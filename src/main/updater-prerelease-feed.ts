@@ -21,7 +21,8 @@ function getPlatformManifestName(): string {
     return 'latest-mac.yml'
   }
   if (process.platform === 'linux') {
-    return 'latest-linux.yml'
+    // Why: electron-updater requests arch-suffixed manifests on non-x64 Linux.
+    return process.arch === 'x64' ? 'latest-linux.yml' : `latest-linux-${process.arch}.yml`
   }
   return 'latest.yml'
 }
@@ -105,25 +106,69 @@ function getManifestAssetNames(manifestText: string): string[] {
 
 type ReleaseReadiness = 'ready' | 'not-ready' | 'unavailable'
 
-/**
- * Why: only an explicit 404 proves an asset is unpublished. Large installers —
- * notably the ~190MB orca-windows-setup.exe — redirect to Azure blob storage,
- * where a HEAD routinely times out or answers 302/403. Treating those as
- * unpublished hid every Windows update behind a false "you're on the latest
- * version".
- */
-async function isReleaseAssetPublished(tag: string, assetName: string): Promise<boolean> {
+function getGitHubReleaseAssetReadiness(assetUrl: string): Promise<ReleaseReadiness> {
+  return new Promise((resolve) => {
+    const request = net.request({ method: 'HEAD', url: assetUrl, redirect: 'manual' })
+    let settled = false
+    const settle = (readiness: ReleaseReadiness): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timeout)
+      resolve(readiness)
+    }
+    const timeout = setTimeout(() => {
+      request.abort()
+      settle('unavailable')
+    }, FETCH_TIMEOUT_MS)
+
+    request.on('redirect', (statusCode) => {
+      // Why: GitHub 302s HEADs for existing assets to signed storage and 404s missing ones
+      // directly, so the redirect alone proves existence without depending on the storage host's
+      // HEAD handling; Electron cancels an unfollowed manual redirect itself. Any other 3xx
+      // (e.g. a 301 from a repo move) proves nothing about the asset.
+      settle(statusCode === 302 ? 'ready' : 'unavailable')
+    })
+    request.on('response', (response) => {
+      settle(
+        response.statusCode === 404
+          ? 'not-ready'
+          : response.statusCode >= 200 && response.statusCode < 300
+            ? 'ready'
+            : 'unavailable'
+      )
+    })
+    request.on('error', () => settle('unavailable'))
+    // Why: settling on a sync throw also clears the timeout, so the stale timer can't abort() a request that never started.
+    try {
+      request.end()
+    } catch {
+      settle('unavailable')
+    }
+  })
+}
+
+async function getReleaseAssetReadiness(tag: string, assetName: string): Promise<ReleaseReadiness> {
+  const isGitHubReleaseAsset = !/^https?:\/\//i.test(assetName)
+  const assetUrl = isGitHubReleaseAsset
+    ? getReleaseAssetUrl(tag, assetName.split('/').findLast(Boolean) ?? assetName)
+    : assetName
+  if (isGitHubReleaseAsset) {
+    return getGitHubReleaseAssetReadiness(assetUrl)
+  }
+
   try {
-    const assetUrl = assetName.startsWith('http')
-      ? assetName
-      : getReleaseAssetUrl(tag, assetName.split('/').findLast(Boolean) ?? assetName)
     const res = await net.fetch(assetUrl, {
       method: 'HEAD',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     })
-    return res.status !== 404
+    if (res.status === 404) {
+      return 'not-ready'
+    }
+    return res.ok ? 'ready' : 'unavailable'
   } catch {
-    return true
+    return 'unavailable'
   }
 }
 
@@ -151,9 +196,13 @@ async function getPlatformManifestReadiness(tag: string): Promise<ReleaseReadine
       return 'not-ready'
     }
     const assetResults = await Promise.all(
-      assetNames.map((assetName) => isReleaseAssetPublished(tag, assetName))
+      assetNames.map((assetName) => getReleaseAssetReadiness(tag, assetName))
     )
-    return assetResults.includes(false) ? 'not-ready' : 'ready'
+    return assetResults.includes('not-ready')
+      ? 'not-ready'
+      : assetResults.includes('unavailable')
+        ? 'unavailable'
+        : 'ready'
   } catch {
     return 'unavailable'
   }
