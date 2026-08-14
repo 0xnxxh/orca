@@ -198,7 +198,10 @@ import {
   isNativeWindowsLocalPtySpawn,
   markNativeWindowsConptyPty
 } from '../runtime/terminal-model-query-authority'
-import { setTerminalViewAttributes } from '../runtime/terminal-view-attribute-store'
+import {
+  getTerminalViewColorQueryReplyColors,
+  setTerminalViewAttributes
+} from '../runtime/terminal-view-attribute-store'
 import { validateTerminalViewAttributes } from '../../shared/terminal-view-attributes'
 import type { PtyModelRestoreReason } from '../../shared/pty-model-restore-marker'
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
@@ -4744,7 +4747,11 @@ export function registerPtyHandlers(
       if (!args.connectionId && !isDaemonHostSpawn) {
         spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }
       }
-      const startupTerminalColorQueryReplyColors = getStartupTerminalColorQueryReplyColors(args)
+      // Why: fall back for non-agent panes — a prompt theme (Oh My Posh, starship, p10k)
+      // queries OSC 10/11 while the shell is still in cooked mode, so an unanswered query
+      // is echoed back as visible text. Same fallback the runtime spawn path already uses.
+      const startupTerminalColorQueryReplyColors =
+        getStartupTerminalColorQueryReplyColors(args) ?? getTerminalViewColorQueryReplyColors()
       if (startupTerminalColorQueryReplyColors) {
         spawnOptions.startupIngress = {
           colors: startupTerminalColorQueryReplyColors,
@@ -6177,7 +6184,10 @@ export function registerPtyHandlers(
         }
         // Why: the daemon-backed provider skips LocalPtyProvider's buildSpawnEnv, so assemble the same host-local env here for parity.
         // Safety: skip entirely for SSH — every injection is a loopback secret or a local path that leaks or misleads on the remote host.
-        const startupTerminalColorQueryReplyColors = getStartupTerminalColorQueryReplyColors(args)
+        // Why: see the local spawn path — non-agent panes need the same view-attribute
+        // fallback or their prompt theme's OSC 10/11 reply echoes as visible text.
+        const startupTerminalColorQueryReplyColors =
+          getStartupTerminalColorQueryReplyColors(args) ?? getTerminalViewColorQueryReplyColors()
         // Why: forward pane env to SSH only when the relay hook path is enabled, or a newer relay could emit statuses this build can't route.
         const sshSourceEnv = stripRemotePaneEnvWhenHooksDisabled(args.connectionId, args.env)
         const baseEnvWithAuth = claudeAuth

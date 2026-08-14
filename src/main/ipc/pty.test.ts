@@ -20,6 +20,53 @@ import type * as Wsl from '../wsl'
 
 const isWindowsHost = process.platform === 'win32'
 const posixOnlyIt = isWindowsHost ? it.skip : it
+
+function makeTerminalViewAttributes(): Parameters<typeof setTerminalViewAttributes>[0] {
+  return {
+    foreground: [0xaa, 0xbb, 0xcc],
+    background: [0x10, 0x20, 0x30],
+    cursor: [0xff, 0xff, 0xff],
+    ansi: Array.from({ length: 256 }, () => [0, 0, 0] as [number, number, number]),
+    colorSchemeMode: 'dark',
+    cursorStyle: 'block',
+    cursorBlink: false
+  }
+}
+
+function makeStubPtyProvider(spawn: ReturnType<typeof vi.fn>): Record<string, unknown> {
+  return {
+    spawn,
+    write: vi.fn(),
+    resize: vi.fn(),
+    kill: vi.fn(),
+    shutdown: vi.fn(),
+    sendSignal: vi.fn(),
+    getCwd: vi.fn(),
+    getInitialCwd: vi.fn(),
+    clearBuffer: vi.fn(),
+    acknowledgeDataEvent: vi.fn(),
+    hasChildProcesses: vi.fn(),
+    getForegroundProcess: vi.fn(),
+    serialize: vi.fn(),
+    revive: vi.fn(),
+    onData: vi.fn(() => () => {}),
+    onReplay: vi.fn(() => () => {}),
+    onExit: vi.fn(() => () => {}),
+    listProcesses: vi.fn(async () => []),
+    attach: vi.fn(),
+    getDefaultShell: vi.fn(),
+    getProfiles: vi.fn()
+  }
+}
+
+function makeStubRuntime(): Record<string, unknown> {
+  return {
+    setPtyController: vi.fn(),
+    createPreAllocatedTerminalHandle: vi.fn(() => null),
+    onPtyData: vi.fn(),
+    registerPty: vi.fn()
+  }
+}
 // Why: bare shells no longer mkdir ~/.omp; OMP status lives under userData (#10196).
 const expectedOmpStatusExtension = posix.join(
   '/tmp/orca-user-data',
@@ -256,6 +303,10 @@ import {
   isHiddenRendererPty
 } from './pty-hidden-delivery-gate'
 import { OrcaRuntimeService } from '../runtime/orca-runtime'
+import {
+  _resetTerminalViewAttributesForTest,
+  setTerminalViewAttributes
+} from '../runtime/terminal-view-attribute-store'
 import { hasLiveClaudePtys, markClaudePtySpawned } from '../claude-accounts/live-pty-gate'
 import * as livePtyGate from '../claude-accounts/live-pty-gate'
 import {
@@ -13934,6 +13985,52 @@ describe('registerPtyHandlers', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('arms startup ingress for a non-agent pane from the terminal view attributes', async () => {
+    // Why STA-4145: a prompt theme (Oh My Posh, starship, p10k) emits OSC 10;?/11;? while the
+    // shell is still in cooked mode. Without ingress armed the query reaches the renderer, whose
+    // reply is echoed back by readline as visible text ("10;rgb:ffff/ffff/ffff").
+    const spawn = vi.fn(async (options: { sessionId?: string }) => ({
+      id: options.sessionId ?? 'plain-shell-pty'
+    }))
+    setLocalPtyProvider(makeStubPtyProvider(spawn) as never)
+    setTerminalViewAttributes(makeTerminalViewAttributes())
+    try {
+      registerPtyHandlers(mainWindow as never, makeStubRuntime() as never)
+      // No launchAgent, no telemetry.agent_kind, no recognizable agent command, and no
+      // caller-supplied terminalColorQueryReplies: exactly a plain shell pane.
+      await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, cwd: '/tmp' })
+
+      expect(spawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startupIngress: expect.objectContaining({
+            colors: { foreground: '#aabbcc', background: '#102030' },
+            deadlineMs: 5_000
+          })
+        })
+      )
+    } finally {
+      _resetTerminalViewAttributesForTest()
+    }
+  })
+
+  it('leaves startup ingress unarmed for a non-agent pane before the first view-attribute push', async () => {
+    // Why: the store is silent-until-first-push on purpose — fabricating a default here would
+    // resurrect the default-black OSC 11 bug the store's own comment warns about.
+    const spawn = vi.fn(async (options: { sessionId?: string }) => ({
+      id: options.sessionId ?? 'plain-shell-pty'
+    }))
+    setLocalPtyProvider(makeStubPtyProvider(spawn) as never)
+    _resetTerminalViewAttributesForTest()
+
+    registerPtyHandlers(mainWindow as never, makeStubRuntime() as never)
+    await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, cwd: '/tmp' })
+
+    // Why not objectContaining({startupIngress: undefined}): the key is absent, not undefined,
+    // and that assertion passes either way — read the recorded arg instead.
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][0]).not.toHaveProperty('startupIngress')
   })
 
   it('accepts source-classified daemon startup spans before spawn resolves', async () => {
