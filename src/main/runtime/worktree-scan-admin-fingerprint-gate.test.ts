@@ -39,10 +39,10 @@ vi.mock('./repo-worktree-admin-fingerprint', () => ({
 
 import {
   OrcaRuntimeService,
-  RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
   WORKTREE_SCAN_ADMIN_FINGERPRINT_TIMEOUT_MS,
   WORKTREE_SCAN_ADMIN_RECONCILE_INTERVAL_MS
 } from './orca-runtime'
+import { RESOLVED_WORKTREE_REPO_TIMEOUT_MS } from './repo-worktree-row-resolution'
 
 const REPO_ID = 'repo-local'
 const REPO_PATH = '/Users/me/dev/app'

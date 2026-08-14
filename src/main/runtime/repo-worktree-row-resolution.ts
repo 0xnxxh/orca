@@ -3,7 +3,9 @@ import { getRepoExecutionHostId } from '../../shared/execution-host'
 import { isFolderRepo } from '../../shared/repo-kind'
 import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
 import { withTimeout } from '../../shared/promise-timeout-fallback'
-import type { GitWorktreeInfo, Repo, Worktree } from '../../shared/types'
+import type { GitWorktreeInfo, Worktree } from '../../shared/worktree/types'
+import type { WorktreeLineage } from '../../shared/worktree/lineage-types'
+import type { Repo } from '../../shared/repo-types'
 import type { WorktreeMeta } from '../../shared/worktree/meta-types'
 import type { ProjectExecutionRuntimeResolution } from '../../shared/project-execution-runtime'
 import type { Store } from '../persistence'
@@ -21,11 +23,15 @@ import type { RuntimeWorktreeScanResult } from './repo-worktree-resolution-scan'
  */
 export const RESOLVED_WORKTREE_REPO_TIMEOUT_MS = 5000
 
-/** A resolved row before lineage projection fills in `parentWorktreeId` / `childWorktreeIds`. */
+/**
+ * One repo's resolved row. Builders emit it with the lineage fields empty; `projectResolvedWorktreeLineage`
+ * fills them in. `lineage` is nullable rather than `null` so a projected row still types honestly —
+ * intersecting a `null` literal would collapse the projected type back to "never has lineage".
+ */
 export type RepoWorktreeRow = Worktree & {
   parentWorktreeId: string | null
   childWorktreeIds: string[]
-  lineage: null
+  lineage: WorktreeLineage | null
   git: Pick<GitWorktreeInfo, 'path' | 'head' | 'branch' | 'isBare' | 'isMainWorktree'>
 }
 
