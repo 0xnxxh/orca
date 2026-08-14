@@ -18,7 +18,10 @@ import {
   persistProvisionedEphemeralVmRuntime,
   prepareEphemeralVmCompatibilityPersistence
 } from './ephemeral-vm-runtime-provisioning-persistence'
-import { provisionedRootChangedDuringResume } from './ephemeral-vm-resume-integrity'
+import { getProvisionedRootResumeIntegrityError } from './ephemeral-vm-resume-integrity'
+import { runControlledEphemeralVmRuntimeCleanup } from './ephemeral-vm-runtime-cleanup-control'
+
+export { stopEphemeralVmRuntimeCleanup } from './ephemeral-vm-runtime-cleanup-control'
 
 export type ProvisionEphemeralVmRuntimeArgs = {
   userDataPath: string
@@ -31,6 +34,7 @@ export type ProvisionEphemeralVmRuntimeArgs = {
   repoUrl?: string
   branch?: string
   ref?: string
+  expectedRefHead?: string
   orcaVersion?: string
   now?: number
   signal?: AbortSignal
@@ -55,7 +59,6 @@ export type CleanupEphemeralVmRuntimeArgs = {
   recipe: OrcaVmRecipe
   runtimeId: string
   now?: number
-  destroyTimeoutMs?: number
   signal?: AbortSignal
   onStdout?: (chunk: string) => void
   onStderr?: (chunk: string) => void
@@ -97,8 +100,6 @@ export type ResumeEphemeralVmRuntimeResult =
       error: string
     }
 
-const cleanupInFlight = new Map<string, Promise<CleanupEphemeralVmRuntimeResult>>()
-
 export async function provisionEphemeralVmRuntime(
   args: ProvisionEphemeralVmRuntimeArgs
 ): Promise<ProvisionEphemeralVmRuntimeResult> {
@@ -113,6 +114,7 @@ export async function provisionEphemeralVmRuntime(
       repoUrl: args.repoUrl,
       branch: args.branch,
       ref: args.ref,
+      expectedRefHead: args.expectedRefHead,
       orcaVersion: args.orcaVersion,
       ...(compatibility ? { instanceId: compatibility.instanceId } : {})
     },
@@ -138,21 +140,12 @@ export async function provisionEphemeralVmRuntime(
 export function cleanupEphemeralVmRuntime(
   args: CleanupEphemeralVmRuntimeArgs
 ): Promise<CleanupEphemeralVmRuntimeResult> {
-  const key = `${args.userDataPath}\0${args.runtimeId}`
-  const existing = cleanupInFlight.get(key)
-  if (existing) {
-    return existing
-  }
-
-  const cleanup = cleanupEphemeralVmRuntimeOnce(args)
-  cleanupInFlight.set(key, cleanup)
-  const forget = (): void => {
-    if (cleanupInFlight.get(key) === cleanup) {
-      cleanupInFlight.delete(key)
-    }
-  }
-  void cleanup.then(forget, forget)
-  return cleanup
+  return runControlledEphemeralVmRuntimeCleanup({
+    userDataPath: args.userDataPath,
+    runtimeId: args.runtimeId,
+    signal: args.signal,
+    run: (signal) => cleanupEphemeralVmRuntimeOnce({ ...args, signal })
+  })
 }
 
 async function cleanupEphemeralVmRuntimeOnce(
@@ -185,7 +178,6 @@ async function cleanupEphemeralVmRuntimeOnce(
     recipe: args.recipe,
     context: contextFromRuntime(args.repoPath, running),
     recipeResult: running.recipeResult,
-    timeoutMs: args.destroyTimeoutMs,
     signal: args.signal,
     onStdout: args.onStdout,
     onStderr: args.onStderr
@@ -271,13 +263,15 @@ export async function resumeEphemeralVmRuntime(
     return { ok: false, runtime: failed, error: resume.error }
   }
 
-  if (!resume.skipped && provisionedRootChangedDuringResume(existing.recipeResult, resume.result)) {
-    const error = 'The provisioned workspace root changed while the runtime was suspended.'
+  const resumeIntegrityError = resume.skipped
+    ? null
+    : getProvisionedRootResumeIntegrityError(existing.recipeResult, resume.result)
+  if (resumeIntegrityError) {
     const failed = updateEphemeralVmRuntimeStatus(args.userDataPath, existing.id, {
       status: 'resume_failed',
       updatedAt: Date.now()
     })
-    return { ok: false, runtime: failed, error }
+    return { ok: false, runtime: failed, error: resumeIntegrityError }
   }
 
   const runtime = updateEphemeralVmRuntimeStatus(args.userDataPath, existing.id, {

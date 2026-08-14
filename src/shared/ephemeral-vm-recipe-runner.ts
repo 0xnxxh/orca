@@ -8,10 +8,7 @@ import {
   getEphemeralVmRecipeResultSchemaVersion
 } from './ephemeral-vm-recipe-checkout-mode'
 import { runRecipeCommand } from './ephemeral-vm-recipe-process'
-import {
-  EPHEMERAL_VM_RECIPE_DESTROY_TIMEOUT_MS,
-  getEphemeralVmRecipeDestroyFailure
-} from './ephemeral-vm-recipe-destroy-result'
+import { getEphemeralVmRecipeDestroyFailure } from './ephemeral-vm-recipe-destroy-result'
 import {
   buildEphemeralVmRecipeCleanupPayload,
   buildEphemeralVmRecipeLifecyclePayload
@@ -33,6 +30,7 @@ export type EphemeralVmRecipeContext = {
   repoUrl?: string
   branch?: string
   ref?: string
+  expectedRefHead?: string
   orcaVersion?: string
 }
 
@@ -78,7 +76,6 @@ export type EphemeralVmRecipeCleanupArgs = {
   recipeResult: EphemeralVmRecipeResult
   env?: NodeJS.ProcessEnv
   maxCaptureBytes?: number
-  timeoutMs?: number
   signal?: AbortSignal
   onStdout?: (chunk: string) => void
   onStderr?: (chunk: string) => void
@@ -174,7 +171,6 @@ export async function runEphemeralVmRecipeCleanup(
   }
 
   const payload = buildEphemeralVmRecipeCleanupPayload(args)
-  const timeoutMs = args.timeoutMs ?? EPHEMERAL_VM_RECIPE_DESTROY_TIMEOUT_MS
   const processResult = await runRecipeCommand({
     command: args.recipe.destroy,
     repoPath: args.repoPath,
@@ -184,14 +180,13 @@ export async function runEphemeralVmRecipeCleanup(
     stdin: `${JSON.stringify(payload)}\n`,
     env: args.env,
     maxCaptureBytes: args.maxCaptureBytes,
-    timeoutMs,
     signal: args.signal,
     onStdout: args.onStdout,
     onStderr: args.onStderr,
     spawnCommand: args.spawnCommand
   })
 
-  const failure = getEphemeralVmRecipeDestroyFailure(processResult, timeoutMs)
+  const failure = getEphemeralVmRecipeDestroyFailure(processResult)
   if (failure) {
     return failure
   }

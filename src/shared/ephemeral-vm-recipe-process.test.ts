@@ -26,7 +26,7 @@ function nodeCommand(scriptPath: string): string {
 }
 
 describe('runRecipeCommand', () => {
-  it('settles and kills a destroy process at its deadline even if close never arrives', async () => {
+  it('does not impose an implicit wall-clock deadline', async () => {
     vi.useFakeTimers()
     const child = Object.assign(new EventEmitter(), {
       pid: undefined,
@@ -42,15 +42,73 @@ describe('runRecipeCommand', () => {
       mode: 'destroy',
       resultSchemaVersion: 1,
       context: { recipeId: 'cloud-sandbox', repoPath: makeRepo() },
-      timeoutMs: 1_000,
       spawnCommand: vi.fn(() => child) as never
     })
 
-    await vi.advanceTimersByTimeAsync(1_000)
+    expect(vi.getTimerCount()).toBe(0)
+    child.emit('close', 0, null)
+    await expect(resultPromise).resolves.toMatchObject({ exitCode: 0 })
+  })
 
-    await expect(resultPromise).resolves.toMatchObject({ timedOut: true, exitCode: null })
+  it('force-kills an aborted recipe if graceful termination never closes it', async () => {
+    vi.useFakeTimers()
+    const child = Object.assign(new EventEmitter(), {
+      pid: undefined,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(),
+      unref: vi.fn()
+    })
+    const controller = new AbortController()
+    const resultPromise = runRecipeCommand({
+      command: 'destroy',
+      repoPath: makeRepo(),
+      mode: 'destroy',
+      resultSchemaVersion: 1,
+      context: { recipeId: 'cloud-sandbox', repoPath: makeRepo() },
+      signal: controller.signal,
+      spawnCommand: vi.fn(() => child) as never
+    })
+
+    controller.abort()
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await expect(resultPromise).resolves.toMatchObject({ aborted: true, exitCode: null })
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
     expect(child.unref).toHaveBeenCalledOnce()
+  })
+
+  it('clears the force-kill timer when graceful termination closes synchronously', async () => {
+    vi.useFakeTimers()
+    const child = Object.assign(new EventEmitter(), {
+      pid: undefined,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(),
+      unref: vi.fn()
+    })
+    child.kill.mockImplementation(() => {
+      child.emit('close', null, 'SIGTERM')
+      return true
+    })
+    const controller = new AbortController()
+    const resultPromise = runRecipeCommand({
+      command: 'destroy',
+      repoPath: makeRepo(),
+      mode: 'destroy',
+      resultSchemaVersion: 1,
+      context: { recipeId: 'cloud-sandbox', repoPath: makeRepo() },
+      signal: controller.signal,
+      spawnCommand: vi.fn(() => child) as never
+    })
+
+    controller.abort()
+
+    await expect(resultPromise).resolves.toMatchObject({ aborted: true, signal: 'SIGTERM' })
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it.each([
@@ -119,7 +177,7 @@ describe('runRecipeCommand', () => {
         })
       ])
 
-      expect(result.signal).toBe('SIGTERM')
+      expect(result).toMatchObject({ signal: 'SIGTERM', aborted: true })
     }
   )
 })

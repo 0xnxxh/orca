@@ -1,6 +1,6 @@
 import type { ProcessRunResult } from './ephemeral-vm-recipe-process'
 
-export const EPHEMERAL_VM_RECIPE_DESTROY_TIMEOUT_MS = 5 * 60 * 1000
+export const EPHEMERAL_VM_CLEANUP_STOPPED_ERROR = 'Cleanup stopped by user.'
 
 type FailedEphemeralVmRecipeDestroy = {
   ok: false
@@ -9,14 +9,13 @@ type FailedEphemeralVmRecipeDestroy = {
 } & ProcessRunResult
 
 export function getEphemeralVmRecipeDestroyFailure(
-  result: ProcessRunResult,
-  timeoutMs: number
+  result: ProcessRunResult
 ): FailedEphemeralVmRecipeDestroy | null {
-  if (result.timedOut) {
+  if (result.aborted) {
     return {
       ok: false,
       skipped: false,
-      error: `Destroy timed out after ${timeoutMs}ms.`,
+      error: EPHEMERAL_VM_CLEANUP_STOPPED_ERROR,
       ...result
     }
   }

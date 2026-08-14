@@ -2,13 +2,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { EphemeralVmRecipeContext } from './ephemeral-vm-recipe-runner'
 
 const DEFAULT_MAX_CAPTURE_BYTES = 1024 * 1024
+const CANCEL_FORCE_KILL_DELAY_MS = 5_000
 
 export type ProcessRunResult = {
   stdout: string
   stderr: string
   exitCode: number | null
   signal: NodeJS.Signals | null
-  timedOut?: true
+  aborted?: true
 }
 
 export function quoteShellToken(value: string): string {
@@ -30,7 +31,6 @@ export async function runRecipeCommand(args: {
   stdin?: string
   env?: NodeJS.ProcessEnv
   maxCaptureBytes?: number
-  timeoutMs?: number
   signal?: AbortSignal
   onStdout?: (chunk: string) => void
   onStderr?: (chunk: string) => void
@@ -38,9 +38,6 @@ export async function runRecipeCommand(args: {
 }): Promise<ProcessRunResult> {
   const maxBytes = args.maxCaptureBytes ?? DEFAULT_MAX_CAPTURE_BYTES
   const spawnCommand = args.spawnCommand ?? spawn
-  if (args.timeoutMs !== undefined && (!Number.isFinite(args.timeoutMs) || args.timeoutMs <= 0)) {
-    throw new Error('Recipe command timeout must be a positive finite number.')
-  }
 
   return new Promise((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams
@@ -60,14 +57,15 @@ export async function runRecipeCommand(args: {
     let stdout = ''
     let stderr = ''
     let settled = false
-    let timeout: ReturnType<typeof setTimeout> | undefined
+    let aborted = false
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined
     const finish = (result: ProcessRunResult): void => {
       if (settled) {
         return
       }
       settled = true
-      if (timeout) {
-        clearTimeout(timeout)
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer)
       }
       args.signal?.removeEventListener('abort', abort)
       resolve(result)
@@ -77,8 +75,8 @@ export async function runRecipeCommand(args: {
         return
       }
       settled = true
-      if (timeout) {
-        clearTimeout(timeout)
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer)
       }
       args.signal?.removeEventListener('abort', abort)
       reject(error)
@@ -87,13 +85,20 @@ export async function runRecipeCommand(args: {
       if (settled) {
         return
       }
+      aborted = true
+      forceKillTimer = setTimeout(() => {
+        if (settled) {
+          return
+        }
+        killRecipeProcess(child, true)
+        finish({ stdout, stderr, exitCode: null, signal: null, aborted: true })
+        child.stdin.destroy()
+        child.stdout.destroy()
+        child.stderr.destroy()
+        child.unref()
+      }, CANCEL_FORCE_KILL_DELAY_MS)
+      forceKillTimer.unref()
       killRecipeProcess(child)
-    }
-
-    if (args.signal?.aborted) {
-      abort()
-    } else {
-      args.signal?.addEventListener('abort', abort, { once: true })
     }
 
     child.stdout.setEncoding('utf8')
@@ -110,19 +115,13 @@ export async function runRecipeCommand(args: {
       fail(error)
     })
     child.on('close', (exitCode, signal) => {
-      finish({ stdout, stderr, exitCode, signal })
+      finish({ stdout, stderr, exitCode, signal, ...(aborted ? { aborted: true } : {}) })
     })
 
-    if (args.timeoutMs !== undefined) {
-      timeout = setTimeout(() => {
-        finish({ stdout, stderr, exitCode: null, signal: null, timedOut: true })
-        killRecipeProcess(child, true)
-        child.stdin.destroy()
-        child.stdout.destroy()
-        child.stderr.destroy()
-        child.unref()
-      }, args.timeoutMs)
-      timeout.unref()
+    if (args.signal?.aborted) {
+      abort()
+    } else {
+      args.signal?.addEventListener('abort', abort, { once: true })
     }
 
     if (args.stdin) {
@@ -181,6 +180,7 @@ function buildRecipeEnv(
     ORCA_REPO_URL: context.repoUrl ?? '',
     ORCA_REPO_BRANCH: context.branch ?? '',
     ORCA_REPO_REF: context.ref ?? '',
+    ORCA_REPO_REF_HEAD: context.expectedRefHead ?? '',
     ORCA_RECIPE_RESULT_SCHEMA_VERSION: String(resultSchemaVersion),
     ORCA_VERSION: context.orcaVersion ?? ''
   }
