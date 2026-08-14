@@ -111,8 +111,26 @@ describe('deciding what to do with a presented host key', () => {
   })
 
   describe('StrictHostKeyChecking', () => {
+    // What `ssh -G` ACTUALLY prints for each configured value, captured from OpenSSH 10.2p1 (same
+    // output from a config file and from -o). Driving the table from this rather than from the
+    // configured spellings is the whole point: matching 'yes'/'no'/'off' matched nothing a real
+    // config can produce, so config honouring was entirely dead and every unit test passed.
+    const SSH_G_OUTPUT: Record<string, string> = {
+      yes: 'true',
+      no: 'false',
+      off: 'false',
+      'accept-new': 'accept-new',
+      ask: 'ask'
+    }
+
     it.each([['yes'], ['always']])('denies an unknown host under %s', (value) => {
       expect(decideHostKey(input({ strictHostKeyChecking: value })).action).toBe('reject')
+    })
+
+    it('denies an unknown host for a config that says yes, as ssh -G reports it', () => {
+      const asReported = SSH_G_OUTPUT.yes
+      expect(asReported).toBe('true')
+      expect(decideHostKey(input({ strictHostKeyChecking: asReported })).action).toBe('reject')
     })
 
     // OpenSSH accepts here but does not write; persisting would turn a deliberately lax setting
@@ -120,6 +138,26 @@ describe('deciding what to do with a presented host key', () => {
     it.each([['no'], ['off']])('accepts without remembering under %s', (value) => {
       expect(decideHostKey(input({ strictHostKeyChecking: value })).action).toBe('accept')
     })
+
+    it.each([['no'], ['off']])(
+      'accepts without remembering for a config that says %s, as ssh -G reports it',
+      (value) => {
+        const asReported = SSH_G_OUTPUT[value]
+        expect(asReported).toBe('false')
+        expect(decideHostKey(input({ strictHostKeyChecking: asReported })).action).toBe('accept')
+      }
+    )
+
+    // The end-to-end statement: for every value a user can write, the decision we reach from what
+    // ssh -G reports must equal the decision we would reach from the value they wrote.
+    it.each(Object.entries(SSH_G_OUTPUT))(
+      'reaches the same verdict for a configured %s as for the %s ssh -G prints',
+      (configured, reported) => {
+        expect(decideHostKey(input({ strictHostKeyChecking: reported })).action).toBe(
+          decideHostKey(input({ strictHostKeyChecking: configured })).action
+        )
+      }
+    )
 
     // Phase 1 has no dialog, so `ask` behaves as `accept-new` — deliberate, and the reason the
     // whole defence can ship without a modal. This pins the equivalence so Phase 2 has to break it

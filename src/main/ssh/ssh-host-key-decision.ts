@@ -42,6 +42,19 @@ export type HostKeyDecisionInput = {
   displayHost: string
 }
 
+/**
+ * `true` and `false` are not defensive extras — they are the ONLY spellings that reach us.
+ *
+ * `ssh -G` renders StrictHostKeyChecking through fmt_multistate_int, which prints the first entry of
+ * multistate_strict_hostkey, and that table lists true/false before yes/no. Verified against
+ * OpenSSH 10.2p1 from both a config file and `-o`: `yes` prints `true`, `no` and `off` both print
+ * `false`, while `ask` and `accept-new` pass through unchanged. Matching only yes/no/off therefore
+ * matched nothing a real config can produce — `StrictHostKeyChecking yes` fell through to the
+ * default and we accepted AND persisted a host the user had told ssh to refuse.
+ */
+const STRICT_VALUES = new Set(['true', 'yes', 'always'])
+const LAX_VALUES = new Set(['false', 'no', 'off'])
+
 const CHANGED_KEY_HINT =
   'If you rebuilt or reprovisioned this machine, remove the saved key and reconnect.'
 
@@ -165,7 +178,7 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
   }
 
   // Unknown from here down.
-  if (strict === 'yes' || strict === 'always') {
+  if (STRICT_VALUES.has(strict)) {
     return {
       action: 'reject',
       outcome: 'unknown',
@@ -204,7 +217,7 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
       )
     }
   }
-  if (strict === 'no' || strict === 'off') {
+  if (LAX_VALUES.has(strict)) {
     // OpenSSH accepts here but does not write. Persisting would silently convert a deliberately
     // lax setting into a permanent trust record.
     return { action: 'accept', outcome: 'unknown' }
