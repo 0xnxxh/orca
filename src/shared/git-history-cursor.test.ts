@@ -297,5 +297,43 @@ describe('git history paging against a real repository', () => {
     })
 
     expect(result.items.map((item) => item.id)).toEqual(allCommits.slice(0, 5))
+    // Why: the client tells a restart from a continuation by this, and only by this — without it
+    // a fresh page 1 gets appended under the commits already on screen.
+    expect(result.pageAnchor).toBe(allCommits[0])
+  })
+
+  // Why: this is what pinning the walk buys, and nothing else in the suite can see it. HEAD moving
+  // mid-paging is routine here — agents commit in terminals while the panel is open. Re-anchoring
+  // each page to the live HEAD shifts the offset under the walk, so pages silently repeat commits
+  // at the near end and drop exactly as many off the far end.
+  it('keeps later pages on the walk the first page started, when HEAD moves mid-paging', async () => {
+    const first = await loadGitHistoryFromExecutor(git, repoPath, { limit: 5 })
+    expect(first.nextCursor).toBeDefined()
+
+    await execFileAsync('git', ['commit', '-q', '--allow-empty', '-m', 'landed mid-paging'], {
+      cwd: repoPath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Ada',
+        GIT_AUTHOR_EMAIL: 'ada@example.com',
+        GIT_COMMITTER_NAME: 'Ada',
+        GIT_COMMITTER_EMAIL: 'ada@example.com'
+      }
+    })
+    try {
+      const seen = first.items.map((item) => item.id)
+      let cursor = first.nextCursor
+      while (cursor) {
+        const next = await loadGitHistoryFromExecutor(git, repoPath, { limit: 5, cursor })
+        expect(next.pageAnchor).toBe(cursor.anchor)
+        seen.push(...next.items.map((item) => item.id))
+        cursor = next.hasMore ? next.nextCursor : undefined
+      }
+
+      expect(new Set(seen).size).toBe(seen.length)
+      expect(seen).toEqual(allCommits)
+    } finally {
+      await execFileAsync('git', ['reset', '-q', '--hard', 'HEAD~1'], { cwd: repoPath })
+    }
   })
 })

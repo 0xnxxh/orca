@@ -36,8 +36,10 @@ export function GitHistoryVirtualRows<TRow>({
     getScrollElement: () => scrollElement,
     estimateSize: () => GIT_HISTORY_ROW_HEIGHT_PX,
     overscan: GIT_HISTORY_ROW_OVERSCAN,
-    // Why: commit ids are immutable, so a page append carries row identity instead of remounting
-    // the window — which is what keeps an expanded row open across Load more.
+    // Why: measured row heights are cached against this key. Positions are not stable identity —
+    // a refresh or base-ref change puts different commits at the same indices, and an index key
+    // would hand a new commit the measured height of whatever expanded row used to sit there.
+    // (Expansion itself survives a page append because the panel keys that state by commit id.)
     getItemKey: (index) => {
       const row = rows[index]
       return row === undefined ? index : getRowKey(row)

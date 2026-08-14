@@ -250,6 +250,7 @@ export async function loadGitHistoryFromExecutor(
     hasOutgoingChanges,
     hasMore,
     limit,
+    pageAnchor: walkTip,
     nextCursor: hasMore ? { anchor: walkTip, loaded: skip + items.length } : undefined
   }
 }

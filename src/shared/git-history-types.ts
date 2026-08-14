@@ -86,9 +86,15 @@ export type GitHistoryResult = {
   hasOutgoingChanges: boolean
   hasMore: boolean
   limit: number
+  // The commit this page's walk actually started from. A requested anchor that no longer resolves
+  // is answered with a fresh page from HEAD, and only this says so: a client comparing it against
+  // the anchor it asked for can tell a continuation from a restart and replace rather than stack a
+  // new history under a dead one. Absent from hosts too old to page.
+  pageAnchor?: string
   // Cursor to send for the next page, present only when one exists. Carrying it on the response
   // keeps offset arithmetic out of the client, and a host too old to page simply omits it — the
   // client then hides "Load more" instead of offering a button that re-requests page one forever.
+  // Its anchor always equals `pageAnchor`; the two differ in lifetime, not value.
   nextCursor?: GitHistoryCursor
 }
 

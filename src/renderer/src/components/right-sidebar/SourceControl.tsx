@@ -196,7 +196,7 @@ import { stripBaseRef, useCreatePullRequestDialogFields } from './useCreatePullR
 import { resolveCreateReviewDraftTitle } from './create-review-draft-title'
 import { GitHistoryPanel, type GitHistoryPanelState } from './GitHistoryPanel'
 import { GIT_HISTORY_DEFAULT_LIMIT, type GitHistoryCursor } from '../../../../shared/git-history'
-import { appendGitHistoryPage } from './git-history-page-accumulator'
+import { foldGitHistoryPage } from './git-history-page-accumulator'
 import { useGitHistoryCommitActions } from './useGitHistoryCommitActions'
 import { normalizeHostedReviewHeadRef } from '../../../../shared/hosted-review-refs'
 import {
@@ -4997,11 +4997,10 @@ function SourceControlInner(): React.JSX.Element {
         setGitHistoryByWorktree((prev) => ({
           ...prev,
           // Why: fold against the state this page is landing on, not a snapshot from before the
-          // request. A refresh carries no cursor and replaces — the commits it reloads are the
-          // current truth, and a deep page taken before a rewrite may no longer be reachable.
+          // request. Whether the page appends or replaces is the accumulator's call.
           [worktreeId]: {
             status: 'ready',
-            result: cursor ? appendGitHistoryPage(prev[worktreeId]?.result, result) : result
+            result: foldGitHistoryPage(prev[worktreeId]?.result, result, cursor)
           }
         }))
       } catch (error) {
