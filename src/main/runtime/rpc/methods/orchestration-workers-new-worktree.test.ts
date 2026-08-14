@@ -574,6 +574,55 @@ describe('orchestration new-worktree workers', () => {
     })
   })
 
+  it('replays a dispatch-input failure without creating another worker', async () => {
+    mockCreatedWorktree({ hookFound: false })
+    vi.mocked(runtime.sendTerminalAgentPrompt).mockRejectedValueOnce(
+      new Error('connection closed before dispatch input was accepted')
+    )
+    const task = db.createTask({ spec: 'recover dispatch input', runId })
+    const dispatcher = new RpcDispatcher({ runtime, methods: ORCHESTRATION_METHODS })
+    const request: RpcRequest = {
+      id: 'rpc_worker_start',
+      authToken: 'caller-token',
+      orchestrationContractVersion: ORCHESTRATION_CONTRACT_VERSION,
+      orchestrationRequestId: 'worker_start_request',
+      method: 'orchestration.workerStart',
+      params: {
+        task: task.id,
+        from: 'term_coord',
+        worktree: 'new-child',
+        name: 'recover-input-worker',
+        agent: 'codex'
+      }
+    }
+
+    const first = await dispatcher.dispatch(request)
+    const replay = await dispatcher.dispatch({ ...request, id: 'rpc_worker_start_retry' })
+
+    expect(first).toMatchObject({
+      ok: true,
+      result: {
+        state: 'failed',
+        failedStage: 'dispatch_input',
+        residualResources: expect.arrayContaining([
+          expect.objectContaining({ kind: 'worktree', id: 'repo::created' }),
+          expect.objectContaining({ kind: 'terminal', id: 'term_worker' })
+        ]),
+        mutation: { requestId: 'worker_start_request', replayed: false }
+      }
+    })
+    expect(replay).toMatchObject({
+      ok: true,
+      result: {
+        state: 'failed',
+        failedStage: 'dispatch_input',
+        mutation: { requestId: 'worker_start_request', replayed: true }
+      }
+    })
+    expect(runtime.createManagedWorktree).toHaveBeenCalledOnce()
+    expect(runtime.sendTerminalAgentPrompt).toHaveBeenCalledOnce()
+  })
+
   it('persists pre-effect, post-effect, and post-input stages in order', async () => {
     mockCreatedWorktree({ hookFound: false })
     let finishWait:
