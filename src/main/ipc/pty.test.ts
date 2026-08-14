@@ -22,7 +22,8 @@ import { getBundledLauncherPath } from '../cli/bundled-cli-launcher-path'
 const isWindowsHost = process.platform === 'win32'
 const posixOnlyIt = isWindowsHost ? it.skip : it
 const BUNDLED_RESOURCES_PATH = join('/tmp', 'orca-bundled-resources')
-const BUNDLED_CLI_PATH = getBundledLauncherPath(process.platform, BUNDLED_RESOURCES_PATH) as string
+// Why: this suite forces darwin before every test, including on Linux CI.
+const BUNDLED_CLI_PATH = getBundledLauncherPath('darwin', BUNDLED_RESOURCES_PATH) as string
 // Why: bare shells no longer mkdir ~/.omp; OMP status lives under userData (#10196).
 const expectedOmpStatusExtension = posix.join(
   '/tmp/orca-user-data',
