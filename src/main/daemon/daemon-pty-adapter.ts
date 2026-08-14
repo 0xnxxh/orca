@@ -183,6 +183,16 @@ export class TerminalKilledError extends Error {
   }
 }
 
+// Why a distinct error: expiry means the stop is unverified, not that it failed outright. The PTY
+// is deliberately left alive so the caller reports "not stopped" instead of committing a sleep
+// whose final snapshot has not landed (STA-4228).
+export class FinalCheckpointDeadlineError extends Error {
+  constructor(sessionId: string) {
+    super(`Final history checkpoint for "${sessionId}" exceeded the stop deadline`)
+    this.name = 'FinalCheckpointDeadlineError'
+  }
+}
+
 export class DaemonPtyAdapter implements IPtyProvider {
   readonly protocolVersion: number
   private socketPath: string
@@ -1130,9 +1140,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     // Why: sleep/exact-stop kills the live PTY before the periodic checkpoint may run.
     // Force a final snapshot so wake can restore the pane users left.
     if (opts.keepHistory) {
-      await this.runExclusiveCheckpoint(async () => {
-        await this.checkpointSessions([id], { final: true, teardown: true })
-      })
+      await this.awaitFinalCheckpoint(id, opts.deadlineMs)
       const wslDistro = this.wslDistrosBySessionId.get(id)
       const detection = await this.historyReader?.detectColdRestoreState(id, { wslDistro })
       const detected = detection?.status === 'restored' ? detection.restoreInfo : null
@@ -2138,6 +2146,59 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.stopCheckpointTimerIfIdle()
   }
 
+  /**
+   * Runs the final sleep/disconnect checkpoint and waits for it, but only until the caller's
+   * teardown deadline.
+   *
+   * Two invariants hold here at once, and neither one implies the other:
+   *
+   * 1. The checkpoint itself stays deadline-free. It is never cancelled and never deferred, so it
+   *    runs to completion and still commits — sleep needs the last snapshot on disk, and dropping
+   *    it would silently lose what the user left on screen (STA-4173).
+   * 2. The caller's *wait* is bounded. `runExclusiveCheckpoint` is a process-wide tail and the
+   *    final checkpoint enqueues without a deadline, so one stalled same-session write otherwise
+   *    pins that tail and strands every later keep-history stop until restart (STA-4228).
+   *
+   * Expiry therefore rejects rather than falling through to the kill: the PTY stays alive and the
+   * caller records an unverified stop, instead of committing a sleep whose snapshot has not landed.
+   */
+  private awaitFinalCheckpoint(id: string, deadlineMs: number | undefined): Promise<void> {
+    const checkpoint = this.runExclusiveCheckpoint(async () => {
+      await this.checkpointSessions([id], { final: true, teardown: true })
+    })
+    if (deadlineMs === undefined) {
+      return checkpoint
+    }
+    return new Promise<void>((resolve, reject) => {
+      let expired = false
+      const timer = setTimeout(
+        () => {
+          expired = true
+          console.warn('[history] final checkpoint deadline exceeded:', id)
+          reject(new FinalCheckpointDeadlineError(id))
+        },
+        Math.max(1, deadlineMs - Date.now())
+      )
+      timer.unref?.()
+      checkpoint.then(
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        (error: unknown) => {
+          clearTimeout(timer)
+          // Why swallowed once expired: the caller already failed this stop, so rethrowing here
+          // would only surface as an unhandled rejection.
+          if (expired) {
+            console.warn('[history] abandoned final checkpoint failed:', id, error)
+            return
+          }
+          reject(error)
+        }
+      )
+    })
+  }
+
   private async runExclusiveCheckpoint(
     operation: () => Promise<void>,
     options: { rescheduleDirty?: boolean } = {}
@@ -2237,6 +2298,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   ): Promise<'done' | 'deferred'> {
     // Why final waits without a deadline: sleep/disconnect needs the last snapshot on disk, and
     // deferring there would silently drop what the user left on screen rather than delay it.
+    // The caller's wait is bounded separately in awaitFinalCheckpoint — this work still always runs.
     if (opts.final) {
       return await this.checkpointQueue.run(sessionId, () =>
         this.writeSessionCheckpoint(sessionId, opts)
