@@ -117,10 +117,6 @@ function appState(overrides: Record<string, unknown> = {}): AppState {
     defaultTerminalTabsAppliedByWorktreeId: {},
     hydrateWorkspaceSession: vi.fn(),
     hydrateTabsSession: vi.fn(),
-    reconcileWorktreeTabModel: vi.fn(() => ({
-      renderableTabCount: 0,
-      activeRenderableTabId: null
-    })),
     hydrateEditorSession: vi.fn(),
     hydrateBrowserSession: vi.fn(),
     markRemoteWorkspaceHydrated: vi.fn(),

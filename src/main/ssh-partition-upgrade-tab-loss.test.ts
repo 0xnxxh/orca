@@ -630,5 +630,11 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       relaunched.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? [],
       'an evicted ledger entry let a closed tab reappear in the tab bar'
     ).toHaveLength(0)
+    // Both ledgers, not one: asserting only unifiedTabs left the tabsByWorktree ledger's own
+    // eviction completely unobserved — closed tabs came back into that plane silently.
+    expect(
+      relaunched.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [],
+      'an evicted ledger entry let a closed tab reappear in tabsByWorktree'
+    ).toHaveLength(0)
   })
 })
