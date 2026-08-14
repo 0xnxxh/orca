@@ -1469,6 +1469,68 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).toHaveBeenCalledTimes(1)
   })
 
+  it('does not let a pane title duplicate another coordinator stamped completion', () => {
+    const dispatchCompletion = vi.fn()
+    const hookCoordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    const paneCoordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    hookCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000
+    })
+    hookCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(2_000)
+    paneCoordinator.observeTitleWorking()
+    paneCoordinator.observeClassifiedTitleCompletion('Claude done')
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    hookCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'continue the review',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_010_000
+    })
+    hookCoordinator.observeHookStatus({
+      state: 'done',
+      prompt: 'continue the review',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_020_000
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
+
+    paneCoordinator.observeTitleWorking()
+    paneCoordinator.observeClassifiedTitleCompletion('Claude done')
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(3)
+  })
+
   it('does not let a vetoed gated Stop swallow the later all-clear', () => {
     const dispatchCompletion = vi.fn()
     const coordinator = createAgentCompletionCoordinator({

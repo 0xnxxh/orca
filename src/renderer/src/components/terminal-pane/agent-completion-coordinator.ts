@@ -328,6 +328,8 @@ export function createAgentCompletionCoordinator(
           options.paneKey,
           optionsOverride.completionIdentity.lastTurnCompletedAtNotified
         )
+      } else {
+        handledTurnCompletedAtByPaneKey.delete(options.paneKey)
       }
     }
     if (
@@ -741,7 +743,9 @@ export function createAgentCompletionCoordinator(
     clearPendingCodexAttention()
     workingStatusObserved = true
     requiresFreshWorking = false
-    lastCompletionIdentityByPaneKey.delete(options.paneKey)
+    if (!handledTurnCompletedAtByPaneKey.has(options.paneKey)) {
+      lastCompletionIdentityByPaneKey.delete(options.paneKey)
+    }
     currentTurn += 1
     dropPendingTitle()
     return true
