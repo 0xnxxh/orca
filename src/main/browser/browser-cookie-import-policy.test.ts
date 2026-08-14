@@ -2,11 +2,14 @@ import { describe, expect, it, vi, type Mock } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import type { Cookie } from 'electron'
 import {
+  identitiesFromClearCookies,
+  removeTransplantableCookies
+} from './browser-cookie-import-clear'
+import {
   isGoogleSourceBoundCookie,
   isNonTransplantableCookieDomain,
   NON_TRANSPLANTABLE_HOST_KEY_SQL,
   normalizeCookieDomain,
-  removeTransplantableCookies,
   replaceCookiesForImportedDomains
 } from './browser-cookie-import-policy'
 
@@ -225,12 +228,24 @@ describe('removeTransplantableCookies', () => {
       ...overrides
     }
     const clearData = overrides.clearData ?? vi.fn().mockResolvedValue(undefined)
+    const restoreClearIdentities = vi.fn().mockResolvedValue(undefined)
+    const snapshotClearIdentities = vi.fn(
+      async (items: Parameters<typeof identitiesFromClearCookies>[0]) =>
+        identitiesFromClearCookies(items)
+    )
     return {
-      session: { cookies: store, clearData },
+      session: {
+        cookies: store,
+        clearData,
+        snapshotClearIdentities,
+        restoreClearIdentities
+      },
       get: store.get,
       remove: store.remove,
       set: store.set,
-      clearData
+      clearData,
+      snapshotClearIdentities,
+      restoreClearIdentities
     }
   }
 
@@ -278,14 +293,29 @@ describe('removeTransplantableCookies', () => {
     expect(remove).not.toHaveBeenCalled()
   })
 
-  it('bulk clears cookies the per-cookie path could never address', async () => {
-    const { session, clearData } = clearSession([
-      { ...cookie('.example.com', 'session'), domain: '' }
+  it('does not attach or clear when the jar contains only excluded cookies', async () => {
+    const { session, snapshotClearIdentities, clearData, remove } = clearSession([
+      cookie('.google.com', 'SID'),
+      cookie('accounts.google.com', 'ACCOUNT')
     ])
 
     await removeTransplantableCookies(session)
 
-    expect(clearData).toHaveBeenCalledOnce()
+    expect(snapshotClearIdentities).not.toHaveBeenCalled()
+    expect(clearData).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('does not mutate when a transplantable cookie cannot be represented for rollback', async () => {
+    const { session, clearData, remove, restoreClearIdentities } = clearSession([
+      { ...cookie('.example.com', 'session'), domain: '' }
+    ])
+
+    await expect(removeTransplantableCookies(session)).rejects.toThrow(/session was left unchanged/)
+
+    expect(clearData).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+    expect(restoreClearIdentities).not.toHaveBeenCalled()
   })
 
   it('falls back to per-cookie removal when the bulk clear rejects', async () => {
@@ -303,26 +333,71 @@ describe('removeTransplantableCookies', () => {
     ])
   })
 
-  it('re-reads the jar after a rejected bulk clear', async () => {
-    const beforeAttempt = [cookie('.removed.test', 'gone-before-fallback')]
-    const afterAttempt = [
-      cookie('.google.com', 'SID'),
-      cookie('.survivor.test', 'survived'),
-      cookie('.arrived.test', 'arrived-during-clear')
+  // Why (STA-4170): the fallback may only mutate what the identity snapshot can undo. Re-reading
+  // the jar here widened the removal set past the restore set. Re-removing a cookie the partial
+  // bulk clear already deleted is a harmless no-op, so the narrower stale plan costs nothing.
+  it('removes only the pre-clear snapshot after a rejected bulk clear', async () => {
+    const beforeAttempt = [
+      cookie('.removed.test', 'gone-before-fallback'),
+      cookie('.survivor.test', 'survived')
     ]
-    const get = vi.fn().mockResolvedValueOnce(beforeAttempt).mockResolvedValueOnce(afterAttempt)
-    const { session, remove } = clearSession(beforeAttempt, {
+    const get = vi
+      .fn()
+      .mockResolvedValue([
+        cookie('.google.com', 'SID'),
+        cookie('.survivor.test', 'survived'),
+        cookie('.arrived.test', 'arrived-during-clear')
+      ])
+      .mockResolvedValueOnce(beforeAttempt)
+    const { session, remove, clearData } = clearSession(beforeAttempt, {
       get,
       clearData: rejectingBulkClear()
     })
 
     await removeTransplantableCookies(session)
 
-    expect(get).toHaveBeenCalledTimes(2)
+    expect(clearData).toHaveBeenCalledOnce()
+    expect(get).toHaveBeenCalledOnce()
     expect(remove.mock.calls).toEqual([
-      ['https://survivor.test/', 'survived'],
-      ['https://arrived.test/', 'arrived-during-clear']
+      ['https://removed.test/', 'gone-before-fallback'],
+      ['https://survivor.test/', 'survived']
     ])
+  })
+
+  // Why (STA-4170): arrival plus a later removal failure is the exact shape that deleted a login
+  // the user had just completed and still reported restoration. Mutated set must equal restore set.
+  it('never touches a cookie that arrives while a rejected clear falls back', async () => {
+    const beforeAttempt = [
+      cookie('.example.com', 'first', '/one'),
+      cookie('.example.com', 'second', '/two')
+    ]
+    const get = vi
+      .fn()
+      .mockResolvedValue([...beforeAttempt, cookie('.arrived.test', 'fresh-login')])
+      .mockResolvedValueOnce(beforeAttempt)
+    const { session, remove, restoreClearIdentities } = clearSession(beforeAttempt, {
+      get,
+      clearData: rejectingBulkClear(),
+      remove: vi.fn().mockImplementation(async (_url: string, name: string) => {
+        if (name === 'second') {
+          throw new Error('store unavailable')
+        }
+      })
+    })
+
+    await expect(removeTransplantableCookies(session)).rejects.toThrow(
+      'existing cookies were restored'
+    )
+
+    expect(remove.mock.calls).toEqual([
+      ['https://example.com/one', 'first'],
+      ['https://example.com/two', 'second']
+    ])
+    expect(restoreClearIdentities).toHaveBeenCalledOnce()
+    const restored = restoreClearIdentities.mock.calls[0][0].map(
+      (identity: { name: string }) => identity.name
+    )
+    expect([...restored].sort()).toEqual(['first', 'second'])
   })
 
   // Why: the fallback carries the same exclusion as the bulk call, so a rejected clearData must
@@ -343,10 +418,9 @@ describe('removeTransplantableCookies', () => {
     expect(set).not.toHaveBeenCalled()
   })
 
-  // Why (STA-4061): reconstructing a removed cookie loses its partition key, and the snapshot
-  // cannot say which cookies had one, so a failed clear must stay failed.
-  it('never reconstructs removed cookies when another removal fails', async () => {
-    const { session, remove, set } = clearSession(
+  // Why (STA-4090): a failed fallback must restore through captured identities, never cookies.set.
+  it('restores removed cookies through captured identities when another removal fails', async () => {
+    const { session, remove, set, restoreClearIdentities } = clearSession(
       [
         cookie('.google.com', 'SID'),
         cookie('.example.com', 'first', '/one'),
@@ -364,10 +438,14 @@ describe('removeTransplantableCookies', () => {
     )
 
     await expect(removeTransplantableCookies(session)).rejects.toThrow(
-      'the session was left partially cleared'
+      'existing cookies were restored'
     )
     expect(remove).toHaveBeenCalledTimes(3)
     expect(set).not.toHaveBeenCalled()
+    expect(restoreClearIdentities).toHaveBeenCalledOnce()
+    expect(
+      restoreClearIdentities.mock.calls[0][0].map((identity: { name: string }) => identity.name)
+    ).toEqual(expect.arrayContaining(['first', 'second', 'third']))
   })
 
   it('bounds parallel removals so large cookie jars do not clear serially or fan out', async () => {

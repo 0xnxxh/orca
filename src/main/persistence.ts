@@ -79,6 +79,7 @@ import {
   normalizeProjectRuntimePreference
 } from '../shared/project-execution-runtime'
 import { projectHostSetupProjectionFromRepos } from '../shared/project-host-setup-projection'
+import { carryProjectStateThroughIdentityChange } from '../shared/project-identity-succession'
 import { isPluginPanelTabKey } from '../shared/plugins/plugin-manifest'
 import type { GitRemoteIdentity } from '../shared/git-remote-identity'
 import {
@@ -137,6 +138,10 @@ import {
 import { parseWorkspaceSessionSalvaging } from '../shared/workspace-session-salvage'
 import { normalizeUsagePercentageDisplay } from '../shared/usage-percentage-display'
 import { normalizeStatusBarUsageMode } from '../shared/status-bar-usage-mode'
+import {
+  normalizeCustomWorktreeVisibilitySources,
+  normalizeWorktreeVisibilitySourcePreferences
+} from '../shared/worktree/visibility-sources'
 import { isExistingPersistedProfile } from '../shared/project-order-manual-default-notice'
 import { resolveUsagePercentageDisplayChangeNoticeDismissed } from '../shared/usage-percentage-display-change-notice'
 import { normalizePRBotAuthorOverrides } from '../shared/pr-bot-author-overrides'
@@ -168,7 +173,7 @@ import {
   FOLDER_WORKSPACE_INSTANCE_SEPARATOR,
   getRepoIdFromWorktreeId,
   getWorktreePathBasenameFromId
-} from '../shared/worktree-id'
+} from '../shared/worktree/id'
 import {
   isPathInsideOrEqual,
   isWindowsAbsolutePathLike,
@@ -216,7 +221,7 @@ import {
 } from '../shared/workspace-statuses'
 import { clampMarkdownTocPanelWidth } from '../shared/markdown-toc-panel-width'
 import { clampCombinedDiffFileTreeWidth } from '../shared/combined-diff-file-tree-width'
-import { isLegacyRepoForExternalWorktreeVisibility } from '../shared/worktree-ownership'
+import { isLegacyRepoForExternalWorktreeVisibility } from '../shared/worktree/ownership'
 import { sanitizeRepoIcon } from '../shared/repo-icon'
 import { normalizeRepoBadgeColor } from '../shared/repo-badge-color'
 import {
@@ -1477,6 +1482,8 @@ function sanitizeRepoUpdatesForPersistence<
       | 'worktreeBasePath'
       | 'projectHostSetupMethod'
       | 'forkSyncMode'
+      | 'customWorktreeVisibilitySources'
+      | 'worktreeVisibilitySourcePreferences'
     >
   >
 >(updates: T): T {
@@ -1535,6 +1542,26 @@ function sanitizeRepoUpdatesForPersistence<
       delete sanitized.forkSyncMode
     } else {
       sanitized.forkSyncMode = forkSyncMode
+    }
+  }
+  if ('customWorktreeVisibilitySources' in sanitized) {
+    const sources = normalizeCustomWorktreeVisibilitySources(
+      sanitized.customWorktreeVisibilitySources
+    )
+    if (!sources) {
+      delete sanitized.customWorktreeVisibilitySources
+    } else {
+      sanitized.customWorktreeVisibilitySources = sources
+    }
+  }
+  if ('worktreeVisibilitySourcePreferences' in sanitized) {
+    const preferences = normalizeWorktreeVisibilitySourcePreferences(
+      sanitized.worktreeVisibilitySourcePreferences
+    )
+    if (!preferences) {
+      delete sanitized.worktreeVisibilitySourcePreferences
+    } else {
+      sanitized.worktreeVisibilitySourcePreferences = preferences
     }
   }
   return sanitized
@@ -2441,19 +2468,26 @@ function mergeProjectHostSetupCompatibilityState(
   repos: readonly Repo[]
 ): Pick<PersistedState, 'projects' | 'projectHostSetups'> {
   const projection = projectHostSetupProjectionFromRepos(repos)
-  const existingProjectsById = new Map(
-    (state.projects ?? []).map((project) => [project.id, project])
+  const succession = carryProjectStateThroughIdentityChange(
+    projection.projects,
+    state.projects ?? []
   )
   const currentRepoIds = new Set(repos.map((repo) => repo.id))
   const projectedProjectIds = new Set(projection.projects.map((project) => project.id))
   const projectedSetupIds = new Set(projection.setups.map((setup) => setup.id))
   // Why: legacy/repo-backed setup rows reuse the repo id; keep only independent rows so repo deletion leaves no ghosts.
-  const independentSetups = (state.projectHostSetups ?? []).filter((setup) => {
-    if (projectedSetupIds.has(setup.id)) {
-      return false
-    }
-    return !isRepoBackedProjectHostSetup(setup, currentRepoIds)
-  })
+  const independentSetups = (state.projectHostSetups ?? [])
+    .filter((setup) => {
+      if (projectedSetupIds.has(setup.id)) {
+        return false
+      }
+      return !isRepoBackedProjectHostSetup(setup, currentRepoIds)
+    })
+    // Why: follow the repo's project through a derived-id change so no ghost project row survives.
+    .map((setup) => {
+      const remappedProjectId = succession.remappedProjectIds.get(setup.projectId)
+      return remappedProjectId ? { ...setup, projectId: remappedProjectId } : setup
+    })
   const independentProjectIds = new Set(independentSetups.map((setup) => setup.projectId))
   const independentProjects = (state.projects ?? [])
     .filter(
@@ -2463,18 +2497,8 @@ function mergeProjectHostSetupCompatibilityState(
       ...project,
       sourceRepoIds: project.sourceRepoIds.filter((repoId) => currentRepoIds.has(repoId))
     }))
-  const projectedProjects = projection.projects.map((project) => {
-    const existingProject = existingProjectsById.get(project.id)
-    return existingProject?.localWindowsRuntimePreference
-      ? {
-          ...project,
-          localWindowsRuntimePreference: existingProject.localWindowsRuntimePreference,
-          updatedAt: Math.max(project.updatedAt, existingProject.updatedAt)
-        }
-      : project
-  })
   return {
-    projects: [...projectedProjects, ...independentProjects],
+    projects: [...succession.projects, ...independentProjects],
     projectHostSetups: [...projection.setups, ...independentSetups]
   }
 }
@@ -4983,6 +5007,8 @@ export class Store {
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
         | 'agentWorktreeVisibility'
+        | 'customWorktreeVisibilitySources'
+        | 'worktreeVisibilitySourcePreferences'
         | 'projectGroupId'
         | 'projectGroupOrder'
         | 'projectHostSetupMethod'
@@ -5001,6 +5027,20 @@ export class Store {
       return null
     }
     const sanitizedUpdates = sanitizeRepoUpdatesForPersistence(updates)
+    if (
+      'agentWorktreeVisibility' in sanitizedUpdates &&
+      !('worktreeVisibilitySourcePreferences' in sanitizedUpdates) &&
+      (sanitizedUpdates.agentWorktreeVisibility === 'hide' ||
+        sanitizedUpdates.agentWorktreeVisibility === 'show')
+    ) {
+      sanitizedUpdates.worktreeVisibilitySourcePreferences = {
+        ...repo.worktreeVisibilitySourcePreferences,
+        builtIn: {
+          claude: sanitizedUpdates.agentWorktreeVisibility,
+          gsd: sanitizedUpdates.agentWorktreeVisibility
+        }
+      }
+    }
     if ('projectGroupId' in sanitizedUpdates) {
       const nextGroupId = sanitizedUpdates.projectGroupId
       if (
@@ -5166,6 +5206,8 @@ export class Store {
       sourceControlAi: rawSourceControlAi,
       projectHostSetupMethod: rawProjectHostSetupMethod,
       forkSyncMode: rawForkSyncMode,
+      customWorktreeVisibilitySources: rawCustomWorktreeVisibilitySources,
+      worktreeVisibilitySourcePreferences: rawWorktreeVisibilitySourcePreferences,
       ...repoWithoutIcon
     } = repo
     const repoIcon = sanitizeRepoIcon(rawRepoIcon)
@@ -5174,6 +5216,12 @@ export class Store {
     const sourceControlAi = normalizeRepoSourceControlAiOverrides(rawSourceControlAi)
     const projectHostSetupMethod = sanitizeRepoProjectHostSetupMethod(rawProjectHostSetupMethod)
     const forkSyncMode = sanitizeForkSyncMode(rawForkSyncMode)
+    const customWorktreeVisibilitySources = normalizeCustomWorktreeVisibilitySources(
+      rawCustomWorktreeVisibilitySources
+    )
+    const worktreeVisibilitySourcePreferences = normalizeWorktreeVisibilitySourcePreferences(
+      rawWorktreeVisibilitySourcePreferences
+    )
     // Why: never spawn git/gh username resolution in hydration — a stuck probe froze Windows startup for minutes (issue #7225); read only cache/persisted value.
     const gitUsername = isFolderRepo(repo)
       ? ''
@@ -5187,6 +5235,10 @@ export class Store {
       ...(sourceControlAi !== undefined ? { sourceControlAi } : {}),
       ...(projectHostSetupMethod !== undefined ? { projectHostSetupMethod } : {}),
       ...(forkSyncMode !== undefined ? { forkSyncMode } : {}),
+      ...(customWorktreeVisibilitySources !== undefined ? { customWorktreeVisibilitySources } : {}),
+      ...(worktreeVisibilitySourcePreferences !== undefined
+        ? { worktreeVisibilitySourcePreferences }
+        : {}),
       kind: isFolderRepo(repo) ? 'folder' : 'git',
       gitUsername,
       hookSettings: {

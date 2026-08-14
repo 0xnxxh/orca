@@ -13,6 +13,7 @@ import type {
 import { AGENT_MAP_LINEAGE_RELATION, shouldAggregateAgentMapWorktree } from './agent-map-layout'
 import { selectVisibleAgentMapLabels } from './agent-map-label-declutter'
 import { agentMapDirectLineageChevronPath } from './agent-map-lineage-chevron-path'
+import type { AgentMapFlareStatus } from './agent-map-node-metadata'
 import { AgentMapWorktreeLabel } from './AgentMapWorktreeLabel'
 import { AgentMapWorktreeRingNode } from './AgentMapWorktreeRingNode'
 import { DashboardHostBadge } from './DashboardHostBadge'
@@ -29,6 +30,7 @@ type AgentMapSceneProps = {
   selectedPaneKey: string | null
   allowAggregation: boolean
   showOrchestrationLinks: boolean
+  recentFlareStatuses: ReadonlyMap<string, AgentMapFlareStatus>
   launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
   onSelectAgent: (card: DashboardCard) => void
@@ -72,6 +74,7 @@ export const AgentMapScene = memo(function AgentMapScene({
   selectedPaneKey,
   allowAggregation,
   showOrchestrationLinks,
+  recentFlareStatuses,
   launchableAgentsByWorktreeId,
   nodeRefs,
   onSelectAgent,
@@ -218,6 +221,7 @@ export const AgentMapScene = memo(function AgentMapScene({
                 selectedPaneKey={selectedPaneKey}
                 allowAggregation={allowAggregation}
                 showOrchestrationLinks={showOrchestrationLinks}
+                recentFlareStatuses={recentFlareStatuses}
                 launchableAgents={launchableAgentsByWorktreeId?.[worktree.worktreeId]}
                 nodeRefs={nodeRefs}
                 onSelectAgent={onSelectAgent}

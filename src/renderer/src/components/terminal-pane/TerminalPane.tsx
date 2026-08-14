@@ -163,7 +163,7 @@ import {
   LOCAL_EXECUTION_HOST_ID,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
-import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
+import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import { useProjectHostSetupProjection, useRepoById } from '@/store/selectors'
 import { refitAndRefreshAllTerminalPanes } from '@/lib/pane-manager/pane-manager-registry'
 import {
@@ -548,6 +548,10 @@ function TerminalPane(
     const leafIds = getNativeChatLeafIds()
     return leafIds.length === 1 ? leafIds[0] : null
   }, [getNativeChatLeafIds, tabWideAgentHintLeafId])
+  const getTabWideAgentHintLeafIdRef = useRef(getTabWideAgentHintLeafId)
+  useEffect(() => {
+    getTabWideAgentHintLeafIdRef.current = getTabWideAgentHintLeafId
+  }, [getTabWideAgentHintLeafId])
   useEffect(() => {
     if (tabWideAgentHintLeafId !== undefined) {
       return
@@ -1349,6 +1353,7 @@ function TerminalPane(
     effectiveMacOptionAsAltRef: macOptionAsAltRef,
     initialLayoutRef,
     managerRef,
+    getTabWideAgentHintLeafId: () => getTabWideAgentHintLeafIdRef.current(),
     containerRef,
     expandedStyleSnapshotRef,
     paneFontSizesRef,

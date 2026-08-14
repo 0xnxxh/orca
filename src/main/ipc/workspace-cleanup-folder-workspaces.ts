@@ -1,7 +1,7 @@
 import type { Store } from '../persistence'
 import { createFolderWorktree } from '../repo-worktrees'
 import type { Repo, Worktree } from '../../shared/types'
-import { FOLDER_WORKSPACE_INSTANCE_SEPARATOR } from '../../shared/worktree-id'
+import { FOLDER_WORKSPACE_INSTANCE_SEPARATOR } from '../../shared/worktree/id'
 import { mergeWorktree } from './worktree-logic'
 
 export function listWorkspaceCleanupFolderWorkspaces(store: Store, repo: Repo): Worktree[] {

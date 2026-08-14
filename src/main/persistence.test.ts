@@ -596,6 +596,124 @@ describe('Store', () => {
     })
   })
 
+  it('carries project state and independent setups across a repo remote identity change', async () => {
+    const originProjectId = 'git:git.example.com/acme/app'
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      repos: [
+        makeRepo({
+          id: 'r1',
+          path: '/repo',
+          displayName: 'App',
+          gitRemoteIdentity: {
+            canonicalKey: 'git.example.com/acme/app',
+            remoteName: 'origin',
+            remoteUrl: 'git@git.example.com:acme/app.git'
+          }
+        })
+      ],
+      projects: [
+        makeProject({
+          id: originProjectId,
+          sourceRepoIds: ['r1'],
+          localWindowsRuntimePreference: { kind: 'wsl', distro: 'Ubuntu' }
+        })
+      ],
+      projectHostSetups: [
+        makeProjectHostSetup({ id: 'r1', projectId: originProjectId, repoId: 'r1' }),
+        makeProjectHostSetup({
+          id: 'app::gpu-vm',
+          projectId: originProjectId,
+          hostId: 'runtime:gpu-vm',
+          repoId: '',
+          path: '/srv/app'
+        })
+      ]
+    })
+    const store = await createStore()
+
+    // A re-probe that now prefers the `upstream` remote rewrites the derived project id.
+    store.updateRepo('r1', {
+      gitRemoteIdentity: {
+        canonicalKey: 'git.example.com/acme/app-upstream',
+        remoteName: 'upstream',
+        remoteUrl: 'git@git.example.com:acme/app-upstream.git'
+      }
+    })
+
+    const upstreamProjectId = 'git:git.example.com/acme/app-upstream'
+    expect(store.getProjects().map((project) => project.id)).toEqual([upstreamProjectId])
+    expect(store.getProjects()[0]?.localWindowsRuntimePreference).toEqual({
+      kind: 'wsl',
+      distro: 'Ubuntu'
+    })
+    expect(
+      store.getProjectHostSetups().find((setup) => setup.id === 'app::gpu-vm')?.projectId
+    ).toBe(upstreamProjectId)
+  })
+
+  it('picks one predecessor project when several prior rows overlap the same repos', async () => {
+    const sharedIdentity = {
+      canonicalKey: 'git.example.com/acme/shared',
+      remoteName: 'origin',
+      remoteUrl: 'git@git.example.com:acme/shared.git'
+    }
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      repos: [
+        makeRepo({
+          id: 'r1',
+          path: '/left',
+          displayName: 'Left',
+          gitRemoteIdentity: sharedIdentity
+        }),
+        makeRepo({
+          id: 'r2',
+          path: '/right',
+          displayName: 'Right',
+          gitRemoteIdentity: sharedIdentity
+        })
+      ],
+      projects: [
+        makeProject({
+          id: 'git:git.example.com/acme/left',
+          sourceRepoIds: ['r1'],
+          updatedAt: 200,
+          localWindowsRuntimePreference: { kind: 'wsl', distro: 'Ubuntu' }
+        }),
+        makeProject({
+          id: 'git:git.example.com/acme/right',
+          sourceRepoIds: ['r2'],
+          updatedAt: 100,
+          localWindowsRuntimePreference: { kind: 'windows-host' }
+        })
+      ],
+      projectHostSetups: [
+        makeProjectHostSetup({
+          id: 'r1',
+          projectId: 'git:git.example.com/acme/left',
+          repoId: 'r1'
+        }),
+        makeProjectHostSetup({
+          id: 'r2',
+          projectId: 'git:git.example.com/acme/right',
+          repoId: 'r2'
+        })
+      ]
+    })
+
+    const store = await createStore()
+
+    // Equal repo overlap resolves by newest updatedAt; the loser's preference is never merged in.
+    expect(store.getProjects()).toEqual([
+      expect.objectContaining({
+        id: 'git:git.example.com/acme/shared',
+        sourceRepoIds: ['r1', 'r2'],
+        localWindowsRuntimePreference: { kind: 'wsl', distro: 'Ubuntu' }
+      })
+    ])
+  })
+
   it('migrates legacy WSL agent settings into the global Windows runtime default', async () => {
     writeDataFile({
       schemaVersion: 1,
@@ -686,6 +804,7 @@ describe('Store', () => {
     expect(settings.editorAutoSaveDelayMs).toBe(1000)
     expect(settings.terminalFontSize).toBe(14)
     expect(settings.terminalFontWeight).toBe(500)
+    expect(settings.terminalFontWeightBold).toBe(700)
     expect(settings.terminalScrollSensitivity).toBe(1.15)
     expect(settings.terminalFastScrollSensitivity).toBe(5)
     expect(settings.terminalTuiScrollSensitivity).toBe(1)
@@ -4740,7 +4859,7 @@ describe('Store', () => {
     expect(updated!.externalWorktreeVisibilityLegacy).toBe(true)
   })
 
-  it('persists agent worktree visibility independently from external visibility', async () => {
+  it('keeps rollback agent visibility writes authoritative for both built-in sources', async () => {
     const store = await createStore()
     store.addRepo(makeRepo({ externalWorktreeVisibility: 'hide' }))
 
@@ -4748,15 +4867,51 @@ describe('Store', () => {
 
     expect(updated).toMatchObject({
       externalWorktreeVisibility: 'hide',
-      agentWorktreeVisibility: 'show'
+      agentWorktreeVisibility: 'show',
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'show' }
+      }
     })
 
     store.flush()
     const reloaded = await createStore()
     expect(reloaded.getRepo('r1')).toMatchObject({
       externalWorktreeVisibility: 'hide',
-      agentWorktreeVisibility: 'show'
+      agentWorktreeVisibility: 'show',
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'show' }
+      }
     })
+  })
+
+  it('persists bounded custom worktree sources separately from their preferences', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo())
+
+    const updated = store.updateRepo('r1', {
+      customWorktreeVisibilitySources: [
+        { id: 'team', rootPath: ' /srv/team-worktrees ' },
+        { id: 'invalid', rootPath: '../relative' }
+      ],
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'hide' },
+        custom: { team: 'show' }
+      }
+    })
+
+    expect(updated).toMatchObject({
+      customWorktreeVisibilitySources: [{ id: 'team', rootPath: '/srv/team-worktrees' }],
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'hide' },
+        custom: { team: 'show' }
+      }
+    })
+
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getRepo('r1')?.customWorktreeVisibilitySources).toEqual([
+      { id: 'team', rootPath: '/srv/team-worktrees' }
+    ])
   })
 
   it('updateRepo clears source-control AI overrides independently from other clearable fields', async () => {
@@ -5796,7 +5951,8 @@ describe('Store', () => {
       editorAutoSaveDelayMs: 1500,
       appFontFamily: 'Inter',
       terminalFontSize: 16,
-      terminalFontWeight: 600
+      terminalFontWeight: 600,
+      terminalFontWeightBold: 800
     })
     expect(updated.theme).toBe('dark')
     expect(updated.editorAutoSave).toBe(true)
@@ -5804,6 +5960,7 @@ describe('Store', () => {
     expect(updated.appFontFamily).toBe('Inter')
     expect(updated.terminalFontSize).toBe(16)
     expect(updated.terminalFontWeight).toBe(600)
+    expect(updated.terminalFontWeightBold).toBe(800)
     // Other fields preserved
     expect(updated.branchPrefix).toBe('git-username')
   })

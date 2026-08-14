@@ -20,7 +20,7 @@ import { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal-ki
 import { parseTerminalKittyKeyboardFlags } from '../../../../shared/terminal-kitty-keyboard-flags'
 import { isRuntimeOwnedSshTargetId, parseExecutionHostId } from '../../../../shared/execution-host'
 import { createTerminalZeroDimensionsMessage } from '../../../../shared/terminal-zero-dimensions-diagnostic'
-import { isWorktreeRemovalFenceError } from '../../../../shared/worktree-removal-fence-error'
+import { isWorktreeRemovalFenceError } from '../../../../shared/worktree/removal-fence-error'
 import { parseTerminalOscColorQuery } from '../../../../shared/terminal-osc-color-reply'
 import {
   HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS,
@@ -124,6 +124,7 @@ import {
   POST_REPLAY_MODE_RESET,
   POST_REPLAY_REATTACH_RESET,
   POST_REPLAY_REATTACH_RESET_KEEP_MOUSE,
+  RESET_AFTER_BYTE_GAP,
   RESET_KITTY_KEYBOARD_PROTOCOL,
   RESET_TERMINAL_CURSOR_STYLE
 } from '../../../../shared/terminal-mode-reset-profiles'
@@ -412,7 +413,7 @@ const FOREGROUND_GRID_DRIFT_CHECK_MIN_MS = 250
 // Why: this is only shown if hidden renderer output was skipped and main-owned
 // terminal state is unavailable, so the user has an explicit loss signal.
 const HIDDEN_OUTPUT_RESTORE_UNAVAILABLE_WARNING =
-  '\x18\x1b[0m\r\n[Orca skipped hidden terminal output because main recovery was unavailable.]\r\n'
+  '\r\n[Orca skipped hidden terminal output because main recovery was unavailable.]\r\n'
 type E2eTerminalPtyDataInjectionApi = {
   inject: (paneKey: string, data: string, meta?: PtyDataMeta) => boolean
   keys: () => string[]
@@ -2014,10 +2015,10 @@ export function connectPanePty(
     // "question answered" signal no hook will ever deliver.
     questionAnsweredInference.observeSentTerminalInput(data)
   }
-  let pendingTerminalInputWrite: Promise<void> | null = null
+  let pendingTerminalInputWrite: Promise<boolean | null> | null = null
   let sequencedInterruptStatusBaseline: AgentStatusEntry | null | undefined
   let interruptStatusBaselineSequence = 0
-  const setPendingTerminalInputWrite = (promise: Promise<void>): void => {
+  const setPendingTerminalInputWrite = (promise: Promise<boolean | null>): void => {
     pendingTerminalInputWrite = promise
     void promise.finally(() => {
       if (pendingTerminalInputWrite === promise) {
@@ -2030,7 +2031,9 @@ export function connectPanePty(
     if (!pendingWrite) {
       return interruptInference.flushPending()
     }
-    return pendingWrite.then(() => interruptInference.flushPending())
+    return pendingWrite.then((immediateResult) => {
+      return immediateResult ?? interruptInference.flushPending()
+    })
   }
   // Why: the 133;D confirmation guard and the visible-pane resampler both key off
   // "does this pane expect an agent"; derive each signal once so the two callers
@@ -4165,26 +4168,28 @@ export function connectPanePty(
       clearPendingTerminalInputIntent()
       const writePromise = transport
         .sendInputAccepted(data)
-        .then((accepted) => {
+        .then((accepted): boolean | Promise<boolean> | null => {
           if (accepted) {
             // Why: rejected writes use transport recovery and must not arm a parser probe.
             markAcceptedTerminalInputSent()
             observeAcceptedShellCommandInput(data)
             observeAcceptedTerminalInput(data, acknowledgedIntent)
-            interruptInference.observeInputIntent(
+            const immediateResult = interruptInference.observeInputIntent(
               acknowledgedIntent,
               interruptStatusBaseline,
               capturedBaselineSequence
             )
             observeTitleOnlyInterrupt()
-          } else {
-            // Why: Esc/Ctrl+C are the first keys users press on a frozen pane;
-            // an unbound-transport reject here must arm recovery too.
-            requestRecoveryForUndeliverableInput()
+            return immediateResult ?? null
           }
+          // Why: Esc/Ctrl+C are the first keys users press on a frozen pane;
+          // an unbound-transport reject here must arm recovery too.
+          requestRecoveryForUndeliverableInput()
+          return null
         })
         .catch((err) => {
           console.warn('[agent-interrupt] acknowledged terminal input failed:', err)
+          return null
         })
       setPendingTerminalInputWrite(writePromise)
       return
@@ -6105,6 +6110,17 @@ export function connectPanePty(
         noteHiddenOutputRestoreFloodBackpressure()
         return
       }
+      // Why the emulator too: it carries state across chunks exactly like the
+      // parser does. If the gap swallowed the `ESC[22m` closing a bold run,
+      // every cell written afterwards inherits it. This marker is the one point
+      // where "bytes were dropped" is known, so ground the pen here rather than
+      // relying on each recovery path to remember (STA-4042).
+      // Why after the backpressure return and not before: under flood these
+      // markers arrive continuously, and writing per marker would add work in
+      // exactly the case that guard exists to damp. The flood path repaints via
+      // buildMainModelSnapshotReplayWrites, which grounds the pen itself, so
+      // nothing is lost by skipping it here.
+      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       // Why: a marker during an in-flight restore means that snapshot may predate the drop, so a fresh one must follow; capture BEFORE the mark, which starts a restore synchronously on a visible pane.
       const restoreWasInFlight = hiddenOutputRestoreInFlight !== null
       markHiddenOutputRestoreNeeded()
@@ -7005,6 +7021,7 @@ export function connectPanePty(
         cycle: hiddenOutputRestoreRemoteAbandonCycles
       })
       noteHiddenOutputRestoreFloodBackpressure()
+      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       return true
     }
 
@@ -7057,6 +7074,13 @@ export function connectPanePty(
         // backpressure must not outlive it — it would re-open recovery and banner a second time.
         clearHiddenOutputRestoreFloodRepaintTimer()
         writeRestoreUnavailableWarning()
+      }
+      // Why not an else: the unavailable warning is plain text and carries no SGR
+      // of its own, so folding the reset into the other branch skipped it on the
+      // primary abandon path — the one that declares the bytes unrecoverable.
+      // Guarded only against the remote re-arm, which writes its own reset.
+      if (!rearmedRemoteRestore) {
+        writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       }
       if (hadPendingOverflow) {
         return
@@ -7198,6 +7222,8 @@ export function connectPanePty(
     }
 
     function writeRestoreUnavailableWarning(): void {
+      // The reset must parse before both the warning and any foreground drain.
+      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       if (!shouldWritePtyOutputForeground(deps.isVisibleRef.current)) {
         return
       }

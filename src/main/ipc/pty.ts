@@ -39,6 +39,7 @@ import {
 } from '../../shared/pty-delivery-diagnostics'
 import { recordCrashBreadcrumb } from '../crash-reporting/crash-breadcrumb-store'
 import { isTuiAgent } from '../../shared/tui-agent-config'
+import { isTuiAgentEnabled } from '../../shared/tui-agent-selection'
 import {
   normalizeAgentProviderSession,
   type AgentProviderSessionMetadata,
@@ -147,7 +148,7 @@ import {
   type TerminalStartupCwdMissingDirFallback
 } from '../../shared/terminal-startup-cwd'
 import { isWslUncPath, toWindowsWslPath } from '../../shared/wsl-paths'
-import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
+import { splitWorktreeIdForFilesystem } from '../../shared/worktree/id'
 import type { AgentSessionOwnerBinding } from '../../shared/agent-session-host-authority'
 import {
   agentSessionOwnerBindingsEqual,
@@ -160,6 +161,7 @@ import {
 import { parseWslPath, wslUncDirectoryExistsAsync } from '../wsl'
 import { mergePersistedWindowsPath, resolvePathEnvKey } from '../pty/windows-environment-path'
 import { addOrcaWslInteropEnv, stampWslOrchestrationCompatibilityHost } from '../pty/wsl-orca-env'
+import { resolveCodexShellLaunchPreflightCommand } from '../pty/codex-shell-launch-preflight'
 import { PtyProducerFlowController } from './pty-producer-flow-control'
 import { beginTerminalInstall } from './watcher-removal-gate'
 import {
@@ -1134,6 +1136,7 @@ export type BuildPtyHostEnvOptions = {
   /** Distro for WSL spawns (null = Windows default distro); drives the WSL hook relay + endpoint repoint. Only read when isWsl. */
   wslDistro?: string | null
   agentStatusHooksEnabled: boolean
+  codexStatusHooksEnabled?: boolean
   networkProxySettings?: NetworkProxySettings
   /** Keep indexed Git config off the sparse daemon wire; the daemon appends guard entries after merging its inherited env. */
   deferGitConfigGuardToDaemon?: boolean
@@ -1188,6 +1191,12 @@ function shouldSkipCodexHomeEnvForWindowsShell(
   cwd: string | undefined
 ): boolean {
   return isWslShellName(shellPath) || (typeof cwd === 'string' && parseWslPath(cwd) !== null)
+}
+
+function isCodexStatusHooksEnabled(settings: GlobalSettings | undefined): boolean {
+  return (
+    isAgentStatusHooksEnabled(settings) && isTuiAgentEnabled('codex', settings?.disabledTuiAgents)
+  )
 }
 
 // Why: with the real-home flag ON, a host system-default launch resolves to a
@@ -1845,12 +1854,27 @@ export function buildPtyHostEnv(
   if (opts.skipCodexHomeEnv) {
     delete baseEnv.CODEX_HOME
     delete baseEnv.ORCA_CODEX_HOME
+    delete baseEnv.ORCA_CODEX_LAUNCH_PREFLIGHT
   } else if (opts.selectedCodexHomePath) {
     baseEnv.CODEX_HOME = opts.selectedCodexHomePath
     // Why: user startup files may re-export CODEX_HOME; shell-ready wrappers restore this runtime home before Codex launches.
     baseEnv.ORCA_CODEX_HOME = opts.selectedCodexHomePath
+    const preflightCommand = resolveCodexShellLaunchPreflightCommand({
+      hooksEnabled: opts.codexStatusHooksEnabled ?? opts.agentStatusHooksEnabled,
+      isPackaged: opts.isPackaged,
+      isWsl: opts.isWsl,
+      managedHomePath: opts.selectedCodexHomePath
+    })
+    if (preflightCommand) {
+      baseEnv.ORCA_CODEX_LAUNCH_PREFLIGHT = preflightCommand
+    } else {
+      delete baseEnv.ORCA_CODEX_LAUNCH_PREFLIGHT
+    }
   } else if (opts.stripInheritedOrcaCodexHome) {
     stripInheritedOrcaCodexHomeOverride(baseEnv)
+    delete baseEnv.ORCA_CODEX_LAUNCH_PREFLIGHT
+  } else {
+    delete baseEnv.ORCA_CODEX_LAUNCH_PREFLIGHT
   }
 
   // Why: WSL shells need the managed userData root for shell-ready wrappers; dev-mode terminals need the same export so `orca` targets the live dev instance.
@@ -2430,6 +2454,7 @@ export function registerPtyHandlers(
               }) ?? null)
         )
         const skipCodexHomeEnv = ctx?.isWsl === true && !selectedCodexHomePath
+        const ptySettings = getSettings?.()
         const env = buildPtyHostEnv(id, baseEnv, {
           isPackaged: app.isPackaged,
           resourcesPath: process.resourcesPath,
@@ -2440,14 +2465,15 @@ export function registerPtyHandlers(
             target: codexSelectionTarget,
             selectedCodexHomePath,
             skipCodexHomeEnv,
-            settings: getSettings?.()
+            settings: ptySettings
           }),
           launchCommand: ctx?.command,
           launchAgent: ctx?.launchAgent,
           isWsl: ctx?.isWsl,
           wslDistro: ctx?.wslDistro ?? null,
-          agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
-          networkProxySettings: getSettings?.()
+          agentStatusHooksEnabled: isAgentStatusHooksEnabled(ptySettings),
+          codexStatusHooksEnabled: isCodexStatusHooksEnabled(ptySettings),
+          networkProxySettings: ptySettings
         })
         // Why: agents need their terminal handle at process start to self-identify in orchestration messages without an extra RPC.
         const requestedHandle = baseEnv.ORCA_TERMINAL_HANDLE
@@ -4667,13 +4693,14 @@ export function registerPtyHandlers(
         isDaemonHostSpawn &&
         shouldSkipCodexHomeEnvForWindowsShell(daemonShellOverride, cwd) &&
         !selectedCodexHomePath
+      const ptySettings = isDaemonHostSpawn ? getSettings?.() : undefined
       const stripInheritedOrcaCodexHome =
         isDaemonHostSpawn &&
         shouldStripInheritedOrcaCodexHome({
           target: codexSelectionTarget,
           selectedCodexHomePath,
           skipCodexHomeEnv,
-          settings: getSettings?.()
+          settings: ptySettings
         })
       if (isDaemonHostSpawn && sessionId && !preAdoptedStablePane) {
         if (!isSafePtySessionId(sessionId, app.getPath('userData'))) {
@@ -4690,8 +4717,9 @@ export function registerPtyHandlers(
           launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
           isWsl: shouldSkipCodexHomeEnvForWindowsShell(daemonShellOverride, cwd),
           wslDistro: codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null,
-          agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
-          networkProxySettings: getSettings?.(),
+          agentStatusHooksEnabled: isAgentStatusHooksEnabled(ptySettings),
+          codexStatusHooksEnabled: isCodexStatusHooksEnabled(ptySettings),
+          networkProxySettings: ptySettings,
           deferGitConfigGuardToDaemon: provider.supportsGitCredentialGuardHost?.(sessionId) === true
         })
         stampWslOrchestrationCompatibilityHost(
@@ -6337,13 +6365,14 @@ export function registerPtyHandlers(
           isDaemonHostSpawn &&
           shouldSkipCodexHomeEnvForWindowsShell(effectiveShellOverride, cwd) &&
           !selectedCodexHomePath
+        const ptySettings = isDaemonHostSpawn ? getSettings?.() : undefined
         const stripInheritedOrcaCodexHome =
           isDaemonHostSpawn &&
           shouldStripInheritedOrcaCodexHome({
             target: codexSelectionTarget,
             selectedCodexHomePath,
             skipCodexHomeEnv,
-            settings: getSettings?.()
+            settings: ptySettings
           })
         if (isDaemonHostSpawn && !preAdoptedStablePane) {
           if (effectiveSessionId === undefined) {
@@ -6369,8 +6398,9 @@ export function registerPtyHandlers(
               launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
               isWsl: shouldSkipCodexHomeEnvForWindowsShell(effectiveShellOverride, cwd),
               wslDistro: codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null,
-              agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
-              networkProxySettings: getSettings?.(),
+              agentStatusHooksEnabled: isAgentStatusHooksEnabled(ptySettings),
+              codexStatusHooksEnabled: isCodexStatusHooksEnabled(ptySettings),
+              networkProxySettings: ptySettings,
               deferGitConfigGuardToDaemon:
                 provider.supportsGitCredentialGuardHost?.(effectiveSessionId) === true
             })

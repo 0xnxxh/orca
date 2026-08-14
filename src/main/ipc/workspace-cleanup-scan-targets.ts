@@ -1,4 +1,4 @@
-import { splitWorktreeId } from '../../shared/worktree-id'
+import { splitWorktreeId } from '../../shared/worktree/id'
 import {
   WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT,
   type WorkspaceCleanupScanArgs
