@@ -12,7 +12,7 @@ import {
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
-import { planWorktreeSortOrderUpdates } from '../../shared/worktree-sort-order-update'
+import { planWorktreeSortOrderUpdates } from '../../shared/worktree/sort-order-update'
 import { isArtifactSharingEnabled } from '../../shared/artifact-sharing-gate'
 import { sortDirEntries } from '../../shared/file-name-sort'
 import { isServerDriveListRequest, listWindowsDrives } from './windows-drive-listing'
@@ -117,7 +117,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { resolveWorktreeCreateBase } from '../worktree-create-base'
-import { resolveWorktreeAddBaseRef } from '../../shared/worktree-base-ref'
+import { resolveWorktreeAddBaseRef } from '../../shared/worktree/base-ref'
 import { OrchestrationDb } from './orchestration/db'
 import { reconcileRequestedWorkerTerminalReleases } from './orchestration/worker-terminal-release-reconciliation'
 import {
@@ -162,9 +162,13 @@ import type {
   OrchestrationEnvironmentTransport,
   OrchestrationWorkerServer
 } from './orchestration/environment-transport'
-import { clearFederationAckCheckpoints } from './orchestration/federation-ack-checkpoints'
+import {
+  clearFederationAckCheckpoints,
+  releaseFederationAckCheckpoint
+} from './orchestration/federation-ack-checkpoints'
 import { syncFederatedDispatch } from './orchestration/federation-sync'
 import { formatMessagePointer } from './orchestration/formatter'
+import { MailPointerRepointScheduler } from './orchestration/mail-pointer-repoint-scheduler'
 import { selectExactWorkerProviderSession } from './orchestration/worker-provider-session'
 import type {
   Automation,
@@ -256,10 +260,11 @@ import type {
   CodexRateLimitAccountsState
 } from '../../shared/types'
 import type { TaskSourceContext } from '../../shared/task-source-context'
-import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
+import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree/removal'
 import {
   LOCAL_EXECUTION_HOST_ID,
   getRepoExecutionHostId,
+  getWorktreeExecutionHostId,
   parseExecutionHostId,
   toSshExecutionHostId,
   type ExecutionHostId
@@ -309,7 +314,7 @@ import type {
   LinearTeamMembersResult,
   LinearTeamStatesResult,
   LinearStatusSetResult
-} from '../../shared/linear-agent-access'
+} from '../../shared/linear/agent-access'
 import {
   HEADLESS_RUNTIME_WINDOW_ID,
   type RuntimeDesktopWindowStatus,
@@ -377,8 +382,8 @@ import {
   LINEAR_SEARCH_MAX_LIMIT,
   LINEAR_WRITE_BODY_CAP,
   clampLinearSearchLimit
-} from '../../shared/linear-agent-access'
-import { isLinearUuid } from '../../shared/linear-uuid'
+} from '../../shared/linear/agent-access'
+import { isLinearUuid } from '../../shared/linear/uuid'
 import type { FeatureInteractionId } from '../../shared/feature-interactions'
 import type { TerminalPaneSplitSource } from '../../shared/feature-education-telemetry'
 import {
@@ -387,14 +392,14 @@ import {
   getRepoIdFromWorktreeId,
   splitWorktreeId,
   splitWorktreeIdForFilesystem
-} from '../../shared/worktree-id'
+} from '../../shared/worktree/id'
 import {
   getProjectIdForProviderIdentity,
   getProjectHostSetupForRepo,
   getProjectHostSetupWorktreeMeta
 } from '../../shared/project-host-setup-projection'
 import { parsePtySessionId } from '../../shared/pty-session-id-format'
-import { clampLinearIssueListLimit } from '../../shared/linear-issue-read-limits'
+import { clampLinearIssueListLimit } from '../../shared/linear/issue-read-limits'
 import { isFolderRepo } from '../../shared/repo-kind'
 import { DEFAULT_WORKSPACE_STATUS_ID } from '../../shared/workspace-statuses'
 import {
@@ -485,13 +490,13 @@ import {
   buildKnownOrcaWorkspaceLayouts,
   isLegacyRepoForExternalWorktreeVisibility,
   toDetectedWorktree
-} from '../../shared/worktree-ownership'
+} from '../../shared/worktree/ownership'
 import { isAgentScratchRepoRootPath } from '../../shared/agent-scratch-worktrees'
 import {
   createWorktreeVisibilitySourceMatcher,
   normalizeCustomWorktreeVisibilitySources,
   type WorktreeVisibilitySourceMatcher
-} from '../../shared/worktree-visibility-sources'
+} from '../../shared/worktree/visibility-sources'
 import {
   BROWSER_HEADLESS_RUNTIME_CAPABILITY,
   BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY,
@@ -849,7 +854,7 @@ import type {
   UpdateIssueTypeBySlugArgs,
   UpdateProjectItemFieldArgs,
   UpdatePullRequestBySlugArgs
-} from '../../shared/github-project-types'
+} from '../../shared/github/project-types'
 import {
   getBaseRefDefault,
   getDefaultRemote,
@@ -1830,6 +1835,10 @@ const BRACKETED_PASTE_BEGIN = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
 const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
+const CLAUDE_AGENT_PROMPT_RENDER_TIMEOUT_MS = 8000
+const CLAUDE_AGENT_PROMPT_RENDER_QUIET_MS = 1500
+// Why: Claude emits show-cursor while rendering its composer; output must settle afterward.
+const CLAUDE_AGENT_PROMPT_RENDER_MARKER = '\x1b[?25h'
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
 // Why: the split already failed; the caller waits on this teardown only to learn whether the
 // fallback kill is needed, so keep it short — an unreachable host must not stall the rejection.
@@ -2487,6 +2496,11 @@ type TerminalWorkspaceLaunchScope = {
   folderWorkspace: FolderWorkspace | null
 }
 
+type ResolvedTerminalWorkspaceLaunchTarget = {
+  scope: TerminalWorkspaceLaunchScope
+  managedWorktree: ResolvedWorktree | null
+}
+
 type WorktreeLineageInput = {
   parentWorkspace?: string
   envParentWorkspace?: string
@@ -2539,10 +2553,11 @@ type RuntimeWorktreeScanCache = {
   result: RuntimeWorktreeScanResult
   expiresAt: number
   /**
-   * Git-admin state read as of the scan's start, kept unresolved so no caller ever waits on the
-   * probe to receive a scan result. Resolves to `null` when the state could not be read.
+   * Git-admin state read as of the scan's start, written back once the probe settles. Never holds a
+   * pending promise: a wedged mount would otherwise poison every later refresh that awaits it.
+   * `null` means "cannot prove unchanged" (unreadable layout, still probing, probe timed out).
    */
-  adminFingerprint: Promise<string | null>
+  adminFingerprint: string | null
   /** When the Git scan behind `result` actually ran, so reconciliation can be bounded. */
   scannedAt: number
 }
@@ -2555,7 +2570,9 @@ type RuntimeWorktreeScanInFlight = {
 
 type RuntimeWorktreeScanRefresh = {
   result: RuntimeWorktreeScanResult
-  adminFingerprint: Promise<string | null>
+  adminFingerprint: string | null
+  /** Still-running probe whose value the cache entry adopts if it settles; never awaited by a caller. */
+  adminFingerprintProbe: Promise<string | null> | null
   scannedAt: number
 }
 
@@ -2776,6 +2793,7 @@ export class OrcaRuntimeService {
     }
   >()
   private terminalSleepGeneration = 0
+  private terminalPaneRecoveryByIdentity = new Map<string, Promise<RuntimeTerminalResolvePane>>()
   // Why: idempotency map for worktree.create — a create interrupted by a mobile
   // connection migration is retried with the same clientMutationId and returns
   // the in-flight (or just-finished) operation instead of a duplicate worktree.
@@ -2837,6 +2855,11 @@ export class OrcaRuntimeService {
   private handleByPtyId = new Map<string, string>()
   // Why: pointer state is process-local; one harmless replay after restart avoids a wire or schema change.
   private readonly lastPointedMessageSequenceByHandle = new Map<string, number>()
+  // Why: a waiter can reserve an older row while a newer row advances the sequence watermark.
+  private readonly pointedMessageIdsByHandle = new Map<string, Set<string>>()
+  private readonly mailPointerRepointScheduler = new MailPointerRepointScheduler((handle) =>
+    this.repointPendingMessagesForHandle(handle)
+  )
   private syntheticTerminalHandles = new Set<string>()
   private detachedPreAllocatedLeaves = new Map<string, RuntimeLeafRecord>()
   private graphSyncCallbacks: (() => void)[] = []
@@ -2867,6 +2890,8 @@ export class OrcaRuntimeService {
   private worktreeScanGenerations = new Map<string, number>()
   private worktreeScanCache = new Map<string, RuntimeWorktreeScanCache>()
   private worktreeScanInFlight = new Map<string, RuntimeWorktreeScanInFlight>()
+  /** Repos whose Git-admin probe has not settled yet; caps abandoned fs work at one per repo. */
+  private worktreeAdminFingerprintProbes = new Set<string>()
   private cloneInFlightByPath = new Map<string, Promise<void>>()
   private agentDetector: AgentDetector | null = null
   private ptyForegroundAgentRefreshes = new Map<string, PtyForegroundAgentRefresh>()
@@ -3857,14 +3882,19 @@ export class OrcaRuntimeService {
       const dbPath = join(app.getPath('userData'), 'orchestration.db')
       this._orchestrationDb = new OrchestrationDb(dbPath)
       this.ensureOrchestrationFederationRelay()
+      this.scheduleRestoredMessageRepoints()
     }
     return this._orchestrationDb
   }
 
   setOrchestrationDb(db: OrchestrationDb): void {
     this.stopOrchestrationFederationRelay()
+    this.mailPointerRepointScheduler.clear()
+    this.lastPointedMessageSequenceByHandle.clear()
+    this.pointedMessageIdsByHandle.clear()
     this._orchestrationDb = db
     this.ensureOrchestrationFederationRelay()
+    this.scheduleRestoredMessageRepoints()
   }
 
   private getLegacyWorkerTerminalRecoveryPlan(): LegacyWorkerTerminalRecoveryPlan {
@@ -4717,8 +4747,12 @@ export class OrcaRuntimeService {
         throw error
       })
       .finally(() => {
-        if (this.orchestrationFederationSyncs.get(dispatchId)?.promise === sync) {
-          this.orchestrationFederationSyncs.delete(dispatchId)
+        if (this.orchestrationFederationSyncs.get(dispatchId)?.promise !== sync) {
+          return
+        }
+        this.orchestrationFederationSyncs.delete(dispatchId)
+        if (!db.isFederatedDispatchRelayEligible(dispatchId)) {
+          releaseFederationAckCheckpoint(this, dispatchId)
         }
       })
     this.orchestrationFederationSyncs.set(dispatchId, { db, promise: sync })
@@ -5563,6 +5597,7 @@ export class OrcaRuntimeService {
       throw new Error('Runtime graph publisher does not match the authoritative window')
     }
 
+    const graphWasReady = this.graphStatus === 'ready'
     const previousTabs = this.tabs
     const previousLeaves = this.leaves
     this.tabs = new Map(graph.tabs.map((tab) => [tab.tabId, tab]))
@@ -5733,6 +5768,20 @@ export class OrcaRuntimeService {
     this.refreshWritableFlags()
     for (const leaf of this.leaves.values()) {
       this.adoptPreAllocatedHandle(leaf)
+      const previousLeaf = previousLeaves.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+      if (
+        this._orchestrationDb &&
+        leaf.lastAgentStatus === 'idle' &&
+        leaf.lastAgentStatusObservedLive &&
+        leaf.writable &&
+        (!graphWasReady ||
+          previousLeaf?.ptyId !== leaf.ptyId ||
+          !previousLeaf.writable ||
+          previousLeaf.lastAgentStatus !== 'idle' ||
+          !previousLeaf.lastAgentStatusObservedLive)
+      ) {
+        this.deliverPendingMessagesForLeaf(leaf)
+      }
     }
 
     // Why: createTerminal waits for the renderer's graph sync to populate the
@@ -6265,7 +6314,8 @@ export class OrcaRuntimeService {
   private getRecentExpiredSshLease(
     worktreeId: string,
     tabId: string,
-    leafId: string | undefined
+    leafId: string | undefined,
+    ptyId?: string
   ): ReturnType<NonNullable<RuntimeStore['getSshRemotePtyLeases']>>[number] | null {
     const now = Date.now()
     return (
@@ -6276,6 +6326,7 @@ export class OrcaRuntimeService {
             lease.state === 'expired' &&
             lease.worktreeId === worktreeId &&
             lease.tabId === tabId &&
+            (ptyId === undefined || lease.ptyId === ptyId) &&
             (leafId === undefined || lease.leafId === undefined || lease.leafId === leafId) &&
             lease.updatedAt <= now &&
             now - lease.updatedAt <= SSH_PANE_RECOVERY_GRACE_MS
@@ -16585,17 +16636,46 @@ export class OrcaRuntimeService {
     ) {
       throw new Error('terminal_not_found')
     }
+    const recoveryKey = `${expectedWorktreeId}\0${paneKey}`
+    const pending = this.terminalPaneRecoveryByIdentity.get(recoveryKey)
+    if (pending) {
+      return pending
+    }
     if (pty?.connected) {
       const current = this.resolveTerminalPane(paneKey, expectedWorktreeId)
       if (expectedHandle === undefined || current.handle !== expectedHandle) {
         return current
       }
+      throw new Error('terminal_not_recoverable')
     }
-    // A disconnected pane is never silently replaced. The grant this used to hold could not fire:
-    // it compared a relay-native lease id against an app-form runtime id (STA-3077 S6/S8, oracle in
-    // ssh-pane-recovery-grant-reachability.test.ts). The pane surfaces as disconnected instead, and
-    // spawning a replacement is the user's explicit choice.
-    throw new Error('terminal_not_recoverable')
+    if (
+      !this.getRecentExpiredSshLease(expectedWorktreeId, parsed.tabId, parsed.leafId, pty.ptyId)
+    ) {
+      // Why: an explicit close leaves a terminated lease; only relay expiry authorizes shell recreation.
+      throw new Error('terminal_not_recoverable')
+    }
+    // Why: disconnected PTYs can reissue handles during graph cleanup; only a connected replacement satisfies the pane CAS.
+    const recovery = this.createTerminal(`id:${expectedWorktreeId}`, {
+      tabId: parsed.tabId,
+      leafId: parsed.leafId,
+      focus: false,
+      // Why: the HUB renderer may publish its exited layout while recovery is in flight; persist the replacement before that stale graph can orphan it.
+      persistHostSessionBinding: true
+    }).then((terminal) => ({
+      handle: terminal.handle,
+      tabId: parsed.tabId,
+      leafId: parsed.leafId,
+      ptyId: terminal.ptyId ?? null,
+      worktreeId: expectedWorktreeId
+    }))
+    this.terminalPaneRecoveryByIdentity.set(recoveryKey, recovery)
+    const clearRecovery = (): void => {
+      if (this.terminalPaneRecoveryByIdentity.get(recoveryKey) === recovery) {
+        this.terminalPaneRecoveryByIdentity.delete(recoveryKey)
+      }
+    }
+    void recovery.then(clearRecovery, clearRecovery)
+    return recovery
   }
 
   async showTerminal(handle: string): Promise<RuntimeTerminalShow> {
@@ -17380,19 +17460,24 @@ export class OrcaRuntimeService {
       suffixFailureError?: string
     } = {}
   ): Promise<void> {
+    const renderGate = this.createClaudeAgentPromptRenderGate(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false
     try {
       const chunks = iterateTerminalInputChunks(pastePayload)
       let chunk = chunks.next()
       while (!chunk.done) {
+        const nextChunk = chunks.next()
         await options.beforeWrite?.(ptyId)
+        if (nextChunk.done) {
+          renderGate?.arm()
+        }
         const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
         if (!wrote) {
           throw new Error('terminal_not_writable')
         }
         wrotePasteBytes = true
-        chunk = chunks.next()
+        chunk = nextChunk
         if (!chunk.done) {
           await new Promise((resolve) => setTimeout(resolve, 0))
         }
@@ -17402,10 +17487,16 @@ export class OrcaRuntimeService {
       if (wrotePasteBytes && !completedPaste) {
         this.ptyController?.write(ptyId, AGENT_PROMPT_BRACKETED_PASTE_END)
       }
+      renderGate?.dispose()
       throw error
     }
 
-    await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_SUBMIT_DELAY_MS))
+    if (renderGate) {
+      await renderGate.wait()
+      renderGate.dispose()
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_SUBMIT_DELAY_MS))
+    }
     try {
       await options.beforeWrite?.(ptyId)
     } catch (error) {
@@ -17417,6 +17508,87 @@ export class OrcaRuntimeService {
     const suffixWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
     if (!suffixWrote) {
       throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
+    }
+  }
+
+  private createClaudeAgentPromptRenderGate(ptyId: string): {
+    arm: () => void
+    wait: () => Promise<void>
+    dispose: () => void
+  } | null {
+    const pty = this.ptysById.get(ptyId)
+    if ((pty?.launchAgent ?? pty?.foregroundAgent) !== 'claude') {
+      return null
+    }
+    let armed = false
+    let observedMarker = false
+    let settled = false
+    let markerCarry = ''
+    let quietTimer: NodeJS.Timeout | null = null
+    let hardTimer: NodeJS.Timeout | null = null
+    let resolveRender!: () => void
+    const rendered = new Promise<void>((resolve) => {
+      resolveRender = resolve
+    })
+
+    const finish = (): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (quietTimer) {
+        clearTimeout(quietTimer)
+        quietTimer = null
+      }
+      if (hardTimer) {
+        clearTimeout(hardTimer)
+        hardTimer = null
+      }
+      resolveRender()
+    }
+    const armQuietTimer = (): void => {
+      if (quietTimer) {
+        clearTimeout(quietTimer)
+      }
+      quietTimer = setTimeout(finish, CLAUDE_AGENT_PROMPT_RENDER_QUIET_MS)
+    }
+    const unsubscribe = this.subscribeToTerminalData(ptyId, (data) => {
+      if (!armed || settled) {
+        return
+      }
+      if (!observedMarker) {
+        const combined = markerCarry + data
+        markerCarry = combined.slice(-(CLAUDE_AGENT_PROMPT_RENDER_MARKER.length - 1))
+        if (!combined.includes(CLAUDE_AGENT_PROMPT_RENDER_MARKER)) {
+          return
+        }
+        observedMarker = true
+      }
+      armQuietTimer()
+    })
+    return {
+      arm: () => {
+        armed = true
+        markerCarry = ''
+      },
+      wait: async () => {
+        if (settled) {
+          return
+        }
+        hardTimer = setTimeout(finish, CLAUDE_AGENT_PROMPT_RENDER_TIMEOUT_MS)
+        await rendered
+      },
+      dispose: () => {
+        unsubscribe()
+        if (quietTimer) {
+          clearTimeout(quietTimer)
+          quietTimer = null
+        }
+        if (hardTimer) {
+          clearTimeout(hardTimer)
+          hardTimer = null
+        }
+      }
     }
   }
 
@@ -21207,6 +21379,14 @@ export class OrcaRuntimeService {
 
   async showManagedWorktree(worktreeSelector: string) {
     return await this.resolveWorktreeSelector(worktreeSelector)
+  }
+
+  async showManagedTerminalWorkspace(worktreeSelector: string) {
+    const target = await this.resolveTerminalWorkspaceLaunchTarget(worktreeSelector)
+    if (!target.managedWorktree) {
+      throw new Error('selector_not_found')
+    }
+    return target.managedWorktree
   }
 
   async scanWorkspacePorts(repoId?: string): Promise<WorkspacePortScanResult> {
@@ -28476,7 +28656,7 @@ export class OrcaRuntimeService {
 
   private async resolveFolderWorkspaceLaunchScope(
     selector: string
-  ): Promise<TerminalWorkspaceLaunchScope | null> {
+  ): Promise<(TerminalWorkspaceLaunchScope & { folderWorkspace: FolderWorkspace }) | null> {
     const workspace = this.resolveFolderWorkspaceSelector(selector)
     if (!workspace) {
       return null
@@ -28556,23 +28736,35 @@ export class OrcaRuntimeService {
   private async resolveTerminalWorkspaceLaunchScope(
     selector: string
   ): Promise<TerminalWorkspaceLaunchScope> {
+    return (await this.resolveTerminalWorkspaceLaunchTarget(selector)).scope
+  }
+
+  private async resolveTerminalWorkspaceLaunchTarget(
+    selector: string
+  ): Promise<ResolvedTerminalWorkspaceLaunchTarget> {
     const floatingTerminalSelector =
       selector === FLOATING_TERMINAL_WORKTREE_ID ||
       selector === `id:${FLOATING_TERMINAL_WORKTREE_ID}`
     if (floatingTerminalSelector) {
       // Why: the floating sentinel is terminal-only — no backing repo/worktree record for other workspace APIs.
       return {
-        id: FLOATING_TERMINAL_WORKTREE_ID,
-        path: homedir(),
-        connectionId: null,
-        repo: null,
-        folderWorkspace: null
+        scope: {
+          id: FLOATING_TERMINAL_WORKTREE_ID,
+          path: homedir(),
+          connectionId: null,
+          repo: null,
+          folderWorkspace: null
+        },
+        managedWorktree: null
       }
     }
 
     const folderScope = await this.resolveFolderWorkspaceLaunchScope(selector)
     if (folderScope) {
-      return folderScope
+      return {
+        scope: folderScope,
+        managedWorktree: this.folderWorkspaceToResolvedWorktree(folderScope.folderWorkspace)
+      }
     }
 
     const workspaceSelector = selector.startsWith('id:') ? selector.slice(3) : selector
@@ -28581,11 +28773,14 @@ export class OrcaRuntimeService {
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const repo = this.store?.getRepo(worktree.repoId) ?? null
     return {
-      id: worktree.id,
-      path: worktree.path,
-      connectionId: repo?.connectionId ?? null,
-      repo,
-      folderWorkspace: null
+      scope: {
+        id: worktree.id,
+        path: worktree.path,
+        connectionId: repo?.connectionId ?? null,
+        repo,
+        folderWorkspace: null
+      },
+      managedWorktree: worktree
     }
   }
 
@@ -28660,8 +28855,16 @@ export class OrcaRuntimeService {
         runtimePathsEqual(worktree.path, selector.slice(5))
       )
       if (candidates.length > 1) {
-        // Why: the same physical path can appear under multiple repo IDs; a path selector is exact, so take the first row over a dup-registration ambiguity.
-        candidates = [candidates[0]]
+        const hostIds = new Set(
+          candidates.map((worktree) => {
+            const repo = this.store?.getRepo(worktree.repoId)
+            return getWorktreeExecutionHostId(worktree, repo)
+          })
+        )
+        // Why: duplicate registrations on one host describe one path; identical paths on different hosts do not.
+        if (hostIds.size === 1) {
+          candidates = [candidates[0]]
+        }
       }
     } else if (selector.startsWith('branch:')) {
       const branchSelector = selector.slice(7)
@@ -29378,13 +29581,21 @@ export class OrcaRuntimeService {
         generation === (this.worktreeScanGenerations.get(repo.id) ?? 0) &&
         this.worktreeScanInFlight.get(repo.id)?.promise === promise
       ) {
-        this.worktreeScanCache.set(repo.id, {
+        const entry: RuntimeWorktreeScanCache = {
           generation,
           runtimeKey,
           result: refresh.result,
           expiresAt: Date.now() + resolveWorktreeScanCacheTtlMs(repo),
           adminFingerprint: refresh.adminFingerprint,
           scannedAt: refresh.scannedAt
+        }
+        this.worktreeScanCache.set(repo.id, entry)
+        // Why a writeback instead of storing the promise: a probe that never settles must not be
+        // awaited by a later refresh. Identity check keeps a stale probe out of a newer entry.
+        void refresh.adminFingerprintProbe?.then((fingerprint) => {
+          if (this.worktreeScanCache.get(repo.id) === entry) {
+            entry.adminFingerprint = fingerprint
+          }
         })
       }
       return refresh.result
@@ -29414,29 +29625,53 @@ export class OrcaRuntimeService {
       !getLocalProjectWorktreeGitOptionsForRuntime(repo, projectRuntime).wslDistro
     // Why issue it before the scan: a change landing while the scan runs must not be stamped as
     // already-observed, or the next probe would mask it until the reconciliation deadline.
-    const adminFingerprint = fingerprintCapable
-      ? readRepoWorktreeAdminFingerprint(repo.path)
-      : UNFINGERPRINTED_WORKTREE_SCAN
+    const probe = fingerprintCapable ? this.startRepoWorktreeAdminFingerprintProbe(repo) : null
     const reusable =
-      fingerprintCapable &&
       cached?.result.ok === true &&
       scannedAt - cached.scannedAt < WORKTREE_SCAN_ADMIN_RECONCILE_INTERVAL_MS
         ? cached
         : null
-    if (reusable) {
+    if (probe && reusable) {
       // Why await only here: this is the one branch whose decision needs the probe. A scan-bound
       // caller must never wait on it, or every cold read pays filesystem latency it cannot use.
-      const [current, previous] = await Promise.all([adminFingerprint, reusable.adminFingerprint])
-      if (current !== null && current === previous) {
+      const probed = await withTimeoutResult(probe, WORKTREE_SCAN_ADMIN_FINGERPRINT_TIMEOUT_MS)
+      if (!probed.ok) {
+        // Why log: expiry and "fingerprint unavailable" both surface as `null`, so a wedged mount is
+        // otherwise indistinguishable from a repo that simply cannot be fingerprinted.
+        console.warn('[worktree-scan] admin fingerprint probe expired; running a full scan', {
+          repoId: repo.id,
+          timeoutMs: WORKTREE_SCAN_ADMIN_FINGERPRINT_TIMEOUT_MS
+        })
+      }
+      const current = probed.ok ? probed.value : null
+      if (current !== null && current === reusable.adminFingerprint) {
         return {
           result: reusable.result,
-          adminFingerprint: reusable.adminFingerprint,
+          adminFingerprint: current,
+          adminFingerprintProbe: null,
           scannedAt: reusable.scannedAt
         }
       }
     }
     const result = await this.listRepoWorktreesForResolutionUncached(repo, projectRuntime)
-    return { result, adminFingerprint, scannedAt }
+    return { result, adminFingerprint: null, adminFingerprintProbe: probe, scannedAt }
+  }
+
+  /**
+   * Read one repo's Git-admin fingerprint, unless that repo's previous read is still outstanding.
+   * Why the gate: `withTimeout` abandons a probe without cancelling it, and readdir/stat take no
+   * AbortSignal — on a wedged mount a fresh probe per refresh would pin every libuv fs thread.
+   */
+  private startRepoWorktreeAdminFingerprintProbe(repo: Repo): Promise<string | null> | null {
+    if (this.worktreeAdminFingerprintProbes.has(repo.id)) {
+      return null
+    }
+    this.worktreeAdminFingerprintProbes.add(repo.id)
+    return readRepoWorktreeAdminFingerprint(repo.path)
+      .catch(() => null)
+      .finally(() => {
+        this.worktreeAdminFingerprintProbes.delete(repo.id)
+      })
   }
 
   private async listRepoWorktreesForResolutionUncached(
@@ -30179,20 +30414,13 @@ export class OrcaRuntimeService {
     // The sync hasPty rescue closes the spawn/list race: a just-spawned PTY can
     // register after the inventory snapshot, and federation reads one
     // connected:false as exited.
-    let directLiveness: boolean | null | undefined
-    try {
-      directLiveness = leaf.ptyId ? this.ptyController?.hasPty?.(leaf.ptyId) : undefined
-    } catch {
-      directLiveness = null
-    }
     const provenAbsent =
       provenLivePtyIds !== null &&
       leaf.ptyId !== null &&
       !provenLivePtyIds.has(leaf.ptyId) &&
       !leaf.ptyId.startsWith('remote:') &&
       parseAppSshPtyId(leaf.ptyId) === null &&
-      directLiveness !== true &&
-      directLiveness !== null
+      this.ptyController?.hasPty?.(leaf.ptyId) !== true
     return {
       handle: this.issueHandle(leaf),
       ptyId: leaf.ptyId,
@@ -30859,11 +31087,13 @@ export class OrcaRuntimeService {
             { title: pty.lastOscTitle, updatedAt: pty.lastOscTitleAt }
           )
         : null
-      const launchAgent = tab.launchAgent ?? liveLeafPty?.launchAgent ?? pty?.launchAgent ?? null
+      // Renderer omission is authoritative: PTY launch provenance outlives agent exit.
+      const launchAgent = tab.launchAgent ?? null
+      const launchOwnerAgent = launchAgent ?? liveLeafPty?.launchAgent ?? pty?.launchAgent ?? null
       // Why: a retained OMP hook stays stable while wrapper foreground reads can report Pi.
       const ownerAgent =
         resolvePaneAgentOwner({
-          launchAgent,
+          launchAgent: launchOwnerAgent,
           hookAgent:
             tab.agentStatus?.agentType ??
             hookAgentStatus?.agentType ??
@@ -31932,6 +32162,23 @@ export class OrcaRuntimeService {
     }
   }
 
+  private scheduleRestoredMessageRepoints(): void {
+    const handles = this._orchestrationDb?.getUndeliveredUnreadMailboxHandles?.() ?? []
+    for (const handle of handles) {
+      if (!handle.startsWith('dispatch:')) {
+        this.mailPointerRepointScheduler.schedule(handle)
+      }
+    }
+  }
+
+  private repointPendingMessagesForHandle(handle: string): void {
+    try {
+      this.deliverPendingMessagesForHandle(handle)
+    } catch {
+      // The unref'd repair can outlive a test/runtime-owned database during shutdown.
+    }
+  }
+
   private deliverPendingMessagesForLeaf(leaf: RuntimeLeafRecord): void {
     this.deliverPendingMessages(leaf)
     if (!this._orchestrationDb) {
@@ -31945,6 +32192,9 @@ export class OrcaRuntimeService {
 
   // Why: wake blocking orchestration.check --wait calls on this handle so they return the new message immediately instead of polling.
   notifyMessageArrived(handle: string, messageType?: string): void {
+    if (!handle.startsWith('dispatch:')) {
+      this.mailPointerRepointScheduler.schedule(handle)
+    }
     // Why: push-on-idle is driven by status transitions; a message that
     // arrives while the recipient is already idle never sees a transition, so
     // deliver now (#12536). deliverPendingMessagesForHandle no-ops when the
@@ -32615,15 +32865,19 @@ export class OrcaRuntimeService {
       const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
       if (handle) {
         this.lastPointedMessageSequenceByHandle.delete(handle)
+        this.pointedMessageIdsByHandle.delete(handle)
+        this.mailPointerRepointScheduler.schedule(handle)
       }
       const run = this._orchestrationDb?.getCurrentRunForPane?.(`${leaf.tabId}:${leaf.leafId}`)
       if (run) {
         this.lastPointedMessageSequenceByHandle.delete(`run:${run.id}`)
+        this.pointedMessageIdsByHandle.delete(`run:${run.id}`)
+        this.mailPointerRepointScheduler.schedule(`run:${run.id}`)
       }
     }
   }
 
-  // Why: push-on-idle delivery is event-driven (no polling) because the runtime owns both the message store and terminal status detection.
+  // Why: normal delivery stays event-driven; the bounded mailbox retry only repairs missed liveness edges.
   private deliverPendingMessages(
     leaf: RuntimeLeafRecord,
     options: {
@@ -32663,14 +32917,35 @@ export class OrcaRuntimeService {
     // still-blocked case; reservedTypes carries the notify-time snapshot for a
     // waiter resolved later in the same drain, which is already gone from the map.
     const waiters = this.messageWaitersByHandle.get(mailboxHandle)
-    const unread = this._orchestrationDb
-      .getUndeliveredUnreadMessages(mailboxHandle)
-      .filter(
-        (message) =>
-          !options.reservedTypes?.has(message.type) &&
-          !messageTypeHasLiveWaiter(waiters, message.type)
-      )
+    const pending = this._orchestrationDb.getUndeliveredUnreadMessages(mailboxHandle)
+    const pendingIds = new Set(pending.map((message) => message.id))
+    const pointedIds = this.pointedMessageIdsByHandle.get(mailboxHandle)
+    if (pointedIds) {
+      for (const id of pointedIds) {
+        if (!pendingIds.has(id)) {
+          pointedIds.delete(id)
+        }
+      }
+      if (pointedIds.size === 0) {
+        this.pointedMessageIdsByHandle.delete(mailboxHandle)
+      }
+    }
+    const unread = pending.filter(
+      (message) =>
+        !options.reservedTypes?.has(message.type) &&
+        !messageTypeHasLiveWaiter(waiters, message.type)
+    )
     if (unread.length === 0) {
+      return
+    }
+
+    const watermark = this.lastPointedMessageSequenceByHandle.get(mailboxHandle) ?? -1
+    const priorPointedIds = this.pointedMessageIdsByHandle.get(mailboxHandle)
+    if (
+      !unread.some(
+        (message) => message.sequence > watermark || priorPointedIds?.has(message.id) !== true
+      )
+    ) {
       return
     }
 
@@ -32678,10 +32953,7 @@ export class OrcaRuntimeService {
       return
     }
     const newestSequence = unread.at(-1)?.sequence
-    if (
-      newestSequence === undefined ||
-      newestSequence <= (this.lastPointedMessageSequenceByHandle.get(mailboxHandle) ?? -1)
-    ) {
+    if (newestSequence === undefined) {
       return
     }
 
@@ -32752,7 +33024,16 @@ export class OrcaRuntimeService {
       if (!wrote) {
         return
       }
-      this.lastPointedMessageSequenceByHandle.set(mailboxHandle, newestSequence)
+      this.lastPointedMessageSequenceByHandle.set(
+        mailboxHandle,
+        Math.max(watermark, newestSequence)
+      )
+      const pointedIdsAfterWrite =
+        this.pointedMessageIdsByHandle.get(mailboxHandle) ?? new Set<string>()
+      for (const message of unread) {
+        pointedIdsAfterWrite.add(message.id)
+      }
+      this.pointedMessageIdsByHandle.set(mailboxHandle, pointedIdsAfterWrite)
 
       const tabTitle = this.tabs.get(leaf.tabId)?.title
       if (isCursorAgentOrchestrationTarget(leaf, tabTitle)) {
@@ -35774,8 +36055,12 @@ const WORKTREE_SCAN_AGENT_SCRATCH_TTL_MS = 5 * 60_000
 // edits are invisible to it and a tip living in packed-refs or reftable only gets an mtime + size
 // stamp, so a real scan still runs on this interval even while the probe reports "unchanged".
 export const WORKTREE_SCAN_ADMIN_RECONCILE_INTERVAL_MS = 5 * 60_000
-/** Stand-in for a repo the local admin probe cannot or need not describe; never matches a real read. */
-const UNFINGERPRINTED_WORKTREE_SCAN: Promise<string | null> = Promise.resolve(null)
+// Why so generous: a healthy but slow host (100+ linked worktrees, Windows Defender, cold dentry
+// cache, cloud placeholders) must still get to reuse its scan. Well under WORKTREE_LIST_TIMEOUT_MS,
+// and expiring yields `null` — the existing "cannot prove unchanged" sentinel, so a real scan runs.
+// Exceeding RESOLVED_WORKTREE_REPO_TIMEOUT_MS is deliberate, not a bug: the payoff is skipping a
+// `git worktree list` subprocess, not cutting this caller's latency — that caller is already capped.
+export const WORKTREE_SCAN_ADMIN_FINGERPRINT_TIMEOUT_MS = 10_000
 const RESOLVED_WORKTREE_REPO_TIMEOUT_MS = 5000
 
 export function resolveWorktreeScanCacheTtlMs(repo: Pick<Repo, 'path' | 'connectionId'>): number {
@@ -37393,14 +37678,16 @@ function runtimePathsEqual(left: string, right: string): boolean {
  * Windows/WSL/SSH ids still match themselves across hosts.
  */
 function runtimeWorktreeIdsEqual(left: string, right: string): boolean {
-  // Why: derived from the key rather than re-parsed, so equality and the sleep /
-  // mutation-queue keying can never drift apart into two different identity rules.
-  return runtimeWorktreeIdentityKey(left) === runtimeWorktreeIdentityKey(right)
+  const parsedLeft = splitWorktreeId(left)
+  const parsedRight = splitWorktreeId(right)
+  return parsedLeft && parsedRight
+    ? parsedLeft.repoId === parsedRight.repoId &&
+        runtimePathsEqual(parsedLeft.worktreePath, parsedRight.worktreePath)
+    : left === right
 }
 
 function runtimeWorktreeIdentityKey(worktreeId: string): string {
   // Same suffix rule: this keys PTY refresh, sleep, and mutation-queue state per session.
-  // NUL cannot occur in a repoId or a path, so the joined key is unambiguous.
   const parsed = splitWorktreeId(worktreeId)
   return parsed
     ? `${parsed.repoId}\0${normalizeRuntimePathForComparison(parsed.worktreePath)}`

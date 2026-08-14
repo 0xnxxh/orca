@@ -47,7 +47,7 @@ import { normalizeRepoBadgeColor } from '../../../../shared/repo-badge-color'
 import { applyManualRepoOrder, getManualRepoOrder } from '../../../../shared/manual-repo-order'
 import { getProjectGroupSubtreeIds } from '../../../../shared/project-groups'
 import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
-import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
+import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import { selectProjectGroupRemovalTargets } from './project-group-removal-targets'
 import {
   areValuesEqual,
@@ -97,7 +97,7 @@ import { isRemovedRuntimeHostId } from './stale-runtime-host-rows'
 import {
   normalizeCustomWorktreeVisibilitySources,
   normalizeWorktreeVisibilitySourcePreferences
-} from '../../../../shared/worktree-visibility-sources'
+} from '../../../../shared/worktree/visibility-sources'
 import { cleanupEphemeralVmRuntimesForDeleted } from '@/lib/ephemeral-vm-runtime-cleanup'
 import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { formatFolderWorkspaceCreateError } from '../../lib/folder-workspace-path-status'
@@ -3399,10 +3399,13 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     } catch (err) {
       console.error('Failed to delete project host setup:', err)
       const message = err instanceof Error ? err.message : String(err)
-      toast.error(translate('auto.store.slices.repos.c6e022ddfc', 'Failed to add project'), {
-        description: message,
-        duration: ERROR_TOAST_DURATION
-      })
+      toast.error(
+        translate('auto.store.slices.repos.removeProjectFailed', 'Failed to remove project'),
+        {
+          description: message,
+          duration: ERROR_TOAST_DURATION
+        }
+      )
       return null
     }
   },
@@ -3597,9 +3600,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           killedTabIds.add(tab.id)
           for (const ptyId of get().ptyIdsByTabId[tab.id] ?? []) {
             if (!ptyId.startsWith('remote:')) {
-              // Why swallow: an unreachable terminal host rejects instead of reporting a
-              // close it did not perform; removal proceeds either way.
-              void Promise.resolve(window.api.pty.kill(ptyId)).catch(() => {})
+              window.api.pty.kill(ptyId)
             }
           }
         }
