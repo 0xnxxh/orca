@@ -76,16 +76,15 @@ describe('shouldForceBracketedMultilinePasteForPane', () => {
     ).toBe(false)
   })
 
-  // Staleness: the agent row is retained on purpose and is not lifecycle-driven, so it
-  // can outlive the agent. Only evidence the pane is no longer the agent's may veto.
-  it('vetoes when OSC 133;D proved the foreground is back at the shell', () => {
+  it('brackets on a process-confirmed agent even with no status row', () => {
     expect(
       decide({
+        agentStatusByPaneKey: {},
         paneForegroundAgentByPaneKey: {
-          [AGENT_PANE_KEY]: foregroundEntry({ shellForeground: true })
+          [AGENT_PANE_KEY]: foregroundEntry({ agent: 'codex', shellForeground: false })
         }
       })
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('vetoes a row rehydrated from disk across an app restart', () => {
@@ -111,11 +110,14 @@ describe('shouldForceBracketedMultilinePasteForPane', () => {
     ).toBe(true)
   })
 
-  it('still brackets when foreground evidence exists but has not seen a shell', () => {
+  it('still brackets when shellForeground is latched true while an agent owns the pane', () => {
+    // Why: shellForeground is republished only at OSC 133 boundaries, so a shell with
+    // no 133 integration leaves it true while an agent runs. Measured live: vetoing on
+    // it reinstated the submit bug.
     expect(
       decide({
         paneForegroundAgentByPaneKey: {
-          [AGENT_PANE_KEY]: foregroundEntry({ agent: 'codex', shellForeground: false })
+          [AGENT_PANE_KEY]: foregroundEntry({ shellForeground: true })
         }
       })
     ).toBe(true)

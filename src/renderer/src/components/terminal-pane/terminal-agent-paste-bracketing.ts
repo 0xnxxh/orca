@@ -8,11 +8,6 @@ import type { PaneForegroundAgentEntry } from '../../store/slices/pane-foregroun
  * ConPTY never forwards it and that ConPTY can be on a remote host — so the client's
  * platform proves nothing about the PTY. Unbracketed, xterm rewrites the paste's
  * newlines to CR and the agent submits whatever draft was parked in its composer.
- *
- * An agent row is retained on purpose (an idle agent sits at `done`), so neither the
- * 30-minute freshness TTL nor `state !== 'done'` can gate this — both would strip
- * bracketing from a live but quiet agent. Only evidence that the pane is *no longer*
- * the agent's vetoes it.
  */
 export function shouldForceBracketedMultilinePasteForPane({
   isWindowsClient,
@@ -31,10 +26,9 @@ export function shouldForceBracketedMultilinePasteForPane({
     return true
   }
   const paneKey = makePaneKey(tabId, leafId)
-  // Why: OSC 133;D proved the foreground is back at the shell — process-grade evidence
-  // that outranks an agent row nothing has cleared yet.
-  if (paneForegroundAgentByPaneKey[paneKey]?.shellForeground === true) {
-    return false
+  // Why: a process-table confirmed agent is the strongest evidence there is.
+  if (isTuiAgent(paneForegroundAgentByPaneKey[paneKey]?.agent)) {
+    return true
   }
   const entry = agentStatusByPaneKey[paneKey]
   // Why: a row rehydrated from disk across a restart describes the previous process,
@@ -42,5 +36,12 @@ export function shouldForceBracketedMultilinePasteForPane({
   if (entry?.restoredUnconfirmed === true) {
     return false
   }
+  // Why NOT vetoed on shellForeground: that flag is republished only at OSC 133
+  // boundaries, so a shell without 133 integration leaves it latched true while an
+  // agent owns the foreground. Vetoing on it silently reinstates the submit bug —
+  // measured live. An idle agent also sits at `done` past the 30-minute freshness
+  // TTL, so neither state nor TTL can gate this either. Erring toward bracketing
+  // costs a literal ESC[200~ in a non-2004 program; erring the other way sends the
+  // user's parked draft.
   return isTuiAgent(entry?.agentType)
 }
