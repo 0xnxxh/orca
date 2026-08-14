@@ -1202,6 +1202,7 @@ export function connectPanePty(
   // mutation does not propagate back.
   const paneStartup = deps.startup ?? null
   deps.startup = undefined
+  let startupPtyBound = false
 
   // Why: paneKey crosses PTY env, hook IPC, retained rows, and reload/replay.
   // Use the stable layout leaf UUID, not the renderer-local numeric pane id.
@@ -3022,6 +3023,10 @@ export function connectPanePty(
       } else {
         deps.updateTabPtyId(deps.tabId, ptyId)
       }
+    }
+    if (paneStartup && !startupPtyBound) {
+      startupPtyBound = true
+      deps.onStartupBound?.()
     }
     if (options.seedInitialAgentStatus) {
       applyInitialAgentStatus()

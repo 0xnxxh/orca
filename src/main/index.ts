@@ -861,6 +861,11 @@ ipcMain.handle('app:awaitFirstWindowStartupServices', async () => {
   await Promise.all([firstWindowStartupServicesReady, managedWslCliStartupBarrierReady])
 })
 
+ipcMain.handle('app:prepareTerminalStartupRestoration', async () => {
+  await Promise.all([firstWindowStartupServicesReady, managedWslCliStartupBarrierReady])
+  await runtime?.prepareStructuredAgentSessionStartupRestoration()
+})
+
 ipcMain.handle('app:recoverLegacyWorkerTerminalsForRendererStartup', () =>
   recoverLegacyWorkerTerminalsForRendererStartup({
     firstWindowStartupServicesReady,

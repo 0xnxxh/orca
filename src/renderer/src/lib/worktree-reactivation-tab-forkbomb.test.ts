@@ -22,6 +22,7 @@ function baseState(worktree: ReturnType<typeof makeWorktree>): Partial<AppState>
     activeRepoId: 'repo-1',
     activeView: 'terminal',
     workspaceSessionReady: true,
+    terminalStartupRestorationReady: true,
     tabsByWorktree: {},
     unifiedTabsByWorktree: {},
     groupsByWorktree: {},
@@ -57,7 +58,11 @@ afterEach(() => {
 describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
   it('defers packaged-startup resume until restored PTYs finish reconnecting', async () => {
     const worktree = { ...makeWorktree(), createdWithAgent: undefined }
-    useAppStore.setState({ ...baseState(worktree), workspaceSessionReady: false })
+    useAppStore.setState({
+      ...baseState(worktree),
+      workspaceSessionReady: false,
+      terminalStartupRestorationReady: false
+    })
     const paneKey = 'packaged-restart-pane:0'
     useAppStore.setState({
       sleepingAgentSessionsByPaneKey: {
@@ -96,7 +101,10 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
     await Promise.resolve()
     expect(useAppStore.getState().tabsByWorktree[worktree.id] ?? []).toHaveLength(0)
 
-    useAppStore.setState({ workspaceSessionReady: true })
+    useAppStore.setState({
+      workspaceSessionReady: true,
+      terminalStartupRestorationReady: true
+    })
     await gate
     const restored = useAppStore.getState()
     expect(restored.tabsByWorktree[worktree.id]).toHaveLength(1)

@@ -2828,6 +2828,7 @@ export class OrcaRuntimeService {
     new TerminalFocusNavigationCoalescer<RuntimeTerminalFocus>()
   private pendingMobileSessionPtyInventoryRefresh: Promise<Set<string> | null> | null = null
   private structuredAgentSessionTabRestorePromise: Promise<void> | null = null
+  private structuredAgentSessionStartupRestorePromise: Promise<void> | null = null
   private leaves = new Map<string, RuntimeLeafRecord>()
   // Why: PTY output is a per-keystroke hot path. Looking up affected leaves by
   // ptyId keeps active TUI redraws independent of the total open terminal count.
@@ -9804,7 +9805,24 @@ export class OrcaRuntimeService {
     return this.structuredAgentSessionTabRestorePromise
   }
 
+  prepareStructuredAgentSessionStartupRestoration(): Promise<void> {
+    this.structuredAgentSessionStartupRestorePromise ??=
+      this.prepareStructuredAgentSessionStartupRestorationOnce().catch((error) => {
+        this.structuredAgentSessionStartupRestorePromise = null
+        throw error
+      })
+    return this.structuredAgentSessionStartupRestorePromise
+  }
+
+  private async prepareStructuredAgentSessionStartupRestorationOnce(): Promise<void> {
+    // Durable agent records must exist before daemon inventory can be reconciled against them.
+    await this.ensureStructuredAgentSessionHost()
+    await this.refreshMobileSessionPtyRecords()
+    await getStructuredAgentSessionHost()?.restoreReadableSessions()
+  }
+
   private async restoreStructuredAgentSessionTabsOnce(): Promise<void> {
+    await this.prepareStructuredAgentSessionStartupRestoration()
     for (const worktreeId of this.getKnownWorkspaceSessionWorktreeIds()) {
       this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, {
         allowAttachedWindow: true,
@@ -9812,10 +9830,7 @@ export class OrcaRuntimeService {
       })
     }
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession()
-    await this.refreshMobileSessionPtyRecords()
-    await this.ensureStructuredAgentSessionHost()
     const host = getStructuredAgentSessionHost()
-    await host?.restoreReadableSessions()
     for (const session of host?.listSessionTabs() ?? []) {
       this.publishStructuredAgentSessionTab({ ...session, activate: false, notify: false })
     }

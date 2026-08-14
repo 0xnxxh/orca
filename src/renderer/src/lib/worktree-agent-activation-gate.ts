@@ -1,7 +1,6 @@
 import { useAppStore } from '@/store'
 import type { PtyListedSession } from '../../../shared/pty-listed-session'
 import { parsePtySessionId, PTY_SESSION_ID_SEPARATOR } from '../../../shared/pty-session-id-format'
-import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
 import { structuredAgentSessionTabId } from '../../../shared/structured-agent-session-projection'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
@@ -10,26 +9,23 @@ import {
   type ResumeSleepingAgentSessionsOptions
 } from './resume-sleeping-agent-session'
 import { getProviderSessionClaimKey } from './sleeping-agent-pane-ownership'
+import { bindLivePtyToExactSurface } from './worktree-agent-live-surface-adoption'
+import {
+  readWorktreeStructuredActivationInventory,
+  type StructuredActivationInventory
+} from './worktree-agent-structured-inventory'
 
 type ActivationStore = Pick<
   ReturnType<typeof useAppStore.getState>,
   | 'createTab'
   | 'ptyIdsByTabId'
   | 'sleepingAgentSessionsByPaneKey'
+  | 'tabsByWorktree'
   | 'terminalLayoutsByTabId'
   | 'unifiedTabsByWorktree'
+  | 'updateTabPtyId'
+  | 'replaceTerminalLayoutPanePtyId'
 >
-
-type StructuredActivationInventory = {
-  snapshot: RuntimeMobileSessionTabsResult
-  ownerBySessionId: ReadonlyMap<
-    string,
-    {
-      owner: 'native' | 'tui'
-      terminal?: { paneKey: string; ptyId: string; tabId: string }
-    }
-  >
-}
 
 type ActivationGateDeps = {
   getState: () => ActivationStore
@@ -45,7 +41,11 @@ const inFlightByWorktreeId = new Map<string, Promise<WorktreeAgentActivationOutc
 const WORKSPACE_SESSION_READY_TIMEOUT_MS = 30_000
 
 function waitForWorkspaceSessionReady(): Promise<boolean> {
-  if (useAppStore.getState().workspaceSessionReady) {
+  const isReady = () => {
+    const state = useAppStore.getState()
+    return state.workspaceSessionReady && state.terminalStartupRestorationReady
+  }
+  if (isReady()) {
     return Promise.resolve(true)
   }
   return new Promise((resolve) => {
@@ -55,16 +55,13 @@ function waitForWorkspaceSessionReady(): Promise<boolean> {
       unsubscribe?.()
       resolve(ready)
     }
-    const timeout = setTimeout(
-      () => settle(useAppStore.getState().workspaceSessionReady),
-      WORKSPACE_SESSION_READY_TIMEOUT_MS
-    )
+    const timeout = setTimeout(() => settle(isReady()), WORKSPACE_SESSION_READY_TIMEOUT_MS)
     unsubscribe = useAppStore.subscribe((state) => {
-      if (state.workspaceSessionReady) {
+      if (state.workspaceSessionReady && state.terminalStartupRestorationReady) {
         settle(true)
       }
     })
-    if (useAppStore.getState().workspaceSessionReady) {
+    if (isReady()) {
       settle(true)
     }
   })
@@ -152,6 +149,42 @@ export async function runWorktreeAgentActivationGate(
   } catch {
     return 'blocked'
   }
+  let structured = false
+  let structuredInventory: StructuredActivationInventory | null = null
+  try {
+    const reportedStructuredSession = await deps.hasStructuredSession?.(worktreeId)
+    structuredInventory =
+      typeof reportedStructuredSession === 'object' ? reportedStructuredSession : null
+    structured = Boolean(
+      hasStructuredSession(deps.getState(), worktreeId) || reportedStructuredSession
+    )
+  } catch {
+    return 'blocked'
+  }
+
+  const structuredTabs = structuredInventory?.snapshot.tabs.filter(
+    (tab) => tab.type === 'agent-session'
+  )
+  if (
+    structuredTabs?.some((tab) => {
+      const owner = structuredInventory?.ownerBySessionId.get(tab.sessionId)
+      return (
+        !owner ||
+        (owner.owner === 'tui' &&
+          (!owner.terminal || parsePaneKey(owner.terminal.paneKey)?.tabId !== owner.terminal.tabId))
+      )
+    })
+  ) {
+    return 'blocked'
+  }
+  if (
+    structured &&
+    !structuredInventory &&
+    workspaceHasSleepingAgentSessions(deps.getState(), worktreeId)
+  ) {
+    return 'blocked'
+  }
+
   let sessions: PtyListedSession[]
   try {
     sessions = await deps.listSessions()
@@ -164,6 +197,18 @@ export async function runWorktreeAgentActivationGate(
     sessionBelongsToWorkspace(session.id, worktreeId)
   )
   const liveWorkspacePtyIds = new Set(liveWorkspaceSessions.map((session) => session.id))
+  for (const owner of structuredInventory?.ownerBySessionId.values() ?? []) {
+    if (owner.owner !== 'tui') {
+      continue
+    }
+    if (
+      !owner.terminal ||
+      !liveWorkspacePtyIds.has(owner.terminal.ptyId) ||
+      !bindLivePtyToExactSurface(deps.getState(), worktreeId, owner.terminal)
+    ) {
+      return 'blocked'
+    }
+  }
   if (liveWorkspaceSessions.length > 0) {
     for (const session of liveWorkspaceSessions) {
       const store = deps.getState()
@@ -181,20 +226,8 @@ export async function runWorktreeAgentActivationGate(
     }
   }
 
-  let structured = false
-  let structuredInventory: StructuredActivationInventory | null = null
-  try {
-    const reportedStructuredSession = await deps.hasStructuredSession?.(worktreeId)
-    structuredInventory =
-      typeof reportedStructuredSession === 'object' ? reportedStructuredSession : null
-    structured = Boolean(
-      hasStructuredSession(deps.getState(), worktreeId) || reportedStructuredSession
-    )
-    if (structured && !workspaceHasSleepingAgentSessions(deps.getState(), worktreeId)) {
-      return 'structured'
-    }
-  } catch {
-    return 'blocked'
+  if (structured && !workspaceHasSleepingAgentSessions(deps.getState(), worktreeId)) {
+    return 'structured'
   }
   const launched = deps.resume(worktreeId, {
     skipClaimKeys: liveSleepingAgentClaimKeys(
@@ -225,76 +258,7 @@ export function gateWorktreeAgentActivation(
     awaitReady: waitForWorkspaceSessionReady,
     listSessions: () =>
       typeof window === 'undefined' ? Promise.resolve([]) : window.api.pty.listSessions(),
-    hasStructuredSession: async (candidate) => {
-      if (typeof window === 'undefined') {
-        return false
-      }
-      const response = await window.api.runtime.call({ method: 'session.tabs.listAll', params: {} })
-      if (!response.ok) {
-        throw new Error('structured session inventory unavailable')
-      }
-      const result = response.result as { snapshots?: RuntimeMobileSessionTabsResult[] }
-      const snapshot = (result.snapshots ?? []).find(
-        (candidateSnapshot) =>
-          candidateSnapshot.worktree === candidate &&
-          candidateSnapshot.tabs.some((tab) => tab.type === 'agent-session')
-      )
-      if (!snapshot) {
-        return false
-      }
-      const ownerBySessionId = new Map<
-        string,
-        {
-          owner: 'native' | 'tui'
-          terminal?: { paneKey: string; ptyId: string; tabId: string }
-        }
-      >()
-      await Promise.all(
-        snapshot.tabs.flatMap((tab) =>
-          tab.type === 'agent-session'
-            ? [
-                window.api.runtime
-                  .call({
-                    method: 'agentSession.handoffStatus',
-                    params: { sessionId: tab.sessionId }
-                  })
-                  .then((statusResponse) => {
-                    if (!statusResponse.ok) {
-                      return
-                    }
-                    const status = statusResponse.result as {
-                      owner?: unknown
-                      terminal?: {
-                        paneKey?: unknown
-                        ptyId?: unknown
-                        tabId?: unknown
-                      }
-                    }
-                    if (status.owner === 'native') {
-                      ownerBySessionId.set(tab.sessionId, { owner: 'native' })
-                    } else if (
-                      status.owner === 'tui' &&
-                      typeof status.terminal?.paneKey === 'string' &&
-                      typeof status.terminal?.ptyId === 'string' &&
-                      status.terminal.ptyId.length > 0 &&
-                      typeof status.terminal.tabId === 'string'
-                    ) {
-                      ownerBySessionId.set(tab.sessionId, {
-                        owner: 'tui',
-                        terminal: {
-                          paneKey: status.terminal.paneKey,
-                          ptyId: status.terminal.ptyId,
-                          tabId: status.terminal.tabId
-                        }
-                      })
-                    }
-                  })
-              ]
-            : []
-        )
-      )
-      return { snapshot, ownerBySessionId }
-    },
+    hasStructuredSession: readWorktreeStructuredActivationInventory,
     resume: resumeSleepingAgentSessionsForWorktree
   }).finally(() => {
     if (inFlightByWorktreeId.get(worktreeId) === gate) {

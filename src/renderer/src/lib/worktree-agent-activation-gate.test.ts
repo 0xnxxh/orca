@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SleepingAgentSessionRecord } from '../../../shared/agent-session-resume'
 import type { PtyListedSession } from '../../../shared/pty-listed-session'
 import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
+import type { TerminalTab } from '../../../shared/types'
+import type { TerminalSlice } from '@/store/slices/terminals'
 import { runWorktreeAgentActivationGate } from './worktree-agent-activation-gate'
 
 const WORKTREE_ID = 'repo::/worktree'
@@ -72,16 +74,41 @@ function testDeps(args: {
   structured?: boolean
   resumeCount?: number
 }) {
-  const createTab = vi.fn()
   const resume = vi.fn(() => args.resumeCount ?? 1)
   const sleeping = args.sleeping ?? []
   const ptyIdsByTabId: Record<string, string[]> = {}
+  const tabsByWorktree: Record<string, TerminalTab[]> = { [WORKTREE_ID]: [] }
+  let createdCount = 0
+  const createTab: TerminalSlice['createTab'] = vi.fn((worktreeId, _group, _shell, options) => {
+    createdCount += 1
+    const id = options?.id ?? `created-${createdCount}`
+    const tab: TerminalTab = {
+      id,
+      ptyId: options?.initialPtyId ?? null,
+      worktreeId,
+      title: 'Terminal',
+      customTitle: null,
+      color: null,
+      sortOrder: tabsByWorktree[worktreeId]?.length ?? 0,
+      createdAt: 1
+    }
+    tabsByWorktree[worktreeId] ??= []
+    tabsByWorktree[worktreeId].push(tab)
+    ptyIdsByTabId[tab.id] = tab.ptyId ? [tab.ptyId] : []
+    return tab
+  })
+  const updateTabPtyId = vi.fn((tabId: string, ptyId: string) => {
+    ptyIdsByTabId[tabId] = [...new Set([...(ptyIdsByTabId[tabId] ?? []), ptyId])]
+  })
   const store = {
     createTab,
     ptyIdsByTabId,
+    tabsByWorktree,
     sleepingAgentSessionsByPaneKey: Object.fromEntries(
       sleeping.map((record) => [record.paneKey, record])
     ),
+    updateTabPtyId,
+    replaceTerminalLayoutPanePtyId: vi.fn(),
     terminalLayoutsByTabId: Object.fromEntries(
       sleeping.map((record) => {
         const leafId = record.paneKey.slice(record.paneKey.indexOf(':') + 1)
@@ -156,6 +183,18 @@ describe('worktree agent activation gate', () => {
     expect(deps.listSessions).toHaveBeenCalledOnce()
     expect(createTab).toHaveBeenCalledOnce()
     expect(resume).not.toHaveBeenCalled()
+  })
+
+  it('reads structured ownership before adopting daemon PTYs', async () => {
+    const ptyId = `${WORKTREE_ID}@@live-pty`
+    const { deps } = testDeps({ sessions: [listed(ptyId)] })
+    const hasStructuredSession = vi.fn(async () => false)
+
+    await runWorktreeAgentActivationGate(WORKTREE_ID, { ...deps, hasStructuredSession })
+
+    expect(hasStructuredSession.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.listSessions.mock.invocationCallOrder[0] ?? Infinity
+    )
   })
 
   it('blocks automatic resume when packaged restore never becomes ready', async () => {
@@ -262,11 +301,17 @@ describe('worktree agent activation gate', () => {
     })
   })
 
-  it('uses the exact runtime surface while packaged renderer PTY bindings are absent', async () => {
+  it('adopts the exact structured TUI surface without creating a duplicate tab', async () => {
     const tabId = 'structured-agent-session-live-session'
     const live = sleepingRecord(tabId, LIVE_LEAF_ID, 'live-session')
     const livePtyId = `${WORKTREE_ID}@@live-agent`
-    const { deps, resume } = testDeps({ sessions: [listed(livePtyId)], sleeping: [live] })
+    const { deps, createTab, resume } = testDeps({
+      sessions: [listed(livePtyId)],
+      sleeping: [live],
+      resumeCount: 0
+    })
+    const ownerTabId = '3359f7c8-9bd8-4931-8104-52b6bdbd108d'
+    const ownerLeafId = '2659ee80-d3fc-454f-b4ea-0638de1ae345'
 
     await expect(
       runWorktreeAgentActivationGate(WORKTREE_ID, {
@@ -279,18 +324,25 @@ describe('worktree agent activation gate', () => {
               {
                 owner: 'tui',
                 terminal: {
-                  paneKey:
-                    '3359f7c8-9bd8-4931-8104-52b6bdbd108d:2659ee80-d3fc-454f-b4ea-0638de1ae345',
+                  paneKey: `${ownerTabId}:${ownerLeafId}`,
                   ptyId: livePtyId,
-                  tabId: '3359f7c8-9bd8-4931-8104-52b6bdbd108d'
+                  tabId: ownerTabId
                 }
               }
             ]
           ])
         })
       })
-    ).resolves.toBe('resumed')
+    ).resolves.toBe('adopted')
 
+    expect(createTab).toHaveBeenCalledOnce()
+    expect(createTab).toHaveBeenCalledWith(WORKTREE_ID, undefined, undefined, {
+      id: ownerTabId,
+      initialLeafId: ownerLeafId,
+      initialPtyId: livePtyId,
+      activate: false,
+      recordInteraction: false
+    })
     expect(resume).toHaveBeenCalledWith(WORKTREE_ID, {
       skipClaimKeys: new Set([`${WORKTREE_ID}\0codex\0session_id\0live-session`])
     })
@@ -307,7 +359,7 @@ describe('worktree agent activation gate', () => {
     expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
   })
 
-  it('does not claim a structured owner whose PTY is absent from live inventory', async () => {
+  it('blocks when a structured TUI owner is absent from live inventory', async () => {
     const tabId = 'structured-agent-session-live-session'
     const live = sleepingRecord(tabId, LIVE_LEAF_ID, 'live-session')
     const livePtyId = `${WORKTREE_ID}@@live-agent`
@@ -333,12 +385,12 @@ describe('worktree agent activation gate', () => {
           ])
         })
       })
-    ).resolves.toBe('resumed')
+    ).resolves.toBe('blocked')
 
-    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
+    expect(resume).not.toHaveBeenCalled()
   })
 
-  it('does not claim an owner for a different structured session tab', async () => {
+  it('uses the restored owner surface even when its tab predates structured naming', async () => {
     const tabId = 'structured-agent-session-other-session'
     const live = sleepingRecord(tabId, LIVE_LEAF_ID, 'live-session')
     const livePtyId = `${WORKTREE_ID}@@live-agent`
@@ -362,7 +414,9 @@ describe('worktree agent activation gate', () => {
       })
     ).resolves.toBe('resumed')
 
-    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, {
+      skipClaimKeys: new Set([`${WORKTREE_ID}\0codex\0session_id\0live-session`])
+    })
   })
 
   it('suppresses the exact structured session when native already owns it', async () => {

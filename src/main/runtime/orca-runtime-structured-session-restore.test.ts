@@ -5,7 +5,7 @@ import { OrcaRuntimeService } from './orca-runtime'
 afterEach(() => setStructuredAgentSessionHost(null))
 
 describe('structured session cold restoration', () => {
-  it('hydrates PTY inventory before recovering durable TUI owners and only runs once', async () => {
+  it('loads records, inventories PTYs, restores ownership, then projects tabs exactly once', async () => {
     const runtime = new OrcaRuntimeService()
     const hydrate = vi.fn()
     const refresh = vi.fn(async () => new Set<string>())
@@ -29,8 +29,10 @@ describe('structured session cold restoration', () => {
       listSessionTabs: () => []
     } as never)
 
-    await runtime.restoreStructuredAgentSessionTabs()
-    await runtime.restoreStructuredAgentSessionTabs()
+    const first = runtime.restoreStructuredAgentSessionTabs()
+    const second = runtime.restoreStructuredAgentSessionTabs()
+    expect(second).toBe(first)
+    await Promise.all([first, second])
 
     expect(hydrate).toHaveBeenCalledWith('workspace-1', {
       allowAttachedWindow: true,
@@ -39,8 +41,15 @@ describe('structured session cold restoration', () => {
     expect(hydrate).toHaveBeenCalledWith()
     expect(refresh).toHaveBeenCalledOnce()
     expect(restoreReadableSessions).toHaveBeenCalledOnce()
+    expect(ensureHost).toHaveBeenCalledOnce()
+    expect(ensureHost.mock.invocationCallOrder[0]).toBeLessThan(
+      refresh.mock.invocationCallOrder[0] ?? Infinity
+    )
     expect(refresh.mock.invocationCallOrder[0]).toBeLessThan(
       restoreReadableSessions.mock.invocationCallOrder[0] ?? Infinity
+    )
+    expect(restoreReadableSessions.mock.invocationCallOrder[0]).toBeLessThan(
+      hydrate.mock.invocationCallOrder[0] ?? Infinity
     )
   })
 })

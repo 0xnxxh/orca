@@ -525,6 +525,8 @@ const api = {
     },
     awaitFirstWindowStartupServices: (): Promise<void> =>
       ipcRenderer.invoke('app:awaitFirstWindowStartupServices'),
+    prepareTerminalStartupRestoration: (): Promise<void> =>
+      ipcRenderer.invoke('app:prepareTerminalStartupRestoration'),
     recoverLegacyWorkerTerminalsForRendererStartup: (): Promise<void> =>
       ipcRenderer.invoke('app:recoverLegacyWorkerTerminalsForRendererStartup'),
     startupDiagnostic: (event: string, details?: Record<string, unknown>): Promise<void> =>

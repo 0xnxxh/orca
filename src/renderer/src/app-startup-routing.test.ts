@@ -321,6 +321,40 @@ describe('renderer startup runtime routing', () => {
     expect(reconnectIndex).toBeGreaterThan(capabilityIndex)
   })
 
+  it('orders packaged restoration before adoption, projection, and default creation', () => {
+    const appSource = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+    const terminalSource = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/Terminal.tsx'),
+      'utf8'
+    )
+    const hydrateIndex = appSource.indexOf("timeRendererStartupSyncStep('hydrate-session-stores'")
+    const prepareIndex = appSource.indexOf(
+      "timeRendererStartupStep('prepare-terminal-startup-restoration'"
+    )
+    const reconnectIndex = appSource.indexOf("timeRendererStartupStep('reconnect-terminals'")
+    const projectIndex = appSource.indexOf(
+      "timeRendererStartupStep('project-structured-session-tabs'"
+    )
+    const readyIndex = appSource.indexOf('actions.setTerminalStartupRestorationReady(true)')
+    const gateStart = terminalSource.indexOf('const startupActivationGateWorktreeIdsRef')
+    const gateEnd = terminalSource.indexOf('const handleNewTab', gateStart)
+    const gateBlock = terminalSource.slice(gateStart, gateEnd)
+    const gateIndex = gateBlock.indexOf('gateWorktreeAgentActivation(activeWorktreeId)')
+    const createIndex = gateBlock.indexOf(
+      'createTab(activeWorktreeId, undefined, undefined, { pendingActivationSpawn: true })'
+    )
+
+    expect(hydrateIndex).toBeGreaterThanOrEqual(0)
+    expect(hydrateIndex).toBeLessThan(prepareIndex)
+    expect(prepareIndex).toBeLessThan(reconnectIndex)
+    expect(reconnectIndex).toBeLessThan(projectIndex)
+    expect(projectIndex).toBeLessThan(readyIndex)
+    expect(gateBlock).toContain('terminalStartupRestorationReady')
+    expect(gateIndex).toBeGreaterThanOrEqual(0)
+    expect(gateIndex).toBeLessThan(createIndex)
+    expect(gateBlock.slice(gateIndex, createIndex)).toContain("outcome === 'blocked'")
+  })
+
   it('does not load the terminal workbench on the no-workspace landing path', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 

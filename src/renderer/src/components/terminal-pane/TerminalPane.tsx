@@ -763,11 +763,11 @@ function TerminalPane(
     () => useAppStore.getState().pendingIssueCommandSplitByTabId[tabId]
   )
   const consumeTabIssueCommandSplit = useAppStore((store) => store.consumeTabIssueCommandSplit)
-  useEffect(() => {
+  const settleTabStartupCommand = useCallback(() => {
     if (startup) {
-      consumeTabStartupCommand(tabId)
+      consumeTabStartupCommand(tabId, startup)
     }
-  }, [startup, tabId, consumeTabStartupCommand])
+  }, [consumeTabStartupCommand, startup, tabId])
 
   useLayoutEffect(() => {
     if (isVisible && shouldMeasureHiddenStartup) {
@@ -1418,6 +1418,7 @@ function TerminalPane(
     setCacheTimerStartedAt,
     syncPanePtyLayoutBinding,
     clearExitedPanePtyLayoutBinding,
+    onStartupBound: settleTabStartupCommand,
     setTabPaneExpanded,
     setTabCanExpandPane,
     setExpandedPane,
