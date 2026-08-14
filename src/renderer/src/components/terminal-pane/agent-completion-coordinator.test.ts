@@ -808,6 +808,17 @@ describe('agent completion coordinator', () => {
     await flushAsyncTicks()
 
     expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    result = processResult('codex')
+    vi.advanceTimersByTime(2_000)
+    await flushAsyncTicks()
+    result = processResult('zsh', false)
+    vi.advanceTimersByTime(750)
+    await flushAsyncTicks()
+    vi.advanceTimersByTime(750)
+    await flushAsyncTicks()
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
   })
 
   it('keeps duplicate done-only hooks inside replay guard suppressed after process inspection', async () => {
@@ -1510,25 +1521,20 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).toHaveBeenCalledTimes(1)
 
     hookCoordinator.observeHookStatus({
-      state: 'working',
-      prompt: 'continue the review',
-      agentType: 'claude',
-      stateStartedAt: 1_700_000_010_000
-    })
-    hookCoordinator.observeHookStatus({
       state: 'done',
-      prompt: 'continue the review',
+      prompt: 'review the PR',
       agentType: 'claude',
-      stateStartedAt: 1_700_000_020_000
+      stateStartedAt: 1_700_000_055_000,
+      turnCompletedAt: 1_700_000_005_000
     })
     vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
 
-    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
 
     paneCoordinator.observeTitleWorking()
     paneCoordinator.observeClassifiedTitleCompletion('Claude done')
 
-    expect(dispatchCompletion).toHaveBeenCalledTimes(3)
+    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
   })
 
   it('does not let a vetoed gated Stop swallow the later all-clear', () => {

@@ -430,7 +430,8 @@ function equivalentParsedAgentStatusPayload(
     // Why: a session-boundary done must never be deduped against a cached real done —
     // the flag has to reach receivers deterministically (STA-3386).
     a.sessionBoundary === b.sessionBoundary &&
-    a.turnCompletedAt === b.turnCompletedAt
+    // Why: OSC cannot carry the hook-only turn stamp; an otherwise equivalent repaint must preserve it, while an incoming stamp still advances the row.
+    (b.turnCompletedAt === undefined || a.turnCompletedAt === b.turnCompletedAt)
   )
 }
 

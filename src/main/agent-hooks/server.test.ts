@@ -8920,6 +8920,36 @@ describe('AgentHookServer ingestRemote', () => {
 })
 
 describe('AgentHookServer ingestTerminalStatus', () => {
+  it('preserves a hook turn stamp across an equivalent OSC repaint', () => {
+    const server = new AgentHookServer()
+    const listener = vi.fn()
+    server.setListener(listener)
+
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        payload: {
+          state: 'working',
+          prompt: 'review the PR',
+          agentType: 'claude',
+          turnCompletedAt: 1_700_000_005_000
+        }
+      },
+      'conn-1'
+    )
+    server.ingestTerminalStatus({
+      paneKey: PANE,
+      connectionId: 'conn-1',
+      payload: { state: 'working', prompt: 'review the PR', agentType: 'claude' }
+    })
+
+    expect(listener).toHaveBeenCalledOnce()
+    expect(server.getStatusSnapshot()[0]).toMatchObject({
+      state: 'working',
+      turnCompletedAt: 1_700_000_005_000
+    })
+  })
+
   // Why: the OSC 9999 payload cannot carry a provider session, so letting it overwrite the row
   // erased the session id from persisted rows and from headless `orca serve` — which serves these
   // rows straight to mobile — leaving Chat UI with no transcript to subscribe to (#10630).
