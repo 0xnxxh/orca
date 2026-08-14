@@ -2849,7 +2849,6 @@ export type PtyBindingSourceExpectation = {
   incarnationId?: string
 }
 
-
 /** Caps the hoist ledger. A live tab is protected by the local-session check, not by this cap, so
  *  eviction is safe for open tabs; the cost of evicting an id is that its tab could be re-hoisted
  *  once if it is later closed while the partition still lists it. */
@@ -2990,6 +2989,9 @@ export class Store {
   private readonly sshRemotePtyLeaseMutationVersions = new WeakMap<SshRemotePtyLease, number>()
   private readonly protectedSecrets = new ProtectedSecretPersistence()
   private loadNeedsSave = false
+  /** Why a field rather than a parameter: `persistPtyBinding`'s call shape is asserted exactly by
+   *  existing tests, and the reason is only ever read by the caller on the very next line. */
+  private lastPtyBindingRefusalReason: PtyBindingRefusalReason | undefined
   /** SSH host partitions as they were on disk, before pruning. Used once, by the hoist migration. */
   private sshPartitionsAtLoad: PersistedState['workspaceSessionsByHostId'] | undefined
   private settingsChangeListeners = new Set<
@@ -4044,8 +4046,7 @@ export class Store {
     const retainedLeases = (result.sshRemotePtyLeases ?? []).filter(
       // normalizeSshRemotePtyLease always populates updatedAt, so no absent-timestamp case here.
       (lease) =>
-        lease.state !== 'expired' ||
-        Date.now() - lease.updatedAt <= EXPIRED_SSH_LEASE_RETENTION_MS
+        lease.state !== 'expired' || Date.now() - lease.updatedAt <= EXPIRED_SSH_LEASE_RETENTION_MS
     )
     if (retainedLeases.length !== (result.sshRemotePtyLeases ?? []).length) {
       result = { ...result, sshRemotePtyLeases: retainedLeases }
@@ -6578,6 +6579,14 @@ export class Store {
     return normalizeExecutionHostId(hostId) ?? LOCAL_EXECUTION_HOST_ID
   }
 
+  /** Read once, immediately after a refused `persistPtyBinding`. Clearing on read keeps a stale
+   *  reason from being attributed to a later call that never set one. */
+  consumePtyBindingRefusalReason(): PtyBindingRefusalReason | undefined {
+    const reason = this.lastPtyBindingRefusalReason
+    this.lastPtyBindingRefusalReason = undefined
+    return reason
+  }
+
   getWorkspaceSession(hostId?: string | null): PersistedState['workspaceSession'] {
     const resolved = this.resolveHostId(hostId)
     if (resolved === LOCAL_EXECUTION_HOST_ID) {
@@ -7061,13 +7070,11 @@ export class Store {
       /** Reattach passes false: an absent durable pane never authorizes creating UI.
        *  Defaults true so the spawn path keeps its force-quit-race branches. */
       mayCreate?: boolean
-      /** Filled in when the write is refused, so a caller can tell "no such tab" — where anything
-       *  it publishes would be a ghost — from "the tab is live but its membership is stale". */
-      refusal?: { reason?: PtyBindingRefusalReason }
       expectedSourceBinding?: PtyBindingSourceExpectation
     },
     hostId?: string | null
   ): boolean {
+    this.lastPtyBindingRefusalReason = undefined
     const mayCreate = args.mayCreate ?? true
     let refusalReason: PtyBindingRefusalReason | undefined
     const resolvedHostId = this.resolveHostId(hostId)
@@ -7185,9 +7192,9 @@ export class Store {
     }
     if (!mayCreate && terminalMembershipChanged) {
       restoreSession()
-      if (args.refusal) {
-        args.refusal.reason = refusalReason ?? 'noMembership'
-      }
+      // Defaults to the NON-publishing reason: a branch that forgets to set one should fail closed
+      // rather than publish a pane whose ownership it cannot vouch for.
+      this.lastPtyBindingRefusalReason = refusalReason ?? 'noTab'
       return false
     }
     if (!isTerminalLeafId(args.leafId)) {
@@ -7231,7 +7238,7 @@ export class Store {
       }
     } else {
       terminalMembershipChanged = true
-        refusalReason ??= 'noMembership'
+      refusalReason ??= 'noMembership'
       // Why: first tab spawn — persist a minimal layout so a SIGKILL before the renderer snapshot can't lose ptyIdsByLeafId.
       session.terminalLayoutsByTabId = {
         ...session.terminalLayoutsByTabId,
@@ -7245,9 +7252,9 @@ export class Store {
     }
     if (!mayCreate && terminalMembershipChanged) {
       restoreSession()
-      if (args.refusal) {
-        args.refusal.reason = refusalReason ?? 'noMembership'
-      }
+      // Defaults to the NON-publishing reason: a branch that forgets to set one should fail closed
+      // rather than publish a pane whose ownership it cannot vouch for.
+      this.lastPtyBindingRefusalReason = refusalReason ?? 'noTab'
       return false
     }
     advanceTopologyFence()
@@ -7595,7 +7602,16 @@ export class Store {
       undoSupersession()
       this.scheduleSave()
       console.error('[persistence] Failed to persist pane lease supersession:', err)
+      return
     }
+    // Why these two by hand: this path needs flushOrThrow so a failed write can be rolled back,
+    // but flush() also drives them and a lease upsert must not silently stop doing so.
+    try {
+      this.flushActiveViewPreferenceOrThrow()
+    } catch (err) {
+      console.error('[active-view] Failed to flush preference:', err)
+    }
+    this.writeGithubCacheSnapshotSync()
   }
 
   /**

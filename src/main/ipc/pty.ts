@@ -572,7 +572,10 @@ export function resolvePaneShellTabId(
 }
 
 export function bindPaneShell(args: {
-  store: Pick<Store, 'persistPtyBinding' | 'getWorkspaceSession'> | undefined
+  store:
+    | (Pick<Store, 'persistPtyBinding' | 'getWorkspaceSession'> &
+        Partial<Pick<Store, 'consumePtyBindingRefusalReason'>>)
+    | undefined
   worktreeId: string
   tabId: string
   leafId: string
@@ -584,9 +587,7 @@ export function bindPaneShell(args: {
   expectedSourceBinding?: PtyBindingSourceExpectation
 }): { bound: boolean; tabId: string; refusalReason?: PtyBindingRefusalReason } {
   const tabId = args.tabId
-  const refusal: { reason?: PtyBindingRefusalReason } = {}
   const bound = args.store?.persistPtyBinding({
-    refusal,
     worktreeId: args.worktreeId,
     tabId,
     leafId: args.leafId,
@@ -598,13 +599,16 @@ export function bindPaneShell(args: {
     ...(args.expectedSourceBinding ? { expectedSourceBinding: args.expectedSourceBinding } : {})
   })
   if (bound === false) {
-    // Why route the pane key even on refusal, unless the tab is gone: a refusal for stale
-    // membership leaves a LIVE tab whose pane is already listed. Dropping its routing on top of
-    // its binding orphans the shell from the surfaces that can still show it.
-    if (refusal.reason !== 'noTab') {
+    // Route the pane key only on a POSITIVE stale-membership refusal: that leaves a LIVE tab whose
+    // pane is already listed, and dropping its routing on top of its binding orphans the shell from
+    // the surfaces that can still show it. Every other refusal — including the CAS paths, which
+    // record no reason and mean another pty now owns this pane — must not route, or the pane key is
+    // handed to the loser of that race and the winner silently stops resizing and signalling.
+    const refusalReason = args.store?.consumePtyBindingRefusalReason?.()
+    if (refusalReason === 'noMembership') {
       rememberPaneKeyForPty(args.ptyId, makePaneKey(tabId, args.leafId))
     }
-    return { bound: false, tabId, ...(refusal.reason ? { refusalReason: refusal.reason } : {}) }
+    return { bound: false, tabId, ...(refusalReason ? { refusalReason } : {}) }
   }
   rememberPaneKeyForPty(args.ptyId, makePaneKey(tabId, args.leafId))
   return { bound: true, tabId }

@@ -186,9 +186,10 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
     expect(upgraded.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(1)
 
     // The user closes it, and that sticks.
-    upgraded.setWorkspaceSession(
-      { ...upgraded.getWorkspaceSession(), tabsByWorktree: { [WORKTREE]: [] } } as never
-    )
+    upgraded.setWorkspaceSession({
+      ...upgraded.getWorkspaceSession(),
+      tabsByWorktree: { [WORKTREE]: [] }
+    } as never)
     upgraded.flushOrThrow()
 
     const relaunched = await reopenStore()
@@ -232,7 +233,9 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
 
     const relaunched = await reopenStore()
     expect(
-      (relaunched.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).map((tab) => tab.id).sort(),
+      (relaunched.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [])
+        .map((tab) => tab.id)
+        .sort(),
       'a pane the partition gained after the first hoist was stranded'
     ).toEqual(['tab-1', 'tab-2'])
   })
@@ -283,7 +286,25 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
   describe('why a mayCreate:false write was refused', () => {
     it('reports noTab when the pane has no durable tab at all', async () => {
       const store = await createStore()
-      const refusal: { reason?: string } = {}
+
+      const bound = store.persistPtyBinding({
+        worktreeId: WORKTREE,
+        tabId: TAB,
+        leafId: LEAF,
+        ptyId: PTY,
+        mayCreate: false
+      })
+
+      expect(bound).toBe(false)
+      expect(store.consumePtyBindingRefusalReason()).toBe('noTab')
+    })
+
+    // The CAS refusals mean "another pty owns this pane now". They record NO reason, and the
+    // caller must not treat that absence as stale membership — routing there hands the pane key to
+    // the loser of the race, and the winner then silently stops resizing and signalling.
+    it('records no reason when a compare-and-set refuses, so the caller cannot mistake it', async () => {
+      const store = await createStore()
+      store.setWorkspaceSession(paneSession() as never)
 
       const bound = store.persistPtyBinding({
         worktreeId: WORKTREE,
@@ -291,31 +312,32 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
         leafId: LEAF,
         ptyId: PTY,
         mayCreate: false,
-        refusal
-      } as never)
+        expectedBinding: { ptyId: 'a-pty-that-does-not-own-this-pane' }
+      })
 
       expect(bound).toBe(false)
-      expect(refusal.reason).toBe('noTab')
+      expect(
+        store.consumePtyBindingRefusalReason(),
+        'a lost ownership race was reported as a membership problem'
+      ).toBeUndefined()
     })
 
     it('reports noMembership when the tab is live but the leaf is not in its layout', async () => {
       const store = await createStore()
       // A live tab with a layout that does not contain the leaf being bound.
       store.setWorkspaceSession(paneSession() as never)
-      const refusal: { reason?: string } = {}
 
       const bound = store.persistPtyBinding({
         worktreeId: WORKTREE,
         tabId: TAB,
         leafId: LEAF_TWO,
         ptyId: PTY,
-        mayCreate: false,
-        refusal
-      } as never)
+        mayCreate: false
+      })
 
       expect(bound).toBe(false)
       expect(
-        refusal.reason,
+        store.consumePtyBindingRefusalReason(),
         'a live tab was reported as missing, which orphans its running shell'
       ).toBe('noMembership')
     })
