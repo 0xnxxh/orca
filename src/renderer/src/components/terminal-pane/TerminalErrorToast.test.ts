@@ -128,7 +128,7 @@ describe('humanizeTerminalError', () => {
 
   it('replaces a raw relay PTY-not-found string and its quoted id', () => {
     const humanized = humanizeTerminalError(
-      "Error invoking remote method 'pty:spawn': Error: PTY \"orca:2f1c@@pty-7\" not found"
+      'Error invoking remote method \'pty:spawn\': Error: PTY "orca:2f1c@@pty-7" not found'
     )
     expect(humanized).not.toContain('not found')
     expect(humanized).not.toContain('orca:2f1c@@pty-7')
@@ -183,7 +183,7 @@ describe('isExplainedTerminalError', () => {
     expect(isExplainedTerminalError('SSH_SESSION_EXPIRED: orca:2f1c@@pty-7')).toBe(true)
     expect(
       isExplainedTerminalError(
-        "Error invoking remote method 'pty:spawn': Error: PTY \"orca:2f1c@@pty-7\" not found"
+        'Error invoking remote method \'pty:spawn\': Error: PTY "orca:2f1c@@pty-7" not found'
       )
     ).toBe(true)
   })
