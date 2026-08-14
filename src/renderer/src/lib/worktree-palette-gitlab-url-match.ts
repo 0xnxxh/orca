@@ -1,4 +1,4 @@
-import { normalizeGitLabRemoteHost } from '../../../shared/git-remote-host-alias'
+import { foldComparableGitLabHost } from '../../../shared/git-remote-host-alias'
 import {
   matchGitRemoteKeyParts,
   splitGitRemoteKey,
@@ -16,7 +16,7 @@ export type GitLabIssueOrMRLink = NonNullable<ReturnType<typeof parseGitLabIssue
 /** Host + project path, matching how `GitRemoteIdentity.canonicalKey` is built. */
 function gitLabProjectKeyParts(slug: ProjectSlug): GitRemoteKeyParts {
   return {
-    host: normalizeGitLabRemoteHost(slug.host.replace(/:\d+$/, '')),
+    host: foldComparableGitLabHost(slug.host.replace(/:\d+$/, '')),
     tail: slug.path
       .replace(/^\/+/, '')
       .replace(/\/+$/, '')
@@ -41,7 +41,7 @@ function gitLabLinksEqual(left: GitLabIssueOrMRLink, right: GitLabIssueOrMRLink)
 /** Tri-state like `repoMatchesGitHubSlug`: `'unknown'` stays permissive for forks and host aliases. */
 function repoMatchesGitLabSlug(repo: Repo | undefined, slug: ProjectSlug): boolean | 'unknown' {
   const identity = repo?.gitRemoteIdentity
-  const identityParts = splitGitRemoteKey(identity?.canonicalKey, normalizeGitLabRemoteHost)
+  const identityParts = splitGitRemoteKey(identity?.canonicalKey, foldComparableGitLabHost)
   if (!identityParts) {
     return 'unknown'
   }

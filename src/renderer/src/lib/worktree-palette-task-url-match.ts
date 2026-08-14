@@ -1,4 +1,4 @@
-import { normalizeGitHubRemoteHost } from '../../../shared/git-remote-host-alias'
+import { foldComparableGitHubHost } from '../../../shared/git-remote-host-alias'
 import {
   matchGitRemoteKeyParts,
   splitGitRemoteKey,
@@ -84,14 +84,14 @@ function parseOwnerRepoDisplayName(value: string | null | undefined): RepoSlug |
 /** Host + `owner/repo` tail, matching how `GitRemoteIdentity.canonicalKey` is built. */
 function githubRemoteKeyParts(slug: RepoSlug): GitRemoteKeyParts {
   return {
-    host: normalizeGitHubRemoteHost((slug.host || 'github.com').replace(/:\d+$/, '')),
+    host: foldComparableGitHubHost((slug.host || 'github.com').replace(/:\d+$/, '')),
     tail: `${slug.owner.toLowerCase()}/${slug.repo.replace(/\.git$/i, '').toLowerCase()}`
   }
 }
 
 function remoteIdentityMatchesGitHubSlug(repo: Repo, slug: RepoSlug): boolean | 'unknown' {
   const identity = repo.gitRemoteIdentity
-  const identityParts = splitGitRemoteKey(identity?.canonicalKey, normalizeGitHubRemoteHost)
+  const identityParts = splitGitRemoteKey(identity?.canonicalKey, foldComparableGitHubHost)
   if (!identityParts) {
     return 'unknown'
   }

@@ -2,10 +2,16 @@
 // comparison of a probed remote against a pasted URL must fold those to the same identity.
 
 function normalizeRemoteHost(host: string): string {
-  return host
-    .trim()
-    .toLowerCase()
-    .replace(/^www\./, '')
+  return host.trim().toLowerCase()
+}
+
+/**
+ * Fold a `www.` prefix. Deliberately NOT part of the forge normalizers: those feed
+ * `getProjectIdentityKey`, so folding there would re-key already-persisted projects on upgrade.
+ * Only URL-vs-remote comparison may use it.
+ */
+export function foldWwwHostAlias(host: string): string {
+  return normalizeRemoteHost(host).replace(/^www\./, '')
 }
 
 export function normalizeGitHubRemoteHost(host: string): string {
@@ -18,6 +24,15 @@ export function normalizeGitLabRemoteHost(host: string): string {
   const normalizedHost = normalizeRemoteHost(host)
   // Why: GitLab documents altssh.gitlab.com as SSH-over-443 for gitlab.com projects.
   return normalizedHost === 'altssh.gitlab.com' ? 'gitlab.com' : normalizedHost
+}
+
+/** Comparison-only host fold: the forge alias plus `www.`, for matching a remote to a pasted URL. */
+export function foldComparableGitHubHost(host: string): string {
+  return normalizeGitHubRemoteHost(foldWwwHostAlias(host))
+}
+
+export function foldComparableGitLabHost(host: string): string {
+  return normalizeGitLabRemoteHost(foldWwwHostAlias(host))
 }
 
 /**
