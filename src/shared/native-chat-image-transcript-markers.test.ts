@@ -173,7 +173,7 @@ describe('normalizeImageTranscriptMessages', () => {
   })
 
   it('leaves ordinary user text untouched', () => {
-    const message = userText('a', 'how about this')
+    const message = userText('a', 'keep [Image #1] as literal text')
     const messages = [message]
     const out = normalizeImageTranscriptMessages(messages)
     expect(out).toBe(messages)

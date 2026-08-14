@@ -125,6 +125,14 @@ describe('buildMobileNativeChatTransientData', () => {
     ])
   })
 
+  it('renders literal image-marker text in a standalone user turn', () => {
+    const data = build([user('u1', 'Please preserve [Image #1] literally')], null, [])
+
+    expect(data[0]?.blocks).toEqual([
+      { type: 'text', text: 'Please preserve [Image #1] literally' }
+    ])
+  })
+
   it('renders a lone image marker turn (no caption) as an image-ref block', () => {
     const data = build([user('u1', '[Image: source: /tmp/a.png]')], null, [])
     expect(data[0]?.blocks).toEqual([{ type: 'image-ref', path: '/tmp/a.png' }])
@@ -149,7 +157,7 @@ describe('buildMobileNativeChatTransientData', () => {
     ])
   })
 
-  it('restores the local preview onto a marker-only transcript turn', () => {
+  it('restores a local preview without treating it as proof to strip marker text', () => {
     const result = buildMobileNativeChatTransientData({
       folded: foldMobileNativeChatMessages([user('prompt', '[Image #1]')]),
       streaming: null,
@@ -157,7 +165,10 @@ describe('buildMobileNativeChatTransientData', () => {
       imagePreviewsByMessageId: { prompt: ['file:///phone-photo.jpg'] }
     })
 
-    expect(result.data[0]?.blocks).toEqual([{ type: 'image-ref', url: 'file:///phone-photo.jpg' }])
+    expect(result.data[0]?.blocks).toEqual([
+      { type: 'text', text: '[Image #1]' },
+      { type: 'image-ref', url: 'file:///phone-photo.jpg' }
+    ])
   })
 
   it('appends a synthetic bubble for gated streaming text, between transcript and pending', () => {
