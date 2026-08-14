@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getDefaultPersistedState, getDefaultWorkspaceSession } from '../shared/constants'
 import { toSshExecutionHostId } from '../shared/execution-host'
-import { toAppSshPtyId } from '../shared/ssh-pty-id'
+import { toAppSshPtyId, toRelaySshPtyId } from '../shared/ssh-pty-id'
 
 const testState = { dir: '' }
 
@@ -318,6 +318,37 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
         refusal.reason,
         'a live tab was reported as missing, which orphans its running shell'
       ).toBe('noMembership')
+    })
+  })
+
+  // The supersession rollback had no tests at all, which is how a restore that silently dropped
+  // layout-less tabs survived a review round. A failed write must leave the pane exactly as it
+  // was — not holding a live lease with its binding cleared.
+  describe('rolling back a supersession whose write fails', () => {
+    it('restores the binding of a tab that has no layout yet', async () => {
+      const store = await createStore()
+      const layoutless = paneSession()
+      layoutless.terminalLayoutsByTabId = {} as typeof layoutless.terminalLayoutsByTabId
+      store.setWorkspaceSession(layoutless as never)
+
+      const snapshots = (
+        store as unknown as {
+          snapshotSshLeaseBindings: (
+            targetId: string,
+            leases: { leafId?: string; ptyId: string; targetId: string }[]
+          ) => { tabs: { leafId: string; ptyId: string; tabId: string }[] }
+        }
+      ).snapshotSshLeaseBindings(TARGET, [
+        { leafId: LEAF, ptyId: toRelaySshPtyId(TARGET, PTY), targetId: TARGET }
+      ])
+
+      expect(
+        snapshots.tabs,
+        'nothing was snapshotted, so a restore would have nothing to prove'
+      ).toHaveLength(1)
+      expect(snapshots.tabs[0]?.tabId, 'the snapshot did not record which tab it came from').toBe(
+        TAB
+      )
     })
   })
 })

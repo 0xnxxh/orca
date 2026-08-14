@@ -2850,7 +2850,9 @@ export type PtyBindingSourceExpectation = {
 }
 
 
-/** Caps the hoist ledger. Far above any realistic open-tab count, so a live tab is never evicted. */
+/** Caps the hoist ledger. A live tab is protected by the local-session check, not by this cap, so
+ *  eviction is safe for open tabs; the cost of evicting an id is that its tab could be re-hoisted
+ *  once if it is later closed while the partition still lists it. */
 const MAX_HOISTED_TAB_IDS = 512
 
 /** Why a `mayCreate: false` binding write was refused. `noTab` means the pane has no durable tab,
@@ -7813,10 +7815,10 @@ export class Store {
     targetId: string,
     leases: SshRemotePtyLease[]
   ): {
-    tabs: { leafId: string; ptyId: string }[]
+    tabs: { leafId: string; ptyId: string; tabId: string }[]
     leaves: { leafId: string; ptyId: string }[]
   } {
-    const tabSnapshots: { leafId: string; ptyId: string }[] = []
+    const tabSnapshots: { leafId: string; ptyId: string; tabId: string }[] = []
     const leaves: { leafId: string; ptyId: string }[] = []
     const session = this.state.workspaceSession
     for (const [worktreeId, tabs] of Object.entries(session?.tabsByWorktree ?? {})) {
@@ -7831,7 +7833,7 @@ export class Store {
             })
           )
           if (lease?.leafId) {
-            tabSnapshots.push({ leafId: lease.leafId, ptyId: tab.ptyId })
+            tabSnapshots.push({ leafId: lease.leafId, ptyId: tab.ptyId, tabId: tab.id })
           }
         }
       }
@@ -7865,7 +7867,7 @@ export class Store {
     targetId: string,
     leases: SshRemotePtyLease[],
     snapshots: {
-      tabs: { leafId: string; ptyId: string }[]
+      tabs: { leafId: string; ptyId: string; tabId: string }[]
       leaves: { leafId: string; ptyId: string }[]
     }
   ): void {
@@ -7882,7 +7884,12 @@ export class Store {
           lease.ptyId === this.getRelayPtyIdForSshLeaseComparison(targetId, snapshot.ptyId)
       )
     for (const snapshot of snapshots.tabs) {
-      const tabId = findTerminalTabIdForLeaf(session, snapshot.leafId)
+      // Leaf first, so a pane that moved is restored into the tab it is in now. Falling back to
+      // the tab recorded at snapshot time, because resolving by leaf needs the leaf to appear in a
+      // layout, and a background or CLI tab legitimately has none until its pane first mounts —
+      // the shape the hoist now carries. Without the fallback those restores were dropped
+      // silently, leaving a live lease with no binding.
+      const tabId = findTerminalTabIdForLeaf(session, snapshot.leafId) ?? snapshot.tabId
       const tab = Object.values(session?.tabsByWorktree ?? {})
         .flat()
         .find((candidate) => candidate.id === tabId)
