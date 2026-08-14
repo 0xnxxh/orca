@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import {
+  readVerifiedShebangInterpreter,
   renderLegacyTerminalPosixTombstone,
   resolvePosixTombstoneInterpreter
 } from './legacy-terminal-posix-tombstone'
@@ -98,19 +99,18 @@ function writeNeutralWrappers(rootDir: string): void {
   const win32Dir = join(rootDir, 'win32')
   mkdirSync(posixDir, { recursive: true })
   mkdirSync(win32Dir, { recursive: true })
-  // Why: with no absolute interpreter verifiable, a tombstone would need an ambient shebang and
-  // could take bash from the current directory. Deleting the legacy wrapper is the safe outcome:
-  // the command simply falls through to the real one on PATH.
+  // Why: a tombstone with no verifiable absolute interpreter would need an ambient shebang and
+  // could take bash from the current directory. Falling back to the shebang of the wrapper being
+  // replaced keeps a shell that has the path hashed working -- deleting the file strands it on
+  // 127 rather than falling through to PATH. Deleting is the last resort, not the first.
   const interpreter = resolvePosixTombstoneInterpreter()
   for (const command of ['git', 'gh'] as const) {
-    if (interpreter === null) {
-      rmSync(join(posixDir, command), { force: true })
+    const posixPath = join(posixDir, command)
+    const resolved = interpreter ?? readVerifiedShebangInterpreter(posixPath)
+    if (resolved === null) {
+      rmSync(posixPath, { force: true })
     } else {
-      writeFileAtomically(
-        join(posixDir, command),
-        renderLegacyTerminalPosixTombstone(command, interpreter),
-        0o755
-      )
+      writeFileAtomically(posixPath, renderLegacyTerminalPosixTombstone(command, resolved), 0o755)
     }
     writeFileAtomically(
       join(win32Dir, `${command}.cmd`),
@@ -158,7 +158,13 @@ function pathEntrySpellings(dir: string, windows: boolean): string[] {
 }
 
 export function isLegacyTerminalShimPathEntry(entry: string): boolean {
-  const normalized = entry.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
+  // Why normalize first: a `.../orca-terminal-attribution/posix/../posix` spelling names the shim
+  // directory but fails a plain suffix test, so the entry survived the scrub and the shim stayed
+  // reachable. normalize collapses `..` textually, which is what a suffix test needs.
+  const normalized = normalize(entry.replaceAll('\\', '/'))
+    .replaceAll('\\', '/')
+    .replace(/\/+$/, '')
+    .toLowerCase()
   return (
     normalized.endsWith(`/${LEGACY_SHIM_ROOT_DIR}/posix`) ||
     normalized.endsWith(`/${LEGACY_SHIM_ROOT_DIR}/win32`)

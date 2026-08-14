@@ -1,5 +1,5 @@
-import { accessSync, constants, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { accessSync, constants, readFileSync, statSync } from 'node:fs'
+import { basename, join } from 'node:path'
 
 const SHELL_DOLLAR = '$'
 
@@ -70,6 +70,34 @@ export function resolvePosixTombstoneInterpreter(
   return null
 }
 
+/**
+ * Returns the absolute interpreter the wrapper being replaced already used, or null.
+ *
+ * Why: when this process cannot see an absolute bash, deleting the wrapper strands a shell that
+ * has the path hashed -- it reports 127 rather than falling through to the next PATH entry. The
+ * file about to be overwritten ran on this host, so its own shebang names an interpreter known to
+ * work here, and reusing it keeps the compatibility promise without an ambient lookup.
+ */
+export function readVerifiedShebangInterpreter(filePath: string): string | null {
+  let firstLine: string
+  try {
+    firstLine = readFileSync(filePath, 'utf8').split('\n', 1)[0] ?? ''
+  } catch {
+    return null
+  }
+  const match = /^#!\s*(\S+)/.exec(firstLine)
+  const interpreter = match?.[1]
+  if (!interpreter?.startsWith('/')) {
+    return null
+  }
+  // Why: `#!/usr/bin/env bash` is absolute but defers the real lookup to PATH, which is the
+  // current-directory exposure this whole path exists to avoid.
+  if (basename(interpreter) === 'env') {
+    return null
+  }
+  return isExecutable(interpreter) ? interpreter : null
+}
+
 const POSIX_TOMBSTONE = String.raw`#!__ORCA_INTERPRETER__
 set -u
 
@@ -116,7 +144,11 @@ filter_path() {
       # Why: an empty or relative PATH element resolves against the current directory, so keeping
       # it would let a repository-local git/gh win the lookup below.
       :
-    elif [[ -n "$legacy_target" && "$normalized" == "$legacy_target" ]]; then
+    elif [[ -n "$legacy_target" && ( "$normalized" == "$legacy_target" || "$entry" -ef "$legacy_target" ) ]]; then
+      # Why both tests: -ef compares filesystem identity, so it catches the same directory reached
+      # through a symlink or a /legacy/../legacy spelling that the lexical compare misses. It is
+      # false when either path no longer exists, which is exactly when the lexical compare still
+      # holds, so neither alone is enough.
       :
     elif [[ "$entry" -ef "$wrapper_dir" ]]; then
       :

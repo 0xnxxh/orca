@@ -13,7 +13,12 @@
 // script died with "The syntax of the command is incorrect."
 
 const WIN32_PASSTHROUGH_WRAPPER = String.raw`@echo off
-setlocal
+rem Why explicit: bare setlocal inherits the caller's delayed-expansion state, and a parent shell
+rem started with /V:ON made every PATH entry undergo ! expansion inside the loops below. A literal
+rem !CD! entry then became the current directory and a planted git.cmd ran (exit 66), and a
+rem legitimate directory whose name contains ! stopped resolving (exit 127). Both proven on
+rem Windows 11; both disappear when the wrapper pins its own state.
+setlocal DisableDelayedExpansion
 set "orca_real=%ORCA_REAL___ORCA_UPPER_COMMAND__%"
 set "orca_wrapper_dir=%~dp0"
 set "orca_legacy_wrapper_dir=%ORCA_ATTRIBUTION_SHIM_DIR%"
