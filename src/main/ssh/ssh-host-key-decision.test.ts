@@ -104,6 +104,23 @@ describe('deciding what to do with a presented host key', () => {
       expect(decideHostKey(input({ strictHostKeyChecking: value })).action).toBe('accept')
     })
 
+    // Phase 1 has no dialog, so `ask` behaves as `accept-new` — deliberate, and the reason the
+    // whole defence can ship without a modal. This pins the equivalence so Phase 2 has to break it
+    // ON PURPOSE: `accept-new` must still not prompt, `ask` must.
+    it('treats accept-new and ask alike while no dialog exists', () => {
+      const acceptNew = decideHostKey(input({ strictHostKeyChecking: 'accept-new' }))
+      const ask = decideHostKey(input({ strictHostKeyChecking: 'ask' }))
+      expect(acceptNew.action).toBe('accept-and-remember')
+      expect(ask.action).toBe(acceptNew.action)
+    })
+
+    // accept-new is a real OpenSSH value, not a typo — it must never fall into the strict branch.
+    it('does not treat accept-new as strict', () => {
+      expect(decideHostKey(input({ strictHostKeyChecking: 'accept-new' })).action).not.toBe(
+        'reject'
+      )
+    })
+
     it('treats an unrecognised value as ask', () => {
       expect(decideHostKey(input({ strictHostKeyChecking: 'banana' })).action).toBe(
         'accept-and-remember'

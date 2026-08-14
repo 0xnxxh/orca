@@ -141,6 +141,55 @@ describe('resolveKnownHostsFiles', () => {
   })
 })
 
+// Verbatim `ssh -F <config> -G probe` output from OpenSSH_10.2p1 for a Host block setting HostName,
+// HostKeyAlias, StrictHostKeyChecking accept-new, two UserKnownHostsFile paths and Port 2222.
+// Hand-written fixtures elsewhere encode what we EXPECT ssh to print; this one is what it does
+// print, which is the only version that catches us guessing the format wrong.
+const REAL_SSH_G_OUTPUT = [
+  'hostname real.example.com',
+  'port 2222',
+  'checkhostip no',
+  'hashknownhosts no',
+  'stricthostkeychecking accept-new',
+  'updatehostkeys false',
+  'hostkeyalias alias-host',
+  'globalknownhostsfile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2',
+  'userknownhostsfile /Users/nwparker/.ssh/kh_one /Users/nwparker/.ssh/kh_two'
+].join('\n')
+
+describe('parsing real ssh -G output', () => {
+  const resolved = parseSshGOutput(REAL_SSH_G_OUTPUT)
+
+  // Every file list arrives space-separated on ONE line, not repeated per line. Reading it as a
+  // single path would silently consult nothing for anyone with more than one file configured.
+  it('splits both known_hosts lists on one line each', () => {
+    expect(resolved.userKnownHostsFiles).toEqual([
+      '/Users/nwparker/.ssh/kh_one',
+      '/Users/nwparker/.ssh/kh_two'
+    ])
+    expect(resolved.globalKnownHostsFiles).toEqual([
+      '/etc/ssh/ssh_known_hosts',
+      '/etc/ssh/ssh_known_hosts2'
+    ])
+  })
+
+  // Drives the whole strict branch; a miss defaults it to 'ask' and quietly loses the user's policy.
+  it('reads StrictHostKeyChecking, including accept-new', () => {
+    expect(resolved.strictHostKeyChecking).toBe('accept-new')
+  })
+
+  // The one name that outranks the dialed host. A bastion tunnelled through localhost:port depends
+  // on it, and it is the only field allowed to override what we key the lookup on.
+  it('reads HostKeyAlias and prefers it for the lookup', () => {
+    expect(resolved.hostKeyAlias).toBe('alias-host')
+    expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1')).toBe('alias-host')
+  })
+
+  it('reads the non-default port', () => {
+    expect(resolved.port).toBe(2222)
+  })
+})
+
 describe('loadKnownHostsEntries', () => {
   it('unions the entries of every file', async () => {
     const root = await createRoot()
