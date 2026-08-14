@@ -240,6 +240,10 @@ describe('AgentMapTimeRangeField', () => {
     expect(layoutCalls.repacks - mountRepacks).toBe(EXPECTED_DRAG_REPACKS)
     expect(packCalls.count - mountPacks).toBe(EXPECTED_DRAG_REPACKS)
     expect(layoutCalls.updates - mountUpdates).toBe(EXPECTED_DRAG_REPACKS)
+    expect(screen.getByText('of 7 agents shown').parentElement).toHaveTextContent(
+      '1 of 7 agents shown'
+    )
+    await waitFor(() => expect(document.querySelectorAll('[data-agent-map-agent]')).toHaveLength(1))
   })
 
   it('updates the thumb and readout at every intermediate drag stop', async () => {
@@ -308,6 +312,49 @@ describe('AgentMapTimeRangeField', () => {
       'aria-valuenow',
       String(AGENT_MAP_TIME_MAX_INDEX)
     )
+  })
+
+  it('does not commit an interaction invalidated by an external range change', () => {
+    const onChange = vi.fn()
+    const field = (range: AgentMapTimeRange): React.JSX.Element => (
+      <AgentMapTimeRangeField label="Session lifespan" range={range} onChange={onChange} />
+    )
+    const view = render(field({ min: 0, max: AGENT_MAP_TIME_MAX_INDEX }))
+    const thumb = screen.getByRole('slider', { name: 'Session lifespan maximum' })
+
+    act(() => {
+      fireEvent.pointerDown(thumb, { pointerId: 1, button: 0, clientX: SLIDER_WIDTH })
+      fireEvent.pointerMove(thumb, { pointerId: 1, clientX: clientXForStop(8) })
+    })
+    view.rerender(field({ min: 4, max: 9 }))
+    act(() => {
+      fireEvent.pointerMove(thumb, { pointerId: 1, clientX: clientXForStop(7) })
+      fireEvent.pointerUp(thumb, { pointerId: 1, clientX: clientXForStop(7) })
+    })
+
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('discards a pointer draft when the interaction is canceled', () => {
+    const onChange = vi.fn()
+    render(
+      <AgentMapTimeRangeField
+        label="Session lifespan"
+        range={{ min: 0, max: AGENT_MAP_TIME_MAX_INDEX }}
+        onChange={onChange}
+      />
+    )
+    const thumb = screen.getByRole('slider', { name: 'Session lifespan maximum' })
+
+    act(() => {
+      fireEvent.pointerDown(thumb, { pointerId: 1, button: 0, clientX: SLIDER_WIDTH })
+      fireEvent.pointerMove(thumb, { pointerId: 1, clientX: clientXForStop(8) })
+    })
+    expect(screen.getByText('0 – 12h')).toBeInTheDocument()
+    fireEvent.pointerCancel(thumb, { pointerId: 1 })
+
+    expect(screen.getByText('any')).toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('commits a keyboard arrow step', () => {
