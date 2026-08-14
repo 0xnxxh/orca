@@ -259,8 +259,7 @@ describe('agreement with a live OpenSSH client', () => {
 
   // `ssh-keygen -H` on `[127.0.0.1]:2222 ssh-ed25519 <SERVER_KEY>`. The salt and hash are its own
   // output, so this pins that we hash the BRACKETED candidate — hashing the bare host would miss.
-  const HASHED_BRACKETED_ENTRY =
-    '|1|nfzVRh+YQtj+wIqjDBYLW2cryfQ=|Q51GJuiWfUGYpAPuRPyFC/FpKj4= ssh-ed25519 ' + SERVER_KEY
+  const HASHED_BRACKETED_ENTRY = `|1|nfzVRh+YQtj+wIqjDBYLW2cryfQ=|Q51GJuiWfUGYpAPuRPyFC/FpKj4= ssh-ed25519 ${SERVER_KEY}`
 
   it('accepts the hashed bracketed entry ssh-keygen -H produced, as ssh did', () => {
     expect(
