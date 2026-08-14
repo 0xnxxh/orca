@@ -1,3 +1,7 @@
+import {
+  getWorkspaceCleanupCandidateIdentity,
+  getWorkspaceCleanupHostIdentity
+} from '../../../../shared/workspace-cleanup-host-identity'
 import { describe, expect, it, vi } from 'vitest'
 import type { AppState } from '../types'
 import type { WorkspaceCleanupScanResult } from '../../../../shared/workspace-cleanup'
@@ -68,6 +72,9 @@ describe('workspace cleanup removal and protection', () => {
         .removeWorkspaceCleanupCandidates(candidates.map((candidate) => candidate.worktreeId))
     ).resolves.toEqual({
       removedIds: expect.arrayContaining(candidates.map((candidate) => candidate.worktreeId)),
+      removedIdentities: expect.arrayContaining(
+        candidates.map((candidate) => getWorkspaceCleanupCandidateIdentity(candidate))
+      ),
       failures: []
     })
 
@@ -103,6 +110,7 @@ describe('workspace cleanup removal and protection', () => {
       store.getState().removeWorkspaceCleanupCandidates([candidate.worktreeId])
     ).resolves.toEqual({
       removedIds: [candidate.worktreeId],
+      removedIdentities: [getWorkspaceCleanupHostIdentity('local', candidate.worktreeId)],
       failures: [],
       preservedBranches: [
         {
@@ -242,6 +250,7 @@ describe('workspace cleanup removal and protection', () => {
 
     await expect(removal).resolves.toEqual({
       removedIds: [WORKTREE_ID],
+      removedIdentities: [getWorkspaceCleanupHostIdentity('local', WORKTREE_ID)],
       failures: []
     })
     expect(removeWorktree).toHaveBeenCalledWith(WORKTREE_ID, false, {
@@ -355,6 +364,7 @@ describe('workspace cleanup removal and protection', () => {
     await expect(store.getState().removeWorkspaceCleanupCandidates([WORKTREE_ID])).resolves.toEqual(
       {
         removedIds: [WORKTREE_ID],
+        removedIdentities: [getWorkspaceCleanupHostIdentity('local', WORKTREE_ID)],
         failures: []
       }
     )
@@ -385,6 +395,7 @@ describe('workspace cleanup removal and protection', () => {
       })
     ).resolves.toEqual({
       removedIds: [],
+      removedIdentities: [],
       failures: [
         {
           worktreeId: WORKTREE_ID,
@@ -415,7 +426,11 @@ describe('workspace cleanup removal and protection', () => {
       store.getState().removeWorkspaceCleanupCandidates([WORKTREE_ID], {
         approvedCandidates: [approvedCandidate]
       })
-    ).resolves.toEqual({ removedIds: [WORKTREE_ID], failures: [] })
+    ).resolves.toEqual({
+      removedIds: [WORKTREE_ID],
+      removedIdentities: [getWorkspaceCleanupHostIdentity('local', WORKTREE_ID)],
+      failures: []
+    })
     expect(removeWorktree).toHaveBeenCalledWith(WORKTREE_ID, true, {
       suppressPreservedBranchToast: true
     })
@@ -447,6 +462,7 @@ describe('workspace cleanup removal and protection', () => {
       })
     ).resolves.toEqual({
       removedIds: [],
+      removedIdentities: [],
       failures: [
         {
           worktreeId: WORKTREE_ID,

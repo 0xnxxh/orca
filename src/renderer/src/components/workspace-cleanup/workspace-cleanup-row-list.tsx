@@ -18,15 +18,17 @@ export type WorkspaceCleanupRowListState = {
   loading: boolean
   deletionPhaseByWorktreeId: Record<string, WorkspaceCleanupDeletionPhase>
   deletingWorktreeIds: ReadonlySet<string>
+  /** Host-qualified identities (see WorkspaceCleanupFacets.identity). */
   expandedRowIds: ReadonlySet<string>
   selectedIds: ReadonlySet<string>
   gitPendingWorktreeIds: ReadonlySet<string>
+  /** Keyed by host-qualified identity so a failure marks only its own host's row. */
   rowFailures: Record<string, string>
   removalInFlight: boolean
   scrollElement: HTMLDivElement | null
   onClearFilters: () => void
-  onToggleExpanded: (worktreeId: string) => void
-  onToggleSelected: (worktreeId: string) => void
+  onToggleExpanded: (identity: string) => void
+  onToggleSelected: (identity: string) => void
   onView: (candidate: WorkspaceCleanupCandidate) => void
   onIgnore: (candidate: WorkspaceCleanupCandidate) => void
   onRemove: (candidate: WorkspaceCleanupCandidate) => void
@@ -67,11 +69,12 @@ export function WorkspaceCleanupRowList(props: WorkspaceCleanupRowListState): Re
         scrollElement={props.scrollElement}
         renderRow={(row, index) => (
           <CandidateRow
-            key={row.worktreeId}
+            key={row.identity}
+            identity={row.identity}
             candidate={row.candidate}
             reviewInfo={row.review}
             last={rows.length > 1 && index === rows.length - 1}
-            expanded={props.expandedRowIds.has(row.worktreeId)}
+            expanded={props.expandedRowIds.has(row.identity)}
             lastActivityLabel={formatWorkspaceCleanupRelativeTime(row.lastActivityAt, props.now)}
             sizeLabel={row.sizeBytes === null ? null : formatBytes(row.sizeBytes)}
             workspaceStatusLabel={row.workspaceStatusLabel}
@@ -81,10 +84,9 @@ export function WorkspaceCleanupRowList(props: WorkspaceCleanupRowListState): Re
             // removal batch or this row's own deletion disables it.
             removing={props.removalInFlight || props.deletingWorktreeIds.has(row.worktreeId)}
             selected={
-              props.selectedIds.has(row.worktreeId) &&
-              !props.deletingWorktreeIds.has(row.worktreeId)
+              props.selectedIds.has(row.identity) && !props.deletingWorktreeIds.has(row.worktreeId)
             }
-            failure={props.rowFailures[row.worktreeId]}
+            failure={props.rowFailures[row.identity]}
             onToggleExpanded={props.onToggleExpanded}
             onToggleSelected={props.onToggleSelected}
             onView={props.onView}

@@ -37,6 +37,8 @@ export type WorkspaceCleanupFacetSources = {
 export type WorkspaceCleanupFacets = {
   candidate: WorkspaceCleanupCandidate
   worktreeId: string
+  /** Host-qualified row key; `worktreeId` alone repeats across hosts (STA-4343). */
+  identity: string
   repoId: string
   repoName: string
   displayName: string
@@ -107,6 +109,7 @@ export function buildWorkspaceCleanupFacets(
   const facets: Omit<WorkspaceCleanupFacets, 'searchText'> = {
     candidate,
     worktreeId: candidate.worktreeId,
+    identity: hostIdentity,
     repoId: candidate.repoId,
     repoName: candidate.repoName,
     displayName: candidate.displayName,

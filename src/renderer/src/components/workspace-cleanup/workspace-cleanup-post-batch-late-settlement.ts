@@ -136,6 +136,7 @@ async function reconcilePostBatchLateSettlement(
   }
 
   const removedIds: string[] = []
+  const removedIdentities: string[] = []
   const lateFailures: WorkspaceCleanupFailure[] = []
   const pendingSettlementFailures = new Set<WorkspaceCleanupFailure>()
   const findBlockingDescendants = (
@@ -214,6 +215,7 @@ async function reconcilePostBatchLateSettlement(
         ? outcome.result
         : {
             removedIds: [],
+            removedIdentities: [],
             failures: [
               {
                 worktreeId: ancestor.worktreeId,
@@ -224,6 +226,7 @@ async function reconcilePostBatchLateSettlement(
             ]
           }
     removedIds.push(...result.removedIds)
+    removedIdentities.push(...(result.removedIdentities ?? []))
     if (result.failures.length > 0) {
       state.failedCandidates.push(ancestor)
       lateFailures.push(...result.failures)
@@ -232,7 +235,7 @@ async function reconcilePostBatchLateSettlement(
 
   releaseSettledPostBatchState(state)
   return {
-    result: { removedIds, failures: lateFailures },
+    result: { removedIds, removedIdentities, failures: lateFailures },
     pendingSettlementFailures:
       pendingSettlementFailures.size > 0 ? pendingSettlementFailures : undefined
   }

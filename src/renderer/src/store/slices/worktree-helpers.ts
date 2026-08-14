@@ -254,6 +254,10 @@ export type WorktreeSlice = {
       // PTY stopped; `force` alone is set by the ordinary delete confirmation.
       allowUnverifiedPtyStop?: boolean
       snapshotPruneBatchId?: string
+      // Why (STA-4343): `repoId::path` ids repeat across hosts. A caller that
+      // knows which host it confirmed pins the removal there; routing that
+      // cannot land on that host fails instead of deleting elsewhere.
+      requiredExecutionHostId?: ExecutionHostId
     }
   ) => Promise<({ ok: true } & RendererRemoveWorktreeResult) | { ok: false; error: string }>
   markWorktreesDeleting: (worktreeIds: readonly string[]) => void

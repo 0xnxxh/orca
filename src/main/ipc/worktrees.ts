@@ -215,21 +215,11 @@ function getRepoForWorktreeRemoval(
   repoId: string,
   hostId?: ExecutionHostId
 ): Repo | undefined {
-  const matches = store
-    .getRepos()
-    .filter((repo) => repo.id === repoId && (!hostId || getRepoExecutionHostId(repo) === hostId))
   // Why: deletion must never guess between host owners; legacy unscoped calls work only while the repo id has one unique owner.
-  if (matches.length === 1) {
-    return matches[0]
-  }
-  if (matches.length > 1) {
-    return undefined
-  }
-  const legacyMatch = store.getRepo(repoId)
-  return legacyMatch && (!hostId || getRepoExecutionHostId(legacyMatch) === hostId)
-    ? legacyMatch
-    : undefined
+  const owner = resolveWorktreeRemovalRepoOwner(store, repoId, hostId)
+  return owner.kind === 'resolved' ? owner.repo : undefined
 }
+import { resolveWorktreeRemovalRepoOwner } from '../worktree-removal-repo-owner'
 import { classifyWorkspaceCreateError } from './workspace-create-error-classifier'
 import { advertisedUrlWatcher } from '../ports/advertised-url-watcher'
 import { localhostWorktreeLabelProxy } from '../localhost-worktree-label-proxy'

@@ -1,5 +1,6 @@
 import { translate } from '@/i18n/i18n'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
+import { getWorkspaceCleanupCandidateIdentity } from '../../../../shared/workspace-cleanup-host-identity'
 
 export function formatVanishedSelectionNotice(count: number): string {
   return count === 1
@@ -14,7 +15,8 @@ export function formatVanishedSelectionNotice(count: number): string {
       )
 }
 
-export function getDefaultSelectedWorkspaceCleanupIds(
+/** Host-qualified identities, so a default selection cannot span two hosts' rows. */
+export function getDefaultSelectedWorkspaceCleanupIdentities(
   candidates: readonly WorkspaceCleanupCandidate[],
   deletingWorktreeIds: ReadonlySet<string> = new Set()
 ): Set<string> {
@@ -23,7 +25,7 @@ export function getDefaultSelectedWorkspaceCleanupIds(
       .filter(
         (candidate) => candidate.selectedByDefault && !deletingWorktreeIds.has(candidate.worktreeId)
       )
-      .map((candidate) => candidate.worktreeId)
+      .map((candidate) => getWorkspaceCleanupCandidateIdentity(candidate))
   )
 }
 

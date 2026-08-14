@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getWorkspaceCleanupCandidateIdentity } from './workspace-cleanup-host-identity'
 import { CandidateRow } from './workspace-cleanup-candidate-row'
 import { makeCandidate } from './workspace-cleanup-presentation-fixtures'
 
@@ -37,6 +38,7 @@ describe('CandidateRow', () => {
     act(() => {
       root?.render(
         <CandidateRow
+          identity={getWorkspaceCleanupCandidateIdentity(candidate)}
           candidate={candidate}
           expanded={false}
           last
@@ -68,6 +70,7 @@ describe('CandidateRow', () => {
     act(() => {
       root?.render(
         <CandidateRow
+          identity={getWorkspaceCleanupCandidateIdentity(candidate)}
           candidate={candidate}
           expanded={false}
           last
@@ -103,6 +106,7 @@ describe('CandidateRow', () => {
     act(() => {
       root?.render(
         <CandidateRow
+          identity={getWorkspaceCleanupCandidateIdentity(candidate)}
           candidate={candidate}
           expanded={false}
           last
@@ -134,6 +138,7 @@ describe('CandidateRow', () => {
     act(() => {
       root?.render(
         <CandidateRow
+          identity={getWorkspaceCleanupCandidateIdentity(candidate)}
           candidate={candidate}
           expanded={false}
           last
@@ -169,6 +174,7 @@ describe('CandidateRow', () => {
     act(() => {
       root?.render(
         <CandidateRow
+          identity={getWorkspaceCleanupCandidateIdentity(candidate)}
           candidate={candidate}
           deletionPhase={deletionPhase}
           expanded={false}

@@ -998,6 +998,7 @@ import {
   stripOrcaProvenanceMetaUpdates,
   UNREGISTERED_MISSING_WORKTREE_MESSAGE
 } from '../worktree-removal-safety'
+import { resolveWorktreeRemovalRepoOwner } from '../worktree-removal-repo-owner'
 import { prefetchWorktreeCreateBase } from '../worktree-create-base-prefetch'
 import { prepareLocalWorktreeRootForRepo } from '../worktree-root-preparation'
 import {
@@ -24806,7 +24807,20 @@ export class OrcaRuntimeService {
       // Why: CLI, mobile and headless serve delete through here rather than the IPC handler; without
       // this span their freezes are as invisible as desktop deletes were before `worktree.remove`.
       return withWorktreeSpan({ stage: 'remove', path: removalTarget.path }, async () => {
-        const repo = store.getRepo(removalTarget.repoId)
+        // Why (STA-4343): a repo id can exist once per host. Honor the caller's
+        // host qualifier, and refuse an unqualified delete the runtime cannot
+        // pin to one owner rather than deleting a same-id workspace elsewhere.
+        const repoOwner = resolveWorktreeRemovalRepoOwner(
+          store,
+          removalTarget.repoId,
+          cleanupHostId
+        )
+        if (repoOwner.kind === 'ambiguous') {
+          throw new Error(
+            `Workspace identity is ambiguous across hosts: ${removalTarget.id}. Retry with an explicit host.`
+          )
+        }
+        const repo = repoOwner.kind === 'resolved' ? repoOwner.repo : undefined
         if (!repo) {
           const orphanHost = parseExecutionHostId(store.getWorktreeMeta(removalTarget.id)?.hostId)
           const sshPtyProvider =

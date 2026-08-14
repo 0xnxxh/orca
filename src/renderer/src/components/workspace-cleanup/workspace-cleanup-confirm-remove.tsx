@@ -21,6 +21,7 @@ import { StatusPill } from './workspace-cleanup-status-pill'
 import { WorkspaceCleanupCandidateList } from './workspace-cleanup-candidate-list'
 import {
   getWorkspaceCleanupCandidateHostId,
+  getWorkspaceCleanupCandidateIdentity,
   getWorkspaceCleanupHostIdentity
 } from './workspace-cleanup-host-identity'
 
@@ -138,7 +139,7 @@ export function WorkspaceCleanupConfirmRemove({
             estimatedRowHeight={CONFIRM_REMOVE_ROW_ESTIMATE_PX}
             renderRow={(candidate, index) => (
               <ConfirmRemoveRow
-                key={candidate.worktreeId}
+                key={getWorkspaceCleanupCandidateIdentity(candidate)}
                 candidate={candidate}
                 now={now}
                 reviewInfo={

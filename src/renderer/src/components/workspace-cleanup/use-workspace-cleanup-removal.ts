@@ -3,6 +3,11 @@ import { useAppStore } from '@/store'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
 import {
+  getWorkspaceCleanupCandidateIdentity,
+  getWorkspaceCleanupHostIdentity
+} from '../../../../shared/workspace-cleanup-host-identity'
+import type { WorkspaceCleanupFailure } from '@/store/slices/workspace-cleanup'
+import {
   startWorkspaceCleanupBackgroundRemoval,
   type WorkspaceCleanupRemovalProgress
 } from './workspace-cleanup-background-removal'
@@ -15,6 +20,7 @@ export type WorkspaceCleanupRemovalController = {
   removalInFlight: boolean
   /** Synchronous guard; state alone lags a second confirm click. */
   removalInFlightRef: { current: boolean }
+  /** Keyed by host-qualified identity so a failure marks only the confirmed host's row. */
   rowFailures: Record<string, string>
   resetRowFailures: () => void
   resetForReopen: () => void
@@ -32,7 +38,7 @@ export function useWorkspaceCleanupRemoval({
   onDeselect,
   closeModal
 }: {
-  onDeselect: (removedIds: readonly string[]) => void
+  onDeselect: (removedIdentities: readonly string[]) => void
   closeModal: () => void
 }): WorkspaceCleanupRemovalController {
   const removeCandidates = useAppStore((s) => s.removeWorkspaceCleanupCandidates)
@@ -177,13 +183,13 @@ export function useWorkspaceCleanupRemoval({
         onResult: (result) => {
           const nextFailures: Record<string, string> = {}
           for (const failure of result.failures) {
-            nextFailures[failure.worktreeId] = failure.message
+            nextFailures[getWorkspaceCleanupFailureIdentity(failure)] = failure.message
             // Why: defensively covers failures that never reached onRowFailed.
             clearQueuedDeleteState(failure.worktreeId)
           }
           if (mountedRef.current) {
             setRowFailures(nextFailures)
-            onDeselect(result.removedIds)
+            onDeselect(result.removedIdentities)
             settle()
           }
           removalInFlightRef.current = false
@@ -199,15 +205,15 @@ export function useWorkspaceCleanupRemoval({
           }
           setRowFailures((current) => {
             const next = { ...current }
-            for (const id of result.removedIds) {
-              delete next[id]
+            for (const identity of result.removedIdentities) {
+              delete next[identity]
             }
             for (const failure of result.failures) {
-              next[failure.worktreeId] = failure.message
+              next[getWorkspaceCleanupFailureIdentity(failure)] = failure.message
             }
             return next
           })
-          onDeselect(result.removedIds)
+          onDeselect(result.removedIdentities)
         },
         onError: handleRemovalError
       })
@@ -239,4 +245,11 @@ export function useWorkspaceCleanupRemoval({
     cancelConfirmRemove,
     backToList
   }
+}
+
+/** Row key for a failure; an id-only failure lands on the local row, as before. */
+function getWorkspaceCleanupFailureIdentity(failure: WorkspaceCleanupFailure): string {
+  return failure.executionHostId
+    ? getWorkspaceCleanupHostIdentity(failure.executionHostId, failure.worktreeId)
+    : getWorkspaceCleanupCandidateIdentity({ worktreeId: failure.worktreeId })
 }

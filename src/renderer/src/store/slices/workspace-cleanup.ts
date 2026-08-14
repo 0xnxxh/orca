@@ -3,15 +3,14 @@
    one store state contract. */
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
   type AgentStatusEntry
 } from '../../../../shared/agent-status-types'
 import {
   WORKSPACE_CLEANUP_CLASSIFIER_VERSION,
-  WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT,
   applyWorkspaceCleanupPolicy,
-  canQueueWorkspaceCleanupCandidate,
   canSelectWorkspaceCleanupCandidate,
   shouldForceWorkspaceCleanupRemoval,
   shouldHideWorkspaceCleanupCandidate,
@@ -22,8 +21,17 @@ import {
   type WorkspaceCleanupScanProgress,
   type WorkspaceCleanupScanResult
 } from '../../../../shared/workspace-cleanup'
+import {
+  getWorkspaceCleanupCandidateHostId,
+  getWorkspaceCleanupCandidateIdentity
+} from '../../../../shared/workspace-cleanup-host-identity'
 import { mapWithConcurrency } from '../../../../shared/map-with-concurrency'
 import { hydrateWorkspaceCleanupScanFromCache } from './workspace-cleanup-cache-hydration'
+import {
+  preflightWorkspaceCleanupCandidates,
+  resolveWorkspaceCleanupRemovalTargets,
+  type WorkspaceCleanupRemovalTarget
+} from './workspace-cleanup-removal-targets'
 import {
   getInFlightWorkspaceCleanupScan,
   hasInFlightWorkspaceCleanupScan,
@@ -34,17 +42,20 @@ import {
   throwIfWorkspaceCleanupScanSuperseded
 } from './workspace-cleanup-broad-scan-registry'
 import { classifyTitleActivity, isExplicitAgentStatusFresh } from '@/lib/pane-agent-evidence'
-import { translate } from '@/i18n/i18n'
 import type { PreservedBranchCleanup } from '@/lib/preserved-branch-cleanup'
 
 export type WorkspaceCleanupFailure = {
   worktreeId: string
+  /** Which host's row failed; absent only for a row with no host evidence. */
+  executionHostId?: ExecutionHostId
   displayName: string
   message: string
 }
 
 export type WorkspaceCleanupRemoveResult = {
   removedIds: string[]
+  /** Host-qualified keys of the rows actually removed, parallel to removedIds. */
+  removedIdentities: string[]
   failures: WorkspaceCleanupFailure[]
   preservedBranches?: PreservedBranchCleanup[]
 }
@@ -104,11 +115,6 @@ type WorkspaceCleanupEnrichmentProjection = {
 const RECENT_VISIBLE_CONTEXT_MS = 24 * 60 * 60 * 1000
 const VIEWED_FROM_CLEANUP_MS = 2 * 60 * 60 * 1000
 export const WORKSPACE_CLEANUP_ENRICHMENT_CONCURRENCY = 8
-// Why: dirty-files/unpushed-commits are concrete known work at risk; unknown-base
-// and git-status-error only mean "couldn't verify". A row approved while
-// unverifiable must still fail if real work becomes visible before removal.
-const WORKSPACE_CLEANUP_CONCRETE_RISK_BLOCKERS = ['dirty-files', 'unpushed-commits'] as const
-
 let latestWorkspaceCleanupScanToken = 0
 let finalizedWorkspaceCleanupScanToken = 0
 let workspaceCleanupProgressQueue: {
@@ -126,7 +132,7 @@ let workspaceCleanupProgressCandidateIndex: {
   scanToken: number
   scanId: string
   candidates: WorkspaceCleanupCandidate[]
-  indexesByWorktreeId: Map<string, number>
+  indexesByIdentity: Map<string, number>
 } | null = null
 
 const SHELL_PROCESS_NAMES = new Set([
@@ -307,6 +313,9 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
     const now = Date.now()
     const dismissals = candidates.map((candidate) => ({
       worktreeId: candidate.worktreeId,
+      // Why (STA-4343): ignoring one host's row must not hide the same-id row
+      // on another host; the stored host scopes the match.
+      executionHostId: getWorkspaceCleanupCandidateHostId(candidate),
       dismissedAt: now,
       fingerprint: candidate.fingerprint,
       classifierVersion: WORKSPACE_CLEANUP_CLASSIFIER_VERSION
@@ -354,30 +363,51 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
 
   removeWorkspaceCleanupCandidates: async (worktreeIds, options) => {
     const removedIds: string[] = []
+    const removedIdentities = new Set<string>()
     const failures: WorkspaceCleanupFailure[] = []
     const preservedBranches: PreservedBranchCleanup[] = []
-    const approvedCandidatesByWorktreeId = new Map(
-      (options?.approvedCandidates ?? []).map((candidate) => [candidate.worktreeId, candidate])
+
+    // Why (STA-4343): the confirmed row — not the id — names the host to delete
+    // on. Everything below carries that owner so nothing re-derives it from the
+    // active workspace, which owns the same `repoId::path` id on another host.
+    const targets = resolveWorkspaceCleanupRemovalTargets(
+      worktreeIds,
+      get(),
+      options?.approvedCandidates ? { approvedCandidates: options.approvedCandidates } : {}
     )
+    const removableTargets: WorkspaceCleanupRemovalTarget[] = []
+    for (const target of targets) {
+      if (target.kind === 'unresolved') {
+        failures.push(target.failure)
+        continue
+      }
+      removableTargets.push(target)
+    }
 
     const preflights = await preflightWorkspaceCleanupCandidates(
-      worktreeIds,
+      removableTargets,
       get,
-      approvedCandidatesByWorktreeId
+      (candidates, state) =>
+        enrichWorkspaceCleanupCandidates(candidates, state, { applyDismissals: false })
     )
-    const candidatesToRemove: WorkspaceCleanupCandidate[] = []
+    const targetsToRemove: {
+      target: WorkspaceCleanupRemovalTarget
+      candidate: WorkspaceCleanupCandidate
+    }[] = []
 
     for (const preflight of preflights) {
       if (!preflight.ok) {
         failures.push(preflight.failure)
         continue
       }
-      candidatesToRemove.push(preflight.candidate)
+      targetsToRemove.push({ target: preflight.target, candidate: preflight.candidate })
     }
 
     // Why: nested workspaces can belong to different repos; parent removal must
     // not race child cleanup hooks, PTY teardown, or metadata deletion.
-    for (const candidate of [...candidatesToRemove].sort((a, b) => b.path.length - a.path.length)) {
+    for (const { target, candidate } of [...targetsToRemove].sort(
+      (a, b) => b.candidate.path.length - a.candidate.path.length
+    )) {
       const result = await get().removeWorktree(
         candidate.worktreeId,
         shouldForceWorkspaceCleanupRemoval(candidate),
@@ -387,11 +417,14 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
           suppressPreservedBranchToast: true,
           ...(options?.snapshotPruneBatchId
             ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
-            : {})
+            : {}),
+          // Fails the removal closed when routing cannot land on this host.
+          ...(target.executionHostId ? { requiredExecutionHostId: target.executionHostId } : {})
         }
       )
       if (result.ok) {
         removedIds.push(candidate.worktreeId)
+        removedIdentities.add(getWorkspaceCleanupCandidateIdentity(candidate))
         if (result.preservedBranch) {
           preservedBranches.push({
             worktreeId: candidate.worktreeId,
@@ -402,6 +435,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
       } else {
         failures.push({
           worktreeId: candidate.worktreeId,
+          ...(target.executionHostId ? { executionHostId: target.executionHostId } : {}),
           displayName: candidate.displayName,
           message: result.error
         })
@@ -410,37 +444,50 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
 
     if (removedIds.length > 0) {
       invalidateWorkspaceCleanupScanProgress()
-      const removedIdSet = new Set(removedIds)
-      set((state) => ({
-        workspaceCleanupLoading: false,
-        workspaceCleanupScan: state.workspaceCleanupScan
-          ? {
-              ...state.workspaceCleanupScan,
-              candidates: state.workspaceCleanupScan.candidates.filter(
-                (candidate) => !removedIdSet.has(candidate.worktreeId)
-              )
-            }
-          : state.workspaceCleanupScan,
-        // Why: dismissals and viewed marks for removed worktrees are dead
-        // weight in the store and in every persisted-dismissals write.
-        workspaceCleanupDismissals: pruneWorkspaceCleanupRecord(
-          state.workspaceCleanupDismissals,
-          removedIdSet
-        ),
-        workspaceCleanupViewedCandidates: pruneWorkspaceCleanupRecord(
-          state.workspaceCleanupViewedCandidates,
-          removedIdSet
+      let prunableWorktreeIds = new Set(removedIds)
+      set((state) => {
+        const remainingCandidates = state.workspaceCleanupScan?.candidates.filter(
+          (candidate) => !removedIdentities.has(getWorkspaceCleanupCandidateIdentity(candidate))
         )
-      }))
-      void window.api.workspaceCleanup
-        .dismiss({ dismissals: [], removedWorktreeIds: removedIds })
-        .catch((error: unknown) => {
-          console.warn('Failed to prune persisted cleanup dismissals', error)
-        })
+        // Why: a same-id row on another host survives this removal, and its
+        // dismissal/viewed marks are keyed by worktree id alone — dropping them
+        // would resurrect a row the user already ignored.
+        const survivingWorktreeIds = new Set(
+          (remainingCandidates ?? []).map((candidate) => candidate.worktreeId)
+        )
+        prunableWorktreeIds = new Set(
+          removedIds.filter((worktreeId) => !survivingWorktreeIds.has(worktreeId))
+        )
+        return {
+          workspaceCleanupLoading: false,
+          workspaceCleanupScan:
+            state.workspaceCleanupScan && remainingCandidates
+              ? { ...state.workspaceCleanupScan, candidates: remainingCandidates }
+              : state.workspaceCleanupScan,
+          // Why: dismissals and viewed marks for removed worktrees are dead
+          // weight in the store and in every persisted-dismissals write.
+          workspaceCleanupDismissals: pruneWorkspaceCleanupRecord(
+            state.workspaceCleanupDismissals,
+            prunableWorktreeIds
+          ),
+          workspaceCleanupViewedCandidates: pruneWorkspaceCleanupRecord(
+            state.workspaceCleanupViewedCandidates,
+            prunableWorktreeIds
+          )
+        }
+      })
+      if (prunableWorktreeIds.size > 0) {
+        void window.api.workspaceCleanup
+          .dismiss({ dismissals: [], removedWorktreeIds: [...prunableWorktreeIds] })
+          .catch((error: unknown) => {
+            console.warn('Failed to prune persisted cleanup dismissals', error)
+          })
+      }
     }
 
     return {
       removedIds,
+      removedIdentities: [...removedIdentities],
       failures,
       ...(preservedBranches.length > 0 ? { preservedBranches } : {})
     }
@@ -654,9 +701,12 @@ function mergeWorkspaceCleanupProgressCandidates({
   )
   const merged = [...indexCache.candidates]
   for (const candidate of nextCandidates) {
-    const existingIndex = indexCache.indexesByWorktreeId.get(candidate.worktreeId)
+    // Why (STA-4343): two hosts publish the same `repoId::path` id; keying the
+    // merge on the id alone made one host's row overwrite the other's.
+    const identity = getWorkspaceCleanupCandidateIdentity(candidate)
+    const existingIndex = indexCache.indexesByIdentity.get(identity)
     if (existingIndex === undefined) {
-      indexCache.indexesByWorktreeId.set(candidate.worktreeId, merged.length)
+      indexCache.indexesByIdentity.set(identity, merged.length)
       merged.push(candidate)
       continue
     }
@@ -666,7 +716,7 @@ function mergeWorkspaceCleanupProgressCandidates({
     scanToken,
     scanId: progress.scanId,
     candidates: merged,
-    indexesByWorktreeId: indexCache.indexesByWorktreeId
+    indexesByIdentity: indexCache.indexesByIdentity
   }
   return merged
 }
@@ -677,7 +727,7 @@ function getWorkspaceCleanupProgressCandidateIndex(
   scanToken: number
 ): {
   candidates: WorkspaceCleanupCandidate[]
-  indexesByWorktreeId: Map<string, number>
+  indexesByIdentity: Map<string, number>
 } {
   if (
     workspaceCleanupProgressCandidateIndex?.scanToken === scanToken &&
@@ -689,8 +739,8 @@ function getWorkspaceCleanupProgressCandidateIndex(
 
   return {
     candidates: [...candidates],
-    indexesByWorktreeId: new Map(
-      candidates.map((candidate, index) => [candidate.worktreeId, index])
+    indexesByIdentity: new Map(
+      candidates.map((candidate, index) => [getWorkspaceCleanupCandidateIdentity(candidate), index])
     )
   }
 }
@@ -996,10 +1046,6 @@ function applyDismissal(
   })
 }
 
-type WorkspaceCleanupPreflightResult =
-  | { ok: true; candidate: WorkspaceCleanupCandidate }
-  | { ok: false; failure: WorkspaceCleanupFailure }
-
 function pruneWorkspaceCleanupRecord<T>(
   record: Record<string, T>,
   removedIds: ReadonlySet<string>
@@ -1008,97 +1054,6 @@ function pruneWorkspaceCleanupRecord<T>(
     return record
   }
   return Object.fromEntries(Object.entries(record).filter(([id]) => !removedIds.has(id)))
-}
-
-async function preflightWorkspaceCleanupCandidates(
-  worktreeIds: readonly string[],
-  getState: () => AppState,
-  approvedCandidatesByWorktreeId: ReadonlyMap<string, WorkspaceCleanupCandidate>
-): Promise<WorkspaceCleanupPreflightResult[]> {
-  // Why: one batched scan per chunk replaces a git worktree-list + activity
-  // read per row; chunks stay under main's silent target truncation limit.
-  const candidatesByWorktreeId = new Map<string, WorkspaceCleanupCandidate>()
-  for (let start = 0; start < worktreeIds.length; start += WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT) {
-    const chunk = worktreeIds.slice(start, start + WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT)
-    const scan = await window.api.workspaceCleanup.scan({
-      worktreeIds: [...chunk],
-      scanId: crypto.randomUUID(),
-      refreshActivity: true
-    })
-    const enriched = await enrichWorkspaceCleanupCandidates(scan.candidates, getState(), {
-      applyDismissals: false
-    })
-    for (const candidate of enriched) {
-      candidatesByWorktreeId.set(candidate.worktreeId, candidate)
-    }
-  }
-  return worktreeIds.map((worktreeId) =>
-    evaluateWorkspaceCleanupPreflight(
-      worktreeId,
-      candidatesByWorktreeId.get(worktreeId),
-      approvedCandidatesByWorktreeId.get(worktreeId)
-    )
-  )
-}
-
-function evaluateWorkspaceCleanupPreflight(
-  worktreeId: string,
-  candidate: WorkspaceCleanupCandidate | undefined,
-  approvedCandidate?: WorkspaceCleanupCandidate
-): WorkspaceCleanupPreflightResult {
-  if (!candidate) {
-    return {
-      ok: false,
-      failure: {
-        worktreeId,
-        displayName: worktreeId,
-        message: translate(
-          'auto.store.slices.workspace.cleanup.9d6e531da6',
-          'Workspace no longer exists.'
-        )
-      }
-    }
-  }
-  if (!canQueueWorkspaceCleanupCandidate(candidate)) {
-    return {
-      ok: false,
-      failure: {
-        worktreeId,
-        displayName: candidate.displayName,
-        message: candidate.blockers.length
-          ? candidate.blockers.join(', ')
-          : 'Workspace needs another look before removal.'
-      }
-    }
-  }
-  // Why: this row may be removed minutes after the confirm click. If it now
-  // needs a force removal the user never approved (new dirt, unpushed work,
-  // or a git error since confirmation), fail it instead of force-deleting.
-  if (approvedCandidate) {
-    const escalatedToForce =
-      shouldForceWorkspaceCleanupRemoval(candidate) &&
-      !shouldForceWorkspaceCleanupRemoval(approvedCandidate)
-    // Why: an approved row that was already force-flagged for an unverifiable
-    // reason must still fail when real dirt/unpushed work is now visible.
-    const revealedConcreteRisk = WORKSPACE_CLEANUP_CONCRETE_RISK_BLOCKERS.some(
-      (blocker) =>
-        candidate.blockers.includes(blocker) && !approvedCandidate.blockers.includes(blocker)
-    )
-    if (escalatedToForce || revealedConcreteRisk) {
-      return {
-        ok: false,
-        failure: {
-          worktreeId,
-          displayName: candidate.displayName,
-          message: translate(
-            'auto.store.slices.workspace.cleanup.changedSinceConfirmation',
-            'Workspace changed after confirmation. Refresh to review it before removing.'
-          )
-        }
-      }
-    }
-  }
-  return { ok: true, candidate }
 }
 
 function buildWorkspaceCleanupAgentStatusIndex(

@@ -92,8 +92,11 @@ import {
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import {
   resolveWorktreeOperationRoute,
+  resolveWorktreeOperationRouteForHost,
   resolveWorktreeOperationRouteResult,
-  settingsForWorktreeOperationRoute
+  resolveWorktreeOperationRouteResultForHost,
+  settingsForWorktreeOperationRoute,
+  type WorktreeOperationRoute
 } from '@/lib/worktree-operation-route'
 import { captureWorktreeOperationGenerationGuard } from '@/lib/worktree-operation-generation'
 import { getEnvironmentSshStateGeneration } from './runtime-environment-ssh'
@@ -143,6 +146,10 @@ export type { WorktreeSlice, WorktreeDeleteState } from './worktree-helpers'
 const REMOTE_WORKTREE_LIST_PARITY_LIMIT = 10_000
 const WORKTREE_REMOVAL_AMBIGUOUS_ERROR =
   'Workspace identity is ambiguous across hosts. Refresh projects and try again.'
+// Why (STA-4343): the confirmed row names the host to delete on. If the route
+// no longer lands there, deleting anyway destroys another host's workspace.
+export const WORKTREE_REMOVAL_HOST_CHANGED_ERROR =
+  'This workspace is no longer on the host you confirmed. Refresh and review it again.'
 const ACTIVE_WORKTREE_TERMINAL_PREP_DELAY_MS = 300
 const ACTIVE_WORKTREE_TERMINAL_PREP_INPUT_QUIET_MS = 450
 const ACTIVE_WORKTREE_TERMINAL_PREP_IDLE_TIMEOUT_MS = 180
@@ -4215,17 +4222,40 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   removeWorktree: async (worktreeId, force, options) => {
     const forgetLocalOnly = options?.mode === 'forget-local'
-    const removalRoute = resolveWorktreeOperationRoute(get(), worktreeId)
+    // Why (STA-4343): a qualified caller confirmed ONE host's row; route at that
+    // host instead of the active workspace's, which owns the same id elsewhere.
+    const requiredExecutionHostId = options?.requiredExecutionHostId
+    const resolveRemovalRoute = (): WorktreeOperationRoute | null =>
+      requiredExecutionHostId
+        ? resolveWorktreeOperationRouteForHost(get(), worktreeId, requiredExecutionHostId)
+        : resolveWorktreeOperationRoute(get(), worktreeId)
+    const removalRoute = resolveRemovalRoute()
     if (!forgetLocalOnly && !removalRoute) {
       return { ok: false, error: WORKTREE_REMOVAL_AMBIGUOUS_ERROR }
     }
-    const hostId = removalRoute?.executionHostId ?? undefined
+    // Fail closed rather than delete on a host the caller never confirmed.
+    if (
+      requiredExecutionHostId &&
+      removalRoute &&
+      removalRoute.executionHostId !== requiredExecutionHostId
+    ) {
+      return { ok: false, error: WORKTREE_REMOVAL_HOST_CHANGED_ERROR }
+    }
+    const hostId = removalRoute?.executionHostId ?? requiredExecutionHostId ?? undefined
     const removalGenerationGuard = removalRoute
       ? captureWorktreeOperationGenerationGuard(
           get,
           worktreeId,
           removalRoute,
-          () => new Error(WORKTREE_REMOVAL_AMBIGUOUS_ERROR)
+          () =>
+            new Error(
+              requiredExecutionHostId
+                ? WORKTREE_REMOVAL_HOST_CHANGED_ERROR
+                : WORKTREE_REMOVAL_AMBIGUOUS_ERROR
+            ),
+          // Why: every mid-flight re-check must re-resolve at the CONFIRMED host,
+          // or the active host's route would read as "ownership changed".
+          requiredExecutionHostId ? resolveRemovalRoute : undefined
         )
       : null
     set((s) => ({
@@ -4313,7 +4343,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           (isRuntimeRepoNotFoundError(error) || isRuntimeSelectorNotFoundError(error))
         ) {
           // Missing means stale mirror; ambiguous or changed ownership must fail closed.
-          const currentResolution = resolveWorktreeOperationRouteResult(get(), worktreeId)
+          const currentResolution = requiredExecutionHostId
+            ? resolveWorktreeOperationRouteResultForHost(get(), worktreeId, requiredExecutionHostId)
+            : resolveWorktreeOperationRouteResult(get(), worktreeId)
           if (currentResolution.kind === 'ambiguous') {
             throw error
           }
