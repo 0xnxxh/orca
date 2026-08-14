@@ -63,6 +63,12 @@ function createRuntime() {
   return { runtime, repos, removeProject, removeProjectForHost }
 }
 
+/** The scan bookkeeping is private, and its whole point is that nothing observable survives it. */
+function scanGenerations(runtime: OrcaRuntimeService): Map<string, number> {
+  return (runtime as unknown as { worktreeScanGenerations: Map<string, number> })
+    .worktreeScanGenerations
+}
+
 describe('repo.rm with the same repo id on two execution hosts', () => {
   it('removes only the resolved row when a path selector picks the SSH host copy', async () => {
     const { runtime, repos } = createRuntime()
@@ -78,6 +84,27 @@ describe('repo.rm with the same repo id on two execution hosts', () => {
     await runtime.removeProject('name:Dup Local')
 
     expect(repos.map((repo) => repo.path)).toEqual(['/remote/dup'])
+  })
+
+  it('keeps the scan generation while the id still has a row on the sibling host', async () => {
+    const { runtime } = createRuntime()
+    scanGenerations(runtime).set('dup', 4)
+
+    await runtime.removeProject('path:/remote/dup')
+
+    // The surviving local row shares this map key, so its in-flight scan still needs out-ranking.
+    expect(scanGenerations(runtime).get('dup')).toBe(5)
+  })
+
+  it('drops the scan generation once the last row of an id is removed', async () => {
+    const { runtime } = createRuntime()
+    scanGenerations(runtime).set('dup', 4)
+
+    await runtime.removeProject('path:/remote/dup')
+    await runtime.removeProject('path:/laptop/dup')
+
+    // Bumping instead would strand one entry per removed repo for the life of the process.
+    expect(scanGenerations(runtime).has('dup')).toBe(false)
   })
 
   it('refuses a bare duplicated id rather than guessing a host', async () => {

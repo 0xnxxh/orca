@@ -97,6 +97,13 @@ function makeStore(options: { connectionId?: string; repoCount?: number; repoPat
       return metaById[id]
     },
     removeWorktreeMeta: () => {},
+    removeProject: (id: string) => {
+      for (let index = repos.length - 1; index >= 0; index -= 1) {
+        if (repos[index].id === id) {
+          repos.splice(index, 1)
+        }
+      }
+    },
     getAllWorktreeLineage: () => ({}),
     getAllWorkspaceLineage: () => ({}),
     removeWorktreeLineage: vi.fn(),
@@ -540,6 +547,34 @@ describe('worktree scan admin-fingerprint gate', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('does not let a scan still in flight repopulate a removed repo', async () => {
+    let releaseScan: (rows: unknown[]) => void = () => {}
+    listWorktreesStrictMock.mockReturnValueOnce(
+      new Promise<unknown[]>((resolve) => {
+        releaseScan = resolve
+      })
+    )
+    const { runtime, list } = makeRuntime()
+    const first = list()
+    await drainMicrotasks()
+
+    await runtime.removeProject(REPO_ID)
+    // Dropping the generation is only safe because the write-back also demands in-flight promise
+    // identity; releasing the scan afterwards is what proves that second guard carries it alone.
+    releaseScan([
+      { path: REPO_PATH, head: 'abc', branch: 'main', isBare: false, isMainWorktree: true }
+    ])
+    await first
+    await drainMicrotasks()
+
+    const runtimeState = runtime as unknown as {
+      worktreeScanCache: Map<string, unknown>
+      worktreeScanGenerations: Map<string, number>
+    }
+    expect(runtimeState.worktreeScanCache.has(REPO_ID)).toBe(false)
+    expect(runtimeState.worktreeScanGenerations.has(REPO_ID)).toBe(false)
   })
 
   it('shares one probe and one scan across concurrent callers', async () => {

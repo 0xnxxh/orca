@@ -18525,9 +18525,10 @@ export class OrcaRuntimeService {
     } catch (err) {
       if (repoWasCreated) {
         // Why: a failed link must not leave a new repo registration or stale host caches behind.
+        // `repoWasCreated` means this id was unknown until now, so removing it retires it entirely.
         this.store?.removeProject?.(initialRepo.id)
         this.invalidateResolvedWorktreeCache()
-        this.invalidateWorktreeScanCacheForRepo(initialRepo.id)
+        this.forgetWorktreeScanStateForRepo(initialRepo.id)
         invalidateAuthorizedRootsCache()
         this.notifyReposChanged()
       }
@@ -19461,7 +19462,11 @@ export class OrcaRuntimeService {
     }
     this.terminalTopologyRevisionByRepoId.delete(repo.id)
     this.invalidateResolvedWorktreeCache()
-    this.invalidateWorktreeScanCacheForRepo(repo.id)
+    if (idExistsOnOtherHost) {
+      this.invalidateWorktreeScanCacheForRepo(repo.id)
+    } else {
+      this.forgetWorktreeScanStateForRepo(repo.id)
+    }
     invalidateAuthorizedRootsCache()
     this.notifyReposChanged()
     return { removed: true }
@@ -29756,6 +29761,24 @@ export class OrcaRuntimeService {
 
   private invalidateWorktreeScanCacheForRepo(repoId: string): void {
     this.worktreeScanGenerations.set(repoId, (this.worktreeScanGenerations.get(repoId) ?? 0) + 1)
+    this.worktreeScanCache.delete(repoId)
+    this.worktreeScanInFlight.delete(repoId)
+  }
+
+  /**
+   * Drop every scan record a repo id leaves behind once its last registration is gone.
+   *
+   * Why not just `invalidateWorktreeScanCacheForRepo`: that one *bumps* the generation rather than
+   * dropping it, because a live repo's next scan still has to out-rank the one it interrupted. A
+   * removed id has no next scan, so the counter guards nothing and would keep one entry per removed
+   * repo for the life of the process. Dropping it is safe because the write-back additionally
+   * requires in-flight promise identity, which this clears in the same breath.
+   *
+   * Only for the last row of an id: sibling execution hosts share these maps by repo id, so a
+   * per-host removal must fall back to plain invalidation.
+   */
+  private forgetWorktreeScanStateForRepo(repoId: string): void {
+    this.worktreeScanGenerations.delete(repoId)
     this.worktreeScanCache.delete(repoId)
     this.worktreeScanInFlight.delete(repoId)
   }
