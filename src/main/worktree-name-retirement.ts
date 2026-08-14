@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { MARINE_CREATURES } from '../shared/marine-creatures'
 import { getRepoExecutionHostId } from '../shared/execution-host'
 import { isFolderRepo } from '../shared/repo-kind'
-import type { GlobalSettings, Repo } from '../shared/types'
+import type { GlobalSettings } from '../shared/global-settings-types'
+import type { Repo } from '../shared/repo-types'
 import {
   encodeClaudeProjectPath,
   isClaudeProjectDirInScope

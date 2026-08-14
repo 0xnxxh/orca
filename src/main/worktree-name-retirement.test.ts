@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MARINE_CREATURES } from '../shared/marine-creatures'
-import type { GlobalSettings, Repo } from '../shared/types'
+import type { GlobalSettings } from '../shared/global-settings-types'
+import type { Repo } from '../shared/repo-types'
 import {
   collectRetiredNamesFromLeafNames,
   discoverRetiredWorktreeNames,
