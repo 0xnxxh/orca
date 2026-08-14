@@ -2365,6 +2365,42 @@ describe('fetchWorktrees', () => {
     expect(hasDismissedHugeRepoWarning(beginHugeRepoWarningProbe(hidden))).toBe(false)
   })
 
+  it('refreshes only repos owned by the changed visibility-default host', async () => {
+    const store = createTestStore()
+    mockApi.worktrees.listDetected.mockImplementationOnce(async (args) =>
+      qualifyDetectedResult(args, makeDetectedResult(args.repoId, []))
+    )
+    store.setState({
+      repos: [
+        {
+          id: 'local-repo',
+          path: '/local',
+          displayName: 'Local',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: 'local'
+        },
+        {
+          id: 'runtime-repo',
+          path: '/remote',
+          displayName: 'Remote',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: 'runtime:env-1'
+        }
+      ],
+      hasHydratedWorktreePurge: true
+    } as Partial<AppState>)
+
+    await store.getState().fetchAllWorktrees({ visibilityOwnerHostId: 'local' })
+
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledOnce()
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledWith(
+      expect.objectContaining({ repoId: 'local-repo', executionHostId: 'local' })
+    )
+    expect(mockApi.runtime.call).not.toHaveBeenCalled()
+  })
+
   it('purges session-only tab keys after an authoritative refresh', async () => {
     const store = createTestStore()
     const deleted = makeWorktree({

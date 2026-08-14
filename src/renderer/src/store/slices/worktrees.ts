@@ -85,6 +85,7 @@ import {
   getSettingsFocusedExecutionHostId,
   LOCAL_EXECUTION_HOST_ID,
   parseExecutionHostId,
+  toRuntimeExecutionHostId,
   toSshExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
@@ -3481,10 +3482,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   }) as WorktreeSlice['fetchWorktrees'],
 
   fetchAllWorktrees: async (options) => {
-    const { repos } = get()
+    const repos = options?.visibilityOwnerHostId
+      ? get().repos.filter((repo) => {
+          const repoHost = parseExecutionHostId(getRepoExecutionHostId(repo))
+          const ownerHost = parseExecutionHostId(options.visibilityOwnerHostId)
+          return ownerHost?.kind === 'runtime'
+            ? repoHost?.kind === 'runtime' && repoHost.environmentId === ownerHost.environmentId
+            : repoHost?.kind !== 'runtime'
+        })
+      : get().repos
 
     // Why: after the one-shot hydration purge, later calls only refresh cached lists — no IPC double-probe for the per-repo success signal.
-    if (get().hasHydratedWorktreePurge) {
+    if (get().hasHydratedWorktreePurge || options?.visibilityOwnerHostId) {
       await mapReposForWorktreeRefresh(repos, async (r) => {
         try {
           const requestStartedState = get()
@@ -6264,12 +6273,33 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
       const restoredSessionOwnersChanged =
         survivingRestoredSessionOwners !== s.restoredRuntimeHostIdByWorkspaceSessionKey
+      let survivingVisibilityDefaults = s.worktreeVisibilityDefaultsByHost
+      for (const environmentId of removed) {
+        const hostId = toRuntimeExecutionHostId(environmentId)
+        if (hostId in survivingVisibilityDefaults) {
+          if (survivingVisibilityDefaults === s.worktreeVisibilityDefaultsByHost) {
+            survivingVisibilityDefaults = { ...survivingVisibilityDefaults }
+          }
+          delete survivingVisibilityDefaults[hostId]
+        }
+      }
+      const visibilityDefaultsChanged =
+        survivingVisibilityDefaults !== s.worktreeVisibilityDefaultsByHost
+      const visibilitySupportChanged = removed.has(
+        s.worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId ?? ''
+      )
+      const visibilitySourceSupportChanged = removed.has(
+        s.worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId ?? ''
+      )
       if (
         !reposChanged &&
         !setupsChanged &&
         !worktreesChanged &&
         !detectedChanged &&
         !restoredSessionOwnersChanged &&
+        !visibilityDefaultsChanged &&
+        !visibilitySupportChanged &&
+        !visibilitySourceSupportChanged &&
         removedWorktreeIds.size === 0
       ) {
         return s
@@ -6293,6 +6323,15 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...(detectedChanged ? { detectedWorktreesByRepo } : {}),
         ...(restoredSessionOwnersChanged
           ? { restoredRuntimeHostIdByWorkspaceSessionKey: survivingRestoredSessionOwners }
+          : {}),
+        ...(visibilityDefaultsChanged
+          ? { worktreeVisibilityDefaultsByHost: survivingVisibilityDefaults }
+          : {}),
+        ...(visibilitySupportChanged
+          ? { worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: null }
+          : {}),
+        ...(visibilitySourceSupportChanged
+          ? { worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId: null }
           : {}),
         ...(rowsChanged ? { sortEpoch: s.sortEpoch + 1 } : {}),
         // Why: mirror validateRepoScopedUi so a filtered/active sidebar can't reference a purged repo id.

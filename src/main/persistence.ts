@@ -227,6 +227,10 @@ import {
 import { clampMarkdownTocPanelWidth } from '../shared/markdown-toc-panel-width'
 import { clampCombinedDiffFileTreeWidth } from '../shared/combined-diff-file-tree-width'
 import { isLegacyRepoForExternalWorktreeVisibility } from '../shared/worktree/ownership'
+import {
+  migrateExternalWorktreeVisibilityDefaults,
+  normalizeWorktreeVisibilityDefaults
+} from '../shared/external-worktree-visibility'
 import { sanitizeRepoIcon } from '../shared/repo-icon'
 import { normalizeRepoBadgeColor } from '../shared/repo-badge-color'
 import {
@@ -3216,6 +3220,13 @@ export class Store {
         // Merge with defaults in case new fields were added
         const homeDir = homedir()
         const defaults = getDefaultPersistedState(homeDir)
+        const migratedExternalVisibility = migrateExternalWorktreeVisibilityDefaults(
+          Array.isArray(parsed.repos) ? parsed.repos : [],
+          parsed.settings?.worktreeVisibilityDefaults
+        )
+        if (migratedExternalVisibility.changed) {
+          this.loadNeedsSave = true
+        }
         const migratedTerminalScrollback = migrateTerminalScrollbackRows(parsed.settings)
         if (migratedTerminalScrollback.needsSave) {
           this.loadNeedsSave = true
@@ -3485,6 +3496,7 @@ export class Store {
             parsed.featureInteractionTelemetryBuckets
           ),
           projectGroups: normalizedProjectGroups,
+          repos: migratedExternalVisibility.repos,
           folderWorkspaces: normalizeFolderWorkspaces(
             parsed.folderWorkspaces,
             normalizedProjectGroups
@@ -3503,6 +3515,7 @@ export class Store {
             ...defaults.settings,
             // Why (#7977): keep persisted experimentalNewWorktreeCardStyle:true — v1.4.130's onboarding auto-wrote it as a plain boolean, so it's indistinguishable from a real opt-in; only the default changed.
             ...stripRetiredGlobalSettings(parsed.settings),
+            worktreeVisibilityDefaults: migratedExternalVisibility.defaults,
             prBotAuthorOverrides: normalizePRBotAuthorOverrides(
               parsed.settings?.prBotAuthorOverrides
             ),
@@ -5007,11 +5020,9 @@ export class Store {
         | 'symlinkPaths'
         | 'issueSourcePreference'
         | 'forkSyncMode'
-        | 'externalWorktreeVisibility'
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
-        | 'agentWorktreeVisibility'
         | 'customWorktreeVisibilitySources'
         | 'worktreeVisibilitySourcePreferences'
         | 'projectGroupId'
@@ -5019,6 +5030,8 @@ export class Store {
         | 'projectHostSetupMethod'
       >
     > & {
+      externalWorktreeVisibility?: Repo['externalWorktreeVisibility'] | null
+      agentWorktreeVisibility?: Repo['agentWorktreeVisibility'] | null
       sourceControlAi?: Repo['sourceControlAi'] | null
       externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
     },
@@ -5079,6 +5092,22 @@ export class Store {
     if ('worktreeBasePath' in sanitizedUpdates && sanitizedUpdates.worktreeBasePath === undefined) {
       delete repo.worktreeBasePath
       delete sanitizedUpdates.worktreeBasePath
+    }
+    if (
+      'externalWorktreeVisibility' in sanitizedUpdates &&
+      (sanitizedUpdates.externalWorktreeVisibility === undefined ||
+        sanitizedUpdates.externalWorktreeVisibility === null)
+    ) {
+      delete repo.externalWorktreeVisibility
+      repo.externalWorktreeVisibilityLegacy = false
+      delete sanitizedUpdates.externalWorktreeVisibility
+    }
+    if (
+      'agentWorktreeVisibility' in sanitizedUpdates &&
+      sanitizedUpdates.agentWorktreeVisibility === null
+    ) {
+      delete repo.agentWorktreeVisibility
+      delete sanitizedUpdates.agentWorktreeVisibility
     }
     if (
       'externalWorktreeVisibility' in sanitizedUpdates &&
@@ -5959,6 +5988,14 @@ export class Store {
     }
     if ('disabledTuiAgents' in updates) {
       sanitizedUpdates.disabledTuiAgents = normalizeDisabledTuiAgents(updates.disabledTuiAgents)
+    }
+    if ('worktreeVisibilityDefaults' in updates) {
+      sanitizedUpdates.worktreeVisibilityDefaults = {
+        ...this.state.settings.worktreeVisibilityDefaults,
+        ...(normalizeWorktreeVisibilityDefaults(updates.worktreeVisibilityDefaults) ?? {
+          external: 'hide'
+        })
+      }
     }
     if ('agentDefaultArgs' in updates) {
       sanitizedUpdates.agentDefaultArgs = normalizeTuiAgentArgsRecord(updates.agentDefaultArgs)

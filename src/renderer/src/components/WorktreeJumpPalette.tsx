@@ -727,6 +727,7 @@ function WorktreeJumpPaletteContent({
   const retainedAgentsByPaneKey = useAppStore((s) => s.retainedAgentsByPaneKey)
   const sleepingAgentSessionsByPaneKey = useAppStore((s) => s.sleepingAgentSessionsByPaneKey)
   const settings = useAppStore((s) => s.settings)
+  const worktreeVisibilityDefaultsByHost = useAppStore((s) => s.worktreeVisibilityDefaultsByHost)
   const sshTargetLabels = useAppStore((s) => s.sshTargetLabels)
   const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
   const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
@@ -1498,7 +1499,9 @@ function WorktreeJumpPaletteContent({
     }
     for (const repoId of buildImportedWorktreesCardCandidates({
       repos,
-      detectedWorktreesByRepo
+      detectedWorktreesByRepo,
+      settings,
+      visibilityDefaultsByHost: worktreeVisibilityDefaultsByHost
     }).keys()) {
       ids.add(repoId)
     }
@@ -1506,7 +1509,15 @@ function WorktreeJumpPaletteContent({
       ids.add(creation.request.repoId)
     }
     return ids
-  }, [allWorktrees, detectedWorktreesByRepo, pendingWorktreeCreations, repos, worktreesByRepo])
+  }, [
+    allWorktrees,
+    detectedWorktreesByRepo,
+    pendingWorktreeCreations,
+    repos,
+    settings,
+    worktreeVisibilityDefaultsByHost,
+    worktreesByRepo
+  ])
   const hasAnyProjectSearchCandidates = useMemo(
     () =>
       hasCmdJProjectSearchCandidates({
