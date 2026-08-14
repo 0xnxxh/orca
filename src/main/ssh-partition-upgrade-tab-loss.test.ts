@@ -29,6 +29,7 @@ const SSH_PARTITION = toSshExecutionHostId(TARGET)
 const WORKTREE = 'repo-1:wt-1'
 const TAB = 'tab-1'
 const LEAF = '3f1c9a2e-7b4d-4e1a-9c8f-2d5e6a7b8c90'
+const LEAF_TWO = '9a8b7c6d-5e4f-4a3b-8c9d-0e1f2a3b4c5d'
 const PTY = toAppSshPtyId(TARGET, 'pty-1')
 
 async function createStore(state: Record<string, unknown> = {}) {
@@ -214,6 +215,17 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       ...second.tabsByWorktree[WORKTREE],
       { ...second.tabsByWorktree[WORKTREE][0], id: 'tab-2' }
     ]
+    // Its layout too: a pane is only hoisted when both halves survived, so a tab without one
+    // would be refused — correctly, but it would not exercise what this test is about.
+    second.terminalLayoutsByTabId = {
+      ...second.terminalLayoutsByTabId,
+      'tab-2': {
+        root: { type: 'leaf' as const, leafId: LEAF_TWO },
+        activeLeafId: LEAF_TWO,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [LEAF_TWO]: PTY }
+      }
+    }
     upgraded.setWorkspaceSession(second as never, SSH_PARTITION)
     upgraded.flushOrThrow()
 
@@ -222,5 +234,25 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       (relaunched.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).map((tab) => tab.id).sort(),
       'a pane the partition gained after the first hoist was stranded'
     ).toEqual(['tab-1', 'tab-2'])
+  })
+
+  // Field-level salvage can drop a tab record while keeping its layout, or the reverse. Moving
+  // half a pane into local is worse than leaving it quarantined: a tab with no layout blanks, and
+  // an orphan layout is unreachable.
+  it('leaves a partially-salvaged pane in the partition rather than half-hoisting it', async () => {
+    const before = await createStore()
+    const partial = paneSession()
+    // The layout survives, the tab record does not — exactly what salvage produces.
+    partial.tabsByWorktree = { [WORKTREE]: [] }
+    before.setWorkspaceSession(partial as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const store = await reopenStore()
+
+    expect(
+      store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB],
+      'an orphan layout was hoisted into local with no tab to reach it'
+    ).toBeUndefined()
   })
 })

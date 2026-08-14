@@ -2889,7 +2889,16 @@ export function hoistSshPartitionsIntoLocalSession(
     for (const [worktreeId, tabs] of Object.entries(partition.tabsByWorktree ?? {})) {
       const existing = local.tabsByWorktree?.[worktreeId] ?? []
       const known = new Set(existing.map((tab) => tab.id))
-      const missing = (tabs ?? []).filter((tab) => !known.has(tab.id) && !alreadyHoisted.has(tab.id))
+      // Both halves or neither: field-level salvage can drop a tab while keeping its layout, or
+      // the reverse. A tab with no layout blanks its pane, and an orphan layout is unreachable —
+      // so a partially-salvaged pane stays quarantined in the partition rather than moving the
+      // damage into local.
+      const missing = (tabs ?? []).filter(
+        (tab) =>
+          !known.has(tab.id) &&
+          !alreadyHoisted.has(tab.id) &&
+          Boolean(partition.terminalLayoutsByTabId?.[tab.id])
+      )
       if (missing.length === 0) {
         continue
       }
@@ -2901,6 +2910,13 @@ export function hoistSshPartitionsIntoLocalSession(
     }
     for (const [tabId, layout] of Object.entries(partition.terminalLayoutsByTabId ?? {})) {
       if (!layout || local.terminalLayoutsByTabId?.[tabId]) {
+        continue
+      }
+      // Only alongside a tab that exists somewhere; an orphan layout is dead weight in local.
+      const hasTab = Object.values(local.tabsByWorktree ?? {}).some((tabs) =>
+        (tabs ?? []).some((tab) => tab.id === tabId)
+      )
+      if (!hasTab) {
         continue
       }
       local.terminalLayoutsByTabId = { ...local.terminalLayoutsByTabId, [tabId]: layout }
@@ -4014,9 +4030,9 @@ export class Store {
     // removed one, so the list grew for the life of the profile. Retention sits far above the
     // pane-recovery grace window, which is the only remaining reader.
     const retainedLeases = (result.sshRemotePtyLeases ?? []).filter(
+      // normalizeSshRemotePtyLease always populates updatedAt, so no absent-timestamp case here.
       (lease) =>
         lease.state !== 'expired' ||
-        !lease.updatedAt ||
         Date.now() - lease.updatedAt <= EXPIRED_SSH_LEASE_RETENTION_MS
     )
     if (retainedLeases.length !== (result.sshRemotePtyLeases ?? []).length) {
