@@ -11,8 +11,10 @@ describe('Run coordinator handle history migration', () => {
 
   afterEach(() => {
     db?.close()
+    db = undefined
     if (tempDir) {
       rmSync(tempDir, { recursive: true, force: true })
+      tempDir = undefined
     }
   })
 

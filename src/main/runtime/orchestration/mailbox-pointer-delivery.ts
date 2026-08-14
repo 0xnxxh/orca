@@ -194,20 +194,22 @@ export class OrchestrationMailboxPointerDelivery<TWaiter extends OrchestrationMe
       )
       return
     }
-    void writeResult.then(
-      (accepted) =>
-        this.finishPointerWrite(
-          leaf,
-          mailboxHandle,
-          unread,
-          newestSequence,
-          ptyId,
-          flight,
-          accepted
-        ),
-      () =>
-        this.finishPointerWrite(leaf, mailboxHandle, unread, newestSequence, ptyId, flight, false)
-    )
+    void writeResult
+      .then(
+        (accepted) =>
+          this.finishPointerWrite(
+            leaf,
+            mailboxHandle,
+            unread,
+            newestSequence,
+            ptyId,
+            flight,
+            accepted
+          ),
+        () =>
+          this.finishPointerWrite(leaf, mailboxHandle, unread, newestSequence, ptyId, flight, false)
+      )
+      .catch(() => undefined)
   }
 
   private finishPointerWrite(

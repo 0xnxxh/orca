@@ -21,6 +21,9 @@ export function writeToSshPtyWithSettlement(
   relayPtyId: string,
   data: string
 ): Promise<boolean> {
+  if (mux.isDisposed()) {
+    return Promise.resolve(false)
+  }
   return new Promise((resolve) => {
     let settled = false
     const finish = (accepted: boolean): void => {

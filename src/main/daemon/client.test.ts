@@ -632,6 +632,20 @@ describe('DaemonClient', () => {
       expect(writeSpy).not.toHaveBeenCalled()
     })
 
+    it('rejects an oversized settled notification without disconnecting', async () => {
+      await startMockDaemon()
+      client = new DaemonClient({ socketPath, tokenPath })
+      await client.ensureConnected()
+      const internals = client as unknown as { controlSocket: Socket }
+      const writeSpy = vi.spyOn(internals.controlSocket, 'write')
+
+      await expect(
+        client.notifyWithSettlement('write', { data: 'x'.repeat(NDJSON_MAX_LINE_BYTES) })
+      ).resolves.toBe(false)
+      expect(writeSpy).not.toHaveBeenCalled()
+      expect(client.isConnected()).toBe(true)
+    })
+
     it('reports a dropped delivery when the socket write throws', async () => {
       await startMockDaemon()
       client = new DaemonClient({ socketPath, tokenPath })

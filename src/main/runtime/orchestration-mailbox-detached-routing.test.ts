@@ -421,4 +421,33 @@ describe('orchestration detached mailbox routing', () => {
     ).toBe(true)
     db.close()
   })
+
+  it('does not rebind active Dispatch mail through coordinator history', () => {
+    const db = createDatabase('orca-mailbox-coordinator-dispatch-overlap-')
+    const run = db.createRun({
+      objective: 'Coordinator and Dispatch overlap',
+      coordinatorHandle: TERMINAL_HANDLE,
+      coordinatorPaneKey: PANE_KEY
+    })
+    const task = db.createTask({ spec: 'Same-handle worker', runId: run.id })
+    db.createDispatchContext(task.id, TERMINAL_HANDLE, PANE_KEY)
+    const message = db.insertMessage({
+      from: 'term_sender',
+      to: TERMINAL_HANDLE,
+      subject: 'Dispatch-owned mail',
+      type: 'dispatch',
+      runId: run.id,
+      deliveryContract: 'current_delivery'
+    })
+
+    db.bindRun({
+      runId: run.id,
+      coordinatorHandle: 'term_new_coordinator',
+      coordinatorPaneKey:
+        '55555555-5555-4555-8555-555555555555:66666666-6666-4666-8666-666666666666'
+    })
+
+    expect(db.getMessageById(message.id)?.to_handle).toBe(TERMINAL_HANDLE)
+    db.close()
+  })
 })

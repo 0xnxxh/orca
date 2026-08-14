@@ -196,7 +196,7 @@ describe('federation relay acknowledgments', () => {
     })
 
     await syncFederatedDispatch(runtime, dispatch.id)
-    await Promise.resolve()
+    await new Promise<void>((resolve) => setImmediate(resolve))
     expect(settled).toBe(false)
     expect(db.getMessageById('msg_federated_1')?.read).toBe(1)
 

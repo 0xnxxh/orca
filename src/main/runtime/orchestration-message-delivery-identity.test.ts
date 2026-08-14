@@ -158,7 +158,7 @@ async function runBuiltCli(
   child.stdout.on('data', (chunk) => stdout.push(chunk))
   child.stderr.on('data', (chunk) => stderr.push(chunk))
   const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once('exit', (code) => resolve(code ?? 1))
+    child.once('close', (code) => resolve(code ?? 1))
     child.once('error', reject)
   })
   return { exitCode, stdout: stdout.join(''), stderr: stderr.join('') }

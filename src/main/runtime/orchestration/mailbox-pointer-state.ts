@@ -57,9 +57,15 @@ export class OrchestrationMailboxPointerState {
     reservedTypes?: ReadonlySet<string>
   ): void {
     const parked = this.parkedDeliveriesByPtyId.get(ptyId) ?? new Map()
-    const prior = parked.get(mailboxHandle)?.reservedTypes
-    const merged =
-      prior || reservedTypes ? new Set([...(prior ?? []), ...(reservedTypes ?? [])]) : undefined
+    const priorEntry = parked.get(mailboxHandle)
+    const prior = priorEntry?.reservedTypes
+    const current = reservedTypes && reservedTypes.size > 0 ? reservedTypes : undefined
+    let merged: Set<string> | undefined
+    if (!priorEntry) {
+      merged = current ? new Set(current) : undefined
+    } else if (prior && current) {
+      merged = new Set([...prior, ...current])
+    }
     parked.set(mailboxHandle, { leaf, reservedTypes: merged })
     this.parkedDeliveriesByPtyId.set(ptyId, parked)
   }
@@ -118,14 +124,17 @@ export class OrchestrationMailboxPointerState {
 
   parkRedelivery(mailboxHandle: string, reservedTypes?: ReadonlySet<string>): void {
     const prior = this.parkedTypesByMailbox.get(mailboxHandle)
-    if (!this.parkedTypesByMailbox.has(mailboxHandle) && !reservedTypes) {
+    const hasPrior = this.parkedTypesByMailbox.has(mailboxHandle)
+    const current = reservedTypes && reservedTypes.size > 0 ? reservedTypes : undefined
+    if (!hasPrior) {
+      this.parkedTypesByMailbox.set(mailboxHandle, current ? new Set(current) : null)
+      return
+    }
+    if (prior == null || current === undefined) {
       this.parkedTypesByMailbox.set(mailboxHandle, null)
       return
     }
-    this.parkedTypesByMailbox.set(
-      mailboxHandle,
-      new Set([...(prior ?? []), ...(reservedTypes ?? [])])
-    )
+    this.parkedTypesByMailbox.set(mailboxHandle, new Set([...prior, ...current]))
   }
 
   takeRedelivery(mailboxHandle: string, force: boolean): ReadonlySet<string> | null | undefined {

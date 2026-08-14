@@ -1304,7 +1304,7 @@ describe('orchestration RPC methods', () => {
     it('waits for a filtered Run peek without consuming the arrival', async () => {
       setup()
       let arrivedId = ''
-      vi.spyOn(runtime, 'waitForMessage').mockImplementation(async () => {
+      const waitSpy = vi.spyOn(runtime, 'waitForMessage').mockImplementation(async () => {
         arrivedId = db.insertMessage({
           from: 'worker',
           to: `run:${activeRunId}`,
@@ -1324,6 +1324,10 @@ describe('orchestration RPC methods', () => {
       })) as { messages: { id: string }[]; count: number }
 
       expect(peeked).toMatchObject({ count: 1, messages: [{ id: arrivedId }] })
+      expect(waitSpy).toHaveBeenCalledWith(
+        `run:${activeRunId}`,
+        expect.objectContaining({ typeFilter: ['worker_done'] })
+      )
       expect(db.getMessageById(arrivedId)?.read).toBe(0)
       expect(db.getUnreadMessages(`run:${activeRunId}`, ['worker_done'])).toHaveLength(1)
     })

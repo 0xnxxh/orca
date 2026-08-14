@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SshPtyProvider } from './ssh-pty-provider'
 import { SSH_PTY_WRITE_SETTLEMENT_TIMEOUT_MS } from './ssh-pty-write'
 
 describe('SSH PTY writes', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('rejects writes synchronously after the transport is disposed', () => {
     const mux = {
       isDisposed: vi.fn().mockReturnValue(true),
@@ -38,6 +42,20 @@ describe('SSH PTY writes', () => {
     await expect(pending).resolves.toBe(false)
   })
 
+  it('rejects settled writes immediately after the transport is disposed', async () => {
+    const mux = {
+      isDisposed: vi.fn().mockReturnValue(true),
+      notifyWithSettlement: vi.fn(),
+      onNotification: vi.fn(),
+      dispose: vi.fn()
+    }
+    const provider = new SshPtyProvider('conn-1', mux as never)
+
+    await expect(provider.writeWithSettlement('ssh:conn-1@@pty-1', 'pointer')).resolves.toBe(false)
+    expect(mux.notifyWithSettlement).not.toHaveBeenCalled()
+    expect(mux.dispose).not.toHaveBeenCalled()
+  })
+
   it('disconnects a transport whose write settlement never arrives', async () => {
     vi.useFakeTimers()
     const mux = {
@@ -56,7 +74,6 @@ describe('SSH PTY writes', () => {
 
     await expect(pending).resolves.toBe(false)
     expect(mux.dispose).toHaveBeenCalledWith('connection_lost')
-    vi.useRealTimers()
   })
 
   it('accepts a healthy settlement after the mux health window', async () => {
@@ -81,6 +98,5 @@ describe('SSH PTY writes', () => {
 
     await expect(pending).resolves.toBe(true)
     expect(mux.dispose).not.toHaveBeenCalled()
-    vi.useRealTimers()
   })
 })

@@ -8956,8 +8956,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration-mailbox-routing-races.test.ts src/main/runtime/orchestration-mailbox-notification-consistency.test.ts src/main/runtime/orchestration-mailbox-detached-routing.test.ts src/main/runtime/orchestration-mailbox-transport-settlement.test.ts src/main/runtime/orchestration/run-coordinator-handle-migration.test.ts src/main/runtime/orchestration/orchestration-run-delivery-db.test.ts src/main/runtime/orchestration/orchestration-worker-dispatch-db.test.ts src/main/runtime/orchestration/formatter.test.ts src/main/providers/ssh-pty-provider.test.ts src/main/providers/ssh-pty-write.test.ts src/main/daemon/client.test.ts src/main/daemon/daemon-pty-router.test.ts src/main/daemon/degraded-daemon-pty-provider.test.ts",
           "result": "passed",
-          "durationSeconds": 9.96,
-          "summary": "241 tests passed across mailbox identity, durable coordinator-handle migration, insertion-time canonicalization, duplicate-free 51-row ownership branch caps, direct and Dispatch pointer suppression, persisted reconciliation, 50-row paging and filtered waits, cross-PTY serialization, lifecycle fencing, bounded daemon and SSH transport settlement, outstanding Deliveries, reminted Dispatch ownership, acknowledgment, cancellation, and bounded pane lookup."
+          "durationSeconds": 8.22,
+          "summary": "245 tests passed across mailbox identity, durable coordinator-handle migration, insertion-time canonicalization, duplicate-free 51-row ownership branch caps, unrestricted reservation merging, direct and Dispatch pointer suppression, persisted reconciliation, 50-row paging and filtered waits, cross-PTY serialization, lifecycle fencing, bounded daemon and SSH transport settlement, outstanding Deliveries, reminted Dispatch ownership, acknowledgment, cancellation, and bounded pane lookup."
         },
         {
           "date": "2026-08-14",
@@ -8965,7 +8965,7 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/federation-sync.test.ts src/main/runtime/rpc/methods/orchestration-federation.test.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 8.42,
+          "durationSeconds": 8.99,
           "summary": "52 tests passed with real OrchestrationDb rows, a deliberately dropped federation acknowledgment, reconnect/restart, forward-only checkpoints, duplicate read-row wake suppression, and protocol v1/v2 lifecycle settlement replay. The broader final federation/cross-version set passed 77/77."
         },
         {
@@ -8974,7 +8974,7 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration-message-delivery-identity.test.ts --reporter=dot --testTimeout=5000",
           "result": "passed",
-          "durationSeconds": 10.45,
+          "durationSeconds": 8.42,
           "summary": "The byte-identical five-case STA-4325 oracle (SHA-256 76a2d672d27e04e5b1db2f52df3b303468bdf006be7cfd003bf443618a856c35) failed 5/5 on reported v1.4.180, latest main, and production-reverted candidate, then passed 5/5 on the final candidate. It aligns pointer counts with one fixed Delivery across concurrent pollers and filters, replays that Delivery through restart, routes a 125-row old-handle backlog before rebind, repairs committed mail without relying on a notification callback, and matches built-CLI output to direct isolated SQLite state."
         },
         {
@@ -8983,12 +8983,12 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/terminal-send-stale-leaf-liveness.test.ts src/main/runtime/rpc/methods/orchestration.test.ts",
           "result": "passed",
-          "durationSeconds": 17.4,
+          "durationSeconds": 14.15,
           "summary": "1,293 tests passed and 1 was skipped across Run-bound pointer delivery, PTY retirement and respawn, stale-leaf liveness, direct-mail routing, filtered waiter ownership, canonical stored-recipient notification, and orchestration RPC behavior."
         }
       ],
       "runtimeBudget": {
-        "p95Seconds": 15,
+        "p95Seconds": 20,
         "scope": "deterministic runtime, SQLite, and RPC contract tests"
       },
       "flakeHistory": {

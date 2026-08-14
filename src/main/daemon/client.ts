@@ -259,6 +259,12 @@ export class DaemonClient {
 
     const id = `${NOTIFY_PREFIX}${++this.requestCounter}`
     const msg = { id, type, ...(payload !== undefined ? { payload } : {}) }
+    let encoded: string
+    try {
+      encoded = encodeNdjson(msg)
+    } catch {
+      return false
+    }
     return await new Promise<boolean>((resolve) => {
       const socket = this.controlSocket!
       const generation = this.connectionGeneration
@@ -279,7 +285,7 @@ export class DaemonClient {
       }
       const timer = setTimeout(rejectAndDisconnect, timeoutMs)
       try {
-        socket.write(encodeNdjson(msg), (error) => (error ? rejectAndDisconnect() : settle(true)))
+        socket.write(encoded, (error) => (error ? rejectAndDisconnect() : settle(true)))
       } catch {
         rejectAndDisconnect()
       }

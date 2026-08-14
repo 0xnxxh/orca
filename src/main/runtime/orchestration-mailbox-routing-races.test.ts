@@ -376,13 +376,40 @@ describe('orchestration mailbox routing races', () => {
     db.close()
   })
 
-  it('preserves a later filtered reservation behind an unfiltered redrive', () => {
+  it('keeps an unfiltered redrive unrestricted when reservations merge', () => {
     const state = new OrchestrationMailboxPointerState()
 
-    state.parkRedelivery('run:run_test')
+    state.parkRedelivery('run:run_test', new Set())
     state.parkRedelivery('run:run_test', new Set(['worker_done']))
 
-    expect(state.takeRedelivery('run:run_test', false)).toEqual(new Set(['worker_done']))
+    expect(state.takeRedelivery('run:run_test', false)).toBeNull()
+
+    state.parkRedelivery('run:run_test', new Set(['worker_done']))
+    state.parkRedelivery('run:run_test', new Set())
+
+    expect(state.takeRedelivery('run:run_test', false)).toBeNull()
+  })
+
+  it('keeps an unfiltered parked delivery unrestricted when reservations merge', () => {
+    const state = new OrchestrationMailboxPointerState()
+    const leaf = {} as never
+
+    const unfilteredFirst = state.beginFlight('pty_unfiltered_first')
+    state.parkDelivery('pty_unfiltered_first', 'run:run_test', leaf, new Set())
+    state.parkDelivery('pty_unfiltered_first', 'run:run_test', leaf, new Set(['worker_done']))
+
+    expect(
+      state.settleFlight('pty_unfiltered_first', unfilteredFirst)?.get('run:run_test')
+        ?.reservedTypes
+    ).toBeUndefined()
+
+    const unfilteredLast = state.beginFlight('pty_unfiltered_last')
+    state.parkDelivery('pty_unfiltered_last', 'run:run_test', leaf, new Set(['worker_done']))
+    state.parkDelivery('pty_unfiltered_last', 'run:run_test', leaf, new Set())
+
+    expect(
+      state.settleFlight('pty_unfiltered_last', unfilteredLast)?.get('run:run_test')?.reservedTypes
+    ).toBeUndefined()
   })
 
   it('uses a bounded indexed pane lookup for reminted Dispatch identity', () => {

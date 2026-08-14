@@ -32404,20 +32404,31 @@ export class OrcaRuntimeService {
   }
 
   private scheduleRestoredMessageRepoints(): void {
-    const handles = this._orchestrationDb?.getUndeliveredUnreadMailboxHandles?.() ?? []
+    let handles: string[]
+    try {
+      handles = this._orchestrationDb?.getUndeliveredUnreadMailboxHandles?.() ?? []
+    } catch (error) {
+      console.warn('[orchestration] failed to scan restored mailboxes', error)
+      return
+    }
     for (const handle of handles) {
-      if (handle.startsWith('dispatch:')) {
-        continue
-      }
-      if (handle.startsWith('run:')) {
-        this.mailPointerRepointScheduler.schedule(handle)
-        continue
-      }
-      const routed = this.orchestrationMailboxOwner.routeDetachedDirectMessages(handle)
-      for (const mailbox of routed.mailboxes) {
-        this.mailPointerRepointScheduler.schedule(mailbox.mailboxHandle)
-      }
-      if (!routed.hasMore) {
+      try {
+        if (handle.startsWith('dispatch:')) {
+          continue
+        }
+        if (handle.startsWith('run:')) {
+          this.mailPointerRepointScheduler.schedule(handle)
+          continue
+        }
+        const routed = this.orchestrationMailboxOwner.routeDetachedDirectMessages(handle)
+        for (const mailbox of routed.mailboxes) {
+          this.mailPointerRepointScheduler.schedule(mailbox.mailboxHandle)
+        }
+        if (!routed.hasMore) {
+          this.mailPointerRepointScheduler.schedule(handle)
+        }
+      } catch (error) {
+        console.warn(`[orchestration] failed to restore mailbox ${handle}`, error)
         this.mailPointerRepointScheduler.schedule(handle)
       }
     }
