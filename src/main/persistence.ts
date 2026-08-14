@@ -725,9 +725,10 @@ function migrateTerminalFontWeightBold(settings: unknown): {
     settings && typeof settings === 'object' ? (settings as LegacyTerminalFontWeightSettings) : {}
 
   if (Object.hasOwn(legacySettings, 'terminalFontWeightBold')) {
+    const fontWeightBold = normalizeTerminalFontWeightBold(legacySettings.terminalFontWeightBold)
     return {
-      fontWeightBold: normalizeTerminalFontWeightBold(legacySettings.terminalFontWeightBold),
-      needsSave: false
+      fontWeightBold,
+      needsSave: legacySettings.terminalFontWeightBold !== fontWeightBold
     }
   }
 
