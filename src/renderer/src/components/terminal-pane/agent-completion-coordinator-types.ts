@@ -23,6 +23,7 @@ export type AgentAttentionDispatchMeta = {
 
 export type AgentCompletionCoordinatorOptions = {
   paneKey: string
+  statusLane?: 'hook' | 'pty'
   getPtyId: () => string | null
   getSettings: () => Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
   inspectProcess: (

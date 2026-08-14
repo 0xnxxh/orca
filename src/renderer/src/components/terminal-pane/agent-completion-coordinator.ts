@@ -44,12 +44,13 @@ const pendingStampedTailByPaneKey = new Map<
   string,
   {
     turnCompletedAt: number
-    originCoordinatorId: number
-    eligibleWorkingBoundaryByCoordinator: Map<number, number>
+    originLane: string
+    eligibleWorkingBoundaryByLane: Map<string, number>
+    consumedIdentityByLane: Map<string, string>
   }
 >()
 // Why: a sibling all-clear belongs to the stamped tail only while its exact working interval is still current.
-const workingBoundaryByPaneKey = new Map<string, Map<number, number>>()
+const workingBoundaryByPaneKey = new Map<string, Map<string, number>>()
 const coordinatorCountByPaneKey = new Map<string, number>()
 let nextCoordinatorId = 1
 
@@ -94,6 +95,10 @@ export function createAgentCompletionCoordinator(
   options: AgentCompletionCoordinatorOptions
 ): AgentCompletionCoordinator {
   const coordinatorId = nextCoordinatorId++
+  const coordinatorLane = options.statusLane ?? `coordinator:${coordinatorId}`
+  let inheritedWorkingBoundary = pendingStampedTailByPaneKey
+    .get(options.paneKey)
+    ?.eligibleWorkingBoundaryByLane.get(coordinatorLane)
   coordinatorCountByPaneKey.set(
     options.paneKey,
     (coordinatorCountByPaneKey.get(options.paneKey) ?? 0) + 1
@@ -225,7 +230,7 @@ export function createAgentCompletionCoordinator(
   function recordWorkingBoundary(stateStartedAt: number | undefined): void {
     let boundaries = workingBoundaryByPaneKey.get(options.paneKey)
     if (!isFiniteTurnCompletedAt(stateStartedAt)) {
-      boundaries?.delete(coordinatorId)
+      boundaries?.delete(coordinatorLane)
       if (boundaries?.size === 0) {
         workingBoundaryByPaneKey.delete(options.paneKey)
       }
@@ -235,35 +240,45 @@ export function createAgentCompletionCoordinator(
       boundaries = new Map()
       workingBoundaryByPaneKey.set(options.paneKey, boundaries)
     }
-    boundaries.set(coordinatorId, stateStartedAt)
+    inheritedWorkingBoundary = undefined
+    boundaries.set(coordinatorLane, stateStartedAt)
   }
 
   function clearWorkingBoundary(): void {
+    inheritedWorkingBoundary = undefined
     const boundaries = workingBoundaryByPaneKey.get(options.paneKey)
-    boundaries?.delete(coordinatorId)
+    boundaries?.delete(coordinatorLane)
     if (boundaries?.size === 0) {
       workingBoundaryByPaneKey.delete(options.paneKey)
     }
   }
 
-  function consumePendingStampedTailForAgent(agentIdentity: string | null): boolean {
+  function consumePendingStampedTailForAgent(
+    agentIdentity: string | null,
+    completionIdentity: string | null
+  ): boolean {
     const pendingStampedTail = pendingStampedTailByPaneKey.get(options.paneKey)
     const stampedCompletion = lastCompletionIdentityByPaneKey.get(options.paneKey)
-    const currentWorkingBoundary = workingBoundaryByPaneKey.get(options.paneKey)?.get(coordinatorId)
+    const currentWorkingBoundary = workingBoundaryByPaneKey
+      .get(options.paneKey)
+      ?.get(coordinatorLane)
+    const eligibleWorkingBoundary =
+      pendingStampedTail?.eligibleWorkingBoundaryByLane.get(coordinatorLane)
     if (
       pendingStampedTail === undefined ||
       stampedCompletion?.lastTurnCompletedAtNotified !== pendingStampedTail.turnCompletedAt ||
       agentIdentity === null ||
       stampedCompletion.agentIdentity !== agentIdentity ||
-      currentWorkingBoundary === undefined ||
-      pendingStampedTail.eligibleWorkingBoundaryByCoordinator.get(coordinatorId) !==
-        currentWorkingBoundary
+      eligibleWorkingBoundary === undefined ||
+      (currentWorkingBoundary !== eligibleWorkingBoundary &&
+        inheritedWorkingBoundary !== eligibleWorkingBoundary)
     ) {
       return false
     }
-    pendingStampedTail.eligibleWorkingBoundaryByCoordinator.delete(coordinatorId)
-    if (pendingStampedTail.eligibleWorkingBoundaryByCoordinator.size === 0) {
-      pendingStampedTailByPaneKey.delete(options.paneKey)
+    pendingStampedTail.eligibleWorkingBoundaryByLane.delete(coordinatorLane)
+    inheritedWorkingBoundary = undefined
+    if (completionIdentity) {
+      pendingStampedTail.consumedIdentityByLane.set(coordinatorLane, completionIdentity)
     }
     return true
   }
@@ -273,10 +288,14 @@ export function createAgentCompletionCoordinator(
     if (pendingStampedTail?.turnCompletedAt !== turnCompletedAt) {
       return
     }
-    pendingStampedTail.eligibleWorkingBoundaryByCoordinator.delete(coordinatorId)
-    if (pendingStampedTail.eligibleWorkingBoundaryByCoordinator.size === 0) {
-      pendingStampedTailByPaneKey.delete(options.paneKey)
-    }
+    pendingStampedTail.eligibleWorkingBoundaryByLane.delete(coordinatorLane)
+  }
+
+  function hasUnconsumedStampedTail(): boolean {
+    return (
+      (pendingStampedTailByPaneKey.get(options.paneKey)?.eligibleWorkingBoundaryByLane.size ?? 0) >
+      0
+    )
   }
 
   function hookCompletionAgentIdentity(payload: AgentCompletionStatusSnapshot): string | null {
@@ -346,6 +365,14 @@ export function createAgentCompletionCoordinator(
     if (!completionIdentity) {
       return false
     }
+    if (
+      completionIdentity.source === 'hook' &&
+      pendingStampedTailByPaneKey
+        .get(options.paneKey)
+        ?.consumedIdentityByLane.get(coordinatorLane) === completionIdentity.identity
+    ) {
+      return true
+    }
     const previous = lastCompletionIdentityByPaneKey.get(options.paneKey)
     if (!previous) {
       return false
@@ -354,7 +381,10 @@ export function createAgentCompletionCoordinator(
       return (
         previous.identity === completionIdentity.identity ||
         (completionIdentity.source === 'hook' &&
-          consumePendingStampedTailForAgent(completionIdentity.agentIdentity))
+          consumePendingStampedTailForAgent(
+            completionIdentity.agentIdentity,
+            completionIdentity.identity
+          ))
       )
     }
     return (
@@ -578,7 +608,7 @@ export function createAgentCompletionCoordinator(
     if (
       !lastForegroundAgent &&
       processSession > 0 &&
-      !pendingStampedTailByPaneKey.has(options.paneKey) &&
+      !hasUnconsumedStampedTail() &&
       replayIdentity?.source === 'hook' &&
       replayIdentity.agentIdentity === process.agent
     ) {
@@ -656,7 +686,7 @@ export function createAgentCompletionCoordinator(
         })
         if (
           !committed &&
-          !pendingStampedTailByPaneKey.has(options.paneKey) &&
+          !hasUnconsumedStampedTail() &&
           replayIdentityBeforeExit?.source === 'hook' &&
           replayIdentityBeforeExit.agentIdentity === exited.agent
         ) {
@@ -843,7 +873,7 @@ export function createAgentCompletionCoordinator(
     clearPendingCodexAttention()
     workingStatusObserved = true
     requiresFreshWorking = false
-    if (!pendingStampedTailByPaneKey.has(options.paneKey)) {
+    if (!hasUnconsumedStampedTail()) {
       lastCompletionIdentityByPaneKey.delete(options.paneKey)
     }
     currentTurn += 1
@@ -948,10 +978,9 @@ export function createAgentCompletionCoordinator(
         if (!alreadyHandled) {
           pendingStampedTailByPaneKey.set(options.paneKey, {
             turnCompletedAt,
-            originCoordinatorId: coordinatorId,
-            eligibleWorkingBoundaryByCoordinator: new Map(
-              workingBoundaryByPaneKey.get(options.paneKey)
-            )
+            originLane: coordinatorLane,
+            eligibleWorkingBoundaryByLane: new Map(workingBoundaryByPaneKey.get(options.paneKey)),
+            consumedIdentityByLane: new Map()
           })
         }
         // Why: Claude's lead Stop already ended the turn; the pane stays `working` only for background inventory. Announce now, keep lifecycle on the reported working row.
@@ -987,7 +1016,7 @@ export function createAgentCompletionCoordinator(
         return
       }
       const pendingStampedTail = pendingStampedTailByPaneKey.get(options.paneKey)
-      if (pendingStampedTail?.originCoordinatorId === coordinatorId) {
+      if (pendingStampedTail?.originLane === coordinatorLane) {
         pendingStampedTailByPaneKey.delete(options.paneKey)
       }
       recordWorkingBoundary(payload.stateStartedAt)
@@ -1028,7 +1057,7 @@ export function createAgentCompletionCoordinator(
         : undefined
       if (
         turnCompletedAt === undefined &&
-        consumePendingStampedTailForAgent(hookCompletionAgentIdentity(payload))
+        consumePendingStampedTailForAgent(hookCompletionAgentIdentity(payload), hookIdentity)
       ) {
         // Why: paired host hooks carry the stamp while the sibling OSC coordinator sees only the matching all-clear.
         lastCompletionIdentity = hookIdentity

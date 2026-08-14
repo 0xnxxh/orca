@@ -1574,6 +1574,70 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).toHaveBeenCalledTimes(2)
   })
 
+  it.each(['before', 'after'] as const)(
+    'keeps sibling tail replay suppression when the pane remounts %s its all-clear',
+    (remountOrder) => {
+      const dispatchCompletion = vi.fn()
+      const createLocalCoordinator = () =>
+        createAgentCompletionCoordinator({
+          paneKey: 'tab-1:leaf-1',
+          statusLane: 'pty',
+          getPtyId: () => 'pty-1',
+          getSettings: () => null,
+          inspectProcess: vi.fn(),
+          dispatchCompletion,
+          isLive: () => true
+        })
+      const localCoordinator = createLocalCoordinator()
+      const hostCoordinator = createAgentCompletionCoordinator({
+        paneKey: 'tab-1:leaf-1',
+        statusLane: 'hook',
+        getPtyId: () => 'pty-1',
+        getSettings: () => null,
+        inspectProcess: vi.fn(),
+        dispatchCompletion,
+        isLive: () => true
+      })
+      const localAllClear = {
+        state: 'done' as const,
+        prompt: 'first turn',
+        agentType: 'claude' as const,
+        stateStartedAt: 5_500
+      }
+
+      localCoordinator.observeHookStatus({
+        state: 'working',
+        prompt: 'first turn',
+        agentType: 'claude',
+        stateStartedAt: 5_000
+      })
+      hostCoordinator.observeHookStatus({
+        state: 'working',
+        prompt: 'first turn',
+        agentType: 'claude',
+        stateStartedAt: 2_000
+      })
+      hostCoordinator.observeHookStatus({
+        state: 'working',
+        prompt: 'first turn',
+        agentType: 'claude',
+        stateStartedAt: 2_000,
+        turnCompletedAt: 2_500
+      })
+      expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+      if (remountOrder === 'after') {
+        localCoordinator.observeHookStatus(localAllClear)
+      }
+      localCoordinator.dispose()
+      const remounted = createLocalCoordinator()
+      remounted.observeHookStatus(localAllClear)
+      vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+      expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('does not replay a stamped turn or its all-clear after a working title blip', () => {
     const dispatchCompletion = vi.fn()
     const dispatchHookLifecycle = vi.fn()

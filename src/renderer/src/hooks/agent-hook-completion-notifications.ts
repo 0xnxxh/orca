@@ -231,6 +231,7 @@ function paneCanReceiveHookCompletion(paneKey: string, tabIndex?: TabIndex): boo
 function createCoordinator(paneKey: string, worktreeId: string): AgentCompletionCoordinator {
   return createAgentCompletionCoordinator({
     paneKey,
+    statusLane: 'hook',
     getPtyId: () => getPtyIdForPaneKey(paneKey),
     getSettings: () => useAppStore.getState().settings,
     inspectProcess: async (): Promise<RuntimeTerminalProcessInspection> => ({
