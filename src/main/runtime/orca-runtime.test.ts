@@ -10,16 +10,13 @@ import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join, win32 } from 'node:path'
 import { ipcMain } from 'electron'
-import type {
-  FolderWorkspace,
-  ProjectGroup,
-  Tab,
-  TerminalLayoutSnapshot,
-  WorktreeLineage,
-  WorktreeMeta,
-  WorkspaceLineage,
-  WorkspaceSessionState
-} from '../../shared/types'
+import type { FolderWorkspace } from '../../shared/folder-workspace-types'
+import type { ProjectGroup } from '../../shared/project-group-types'
+import type { Tab } from '../../shared/tab-types'
+import type { TerminalLayoutSnapshot } from '../../shared/terminal-tab-types'
+import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
+import type { WorkspaceLineage, WorktreeLineage } from '../../shared/worktree/lineage-types'
+import type { WorktreeMeta } from '../../shared/worktree/meta-types'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../shared/agent-status-types'
 import {
   reviewHeadRemoteRefComponent,
@@ -66,6 +63,7 @@ import {
   resolveWorktreeScanCacheTtlMs,
   type RuntimeTerminalAgentStatusEvent
 } from './orca-runtime'
+import { RUNTIME_GRAPH_RELOAD_TIMEOUT_MS } from './runtime-graph-reload-lifecycle'
 import {
   appendRecentPtyPathCandidates,
   recentTerminalPathCandidatesIncludePath,
@@ -1690,6 +1688,7 @@ describe('OrcaRuntimeService', () => {
     } as never)
 
     expect(runtime.getClientSettings()).toMatchObject({
+      worktreeVisibilityDefaults: { external: 'hide' },
       experimentalNewWorktreeCardStyle: true,
       compactWorktreeCards: true,
       minimaxGroupId: 'group-42',
@@ -1813,6 +1812,23 @@ describe('OrcaRuntimeService', () => {
       minimaxGroupId: 'group-42',
       minimaxUsageModels: 'general,abab6.5'
     })
+  })
+
+  it('broadcasts visibility default changes to paired clients', async () => {
+    let settings = { ...store.getSettings(), worktreeVisibilityDefaults: { external: 'hide' } }
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => settings,
+      updateSettings: (updates: Partial<typeof settings>) => {
+        settings = { ...settings, ...updates }
+      }
+    } as never)
+    const events: unknown[] = []
+    runtime.onClientEvent((event) => events.push(event))
+
+    await runtime.updateClientSettings({ worktreeVisibilityDefaults: { external: 'show' } })
+
+    expect(events).toContainEqual({ type: 'reposChanged' })
   })
 
   it('reconciles hooks only when paired-client hook settings change', async () => {
@@ -2492,6 +2508,62 @@ describe('OrcaRuntimeService', () => {
     expect(runtime.getStatus().graphStatus).toBe('ready')
   })
 
+  it('restores a surviving renderer when its reload is cancelled', () => {
+    const runtime = createRuntime()
+    runtime.attachWindow(TEST_WINDOW_ID)
+    runtime.markGraphReady(TEST_WINDOW_ID)
+    const fence = runtime.markRendererReloading(TEST_WINDOW_ID)
+    if (fence === null) {
+      throw new Error('expected active renderer reload fence')
+    }
+
+    expect(fence.recovery).toBe('renderer')
+    expect(runtime.getStatus().graphStatus).toBe('reloading')
+    expect(runtime.markRendererReloadCancelled(TEST_WINDOW_ID, fence)).toBe(true)
+    expect(runtime.getStatus().graphStatus).toBe('ready')
+  })
+
+  it('keeps an earlier committed reload fenced when a later reload is cancelled', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = createRuntime()
+      runtime.attachWindow(TEST_WINDOW_ID)
+      runtime.markGraphReady(TEST_WINDOW_ID)
+      const committedFence = runtime.markRendererReloading(TEST_WINDOW_ID)
+      const cancelledFence = runtime.markRendererReloading(TEST_WINDOW_ID)
+      if (committedFence === null || cancelledFence === null) {
+        throw new Error('expected active renderer reload fences')
+      }
+
+      expect(cancelledFence.recovery).toBe('reloading')
+      expect(runtime.markRendererReloadCancelled(TEST_WINDOW_ID, committedFence)).toBe(false)
+      expect(runtime.markRendererReloadCancelled(TEST_WINDOW_ID, cancelledFence)).toBe(false)
+      await vi.advanceTimersByTimeAsync(RUNTIME_GRAPH_RELOAD_TIMEOUT_MS - 1)
+      expect(runtime.getStatus().graphStatus).toBe('reloading')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(runtime.getStatus().graphStatus).toBe('unavailable')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restores headless authority when desktop promotion navigation is cancelled', () => {
+    const runtime = createRuntime()
+    runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
+    runtime.attachWindow(TEST_WINDOW_ID)
+    const fence = runtime.markRendererReloading(TEST_WINDOW_ID)
+    if (fence === null) {
+      throw new Error('expected active promotion reload fence')
+    }
+
+    expect(fence.recovery).toBe('headless')
+    expect(runtime.markRendererReloadCancelled(TEST_WINDOW_ID, fence)).toBe(false)
+    expect(runtime.getStatus()).toMatchObject({
+      authoritativeWindowId: HEADLESS_RUNTIME_WINDOW_ID,
+      graphStatus: 'ready'
+    })
+  })
+
   it('drops back to unavailable and clears authority when the window disappears', () => {
     const runtime = createRuntime()
 
@@ -2504,6 +2576,164 @@ describe('OrcaRuntimeService', () => {
       graphStatus: 'unavailable',
       authoritativeWindowId: null,
       rendererGraphEpoch: 2
+    })
+  })
+
+  it('restores headless graph authority after a promoted renderer reload times out', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = createRuntime()
+      runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
+      runtime.registerPty('persisted-pty', TEST_WORKTREE_ID, null, {
+        tabId: 'host-tab',
+        leafId: HEADLESS_LEAF_ID
+      })
+      runtime.attachWindow(TEST_WINDOW_ID)
+
+      await vi.advanceTimersByTimeAsync(RUNTIME_GRAPH_RELOAD_TIMEOUT_MS)
+
+      expect(runtime.getStatus()).toMatchObject({
+        authoritativeWindowId: HEADLESS_RUNTIME_WINDOW_ID,
+        graphStatus: 'ready'
+      })
+      expect((await runtime.listTerminals()).terminals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ ptyId: 'persisted-pty', connected: true, writable: true })
+        ])
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('moves a desktop graph to unavailable when its reload times out', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = createRuntime()
+      runtime.attachWindow(TEST_WINDOW_ID)
+      runtime.markGraphReady(TEST_WINDOW_ID)
+      runtime.markRendererReloading(TEST_WINDOW_ID)
+
+      await vi.advanceTimersByTimeAsync(RUNTIME_GRAPH_RELOAD_TIMEOUT_MS)
+
+      expect(runtime.getStatus()).toMatchObject({
+        authoritativeWindowId: TEST_WINDOW_ID,
+        graphStatus: 'unavailable',
+        rendererGraphEpoch: 1
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('recovers a failed headless promotion and accepts a later renderer generation', () => {
+    const runtime = createRuntime()
+    runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
+    runtime.attachWindow(TEST_WINDOW_ID)
+
+    runtime.markGraphReloadFailed(TEST_WINDOW_ID, 'renderer-process-gone')
+
+    expect(runtime.getStatus()).toMatchObject({
+      authoritativeWindowId: HEADLESS_RUNTIME_WINDOW_ID,
+      graphStatus: 'ready'
+    })
+
+    runtime.syncWindowGraph(TEST_WINDOW_ID, { tabs: [], leaves: [] })
+
+    expect(runtime.getStatus()).toMatchObject({
+      authoritativeWindowId: TEST_WINDOW_ID,
+      graphStatus: 'ready'
+    })
+  })
+
+  it('retires the headless fallback after renderer promotion succeeds', () => {
+    const runtime = createRuntime()
+    runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
+    runtime.attachWindow(TEST_WINDOW_ID)
+    runtime.syncWindowGraph(TEST_WINDOW_ID, { tabs: [], leaves: [] })
+
+    runtime.markRendererReloading(TEST_WINDOW_ID)
+    runtime.markGraphReloadFailed(TEST_WINDOW_ID, 'renderer-process-gone')
+
+    expect(runtime.getStatus()).toMatchObject({
+      authoritativeWindowId: TEST_WINDOW_ID,
+      graphStatus: 'unavailable'
+    })
+
+    runtime.syncWindowGraph(TEST_WINDOW_ID, { tabs: [], leaves: [] })
+    expect(runtime.getStatus()).toMatchObject({
+      authoritativeWindowId: TEST_WINDOW_ID,
+      graphStatus: 'ready'
+    })
+  })
+
+  it('does not let a superseded reload timeout overwrite a newer renderer graph', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = createRuntime()
+      runtime.attachWindow(TEST_WINDOW_ID)
+      runtime.markGraphReady(TEST_WINDOW_ID)
+      runtime.markRendererReloading(TEST_WINDOW_ID)
+      await vi.advanceTimersByTimeAsync(RUNTIME_GRAPH_RELOAD_TIMEOUT_MS / 2)
+      runtime.markRendererReloading(TEST_WINDOW_ID)
+
+      await vi.advanceTimersByTimeAsync(RUNTIME_GRAPH_RELOAD_TIMEOUT_MS / 2)
+
+      expect(runtime.getStatus()).toMatchObject({
+        authoritativeWindowId: TEST_WINDOW_ID,
+        graphStatus: 'reloading'
+      })
+
+      await vi.advanceTimersByTimeAsync(RUNTIME_GRAPH_RELOAD_TIMEOUT_MS / 2)
+
+      expect(runtime.getStatus()).toMatchObject({
+        authoritativeWindowId: TEST_WINDOW_ID,
+        graphStatus: 'unavailable'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects a same-frame graph publication from the superseded renderer generation', () => {
+    const runtime = createRuntime()
+    runtime.attachWindow(TEST_WINDOW_ID)
+    runtime.syncWindowGraph(TEST_WINDOW_ID, {
+      tabs: [],
+      leaves: [],
+      rendererGeneration: 'renderer-a'
+    })
+    runtime.markRendererReloading(TEST_WINDOW_ID)
+
+    expect(() =>
+      runtime.syncWindowGraph(TEST_WINDOW_ID, {
+        tabs: [],
+        leaves: [],
+        rendererGeneration: 'renderer-a'
+      })
+    ).toThrow('Runtime graph publisher belongs to a superseded renderer generation')
+    expect(runtime.getStatus()).toMatchObject({
+      authoritativeWindowId: TEST_WINDOW_ID,
+      graphStatus: 'reloading'
+    })
+  })
+
+  it('keeps a restored headless graph pinned to the failed promotion window', () => {
+    const runtime = createRuntime()
+    runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
+    runtime.attachWindow(TEST_WINDOW_ID)
+    runtime.markGraphReloadFailed(TEST_WINDOW_ID, 'renderer-process-gone')
+
+    expect(() =>
+      runtime.syncWindowGraph(2, {
+        tabs: [],
+        leaves: [],
+        rendererGeneration: 'renderer-b'
+      })
+    ).toThrow('Runtime graph publisher does not match the pending desktop promotion')
+    expect(runtime.getStatus()).toMatchObject({
+      authoritativeWindowId: HEADLESS_RUNTIME_WINDOW_ID,
+      graphStatus: 'ready'
     })
   })
 
@@ -3883,7 +4113,10 @@ describe('OrcaRuntimeService', () => {
     expect(fsProvider.stat).toHaveBeenCalledWith(folderPath)
     expect(fsProvider.readDir).toHaveBeenCalledWith('/srv/platform/src')
     expect(fsProvider.stat).toHaveBeenCalledWith('/srv/platform/src/app.ts')
-    expect(fsProvider.readFile).toHaveBeenCalledWith('/srv/platform/src/app.ts')
+    expect(fsProvider.readFile).toHaveBeenCalledWith('/srv/platform/src/app.ts', {
+      maxBinaryBytes: 10 * 1024 * 1024,
+      maxTextBytes: 512 * 1024
+    })
   })
 
   it('lists persisted SSH worktrees while the git provider is unavailable', async () => {
@@ -8246,11 +8479,10 @@ describe('OrcaRuntimeService', () => {
       expect(added).toEqual([
         expect.objectContaining({
           badgeColor: DEFAULT_REPO_BADGE_COLOR,
-          externalWorktreeVisibility: 'hide',
           externalWorktreeVisibilityLegacy: false
         })
       ])
-      expect(repo.externalWorktreeVisibility).toBe('hide')
+      expect(repo.externalWorktreeVisibility).toBeUndefined()
       expect(prepareLocalWorktreeRootForRepoMock).toHaveBeenCalledWith(colorStore, repo)
     } finally {
       spawnSpy.mockRestore()
@@ -14263,6 +14495,8 @@ describe('OrcaRuntimeService', () => {
       command: 'claude --resume claude-session',
       env: {
         CLAUDE_PROFILE: 'captured',
+        // Why: native panes need an absolute CLI; without one the plan degrades to in-process teammates.
+        ORCA_AGENT_TEAMS_SHIM_BIN: '/opt/orca/bin/orca-ide',
         ORCA_AGENT_TEAMS_TEAM_ID: 'stale-team',
         ORCA_AGENT_TEAMS_TOKEN: 'stale-token',
         TMUX: '/tmp/orca-claude-agent-teams/stale-team,0,1'
@@ -14273,6 +14507,7 @@ describe('OrcaRuntimeService', () => {
         agentArgs: '--teammate-mode auto',
         agentEnv: {
           CLAUDE_PROFILE: 'captured',
+          ORCA_AGENT_TEAMS_SHIM_BIN: '/opt/orca/bin/orca-ide',
           ORCA_AGENT_TEAMS_TEAM_ID: 'stale-team',
           ORCA_AGENT_TEAMS_TOKEN: 'stale-token',
           TMUX: '/tmp/orca-claude-agent-teams/stale-team,0,1'
@@ -14287,6 +14522,7 @@ describe('OrcaRuntimeService', () => {
     expect(spawnCall?.env).toMatchObject({
       CLAUDE_PROFILE: 'captured',
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      ORCA_AGENT_TEAMS_SHIM_BIN: '/opt/orca/bin/orca-ide',
       TMUX_PANE: '%1'
     })
     expect(spawnCall?.env?.ORCA_AGENT_TEAMS_TEAM_ID).toMatch(/^team-/)
@@ -16394,75 +16630,78 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
-  it('waits for Claude output to settle after its first render marker before one submit', async () => {
-    vi.useFakeTimers()
-    try {
-      const writes: string[] = []
-      let composerReady = false
-      let prematureEnters = 0
-      let submissions = 0
-      const runtime = new OrcaRuntimeService(store)
-      runtime.setPtyController({
-        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
-        write: (_ptyId, data) => {
-          writes.push(data)
-          if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
-            setTimeout(() => {
-              runtime.onPtyData('pty-bg', 'partial redraw without cursor', Date.now())
-            }, 650)
-            setTimeout(() => {
-              runtime.onPtyData('pty-bg', '\x1b[?2', Date.now())
-            }, 750)
-            setTimeout(() => {
-              runtime.onPtyData('pty-bg', '5h intermediate frame', Date.now())
-            }, 751)
-            setTimeout(() => {
-              runtime.onPtyData('pty-bg', 'continued composer render', Date.now())
-            }, 900)
-            setTimeout(() => {
-              composerReady = true
-              runtime.onPtyData('pty-bg', 'final composer frame', Date.now())
-            }, 1_000)
-          }
-          if (data === '\r') {
-            if (composerReady) {
-              submissions += 1
-            } else {
-              prematureEnters += 1
+  it.each(['claude', 'codex'] as const)(
+    'waits for %s output to settle after its first render marker before one submit',
+    async (agent) => {
+      vi.useFakeTimers()
+      try {
+        const writes: string[] = []
+        let composerReady = false
+        let prematureEnters = 0
+        let submissions = 0
+        const runtime = new OrcaRuntimeService(store)
+        runtime.setPtyController({
+          spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+          write: (_ptyId, data) => {
+            writes.push(data)
+            if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+              setTimeout(() => {
+                runtime.onPtyData('pty-bg', 'partial redraw without cursor', Date.now())
+              }, 650)
+              setTimeout(() => {
+                runtime.onPtyData('pty-bg', '\x1b[?2', Date.now())
+              }, 750)
+              setTimeout(() => {
+                runtime.onPtyData('pty-bg', '5h intermediate frame', Date.now())
+              }, 751)
+              setTimeout(() => {
+                runtime.onPtyData('pty-bg', 'continued composer render', Date.now())
+              }, 900)
+              setTimeout(() => {
+                composerReady = true
+                runtime.onPtyData('pty-bg', 'final composer frame', Date.now())
+              }, 1_000)
             }
-          }
-          return true
-        },
-        kill: () => true,
-        getForegroundProcess: async () => null
-      })
-      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
-        launchAgent: 'claude'
-      })
-      const assertAuthority = vi.fn()
+            if (data === '\r') {
+              if (composerReady) {
+                submissions += 1
+              } else {
+                prematureEnters += 1
+              }
+            }
+            return true
+          },
+          kill: () => true,
+          getForegroundProcess: async () => null
+        })
+        const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+          launchAgent: agent
+        })
+        const assertAuthority = vi.fn()
 
-      const sendPromise = runtime.sendTerminalAgentPrompt(handle, 'review this change', {
-        beforeWrite: assertAuthority
-      })
-      await vi.advanceTimersByTimeAsync(500)
+        const sendPromise = runtime.sendTerminalAgentPrompt(handle, 'review this change', {
+          beforeWrite: assertAuthority
+        })
+        await vi.advanceTimersByTimeAsync(500)
 
-      expect(writes).not.toContain('\r')
-      await vi.advanceTimersByTimeAsync(150)
-      expect(writes).not.toContain('\r')
-      await vi.advanceTimersByTimeAsync(101)
-      expect(writes).not.toContain('\r')
-      await vi.advanceTimersByTimeAsync(1_748)
-      expect(writes).not.toContain('\r')
-      await vi.advanceTimersByTimeAsync(1)
-      await sendPromise
-      expect(prematureEnters).toBe(0)
-      expect(submissions).toBe(1)
-      expect(writes.filter((data) => data === '\r')).toHaveLength(1)
-      expect(assertAuthority).toHaveBeenCalledTimes(2)
-    } finally {
-      vi.useRealTimers()
+        expect(writes).not.toContain('\r')
+        await vi.advanceTimersByTimeAsync(150)
+        expect(writes).not.toContain('\r')
+        await vi.advanceTimersByTimeAsync(101)
+        expect(writes).not.toContain('\r')
+        await vi.advanceTimersByTimeAsync(1_748)
+        expect(writes).not.toContain('\r')
+        await vi.advanceTimersByTimeAsync(1)
+        await sendPromise
+        expect(prematureEnters).toBe(0)
+        expect(submissions).toBe(1)
+        expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+        expect(assertAuthority).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
     }
-  })
+  )
 
   it('submits a silent Claude composer once after the bounded render fallback', async () => {
     vi.useFakeTimers()
@@ -16488,6 +16727,46 @@ describe('OrcaRuntimeService', () => {
 
       await vi.advanceTimersByTimeAsync(1)
       await sendPromise
+      expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives a late Codex render marker a fresh quiescence window', async () => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      let composerReady = false
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+            setTimeout(() => runtime.onPtyData('pty-bg', '\x1b[?25h', Date.now()), 7_900)
+            setTimeout(() => {
+              composerReady = true
+              runtime.onPtyData('pty-bg', 'final slow composer frame', Date.now())
+            }, 8_100)
+          }
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'codex'
+      })
+
+      const sendPromise = runtime.sendTerminalAgentPrompt(handle, 'review this change')
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(writes).not.toContain('\r')
+      await vi.advanceTimersByTimeAsync(1_599)
+      expect(writes).not.toContain('\r')
+      await vi.advanceTimersByTimeAsync(1)
+      await sendPromise
+      expect(composerReady).toBe(true)
       expect(writes.filter((data) => data === '\r')).toHaveLength(1)
     } finally {
       vi.useRealTimers()
@@ -16522,7 +16801,7 @@ describe('OrcaRuntimeService', () => {
       })
 
       const sendPromise = runtime.sendTerminalAgentPrompt(handle, 'review this change')
-      await vi.advanceTimersByTimeAsync(7_999)
+      await vi.advanceTimersByTimeAsync(8_099)
       expect(writes).not.toContain('\r')
 
       await vi.advanceTimersByTimeAsync(1)
@@ -36056,6 +36335,61 @@ describe('OrcaRuntimeService', () => {
 
     expect(target).toMatchObject({
       worktree: { path: scratchPath },
+      relativePath: 'src/app.ts'
+    })
+  })
+
+  it('applies global custom-source visibility to mobile summaries and file resolution', async () => {
+    const globalRoot = '/tmp/global-worktrees'
+    const globalWorktreePath = `${globalRoot}/review`
+    vi.mocked(listWorktrees).mockResolvedValue([
+      {
+        path: TEST_REPO_PATH,
+        head: 'main',
+        branch: 'main',
+        isBare: false,
+        isMainWorktree: true
+      },
+      {
+        path: globalWorktreePath,
+        head: 'review',
+        branch: 'feature/review',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    const repo = {
+      ...store.getRepos()[0],
+      externalWorktreeVisibility: 'hide' as const,
+      externalWorktreeVisibilityLegacy: false
+    }
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getRepos: () => [repo],
+      getRepo: () => repo,
+      getSettings: () => ({
+        ...store.getSettings(),
+        worktreeVisibilityDefaults: {
+          external: 'hide' as const,
+          customSources: [{ id: 'global', rootPath: globalRoot }],
+          sourcePreferences: { custom: { global: 'show' as const } }
+        }
+      })
+    } as never)
+
+    const summaries = await runtime.getWorktreePs()
+    const target = await (
+      runtime as unknown as {
+        resolveKnownWorkspaceFileTarget: (
+          path: string,
+          executionHostId: 'local'
+        ) => Promise<{ worktree: { path: string }; relativePath: string } | null>
+      }
+    ).resolveKnownWorkspaceFileTarget(`${globalWorktreePath}/src/app.ts`, 'local')
+
+    expect(summaries.worktrees.map((worktree) => worktree.path)).toContain(globalWorktreePath)
+    expect(target).toMatchObject({
+      worktree: { path: globalWorktreePath },
       relativePath: 'src/app.ts'
     })
   })

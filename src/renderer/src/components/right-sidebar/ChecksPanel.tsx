@@ -58,17 +58,15 @@ import {
   type PRCommentsListSelectionClearRequest
 } from './pr-comments-list-selection'
 import { ENTRY_REFRESH_GRACE_MS, shouldEntryRefresh } from './checks-entry-refresh'
+import type { PRCheckDetail, PRCheckRunDetails } from '../../../../shared/github/check-types'
+import type { GitHubReactionContent, PRComment } from '../../../../shared/github/comment-types'
+import type { PRRefreshErrorType } from '../../../../shared/github/pull-request-refresh-types'
+import type { PRInfo } from '../../../../shared/github/pull-request-types'
 import type {
   GitLabDiscussionResolveResult,
   GitLabProjectRef,
-  GitLabWorkItemDetails,
-  PRInfo,
-  PRCheckDetail,
-  PRCheckRunDetails,
-  PRComment,
-  GitHubReactionContent,
-  PRRefreshErrorType
-} from '../../../../shared/types'
+  GitLabWorkItemDetails
+} from '../../../../shared/gitlab-types'
 import { getConnectionId } from '@/lib/connection-context'
 import {
   buildResolvePullRequestConflictsPrompt,

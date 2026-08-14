@@ -51,9 +51,9 @@ import {
   isAutomationGeneratedWorkspace,
   isCliCreatedWorkspace,
   isDetachedHeadWorkspace,
-  isDefaultBranchWorkspace,
   isSleepingSweepExemptWorkspace
 } from '@/components/sidebar/visible-worktrees'
+import { isDefaultBranchWorkspace } from '@/components/sidebar/default-branch-workspace'
 import {
   EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
   getPairedDeviceIdsByEnvironment,
@@ -200,7 +200,10 @@ import {
   getSettingsFocusedExecutionHostId,
   isRuntimeOwnedSshTargetId
 } from '../../../shared/execution-host'
-import type { GitHubWorkItem, LinearIssue, TerminalTab, Worktree } from '../../../shared/types'
+import type { GitHubWorkItem } from '../../../shared/github/work-item-types'
+import type { LinearIssue } from '../../../shared/linear/issue-types'
+import type { TerminalTab } from '../../../shared/terminal-tab-types'
+import type { Worktree } from '../../../shared/worktree/types'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import {
   buildTaskSourceContextFromRepo,
@@ -724,6 +727,7 @@ function WorktreeJumpPaletteContent({
   const retainedAgentsByPaneKey = useAppStore((s) => s.retainedAgentsByPaneKey)
   const sleepingAgentSessionsByPaneKey = useAppStore((s) => s.sleepingAgentSessionsByPaneKey)
   const settings = useAppStore((s) => s.settings)
+  const worktreeVisibilityDefaultsByHost = useAppStore((s) => s.worktreeVisibilityDefaultsByHost)
   const sshTargetLabels = useAppStore((s) => s.sshTargetLabels)
   const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
   const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
@@ -1495,7 +1499,9 @@ function WorktreeJumpPaletteContent({
     }
     for (const repoId of buildImportedWorktreesCardCandidates({
       repos,
-      detectedWorktreesByRepo
+      detectedWorktreesByRepo,
+      settings,
+      visibilityDefaultsByHost: worktreeVisibilityDefaultsByHost
     }).keys()) {
       ids.add(repoId)
     }
@@ -1503,7 +1509,15 @@ function WorktreeJumpPaletteContent({
       ids.add(creation.request.repoId)
     }
     return ids
-  }, [allWorktrees, detectedWorktreesByRepo, pendingWorktreeCreations, repos, worktreesByRepo])
+  }, [
+    allWorktrees,
+    detectedWorktreesByRepo,
+    pendingWorktreeCreations,
+    repos,
+    settings,
+    worktreeVisibilityDefaultsByHost,
+    worktreesByRepo
+  ])
   const hasAnyProjectSearchCandidates = useMemo(
     () =>
       hasCmdJProjectSearchCandidates({

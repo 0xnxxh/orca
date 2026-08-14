@@ -23,7 +23,6 @@ import { isRuntimeSubscriptionReplayResponse } from './runtime-subscription-repl
 import * as protocolVersion from './protocol-version'
 
 const TEST_PROJECT_PATH = path.join('tmp', 'project')
-
 type TestServer = {
   pairing: PairingOffer
   requests: { id: string; method: string; params?: unknown }[]
@@ -65,7 +64,9 @@ describe('RemoteRuntimeSharedControlConnection', () => {
       clientCapabilities: [
         protocolVersion.SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
         protocolVersion.AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
-        protocolVersion.SKILL_INSTALL_RESULT_V2_CAPABILITY
+        protocolVersion.SKILL_INSTALL_RESULT_V2_CAPABILITY,
+        protocolVersion.WORKTREE_VISIBILITY_DEFAULTS_RUNTIME_CAPABILITY,
+        protocolVersion.WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY
       ]
     })
     expect(server.requests.map((request) => request.method)).toEqual([

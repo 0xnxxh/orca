@@ -111,7 +111,7 @@ import {
   resolveUpdateInstallMode
 } from './updater'
 import { configureRemoteServerUpdater } from './runtime/remote-server-updater'
-import type { UpdateCheckOptions } from '../shared/types'
+import type { UpdateCheckOptions } from '../shared/update-status-types'
 import { recordUpdaterLifecycle } from './updater-lifecycle-diagnostics'
 import {
   installServeSupervisorDisconnectQuit,

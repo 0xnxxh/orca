@@ -15,7 +15,8 @@ export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-rea
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
 import { retireTerminalSurfaceFromPersistence } from '../runtime/mobile-session-terminal-persistence-retirement'
-import type { GlobalSettings, TuiAgent } from '../../shared/types'
+import type { GlobalSettings } from '../../shared/global-settings-types'
+import type { TuiAgent } from '../../shared/tui-agent'
 import { toSshExecutionHostId } from '../../shared/execution-host'
 import { normalizeRuntimePathForComparison } from '../../shared/cross-platform-path'
 import { terminalOutputBacklogCapChars } from '../../shared/terminal-scrollback-policy'
@@ -1863,7 +1864,9 @@ export function buildPtyHostEnv(
       hooksEnabled: opts.codexStatusHooksEnabled ?? opts.agentStatusHooksEnabled,
       isPackaged: opts.isPackaged,
       isWsl: opts.isWsl,
-      managedHomePath: opts.selectedCodexHomePath
+      managedHomePath: opts.selectedCodexHomePath,
+      userDataPath: opts.userDataPath,
+      resourcesPath: opts.resourcesPath
     })
     if (preflightCommand) {
       baseEnv.ORCA_CODEX_LAUNCH_PREFLIGHT = preflightCommand

@@ -1,10 +1,6 @@
 import { parseAuthenticatedFrame, parseReadyFrame } from './remote-runtime-request-frames'
 import type { RemoteRuntimeClientError } from './remote-runtime-client-error'
-import {
-  AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
-  SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY
-} from './protocol-version'
-import { SKILL_INSTALL_RESULT_V2_CAPABILITY } from './skill-install-capability'
+import { remoteRuntimeClientCapabilities } from './remote-runtime-client-capabilities'
 import { dispatchSharedControlFrame } from './remote-runtime-shared-control-frame-dispatch'
 import { parseSharedControlFrame } from './remote-runtime-shared-control-protocol'
 import type { SharedControlRetiredRequestIds } from './remote-runtime-shared-control-retired-request-ids'
@@ -42,11 +38,7 @@ export function handleSharedControlTextFrame(args: {
     args.sendEncrypted({
       type: 'e2ee_auth',
       deviceToken: args.deviceToken,
-      clientCapabilities: [
-        SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-        AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
-        SKILL_INSTALL_RESULT_V2_CAPABILITY
-      ]
+      clientCapabilities: remoteRuntimeClientCapabilities()
     })
     return
   }
