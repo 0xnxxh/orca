@@ -84,8 +84,9 @@ function humanizeUnreattachableSession(error: string): string {
     'auto.components.terminal.pane.TerminalErrorToast.sessionUnavailable',
     "Orca couldn't reattach to this pane's terminal session on the host. Open a new terminal to continue."
   )
+  // Why a replacer: a translation containing `$&` or `$1` would otherwise be read as a substitution.
   return UNREATTACHABLE_SESSION_REPLACE_PATTERNS.reduce(
-    (message, pattern) => message.replace(pattern, explanation),
+    (message, pattern) => message.replace(pattern, () => explanation),
     error
   )
 }
