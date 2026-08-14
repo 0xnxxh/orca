@@ -87,11 +87,17 @@ async function loadRuntimeOwnedSshAiVaultTargets(
     if (isRuntimeOwnedSshTargetId(target.id)) {
       return []
     }
+    let executionHostId: `ssh:${string}`
+    try {
+      executionHostId = toSshExecutionHostId(target.id)
+    } catch {
+      return []
+    }
     return [
       {
         environmentId,
         targetId: target.id,
-        executionHostId: toSshExecutionHostId(target.id),
+        executionHostId,
         ...('connected' in target && typeof target.connected === 'boolean'
           ? { connected: target.connected }
           : {})

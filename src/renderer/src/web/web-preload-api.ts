@@ -1608,6 +1608,7 @@ function createAiVaultApi(): NonNullable<Partial<PreloadApi>['aiVault']> {
       if (parsedScope?.kind === 'ssh') {
         return callRuntimeResult<AiVaultListResult>('aiVault.listSessions', {
           limit: args?.limit,
+          unlimited: args?.unlimited,
           force: args?.force,
           scopePaths: args?.scopePaths,
           executionHostId: parsedScope.id
@@ -1700,6 +1701,7 @@ function webAiVaultUnsupportedSshHostResult(executionHostId: ExecutionHostId): A
       {
         executionHostId,
         agent: 'codex',
+        kind: 'host',
         path: executionHostId,
         message: translate(
           'auto.web.webPreloadApi.aiVaultUnsupportedSshHost',

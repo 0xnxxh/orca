@@ -63,7 +63,7 @@ describe('runtime-owned SSH AI Vault inventory', () => {
   it('skips malformed target rows from a paired runtime', async () => {
     mocks.callRuntimeEnvironment.mockResolvedValueOnce({
       ok: true,
-      result: { targets: [null, 42, { id: 'hub-owned-host', connected: true }] }
+      result: { targets: [null, 42, { id: '\ud800' }, { id: 'hub-owned-host', connected: true }] }
     })
 
     await expect(listRuntimeOwnedSshAiVaultTargets('/user-data', 'hub-runtime')).resolves.toEqual([

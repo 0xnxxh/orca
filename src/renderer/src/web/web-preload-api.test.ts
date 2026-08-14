@@ -1941,14 +1941,14 @@ describe('web AI Vault preload API', () => {
     await expect(
       globals.window.api.aiVault.listSessions({
         executionHostScope: 'ssh:hub-owned-host',
-        limit: 25
+        unlimited: true
       })
     ).resolves.toEqual(scanResult)
     expect(runtimeCalls).toEqual([
       {
         method: 'aiVault.listSessions',
         params: {
-          limit: 25,
+          unlimited: true,
           executionHostId: 'ssh:hub-owned-host'
         }
       }
@@ -1985,6 +1985,7 @@ describe('web AI Vault preload API', () => {
       issues: [
         expect.objectContaining({
           executionHostId: 'ssh:hub-owned-host',
+          kind: 'host',
           message: expect.stringContaining('cannot scan Agent Session History on its SSH hosts')
         })
       ],
