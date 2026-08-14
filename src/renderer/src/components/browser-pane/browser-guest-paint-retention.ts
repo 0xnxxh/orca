@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '../../store'
 import { useBrowserMobileDriverForAny } from '../../lib/pane-manager/browser-mobile-driver-state'
@@ -25,6 +26,7 @@ export function collectBrowserPageIds(
 
 // Why: a stable identity keeps the disabled branch from re-running downstream shallow compares.
 const NO_BROWSER_PAGE_IDS: string[] = []
+const NO_BROWSER_TABS_BY_WORKTREE: Record<string, BrowserTabPageIdSource[]> = {}
 
 export function useWorktreeBrowserPageIds(worktreeId: string): string[] {
   return useAppStore(
@@ -46,12 +48,15 @@ export function useBrowserGuestPaintRetention(browserPageIds: readonly string[])
 // on the driver alone and the guest never mounts, so the driver never flips: a deadlock that
 // leaves the page unreachable from the phone entirely.
 export function useAnyBrowserGuestNeedsPaint(enabled: boolean): boolean {
-  const browserPageIds = useAppStore(
-    useShallow((state) =>
+  const browserTabsByWorktree = useAppStore((state) =>
+    enabled ? state.browserTabsByWorktree : NO_BROWSER_TABS_BY_WORKTREE
+  )
+  const browserPageIds = useMemo(
+    () =>
       enabled
-        ? Object.values(state.browserTabsByWorktree).flatMap((tabs) => collectBrowserPageIds(tabs))
-        : NO_BROWSER_PAGE_IDS
-    )
+        ? Object.values(browserTabsByWorktree).flatMap((tabs) => collectBrowserPageIds(tabs))
+        : NO_BROWSER_PAGE_IDS,
+    [browserTabsByWorktree, enabled]
   )
   return useBrowserGuestPaintRetention(browserPageIds)
 }

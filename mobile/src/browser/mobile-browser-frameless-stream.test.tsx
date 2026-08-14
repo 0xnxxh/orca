@@ -87,7 +87,7 @@ async function renderPane(): Promise<{ renderer: ReactTestRenderer; stream: Subs
     isActive: true
   }
 
-  let renderer: ReactTestRenderer | null = null
+  let renderer: ReactTestRenderer
   await act(async () => {
     renderer = create(
       createElement(MobileBrowserPane, {
@@ -104,9 +104,6 @@ async function renderPane(): Promise<{ renderer: ReactTestRenderer; stream: Subs
     )
     await Promise.resolve()
   })
-  if (!renderer) {
-    throw new Error('MobileBrowserPane did not render')
-  }
   const mounted: ReactTestRenderer = renderer
   const viewport = mounted.root
     .findAllByType('View')
