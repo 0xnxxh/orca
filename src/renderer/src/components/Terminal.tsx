@@ -149,7 +149,7 @@ import {
 } from '@/runtime/web-runtime-session'
 import { openMobileEmulatorTab } from '@/lib/open-mobile-emulator-tab'
 import { launchAgentInNewTab } from '@/lib/launch-agent-in-new-tab'
-import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-agent-session'
+import { gateWorktreeAgentActivation } from '@/lib/worktree-agent-activation-gate'
 import { listBoundAgentTabActions, resolveDefaultAgentForNewTab } from '@/lib/agent-tab-shortcuts'
 import { terminalProviderHasAuthoritativeSnapshot } from './terminal/terminal-provider-snapshot-capability'
 import { useTerminalProviderSnapshotCapability } from './terminal/use-terminal-provider-snapshot-capability'
@@ -1487,17 +1487,17 @@ function Terminal(): React.JSX.Element | null {
     createTab(activeWorktreeId, undefined, undefined, { pendingActivationSpawn: true })
   }, [workspaceSessionReady, activeWorktreeId, createTab, reconcileWorktreeTabModel])
 
-  const startupResumeWorktreeIdsRef = useRef(new Set<string>())
+  const startupActivationGateWorktreeIdsRef = useRef(new Set<string>())
   useEffect(() => {
     if (!workspaceSessionReady || !hydrationSucceeded || !activeWorktreeId) {
       return
     }
-    if (startupResumeWorktreeIdsRef.current.has(activeWorktreeId)) {
+    if (startupActivationGateWorktreeIdsRef.current.has(activeWorktreeId)) {
       return
     }
-    startupResumeWorktreeIdsRef.current.add(activeWorktreeId)
-    // Why: startup hydration restores the worktree without activateAndRevealWorktree, so orphaned live/quit records need a terminal-surface pass after cold restore.
-    resumeSleepingAgentSessionsForWorktree(activeWorktreeId)
+    startupActivationGateWorktreeIdsRef.current.add(activeWorktreeId)
+    // Why: startup bypasses activateAndRevealWorktree, but must still adopt daemon PTYs before resuming persisted agents.
+    void gateWorktreeAgentActivation(activeWorktreeId)
   }, [activeWorktreeId, hydrationSucceeded, workspaceSessionReady])
 
   const handleNewTab = useCallback(

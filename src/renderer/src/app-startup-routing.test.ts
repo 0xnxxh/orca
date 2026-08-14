@@ -3,6 +3,20 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('renderer startup runtime routing', () => {
+  it('routes packaged terminal restore through the daemon adoption gate', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/Terminal.tsx'),
+      'utf8'
+    )
+    const gateStart = source.indexOf('const startupActivationGateWorktreeIdsRef')
+    const gateEnd = source.indexOf('const handleNewTab', gateStart)
+    const gateEffect = source.slice(gateStart, gateEnd)
+
+    expect(gateStart).toBeGreaterThanOrEqual(0)
+    expect(gateEffect).toContain('void gateWorktreeAgentActivation(activeWorktreeId)')
+    expect(gateEffect).not.toContain('resumeSleepingAgentSessionsForWorktree')
+  })
+
   it('hydrates persisted UI before local catalog and worktree hydration', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
     const startupBlockStart = source.indexOf('void (async () => {')
