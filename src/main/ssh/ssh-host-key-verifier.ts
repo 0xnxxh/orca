@@ -52,15 +52,17 @@ export type HostKeyVerifierDeps = {
 }
 
 /**
- * ssh2's own default host-key proposal order, which we reorder rather than replace.
+ * Last-resort copy of ssh2 1.17's list, used only if the real one cannot be read.
  *
- * A hand-copy, because ssh2 exports it only from a deep internal path. Two things make that safe:
- * ssh2 THROWS `Unsupported algorithm` on any entry outside its supported list, so drift fails loudly
- * at connect rather than silently; and a test pins this against the real list so an ssh2 upgrade
- * that changes it is a review, not a surprise. Adopting a new proposal order automatically is the
- * wrong default — the order is what makes type-scoped matching safe.
+ * Deliberately not the primary source. ssh2's list is built at load time and `ssh-ed25519` is
+ * prepended only when a RUNTIME PROBE succeeds — it signs and verifies with a fixed Ed25519 key. On
+ * a build where that probe fails, ssh-ed25519 is absent from ssh2's SUPPORTED list too, and
+ * `generateAlgorithmList` THROWS `Unsupported algorithm: ssh-ed25519` from inside `client.connect`.
+ * That throw matches no retry classifier, so it is a permanent failure — and it would fire ONLY for
+ * hosts we already know, since those are the only ones we set `algorithms` for. Working on new
+ * hosts and failing on trusted ones is about the worst shape a bug can have.
  */
-export const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = [
+export const FALLBACK_SERVER_HOST_KEY_ALGORITHMS = [
   'ssh-ed25519',
   'ecdsa-sha2-nistp256',
   'ecdsa-sha2-nistp384',
@@ -69,6 +71,35 @@ export const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = [
   'rsa-sha2-256',
   'ssh-rsa'
 ]
+
+/**
+ * ssh2's own default host-key proposal order, which we reorder rather than replace.
+ *
+ * Read from ssh2 rather than copied, so we cannot propose an algorithm this ssh2 build does not
+ * support and cannot silently drop one it adds. The deep path is the only place ssh2 exports it;
+ * ssh2 is an external dependency in the main bundle, so it resolves at runtime from the packaged
+ * node_modules rather than being inlined.
+ */
+export const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = readSsh2DefaultServerHostKeyAlgorithms()
+
+function readSsh2DefaultServerHostKeyAlgorithms(): string[] {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- ssh2 exports this only here
+    const constants = require('ssh2/lib/protocol/constants.js') as {
+      DEFAULT_SERVER_HOST_KEY?: unknown
+    }
+    const list = constants?.DEFAULT_SERVER_HOST_KEY
+    if (Array.isArray(list) && list.length > 0 && list.every((a) => typeof a === 'string')) {
+      return [...(list as string[])]
+    }
+    console.warn('[ssh] ssh2 default host key list has an unexpected shape; using the copy')
+  } catch (error) {
+    // A future ssh2 could move the file. Falling back keeps connections working; the cost is only
+    // that the proposal order may drift, which a test reports.
+    console.warn('[ssh] could not read ssh2 default host key algorithms; using the copy:', error)
+  }
+  return [...FALLBACK_SERVER_HOST_KEY_ALGORITHMS]
+}
 
 export function hostKeyFingerprintOf(key: Buffer): string {
   return formatHostKeyFingerprint(createHash('sha256').update(key).digest('base64'))

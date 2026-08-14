@@ -3,6 +3,7 @@ import { parseKnownHosts } from './ssh-known-hosts'
 import {
   createHostKeyVerifier,
   DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
+  FALLBACK_SERVER_HOST_KEY_ALGORITHMS,
   hostKeyFingerprintOf,
   orderServerHostKeyAlgorithms,
   type HostKeyVerifierDeps
@@ -200,26 +201,33 @@ describe('the ssh2 host key verifier', () => {
   })
 })
 
-// The list we reorder is a hand-copy of ssh2's internal default. If ssh2 changes it, our proposal
-// silently stops matching what ssh2 supports — and ssh2 throws `Unsupported algorithm` on any entry
-// outside its supported list, so the whole transport stops connecting.
-describe('the copied ssh2 default algorithm list', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports -- the only way to read ssh2's internal constant
+// We now READ ssh2's list instead of copying it, which removes the drift class entirely — but the
+// fallback copy is still load-bearing if the deep path ever moves, so it is the thing worth pinning.
+describe('the ssh2 default algorithm list', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- ssh2 exports this only here
   const ssh2Constants = require('ssh2/lib/protocol/constants.js') as {
     DEFAULT_SERVER_HOST_KEY: string[]
     SUPPORTED_SERVER_HOST_KEY: string[]
   }
 
-  it('still matches ssh2, in the same order', () => {
+  it('is read from ssh2, not guessed', () => {
     expect(DEFAULT_SERVER_HOST_KEY_ALGORITHMS).toEqual(ssh2Constants.DEFAULT_SERVER_HOST_KEY)
   })
 
-  // The failure mode if it ever diverges: client.connect() throws synchronously before a socket is
-  // opened, so every target fails with a message about an algorithm the user never chose.
+  // The failure this prevents: generateAlgorithmList throws `Unsupported algorithm` from inside
+  // client.connect, and only for hosts we already know, since those are the only ones we set
+  // `algorithms` for.
   it('proposes nothing ssh2 would refuse', () => {
     for (const algorithm of DEFAULT_SERVER_HOST_KEY_ALGORITHMS) {
       expect(ssh2Constants.SUPPORTED_SERVER_HOST_KEY).toContain(algorithm)
     }
+  })
+
+  // ssh2 prepends ssh-ed25519 only when a runtime probe succeeds, so a copy is not merely stale-able
+  // — it can be wrong on a build where the probe fails. This asserts the fallback still matches on a
+  // machine where the probe passes; it is the copy, so drift here is a review, not an outage.
+  it('keeps the fallback copy in step with ssh2', () => {
+    expect(FALLBACK_SERVER_HOST_KEY_ALGORITHMS).toEqual(ssh2Constants.DEFAULT_SERVER_HOST_KEY)
   })
 
   // Type scoping is only safe because we can promote the type we hold, and RSA is negotiated under
