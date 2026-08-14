@@ -2881,10 +2881,10 @@ export function hoistSshPartitionsIntoLocalSession(
   // afterwards. Recording tabs instead keeps the hoist repeatable while never re-adding a tab the
   // user has closed, which is the resurrection this guard exists to prevent.
   const alreadyHoisted = new Set(state.settings?.sshHoistedTabIds ?? [])
-  // Snapshot: the tabsByWorktree loop stamps ids into `alreadyHoisted` before the unifiedTabs loop
-  // runs for the same partition, so that set cannot be used there to mean "hoisted on a PREVIOUS
-  // pass".
-  const hoistedBeforeThisPass = new Set(alreadyHoisted)
+  // Its OWN ledger: the two planes can arrive on different launches, so "this tab was hoisted" and
+  // "this tab's unified record was hoisted" are different facts. Sharing one set suppresses a
+  // unified record that shows up after its tabsByWorktree entry — permanently invisible.
+  const alreadyHoistedUnified = new Set(state.settings?.sshHoistedUnifiedTabIds ?? [])
   const partitions = sourcePartitions ?? state.workspaceSessionsByHostId
   if (!partitions) {
     return false
@@ -2991,7 +2991,7 @@ export function hoistSshPartitionsIntoLocalSession(
       const localTabs = local.unifiedTabs?.[worktreeId] ?? []
       const known = new Set(localTabs.map((tab) => tab.id))
       const additions = (tabs ?? []).filter(
-        (tab) => !known.has(tab.id) && !hoistedBeforeThisPass.has(tab.id)
+        (tab) => !known.has(tab.id) && !alreadyHoistedUnified.has(tab.id)
       )
       if (additions.length === 0) {
         continue
@@ -2999,6 +2999,9 @@ export function hoistSshPartitionsIntoLocalSession(
       local.unifiedTabs = {
         ...local.unifiedTabs,
         [worktreeId]: [...localTabs, ...structuredClone(additions)]
+      }
+      for (const tab of additions) {
+        alreadyHoistedUnified.add(tab.id)
       }
       changed = true
     }
@@ -3020,10 +3023,15 @@ export function hoistSshPartitionsIntoLocalSession(
   if (changed) {
     // Bounded, newest-last. A tab id can be reused by the CLI after its tab closes, and an
     // unbounded list would both grow for the life of the profile and strand such a pane forever.
-    // Dropping the oldest entries only risks re-hoisting a long-closed tab once, which is the
-    // milder failure of the two.
+    // KNOWN COST, and it is worse than it reads: an evicted id can be re-hoisted once, and since
+    // the unified ledger gates the plane the tab bar renders from, that means a long-closed tab
+    // reappearing ON SCREEN. Needs >512 hoisted tabs. Tracked, not fixed here.
     const bounded = [...alreadyHoisted].slice(-MAX_HOISTED_TAB_IDS)
-    state.settings = { ...state.settings, sshHoistedTabIds: bounded }
+    state.settings = {
+      ...state.settings,
+      sshHoistedTabIds: bounded,
+      sshHoistedUnifiedTabIds: [...alreadyHoistedUnified].slice(-MAX_HOISTED_TAB_IDS)
+    }
   }
   return changed
 }

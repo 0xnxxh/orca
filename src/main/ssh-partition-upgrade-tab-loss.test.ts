@@ -50,9 +50,10 @@ async function createStore(state: Record<string, unknown> = {}) {
 function stripHoistMarker(): void {
   const file = join(testState.dir, 'orca-data.json')
   const state = JSON.parse(readFileSync(file, 'utf-8')) as {
-    settings?: { sshHoistedTabIds?: string[] }
+    settings?: { sshHoistedTabIds?: string[]; sshHoistedUnifiedTabIds?: string[] }
   }
   delete state.settings?.sshHoistedTabIds
+  delete state.settings?.sshHoistedUnifiedTabIds
   writeFileSync(file, JSON.stringify(state), 'utf-8')
 }
 
@@ -537,6 +538,33 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       (relaunched.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? []).map((tab) => tab.id).sort(),
       'the later tab never reached unifiedTabs, so the tab bar cannot render it'
     ).toEqual(['tab-1', 'tab-2'])
+  })
+
+  // The two planes do not have to arrive together: a session written without `unifiedTabs` rebases
+  // `tabsByWorktree` alone (see `includeUnifiedTabs` in the membership authority), so the unified
+  // record can land a launch later. One shared ledger would have stamped the id on the first pass
+  // and suppressed the record forever — in the tab bar, permanently.
+  it('hoists a unified record that arrives a launch after its tabsByWorktree entry', async () => {
+    const first = paneSession()
+    delete (first as { unifiedTabs?: unknown }).unifiedTabs
+    const before = await createStore()
+    before.setWorkspaceSession(first as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const upgraded = await reopenStore()
+    expect(upgraded.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(1)
+    expect(upgraded.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? []).toHaveLength(0)
+
+    // Next launch: the partition now carries the unified record too.
+    upgraded.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    upgraded.flushOrThrow()
+
+    const relaunched = await reopenStore()
+    expect(
+      (relaunched.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? []).map((tab) => tab.id),
+      'the unified record was stamped by the tabsByWorktree hoist and suppressed forever'
+    ).toEqual([TAB])
   })
 
   // Closing the last tab EMPTIES unifiedTabs without deleting the key, so a bare id-diff re-adds

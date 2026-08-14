@@ -3214,6 +3214,10 @@ export type GlobalSettings = {
    *  one-shot flag: that plane is still written by the headless and CLI surfaces, so a single
    *  stamp would strand every pane they add after it. */
   sshHoistedTabIds?: string[]
+  /** Unified tab records already folded across. Separate from `sshHoistedTabIds` because the two
+   *  planes can arrive on different launches: a tab can reach `tabsByWorktree` on one pass and its
+   *  unified record only on a later one, and one ledger would suppress the record forever. */
+  sshHoistedUnifiedTabIds?: string[]
   /** Local voice/dictation config. Optional for pre-voice profiles; getDefaultSettings() hydrates defaults via the persistence merge. */
   voice?: VoiceSettings
 }
