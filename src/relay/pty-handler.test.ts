@@ -1686,6 +1686,16 @@ describe('PtyHandler', () => {
     ).rejects.toThrow(/identity mismatch/i)
   })
 
+  // The asymmetric case: one side carries a pane key, the other only a tab. Ignoring the key's own
+  // tab half let a client with just a tabId take a different pane's shell in that tab.
+  it('refuses when only one side carries a pane key and its tab differs', async () => {
+    const first = await spawnPty({ paneKey: `tab-1:${LEAF_A}` })
+
+    await expect(attachPty({ id: first.id, expectedTabId: 'tab-2' })).rejects.toThrow(
+      /identity mismatch/i
+    )
+  })
+
   it('attaches when the expected incarnation is the shell it names', async () => {
     const first = await spawnPty({})
 

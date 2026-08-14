@@ -1,7 +1,7 @@
 /* oxlint-disable max-lines */
 import type { IPty } from 'node-pty'
 import type * as NodePty from 'node-pty'
-import { isEquivalentPaneKey } from '../shared/stable-pane-id'
+import { isEquivalentPaneKey, parsePaneKey } from '../shared/stable-pane-id'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -363,10 +363,16 @@ function attachIdentityMismatches(expected: PtyIdentity, managed: PtyIdentity): 
   if (expected.paneKey && managed.paneKey) {
     return !isEquivalentPaneKey(expected.paneKey, managed.paneKey)
   }
-  // Why keep the tab compare for the no-paneKey case: both identities are optional at spawn, and
-  // dropping this left a lease with only a tabId unfenced. Relay ids restart at pty-1 after a
-  // replacement, so an unfenced attach can bind a pane to a different live shell.
-  return Boolean(expected.tabId && managed.tabId && expected.tabId !== managed.tabId)
+  // Why keep a tab compare at all: both identities are optional at spawn, and without this a lease
+  // carrying only a tabId is unfenced. Relay ids restart at pty-1 after a replacement, so an
+  // unfenced attach can bind a pane to a different live shell.
+  //
+  // When exactly one side carries a pane key, use the tab embedded in it rather than ignoring it.
+  // A pane key is `tabId:leafId`, so its tab half is directly comparable, and using it is strictly
+  // more checking than the previous fall-through — it cannot refuse a pair that already matched.
+  const expectedTabId = expected.tabId ?? (expected.paneKey && parsePaneKey(expected.paneKey)?.tabId)
+  const managedTabId = managed.tabId ?? (managed.paneKey && parsePaneKey(managed.paneKey)?.tabId)
+  return Boolean(expectedTabId && managedTabId && expectedTabId !== managedTabId)
 }
 /** Returns env to merge into the PTY's spawn env. Receives spawn context so augmenters can derive per-PTY identity from paneKey.
  *  `command` is the renderer-chosen agent launch command (`pi`, `omp`, …); undefined for CLI-launched bare shells. */
