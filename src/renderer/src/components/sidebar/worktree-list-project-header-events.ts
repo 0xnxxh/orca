@@ -4,7 +4,7 @@ import { isRepoHeaderActionTarget } from './project-header-drag'
 import {
   effectiveExternalWorktreeVisibility,
   isLegacyRepoForExternalWorktreeVisibility
-} from '../../../../shared/worktree-ownership'
+} from '../../../../shared/worktree/ownership'
 
 export function stopRepoHeaderKeyboardToggle(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.key === 'Enter' || event.key === ' ') {

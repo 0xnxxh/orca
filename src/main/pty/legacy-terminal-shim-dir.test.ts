@@ -24,6 +24,14 @@ const itOnPosix = process.platform === 'win32' ? it.skip : it
 // Why: the failure case uses directory permissions, which Windows ignores and root bypasses.
 const itOnPosixNonRoot = process.platform === 'win32' || process.getuid?.() === 0 ? it.skip : it
 
+// Why: `expect(text.indexOf(a)).toBeLessThan(text.indexOf(b))` passes when `a` is absent, because
+// indexOf returns -1. Every ordering pin must assert both operands exist first.
+function expectOrdered(text: string, first: string, second: string): void {
+  expect(text, `missing: ${first}`).toContain(first)
+  expect(text, `missing: ${second}`).toContain(second)
+  expect(text.indexOf(first)).toBeLessThan(text.indexOf(second))
+}
+
 describe('legacy terminal shim neutralization', () => {
   const tempRoots: string[] = []
 
@@ -89,14 +97,14 @@ describe('legacy terminal shim neutralization', () => {
     // Why: a captured path that no longer exists must be cleared, or the where.exe fallback below
     // is skipped and the wrapper execs a missing binary.
     expect(cmd).toContain('if defined orca_real if not exist "%orca_real%" set "orca_real="')
-    expect(cmd.indexOf('if not exist "%orca_real%"')).toBeLessThan(
-      cmd.indexOf(':orca_try_candidate')
-    )
+    expectOrdered(cmd, 'if not exist "%orca_real%"', ':orca_try_candidate')
     const powershell = readFileSync(join(win32Dir, 'git-wrapper.ps1'), 'utf8')
     expect(powershell).toContain('[StringComparison]::OrdinalIgnoreCase')
     expect(powershell).toContain('$realCommand = $null')
-    expect(powershell.indexOf('[StringComparison]::OrdinalIgnoreCase')).toBeLessThan(
-      powershell.indexOf('Test-Path -LiteralPath $realCommand')
+    expectOrdered(
+      powershell,
+      '[StringComparison]::OrdinalIgnoreCase',
+      'Test-Path -LiteralPath $realCommand'
     )
   })
 
@@ -147,7 +155,23 @@ describe('legacy terminal shim neutralization', () => {
       // Why: the rooted check must reject drive-relative 'C:foo', which still resolves against
       // the cwd — so the IsPathRooted call must be gone, replaced by an explicit prefix match.
       expect(powershell).not.toContain('[IO.Path]::IsPathRooted(')
-      expect(powershell).toContain("-notmatch '^([A-Za-z]:")
+      // Why the full pattern, not a prefix: `^([A-Za-z]:|\\\\)` also starts with this and would
+      // accept drive-relative `C:foo`, which still resolves against the cwd on that drive.
+      expect(powershell).toContain("-notmatch '^([A-Za-z]:[\\\\/]|\\\\\\\\)'")
+      // Why: trailing-separator normalization is what makes wrapper self-exclusion work; every
+      // one of these survived mutation with the suite green.
+      expect(powershell).toContain("ForEach-Object { $_.TrimEnd('\\') }")
+      expect(powershell).toContain("$pathEntry.TrimEnd('\\')")
+      expect(powershell).toContain("$dir.TrimEnd('\\')")
+      expect(powershell).toContain("$capturedDir.TrimEnd('\\')")
+      // Why: the fallback loop must skip wrapper dirs, or the wrapper can resolve to itself.
+      expect(powershell).toContain(
+        "$dir.TrimEnd('\\'), [StringComparison]::OrdinalIgnoreCase) }) { continue }"
+      )
+      // Why: `C:/Program Files/Git/cmd` style entries are legitimate and must stay accepted.
+      expect(cmd).toContain('if "%orca_candidate:~1,2%"==":/" goto orca_candidate_rooted')
+      // Why: the legacy-dir compare needs the same trailing-separator strip as its twins.
+      expect(cmd).toContain('if "%orca_legacy_norm:~-1%"=="%orca_sep%"')
       expect(powershell).toContain('if (-not $dir) { continue }')
       expect(powershell).toContain('Test-Path -LiteralPath $candidate -PathType Leaf')
     }
@@ -191,8 +215,7 @@ describe('legacy terminal shim neutralization', () => {
           'for %%P in ("%orca_clean_path:;='
         ]
       ] as const) {
-        expect(cmd.indexOf(guard)).toBeGreaterThan(-1)
-        expect(cmd.indexOf(guard)).toBeLessThan(cmd.indexOf(loop))
+        expectOrdered(cmd, guard, loop)
       }
     }
   })
@@ -317,6 +340,90 @@ describe('legacy terminal shim neutralization', () => {
     expect(wrapper).toContain('CDPATH= cd -P --')
   })
 
+  itOnPosix('rejects a distinct legacy shim directory named by the environment', () => {
+    // Why: ORCA_ATTRIBUTION_SHIM_DIR can name a *different* directory than the wrapper's own (an
+    // older install's dir inherited by a pre-upgrade pane). Nothing exercised that reject, so
+    // neutering it left the suite green.
+    const userData = makeUserDataDir()
+    const posixDir = join(userData, 'orca-terminal-attribution', 'posix')
+    const legacyDir = join(userData, 'legacy-shim')
+    const realBin = join(userData, 'real-bin')
+    for (const dir of [posixDir, legacyDir, realBin]) {
+      mkdirSync(dir, { recursive: true })
+    }
+    writeFileSync(join(posixDir, 'git'), 'legacy attribution wrapper')
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    writeFileSync(join(legacyDir, 'git'), "#!/bin/bash\nprintf 'HOSTILE\\n'\n", { mode: 0o755 })
+    writeFileSync(join(realBin, 'git'), "#!/bin/bash\nprintf 'REAL\\n'\n", { mode: 0o755 })
+
+    const run = spawnSync(join(posixDir, 'git'), ['--version'], {
+      env: {
+        ...process.env,
+        ORCA_ATTRIBUTION_SHIM_DIR: legacyDir,
+        PATH: `${legacyDir}:${realBin}:/usr/bin:/bin`
+      },
+      encoding: 'utf8',
+      timeout: 20_000
+    })
+
+    expect(run.stdout).toContain('REAL')
+    expect(run.stdout).not.toContain('HOSTILE')
+  })
+
+  itOnPosix('does not fall back to the cwd when every PATH entry is filtered out', () => {
+    // Why: with the shim dir as the only entry the cleaned PATH is empty; without the
+    // path_entry_kept guard the lookup runs against that empty PATH and finds a cwd-local git.
+    const userData = makeUserDataDir()
+    const posixDir = join(userData, 'orca-terminal-attribution', 'posix')
+    const hostile = join(userData, 'hostile')
+    mkdirSync(posixDir, { recursive: true })
+    mkdirSync(hostile, { recursive: true })
+    writeFileSync(join(posixDir, 'git'), 'legacy attribution wrapper')
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    writeFileSync(join(hostile, 'git'), "#!/bin/bash\nprintf 'HOSTILE\\n'\n", { mode: 0o755 })
+
+    const run = spawnSync(join(posixDir, 'git'), ['--version'], {
+      cwd: hostile,
+      env: { PATH: posixDir },
+      encoding: 'utf8',
+      timeout: 20_000
+    })
+
+    expect(run.stdout).not.toContain('HOSTILE')
+    expect(run.status).toBe(127)
+  })
+
+  itOnPosix('hands the child the cleaned PATH, not the inherited one', () => {
+    // Why: exec must carry the filtered PATH or the legacy shim dir and `.` reach the real git,
+    // and anything it spawns (hooks, credential helpers) resolves against them again.
+    const userData = makeUserDataDir()
+    const posixDir = join(userData, 'orca-terminal-attribution', 'posix')
+    const realBin = join(userData, 'real-bin')
+    mkdirSync(posixDir, { recursive: true })
+    mkdirSync(realBin, { recursive: true })
+    writeFileSync(join(posixDir, 'git'), 'legacy attribution wrapper')
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    writeFileSync(join(realBin, 'git'), '#!/bin/bash\nprintf \'PATH=%s\\n\' "$PATH"\n', {
+      mode: 0o755
+    })
+
+    const run = spawnSync(join(posixDir, 'git'), ['--version'], {
+      env: { PATH: `${posixDir}:.:${realBin}:/usr/bin:/bin` },
+      encoding: 'utf8',
+      timeout: 20_000
+    })
+
+    expect(run.stdout).toContain('PATH=')
+    expect(run.stdout).not.toContain('orca-terminal-attribution')
+    expect(run.stdout.split('PATH=')[1]?.split(':')).not.toContain('.')
+  })
+
   itOnPosix('does not let the cwd supply the script interpreter', async () => {
     // Why: the shebang is resolved before any of the script's own PATH hygiene runs, so with
     // `env` an empty or relative PATH element lets an untrusted checkout supply bash itself.
@@ -426,7 +533,7 @@ describe('legacy terminal shim neutralization', () => {
 
     const cmd = readFileSync(join(win32Dir, 'git.cmd'), 'utf8')
     const cmdCapture = 'set "orca_legacy_wrapper_dir=%ORCA_ATTRIBUTION_SHIM_DIR%"'
-    expect(cmd.indexOf(cmdCapture)).toBeLessThan(cmd.indexOf('set "ORCA_ATTRIBUTION_SHIM_DIR="'))
+    expectOrdered(cmd, cmdCapture, 'set "ORCA_ATTRIBUTION_SHIM_DIR="')
     expect(cmd).toContain('for %%P in ("%PATH:;=" "%") do call :orca_append_path "%%~P"')
     expect(cmd).toContain('if /I "%orca_path_entry_dir%"=="%orca_wrapper_dir%" exit /b')
     expect(cmd).toContain('if defined orca_legacy_wrapper_dir call :orca_reject_legacy_dir')
@@ -436,8 +543,10 @@ describe('legacy terminal shim neutralization', () => {
     expect(cmd).toContain('if "%orca_path_entry_dir:~-1%"=="%orca_sep%"')
 
     const powershell = readFileSync(join(win32Dir, 'git-wrapper.ps1'), 'utf8')
-    expect(powershell.indexOf('$legacyWrapperDir = $env:ORCA_ATTRIBUTION_SHIM_DIR')).toBeLessThan(
-      powershell.indexOf('Remove-Item "Env:$_"')
+    expectOrdered(
+      powershell,
+      '$legacyWrapperDir = $env:ORCA_ATTRIBUTION_SHIM_DIR',
+      'Remove-Item "Env:$_"'
     )
     expect(powershell).toContain('$wrapperDirs = @($wrapperDir, $legacyWrapperDir)')
     expect(powershell).toContain("$env:PATH = (($env:PATH -split ';') | Where-Object {")
@@ -655,6 +764,29 @@ describe('legacy terminal shim neutralization', () => {
 
     expect(windowsEnv).toEqual({ PATH: '', Path: 'C:\\Windows' })
     expect(posixEnv).toEqual({ PATH: '' })
+  })
+
+  it('strips legacy shim entries that carry a trailing separator', () => {
+    // Why: without normalizing the trailing separator the entry does not match, so Orca's own
+    // scrub leaves the legacy shim directory on the spawned PATH and the wrapper stays reachable.
+    const posix: Record<string, string> = {
+      PATH: '/home/u/.orca/orca-terminal-attribution/posix/:/usr/bin'
+    }
+    stripLegacyTerminalShimEnv(posix, 'linux')
+    expect(posix.PATH).toBe('/usr/bin')
+
+    // Why: more than one trailing separator is still the same directory.
+    const many: Record<string, string> = {
+      PATH: '/home/u/.orca/orca-terminal-attribution/posix///:/usr/bin'
+    }
+    stripLegacyTerminalShimEnv(many, 'linux')
+    expect(many.PATH).toBe('/usr/bin')
+
+    const win: Record<string, string> = {
+      Path: 'C:\\Users\\u\\orca-terminal-attribution\\win32\\;C:\\Windows'
+    }
+    stripLegacyTerminalShimEnv(win, 'win32')
+    expect(win.Path).toBe('C:\\Windows')
   })
 
   it('keeps neighbouring directories that merely share the name prefix', () => {
