@@ -11,8 +11,7 @@ import {
   extractBucketLeafCandidates,
   getRetiredWorktreeNamesForRepo,
   normalizeRetirableGeneratedName,
-  resetRetirementCollisionKeyCacheForTests,
-  retireGeneratedWorktreeName
+  resetRetirementCollisionKeyCacheForTests
 } from './worktree-name-retirement'
 
 const FIRST = MARINE_CREATURES[0].toLowerCase()
@@ -201,62 +200,67 @@ describe('discoverRetiredWorktreeNames', () => {
 describe('getRetiredWorktreeNamesForRepo', () => {
   const settingsFor = (nestWorkspaces: boolean): GlobalSettings =>
     ({ workspaceDir: '/workspaces', nestWorkspaces }) as GlobalSettings
+  const storeOf = (byRepo: Record<string, string[]>) => {
+    const calls: string[] = []
+    return {
+      calls,
+      getRetiredWorktreeNames: (repoId: string) => {
+        calls.push(repoId)
+        return byRepo[repoId] ?? []
+      }
+    }
+  }
 
   it('shares retirements when two repos create into the same cwd namespace', () => {
-    const byKey = new Map<string, string[]>()
-    const store = {
-      getRetiredWorktreeNames: (key: string) => byKey.get(key) ?? [],
-      addRetiredWorktreeName: (key: string, name: string) =>
-        byKey.set(key, [...(byKey.get(key) ?? []), name])
-    }
-    const settings = settingsFor(false)
-    const repoA = makeRepo('repo-a', '/repos/a')
-    const repoB = makeRepo('repo-b', '/repos/b')
+    const store = storeOf({ 'repo-a': [FIRST], 'repo-b': [SECOND] })
+    const repos = [makeRepo('repo-a', '/repos/a'), makeRepo('repo-b', '/repos/b')]
 
-    retireGeneratedWorktreeName(store, repoA, settings, FIRST)
-
-    expect(getRetiredWorktreeNamesForRepo(store, repoB, settings)).toEqual([FIRST])
+    expect(
+      getRetiredWorktreeNamesForRepo(store, repos[1], repos, settingsFor(false)).sort()
+    ).toEqual([FIRST, SECOND].sort())
   })
 
   it('keeps independent nested repo paths in separate retirement domains', () => {
-    const byKey = new Map<string, string[]>()
-    const store = {
-      getRetiredWorktreeNames: (key: string) => byKey.get(key) ?? [],
-      addRetiredWorktreeName: (key: string, name: string) =>
-        byKey.set(key, [...(byKey.get(key) ?? []), name])
-    }
-    const settings = settingsFor(true)
-    const repoA = makeRepo('repo-a', '/repos/a')
-    const repoB = makeRepo('repo-b', '/repos/b')
+    const store = storeOf({ 'repo-a': [FIRST], 'repo-b': [SECOND] })
+    const repos = [makeRepo('repo-a', '/repos/a'), makeRepo('repo-b', '/repos/b')]
 
-    retireGeneratedWorktreeName(store, repoA, settings, FIRST)
-
-    expect(getRetiredWorktreeNamesForRepo(store, repoB, settings)).toEqual([])
-    expect(getRetiredWorktreeNamesForRepo(store, repoA, settings)).toEqual([FIRST])
+    expect(getRetiredWorktreeNamesForRepo(store, repos[1], repos, settingsFor(true))).toEqual([
+      SECOND
+    ])
   })
 
-  it('survives a repo being removed and re-added under a new id', () => {
-    // Why: repo ids are regenerated on re-add. Keying the registry by repo id silently dropped
-    // every retirement for a path that had not changed at all.
-    const byKey = new Map<string, string[]>()
-    const store = {
-      getRetiredWorktreeNames: (key: string) => byKey.get(key) ?? [],
-      addRetiredWorktreeName: (key: string, name: string) =>
-        byKey.set(key, [...(byKey.get(key) ?? []), name])
+  it('never probes a path for peers that hold no retirements', () => {
+    // Why: deriving a peer's namespace runs computeWorktreePath, which for a WSL repo is a blocking
+    // wsl.exe call. Reading `path` is exactly what a probe does, so count that.
+    const pathReads: string[] = []
+    const spyRepo = (id: string, path: string): Repo => {
+      const repo = makeRepo(id, path)
+      return Object.defineProperty(repo, 'path', {
+        get: () => {
+          pathReads.push(id)
+          return path
+        }
+      }) as Repo
     }
-    const settings = settingsFor(true)
+    const store = storeOf({ 'repo-a': [FIRST] })
+    const repos = [
+      spyRepo('repo-a', '/repos/a'),
+      ...Array.from({ length: 20 }, (_unused, index) => spyRepo(`peer-${index}`, `/repos/${index}`))
+    ]
 
-    retireGeneratedWorktreeName(store, makeRepo('repo-old', '/repos/a'), settings, FIRST)
-
-    expect(
-      getRetiredWorktreeNamesForRepo(store, makeRepo('repo-new', '/repos/a'), settings)
-    ).toEqual([FIRST])
+    expect(getRetiredWorktreeNamesForRepo(store, repos[0], repos, settingsFor(false))).toEqual([
+      FIRST
+    ])
+    expect(pathReads.filter((id) => id.startsWith('peer-'))).toEqual([])
   })
 
   it('reports nothing for a folder workspace, which has no generated worktree names', () => {
-    const store = { getRetiredWorktreeNames: () => [FIRST] }
+    const store = storeOf({ folder: [FIRST] })
     const folderRepo = { ...makeRepo('folder', '/repos/folder'), kind: 'folder' as const }
-    expect(getRetiredWorktreeNamesForRepo(store, folderRepo, settingsFor(false))).toEqual([])
+
+    expect(
+      getRetiredWorktreeNamesForRepo(store, folderRepo, [folderRepo], settingsFor(false))
+    ).toEqual([])
   })
 })
 
@@ -265,24 +269,26 @@ describe('ensureRetiredWorktreeNamesBackfilled', () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-retirement-backfill-'))
     const workspaceRoot = join(root, 'workspaces')
     await mkdir(join(workspaceRoot, FIRST), { recursive: true })
-    const merged: { key: string; names: string[] }[] = []
+    const merged: { repoId: string; names: string[] }[] = []
     const store = {
-      mergeRetiredWorktreeNames: (key: string, names: Iterable<string>) => {
-        merged.push({ key, names: [...names] })
+      mergeRetiredWorktreeNames: (repoId: string, names: Iterable<string>) => {
+        merged.push({ repoId, names: [...names] })
         return true
       }
     }
-    const repo = makeRepo('repo-a', join(root, 'repos', 'a'))
     const settings = { workspaceDir: workspaceRoot, nestWorkspaces: false }
 
     try {
-      await ensureRetiredWorktreeNamesBackfilled(store, repo, settings)
-      expect(merged).toHaveLength(1)
-      expect(merged[0].names).toContain(FIRST)
+      await ensureRetiredWorktreeNamesBackfilled(store, makeRepo('repo-a', '/repos/a'), settings)
+      expect(merged).toEqual([{ repoId: 'repo-a', names: [FIRST] }])
 
-      // A second repo in the same namespace reuses the one in-flight scan.
+      // Why: the scan is cached per cwd namespace but the registry is per repo, so a second repo in
+      // the same namespace must still receive the merge rather than silently inheriting nothing.
       await ensureRetiredWorktreeNamesBackfilled(store, makeRepo('repo-b', '/repos/b'), settings)
-      expect(merged).toHaveLength(1)
+      expect(merged).toEqual([
+        { repoId: 'repo-a', names: [FIRST] },
+        { repoId: 'repo-b', names: [FIRST] }
+      ])
     } finally {
       await rm(root, { force: true, recursive: true })
     }
@@ -291,7 +297,7 @@ describe('ensureRetiredWorktreeNamesBackfilled', () => {
   it('skips repos whose agent state lives on another host', async () => {
     const merged: string[] = []
     const store = {
-      mergeRetiredWorktreeNames: (_key: string, names: Iterable<string>) => {
+      mergeRetiredWorktreeNames: (_repoId: string, names: Iterable<string>) => {
         merged.push(...names)
         return true
       }

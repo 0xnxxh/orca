@@ -3742,12 +3742,13 @@ export type PersistedState = {
   folderWorkspaceDiffComments?: Record<string, DiffComment[]>
   /** Sparse-checkout presets keyed by repoId. */
   sparsePresetsByRepo: Record<string, SparsePreset[]>
-  /** Generated workspace names already issued, keyed by the cwd namespace repos create into
-   *  (execution host + workspace-root path), not by repoId — the collision this prevents is on the
-   *  path, and repo ids change on remove/re-add while the path does not. Suppresses reissuing a
-   *  name so a recreated workspace never lands on a prior occupant's path and inherits agent state
-   *  keyed to that cwd. Grows monotonically; entries are never removed on workspace deletion. */
-  retiredWorktreeNamesByWorkspaceKey?: Record<string, string[]>
+  /** Generated workspace names already issued, keyed by repoId. Suppresses reissuing a name so a
+   *  recreated workspace never lands on a prior occupant's path and inherits agent state keyed to
+   *  that cwd. Grows monotonically within a repo — entries are never removed on workspace deletion
+   *  — and is dropped wholesale when the repo is removed. Readers union across every repo that
+   *  creates into the same cwd namespace, so the storage key stays the stable repo id while the
+   *  guarantee follows the path. */
+  retiredWorktreeNamesByRepo?: Record<string, string[]>
   /** Per paired device last tab selection by worktree; keeps mobile navigation across host restarts. */
   mobileClientTabSelectionsByDeviceId?: PersistedMobileClientTabSelections
   worktreeMeta: Record<string, WorktreeMeta>

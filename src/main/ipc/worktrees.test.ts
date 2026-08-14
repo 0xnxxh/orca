@@ -4715,7 +4715,7 @@ describe('registerWorktreeHandlers', () => {
     )
     expect(provider.listWorktrees).toHaveBeenCalledTimes(1)
     expect(provider.worktreeIsClean).not.toHaveBeenCalled()
-    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith(expect.any(String), 'nautilus-2')
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-ssh', 'nautilus-2')
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
       'repo-ssh::/remote/repo-nautilus-2',
       expect.objectContaining({

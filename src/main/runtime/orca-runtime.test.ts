@@ -4092,7 +4092,7 @@ describe('OrcaRuntimeService', () => {
         worktrees: expect.arrayContaining([expect.objectContaining({ path: createdWorktree.path })])
       }
     )
-    expect(addRetiredWorktreeName).toHaveBeenCalledWith(expect.any(String), 'nautilus-2')
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus-2')
   })
 
   it('neither skips nor retires a name the user typed', async () => {

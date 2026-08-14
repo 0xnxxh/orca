@@ -1925,7 +1925,7 @@ export function registerWorktreeHandlers(
       // Best effort: without the seed we only under-retire, which is the pre-existing behavior.
       console.warn(`[worktrees] retirement backfill failed for repo ${args.repoId}:`, err)
     }
-    return getRetiredWorktreeNamesForRepo(store, repo, store.getSettings())
+    return getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), store.getSettings())
   })
 
   ipcMain.handle('worktrees:list', async (_event, args: { repoId: string }) => {

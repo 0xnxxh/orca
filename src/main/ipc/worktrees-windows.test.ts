@@ -348,7 +348,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
       nameWasGenerated: true
     })
 
-    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith(expect.any(String), 'nautilus-2')
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-1', 'nautilus-2')
   })
 
   it('leaves a user-typed name reusable even when the same name is retired', async () => {

@@ -2335,15 +2335,28 @@ const MAX_CLAUDE_LIVE_PTY_SESSION_IDS = 200
 // Why: bound removed-SSH-target history so remove/re-add churn can't grow the file unbounded.
 const MAX_REMOVED_SSH_TARGET_TOMBSTONES = 50
 
+// Why: bound per-repo retirement so long-lived repos can't grow the file unbounded. Deliberately
+// far above the 552-name pool — a cap below it would start reissuing names and reintroduce the bug
+// this registry exists to prevent, so only `-2`/`-3` tier accumulation can ever reach it.
+const MAX_RETIRED_WORKTREE_NAMES_PER_REPO = 2000
+
+/** Oldest-first eviction: entries are appended in retirement order, and the oldest paths are the
+ *  ones whose agent state is likeliest to be gone already. */
+function boundRetiredWorktreeNames(names: readonly string[]): string[] {
+  return names.length > MAX_RETIRED_WORKTREE_NAMES_PER_REPO
+    ? names.slice(names.length - MAX_RETIRED_WORKTREE_NAMES_PER_REPO)
+    : [...names]
+}
+
 /** Why: a corrupt or hand-edited map must degrade to "nothing retired" rather than throw during
  *  load — over-retiring costs one name from a 552-entry pool, but a load failure costs the app. */
-function normalizeRetiredWorktreeNamesByWorkspaceKey(value: unknown): Record<string, string[]> {
+function normalizeRetiredWorktreeNamesByRepo(value: unknown): Record<string, string[]> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
   }
-  const byKey: Record<string, string[]> = {}
-  for (const [workspaceKey, names] of Object.entries(value as Record<string, unknown>)) {
-    if (!workspaceKey || !Array.isArray(names)) {
+  const byRepo: Record<string, string[]> = {}
+  for (const [repoId, names] of Object.entries(value as Record<string, unknown>)) {
+    if (!repoId || !Array.isArray(names)) {
       continue
     }
     const seen = new Set<string>()
@@ -2357,10 +2370,10 @@ function normalizeRetiredWorktreeNamesByWorkspaceKey(value: unknown): Record<str
       }
     }
     if (seen.size > 0) {
-      byKey[workspaceKey] = [...seen]
+      byRepo[repoId] = boundRetiredWorktreeNames([...seen])
     }
   }
-  return byKey
+  return byRepo
 }
 
 function normalizeClaudeLivePtySessionIds(value: unknown): string[] {
@@ -3848,8 +3861,8 @@ export class Store {
                 (alias): alias is string => typeof alias === 'string'
               )
             : [],
-          retiredWorktreeNamesByWorkspaceKey: normalizeRetiredWorktreeNamesByWorkspaceKey(
-            parsed.retiredWorktreeNamesByWorkspaceKey
+          retiredWorktreeNamesByRepo: normalizeRetiredWorktreeNamesByRepo(
+            parsed.retiredWorktreeNamesByRepo
           ),
           sshRemotePtyLeases: (parsed.sshRemotePtyLeases ?? [])
             .map(normalizeSshRemotePtyLease)
@@ -4881,6 +4894,8 @@ export class Store {
     this.syncProjectHostSetupCompatibilityState()
     // Why: presets are repo-scoped and unreachable once the repo is gone, so drop them with it.
     delete this.state.sparsePresetsByRepo[id]
+    // Same convention: retirements are repo-id-keyed, so they would otherwise orphan forever.
+    delete this.state.retiredWorktreeNamesByRepo?.[id]
     this.pruneWorktreeStateForRepo(id, null)
     this.state.workspaceSession = removeRepoFromWorkspaceSession(this.state.workspaceSession, id)
     this.state.workspaceSessionsByHostId = removeRepoFromHostWorkspaceSessions(
@@ -4896,9 +4911,11 @@ export class Store {
       (r) => !(r.id === id && getRepoExecutionHostId(r) === hostId)
     )
     const idStillPresent = this.state.repos.some((r) => r.id === id)
-    // Why: presets are repo-id-scoped (not host-scoped); drop them only when the last host's copy is gone.
+    // Why: presets and retirements are repo-id-scoped (not host-scoped); drop them only when the
+    // last host's copy is gone.
     if (!idStillPresent) {
       delete this.state.sparsePresetsByRepo[id]
+      delete this.state.retiredWorktreeNamesByRepo?.[id]
     }
     this.syncProjectHostSetupCompatibilityState()
     // Why: prune only this host's worktree metas if the id survives elsewhere; otherwise prune everything (matches removeProject).
@@ -7215,32 +7232,32 @@ export class Store {
     this.scheduleSave()
   }
 
-  getRetiredWorktreeNames(workspaceKey: string): string[] {
-    return [...(this.state.retiredWorktreeNamesByWorkspaceKey?.[workspaceKey] ?? [])]
+  getRetiredWorktreeNames(repoId: string): string[] {
+    return [...(this.state.retiredWorktreeNamesByRepo?.[repoId] ?? [])]
   }
 
-  /** Records a generated workspace name as spent in this cwd namespace. Called with the name main
-   *  actually used, not the one the renderer proposed — create can advance past it on collision. */
-  addRetiredWorktreeName(workspaceKey: string, name: string): void {
+  /** Records a generated workspace name as spent for this repo. Called with the name main actually
+   *  used, not the one the renderer proposed — the create path can advance past it on collision. */
+  addRetiredWorktreeName(repoId: string, name: string): void {
     const normalized = normalizeRetirableGeneratedName(name)
-    if (!workspaceKey || !normalized) {
+    if (!repoId || !normalized) {
       return
     }
-    this.state.retiredWorktreeNamesByWorkspaceKey ??= {}
-    const existing = this.state.retiredWorktreeNamesByWorkspaceKey[workspaceKey]
+    this.state.retiredWorktreeNamesByRepo ??= {}
+    const existing = this.state.retiredWorktreeNamesByRepo[repoId]
     if (existing?.includes(normalized)) {
       return
     }
-    this.state.retiredWorktreeNamesByWorkspaceKey[workspaceKey] = existing
-      ? [...existing, normalized]
-      : [normalized]
+    this.state.retiredWorktreeNamesByRepo[repoId] = boundRetiredWorktreeNames(
+      existing ? [...existing, normalized] : [normalized]
+    )
     this.scheduleSave()
   }
 
   /** Seeds retirements discovered by the one-time backfill. Merges rather than replaces so a
    *  concurrent create during backfill is not lost. Returns true when anything was added. */
-  mergeRetiredWorktreeNames(workspaceKey: string, names: Iterable<string>): boolean {
-    if (!workspaceKey) {
+  mergeRetiredWorktreeNames(repoId: string, names: Iterable<string>): boolean {
+    if (!repoId) {
       return false
     }
     const incoming = new Set<string>()
@@ -7253,8 +7270,8 @@ export class Store {
     if (incoming.size === 0) {
       return false
     }
-    this.state.retiredWorktreeNamesByWorkspaceKey ??= {}
-    const existing = this.state.retiredWorktreeNamesByWorkspaceKey[workspaceKey] ?? []
+    this.state.retiredWorktreeNamesByRepo ??= {}
+    const existing = this.state.retiredWorktreeNamesByRepo[repoId] ?? []
     const merged = new Set(existing)
     for (const name of incoming) {
       merged.add(name)
@@ -7262,7 +7279,7 @@ export class Store {
     if (merged.size === existing.length) {
       return false
     }
-    this.state.retiredWorktreeNamesByWorkspaceKey[workspaceKey] = [...merged]
+    this.state.retiredWorktreeNamesByRepo[repoId] = boundRetiredWorktreeNames([...merged])
     this.scheduleSave()
     return true
   }

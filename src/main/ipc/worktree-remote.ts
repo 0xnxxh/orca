@@ -135,10 +135,7 @@ import {
   getWorktreeCreateCandidate,
   WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS
 } from '../worktree-create-candidates'
-import {
-  getRetiredWorktreeNamesForRepo,
-  retireGeneratedWorktreeName
-} from '../worktree-name-retirement'
+import { getRetiredWorktreeNamesForRepo } from '../worktree-name-retirement'
 
 const SSH_WORKTREE_CREATE_FETCH_FRESHNESS_MS = 30_000
 const SSH_WORKTREE_CREATE_FETCH_CACHE_MAX = 512
@@ -1555,7 +1552,7 @@ export async function createRemoteWorktree(
   let lastBranchConflictKind: 'local' | 'remote' | null = null
   let remotePathResolved = false
   const retiredNames = args.nameWasGenerated
-    ? new Set(getRetiredWorktreeNamesForRepo(store, repo, settings))
+    ? new Set(getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings))
     : null
   // Why: duplicate PR/MR checkouts still need a workspace; suffix branch/path while preserving review metadata and push target.
   for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
@@ -1773,7 +1770,7 @@ export async function createRemoteWorktree(
   const worktreeId = `${repo.id}::${created.path}`
   // Why: repo-qualified layouts decorate the physical leaf; retire the name main actually used.
   if (args.nameWasGenerated) {
-    retireGeneratedWorktreeName(store, repo, settings, effectiveSanitizedName)
+    store.addRetiredWorktreeName(repo.id, effectiveSanitizedName)
   }
   const now = Date.now()
   // Why: PR/MR worktrees start from a head ref/SHA but Source Control must compare against the review target branch.
@@ -2104,7 +2101,7 @@ export async function createLocalWorktree(
   let lastExistingPR: Awaited<ReturnType<typeof getPRForBranch>> | null = null
   let lastExistingReviewNumber: number | null = null
   const retiredNames = args.nameWasGenerated
-    ? new Set(getRetiredWorktreeNamesForRepo(store, repo, settings))
+    ? new Set(getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings))
     : null
   // Why: a create-from-review branch override may already exist locally; suffix both branch and path instead of blocking the user.
   for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
@@ -2400,7 +2397,7 @@ export async function createLocalWorktree(
   const worktreeId = `${repo.id}::${created.path}`
   // Why: repo-qualified layouts decorate the physical leaf; retire the name main actually used.
   if (args.nameWasGenerated) {
-    retireGeneratedWorktreeName(store, repo, settings, effectiveSanitizedName)
+    store.addRetiredWorktreeName(repo.id, effectiveSanitizedName)
   }
   const now = Date.now()
   // Why: PR/MR worktrees start from a head ref/SHA but Source Control must compare against the review target branch.

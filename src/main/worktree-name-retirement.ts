@@ -18,16 +18,13 @@ import {
 import { worktreePathComparisonKey } from './ipc/worktree-path-comparison'
 
 const RETIREMENT_PROBE_NAME = 'orca-retirement-probe'
-const backfillsByStore = new WeakMap<object, Map<string, Promise<void>>>()
+const scansByStore = new WeakMap<object, Map<string, Promise<Set<string>>>>()
 
 type RetirementReadStore = {
-  getRetiredWorktreeNames(collisionKey: string): string[]
-}
-type RetirementWriteStore = {
-  addRetiredWorktreeName(collisionKey: string, name: string): void
+  getRetiredWorktreeNames(repoId: string): string[]
 }
 type RetirementBackfillStore = {
-  mergeRetiredWorktreeNames(collisionKey: string, names: Iterable<string>): boolean
+  mergeRetiredWorktreeNames(repoId: string, names: Iterable<string>): boolean
 }
 type RetirementPathSettings = Pick<GlobalSettings, 'nestWorkspaces' | 'workspaceDir'>
 
@@ -121,29 +118,40 @@ export function getRetirementCollisionKey(repo: Repo, settings: RetirementPathSe
   return key
 }
 
+/** Stored per repo id, which is stable, but read across every repo that creates into the same cwd
+ *  namespace — that is where a reissued name would actually collide.
+ *
+ *  The peer scan is deliberately lazy: a repo's own retirements never touch a path, and a peer's
+ *  namespace is derived only once that peer is known to hold retirements. Deriving one costs a
+ *  blocking `wsl.exe` call for a WSL repo, so it must not be paid per repo on every create. */
 export function getRetiredWorktreeNamesForRepo(
   store: RetirementReadStore,
   repo: Repo,
+  repos: readonly Repo[],
   settings: RetirementPathSettings
 ): string[] {
   if (isFolderRepo(repo)) {
     return []
   }
-  return store.getRetiredWorktreeNames(getRetirementCollisionKey(repo, settings))
-}
-
-/** Records the name main actually used, not the one the client proposed — the create path can
- *  advance past a taken candidate. Call only for names Orca generated. */
-export function retireGeneratedWorktreeName(
-  store: RetirementWriteStore,
-  repo: Repo,
-  settings: RetirementPathSettings,
-  name: string
-): void {
-  if (isFolderRepo(repo)) {
-    return
+  const names = new Set(store.getRetiredWorktreeNames(repo.id))
+  let collisionKey: string | null = null
+  for (const candidate of repos) {
+    if (candidate.id === repo.id || isFolderRepo(candidate)) {
+      continue
+    }
+    const candidateNames = store.getRetiredWorktreeNames(candidate.id)
+    if (candidateNames.length === 0) {
+      continue
+    }
+    collisionKey ??= getRetirementCollisionKey(repo, settings)
+    if (getRetirementCollisionKey(candidate, settings) !== collisionKey) {
+      continue
+    }
+    for (const name of candidateNames) {
+      names.add(name)
+    }
   }
-  store.addRetiredWorktreeName(getRetirementCollisionKey(repo, settings), name)
+  return [...names]
 }
 
 function parentPath(path: string): string {
@@ -157,27 +165,29 @@ export function ensureRetiredWorktreeNamesBackfilled(
   repo: Repo,
   settings: RetirementPathSettings
 ): Promise<void> {
-  // Remote workspaces keep their agent state on the execution host, which this scan cannot see.
+  // Remote workspaces keep their agent state on the execution host, which this scan cannot see, so
+  // a re-added SSH repo does not recover its retirements the way a local one does.
   if (isFolderRepo(repo) || repo.connectionId) {
     return Promise.resolve()
   }
-  let storeBackfills = backfillsByStore.get(store)
-  if (!storeBackfills) {
-    storeBackfills = new Map()
-    backfillsByStore.set(store, storeBackfills)
+  let storeScans = scansByStore.get(store)
+  if (!storeScans) {
+    storeScans = new Map()
+    scansByStore.set(store, storeScans)
   }
   const collisionKey = getRetirementCollisionKey(repo, settings)
-  const existing = storeBackfills.get(collisionKey)
-  if (existing) {
-    return existing
+  let scan = storeScans.get(collisionKey)
+  if (!scan) {
+    scan = discoverRetiredWorktreeNames({
+      workspaceRoots: [parentPath(getRetirementProbePath(repo, settings))]
+    })
+    storeScans.set(collisionKey, scan)
   }
-  const backfill = discoverRetiredWorktreeNames({
-    workspaceRoots: [parentPath(getRetirementProbePath(repo, settings))]
-  }).then((names) => {
-    store.mergeRetiredWorktreeNames(collisionKey, names)
+  // Why the merge sits outside the cached promise: the scan is per cwd namespace but the registry
+  // is per repo, so every repo that asks must receive it — not only the one that triggered it.
+  return scan.then((names) => {
+    store.mergeRetiredWorktreeNames(repo.id, names)
   })
-  storeBackfills.set(collisionKey, backfill)
-  return backfill
 }
 
 async function readDirectoryNames(path: string): Promise<string[]> {

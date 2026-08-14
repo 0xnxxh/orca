@@ -936,8 +936,7 @@ import {
 } from '../worktree-create-candidates'
 import {
   ensureRetiredWorktreeNamesBackfilled,
-  getRetiredWorktreeNamesForRepo,
-  retireGeneratedWorktreeName
+  getRetiredWorktreeNamesForRepo
 } from '../worktree-name-retirement'
 import { normalizeSparseDirectories } from '../ipc/sparse-checkout-directories'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
@@ -21180,7 +21179,7 @@ export class OrcaRuntimeService {
     } catch (error) {
       console.warn(`[runtime] retirement backfill failed for repo ${repo.id}:`, error)
     }
-    return { [repo.id]: getRetiredWorktreeNamesForRepo(store, repo, settings) }
+    return { [repo.id]: getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings) }
   }
 
   async listDetectedManagedWorktrees(
@@ -22374,7 +22373,7 @@ export class OrcaRuntimeService {
     let worktreePath = ''
     let worktreePathResolved = false
     const retiredNames = args.nameWasGenerated
-      ? new Set(getRetiredWorktreeNamesForRepo(this.store, repo, settings))
+      ? new Set(getRetiredWorktreeNamesForRepo(this.store, repo, this.store.getRepos(), settings))
       : null
     // Why: runtime/mobile create-from-review callers should get a new workspace
     // even when the PR branch or review branch name is already in use.
@@ -22707,7 +22706,7 @@ export class OrcaRuntimeService {
     const worktreeId = `${repo.id}::${created.path}`
     // Why: repo-qualified layouts decorate the physical leaf; retire the name main actually used.
     if (args.nameWasGenerated) {
-      retireGeneratedWorktreeName(this.store, repo, settings, effectiveSanitizedName)
+      this.store.addRetiredWorktreeName(repo.id, effectiveSanitizedName)
     }
     const now = Date.now()
     // Why: PR/MR-created worktrees can start from a head ref/SHA while Source

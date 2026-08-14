@@ -20,6 +20,9 @@ import {
 export type TransferPayload = {
   repo: Repo
   sparsePresets: SparsePreset[]
+  /** Generated names already spent for this repo. Carried so the destination profile does not
+   *  reissue a name whose old directory still holds agent state. */
+  retiredWorktreeNames: string[]
   worktreeMeta: PersistedState['worktreeMeta']
   worktreeLineageById: PersistedState['worktreeLineageById']
   workspaceLineageByChildKey: PersistedState['workspaceLineageByChildKey']
@@ -214,6 +217,7 @@ export function createTransferPayload(args: {
       ...structuredClone(preset),
       repoId: newRepoId
     })),
+    retiredWorktreeNames: [...(sourceState.retiredWorktreeNamesByRepo?.[oldRepoId] ?? [])],
     worktreeMeta: rekeyWorktreeIdRecord(
       sourceState.worktreeMeta,
       worktreeIds,
@@ -269,6 +273,13 @@ export function applyPayloadToTarget(
       ...targetState.sparsePresetsByRepo,
       ...(payload.sparsePresets.length > 0 ? { [payload.repo.id]: payload.sparsePresets } : {})
     },
+    retiredWorktreeNamesByRepo: {
+      ...targetState.retiredWorktreeNamesByRepo,
+      ...(payload.retiredWorktreeNames.length > 0
+        ? { [payload.repo.id]: payload.retiredWorktreeNames }
+        : {})
+    },
+
     worktreeMeta: { ...targetState.worktreeMeta, ...payload.worktreeMeta },
     worktreeLineageById: { ...targetState.worktreeLineageById, ...payload.worktreeLineageById },
     workspaceLineageByChildKey: {

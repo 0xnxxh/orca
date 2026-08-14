@@ -45,6 +45,7 @@ export function readProfileState(profileId: string, userDataPath: string): Trans
     projectGroups: arrayOrEmpty(parsed.projectGroups),
     folderWorkspaces: arrayOrEmpty(parsed.folderWorkspaces),
     sparsePresetsByRepo: recordOrEmpty<SparsePreset[]>(parsed.sparsePresetsByRepo),
+    retiredWorktreeNamesByRepo: recordOrEmpty<string[]>(parsed.retiredWorktreeNamesByRepo),
     worktreeMeta: recordOrEmpty(parsed.worktreeMeta),
     worktreeLineageById: recordOrEmpty(parsed.worktreeLineageById),
     workspaceLineageByChildKey: recordOrEmpty(parsed.workspaceLineageByChildKey),
