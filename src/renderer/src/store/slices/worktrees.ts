@@ -1,20 +1,20 @@
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 import type { WorktreeSlice } from './worktree-helpers'
-import { worktreeSliceInitialState } from './worktrees/slice/worktree-slice-initial-state'
-import { createFetchDetectedWorktrees } from './worktrees/refresh/fetch-detected-worktrees'
-import { createFetchWorktrees } from './worktrees/refresh/fetch-worktrees'
-import { createFetchAllWorktrees } from './worktrees/refresh/fetch-all-worktrees'
+import { worktreeSliceInitialState } from './worktrees/session/worktree-slice-initial-state'
+import { createFetchDetectedWorktrees } from './worktrees/listing/fetch-detected-worktrees'
+import { createFetchWorktrees } from './worktrees/listing/fetch-worktrees'
+import { createFetchAllWorktrees } from './worktrees/listing/fetch-all-worktrees'
 import {
   createAssignWorktreeParent,
   createFetchWorktreeLineage,
   createUpdateWorktreeLineage
-} from './worktrees/lineage/worktree-lineage-actions'
-import { createUpdateWorktreeGitIdentity } from './worktrees/meta/worktree-git-identity-update'
+} from './worktrees/metadata/worktree-lineage-actions'
+import { createUpdateWorktreeGitIdentity } from './worktrees/metadata/worktree-git-identity-update'
 import {
   createUpdateWorktreeBaseStatus,
   createUpdateWorktreeRemoteBranchConflict
-} from './worktrees/meta/worktree-base-status'
+} from './worktrees/metadata/worktree-base-status'
 import { createPrefetchWorktreeCreateBase } from './worktrees/create/prefetch-worktree-create-base'
 import { createCreateWorktree } from './worktrees/create/create-worktree'
 import {
@@ -23,55 +23,55 @@ import {
   createSetActivePendingWorktreeCreation,
   createUpdatePendingWorktreeCreation
 } from './worktrees/create/pending-worktree-creation'
-import { createRemoveWorktree } from './worktrees/remove/remove-worktree'
+import { createRemoveWorktree } from './worktrees/teardown/remove-worktree'
 import {
   createClearWorktreeDeleteState,
   createMarkWorktreesDeleting,
   createMarkWorktreesQueuedForDeletion
-} from './worktrees/remove/worktree-delete-state'
-import { createForceDeletePreservedBranch } from './worktrees/remove/force-delete-preserved-branch'
-import { createUpdateWorktreeMeta } from './worktrees/meta/update-worktree-meta'
-import { createEnsureHostedReviewPushTarget } from './worktrees/hosted-review/hosted-review-push-target-ensure'
-import { createUpdateWorktreesMeta } from './worktrees/meta/update-worktrees-meta'
-import { createSetWorktreesPinnedAndReveal } from './worktrees/activation/worktree-pin-reveal'
+} from './worktrees/teardown/worktree-delete-state'
+import { createForceDeletePreservedBranch } from './worktrees/teardown/force-delete-preserved-branch'
+import { createUpdateWorktreeMeta } from './worktrees/metadata/update-worktree-meta'
+import { createEnsureHostedReviewPushTarget } from './worktrees/metadata/hosted-review-push-target-ensure'
+import { createUpdateWorktreesMeta } from './worktrees/metadata/update-worktrees-meta'
+import { createSetWorktreesPinnedAndReveal } from './worktrees/session/worktree-pin-reveal'
 import {
   createBumpWorktreeActivity,
   createClearWorktreeUnread,
   createMarkWorktreeUnread,
   createObserveTerminalGitHubPullRequestLink
-} from './worktrees/activation/worktree-unread-activity'
+} from './worktrees/session/worktree-unread-activity'
 import {
   createMarkWorktreeVisited,
   createPruneLastVisitedTimestamps,
   createSeedActiveWorktreeLastVisitedIfMissing
-} from './worktrees/activation/worktree-visit-recency'
-import { createSetActiveWorktree } from './worktrees/activation/set-active-worktree'
-import { createSetActiveFolderWorkspace } from './worktrees/activation/set-active-folder-workspace'
+} from './worktrees/session/worktree-visit-recency'
+import { createSetActiveWorktree } from './worktrees/session/set-active-worktree'
+import { createSetActiveFolderWorkspace } from './worktrees/session/set-active-folder-workspace'
 import {
   createAllWorktrees,
   createGetKnownWorktreeById,
   createPurgeWorktreeTerminalState,
   createRemountTerminalTabForRecovery,
   createSetRenamingWorktreeId
-} from './worktrees/slice/worktree-slice-lookups'
-import { createPurgeStaleRuntimeHostState } from './worktrees/remove/purge-stale-runtime-host-state'
-import { createMigrateWorktreeIdentity } from './worktrees/identity/migrate-worktree-identity'
+} from './worktrees/session/worktree-slice-lookups'
+import { createPurgeStaleRuntimeHostState } from './worktrees/teardown/purge-stale-runtime-host-state'
+import { createMigrateWorktreeIdentity } from './worktrees/session/migrate-worktree-identity'
 
 export type { WorktreeSlice, WorktreeDeleteState } from './worktree-helpers'
-export { WORKTREE_REFRESH_CONCURRENCY } from './worktrees/slice/worktree-slice-constants'
-export { acquireDetectedWorktreeRefreshLeaseForRepo } from './worktrees/refresh/detected-worktree-refresh'
+export { WORKTREE_REFRESH_CONCURRENCY } from './worktrees/listing/worktree-slice-constants'
+export { acquireDetectedWorktreeRefreshLeaseForRepo } from './worktrees/listing/detected-worktree-refresh'
 export {
   getHostedReviewLinkMutationGenerationForTests,
   getHostedReviewLinkWorktreeAliasCountForTests,
   resetHostedReviewLinkMutationGenerationForTests
-} from './worktrees/hosted-review/hosted-review-link-mutation'
+} from './worktrees/metadata/hosted-review-link-mutation'
 export {
   getDetachedHeadAutoDerivedDisplayNameForTests,
   setDetachedHeadAutoDerivedDisplayNameForTests
-} from './worktrees/meta/detached-head-display-name'
-export { resetAuthoritativelyRemovedWorktreeMemoryForTests } from './worktrees/ssh/authoritative-worktree-removal-memory'
-export type { DirectSshDetectedWorktreeRefresh } from './worktrees/ssh/known-ssh-worktree-fetch'
-export { acquireDirectSshDetectedWorktreeRefresh } from './worktrees/ssh/known-ssh-worktree-fetch'
+} from './worktrees/metadata/detached-head-display-name'
+export { resetAuthoritativelyRemovedWorktreeMemoryForTests } from './worktrees/listing/authoritative-worktree-removal-memory'
+export type { DirectSshDetectedWorktreeRefresh } from './worktrees/listing/known-ssh-worktree-fetch'
+export { acquireDirectSshDetectedWorktreeRefresh } from './worktrees/listing/known-ssh-worktree-fetch'
 
 export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> = (set, get) => ({
   ...worktreeSliceInitialState,

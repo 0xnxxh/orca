@@ -1,5 +1,5 @@
 import type { WorktreeSlice } from '../../worktree-helpers'
-import type { WorktreeSliceGet, WorktreeSliceSet } from '../slice/worktree-slice-types'
+import type { WorktreeSliceGet, WorktreeSliceSet } from '../listing/worktree-slice-types'
 import type { AppState } from '../../../types'
 import { cleanupFailedEphemeralVmWorkspace } from '@/lib/ephemeral-vm-failed-create-cleanup'
 

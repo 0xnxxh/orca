@@ -1,5 +1,5 @@
 import type { WorktreeSlice } from '../../worktree-helpers'
-import type { WorktreeSliceGet, WorktreeSliceSet } from '../slice/worktree-slice-types'
+import type { WorktreeSliceGet, WorktreeSliceSet } from '../listing/worktree-slice-types'
 import {
   CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS,
   getClientWorktreeCreateCandidate,
@@ -19,8 +19,8 @@ import {
   getProjectHostSetupForRepoHost,
   repoHostId,
   withRepoHostOwnership
-} from '../catalog/worktree-host-ownership'
-import { settingsForRepoOwner } from '../catalog/worktree-owner-settings'
+} from '../listing/worktree-host-ownership'
+import { settingsForRepoOwner } from '../listing/worktree-owner-settings'
 
 export function createCreateWorktree(
   set: WorktreeSliceSet,
