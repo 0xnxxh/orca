@@ -2859,8 +2859,12 @@ export type PtyBindingSourceExpectation = {
  * `mayCreate: false`, so the binding is refused and rolled back — for every pane the upgrading
  * user had open. Local always wins; the partition only supplies panes local does not already know.
  */
-export function hoistSshPartitionsIntoLocalSession(state: PersistedState): boolean {
-  const partitions = state.workspaceSessionsByHostId
+export function hoistSshPartitionsIntoLocalSession(
+  state: PersistedState,
+  /** Passed explicitly: pane-identity normalization prunes partitions before this runs. */
+  sourcePartitions?: PersistedState['workspaceSessionsByHostId']
+): boolean {
+  const partitions = sourcePartitions ?? state.workspaceSessionsByHostId
   if (!partitions) {
     return false
   }
@@ -2943,6 +2947,8 @@ export class Store {
   private readonly sshRemotePtyLeaseMutationVersions = new WeakMap<SshRemotePtyLease, number>()
   private readonly protectedSecrets = new ProtectedSecretPersistence()
   private loadNeedsSave = false
+  /** SSH host partitions as they were on disk, before pruning. Used once, by the hoist migration. */
+  private sshPartitionsAtLoad: PersistedState['workspaceSessionsByHostId'] | undefined
   private settingsChangeListeners = new Set<
     (
       updates: Partial<GlobalSettings>,
@@ -2971,6 +2977,13 @@ export class Store {
     const loaded = this.load()
     const normalized = normalizePersistedPaneIdentityState(loaded)
     this.state = normalized.state
+    // Why: earlier builds wrote SSH pane membership into `ssh:<target>` partitions; this build's
+    // binding writer is local-only and its reattach refuses to create, so an unhoisted partition
+    // means every pane is refused and the user's tabs are discarded. Runs after pane-identity
+    // normalization, which rebuilds the session and would otherwise drop the hoisted panes.
+    if (hoistSshPartitionsIntoLocalSession(this.state, this.sshPartitionsAtLoad)) {
+      this.loadNeedsSave = true
+    }
     // Why: activeView is a frequent, tiny preference; keeping it beside the
     // profile avoids serializing the multi-MB recovery store on navigation.
     this.activeViewPreference = new ActiveViewPreference(this.dataFile, this.state.ui?.activeView)
@@ -3984,6 +3997,10 @@ export class Store {
       this.loadNeedsSave = true
     }
 
+    // Captured here because later load steps and pane-identity normalization prune host
+    // partitions; the SSH hoist below still needs the panes they held.
+    this.sshPartitionsAtLoad = result.workspaceSessionsByHostId
+
     const migrated = this.migrateTabSwitchKeybindings(
       this.migrateTelemetry(result, fileExistedOnLoad),
       fileExistedOnLoad
@@ -4000,14 +4017,6 @@ export class Store {
       this.githubCacheDirty = true
     } else {
       migrated.githubCache = readGithubCacheSnapshot(this.dataFile) ?? migrated.githubCache
-    }
-
-    // Why: earlier builds wrote SSH pane membership into `ssh:<target>` partitions; this build's
-    // binding writer is local-only and its reattach refuses to create, so an unhoisted partition
-    // means every pane is refused and the user's tabs are discarded. Runs on the final state so a
-    // later migration cannot replace the session object out from under it.
-    if (hoistSshPartitionsIntoLocalSession(migrated)) {
-      this.loadNeedsSave = true
     }
 
     logPersistenceStartupMilestone('persistence-load-done', {

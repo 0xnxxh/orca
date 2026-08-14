@@ -92,6 +92,11 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
 
     // The upgrade launch.
     const store = await reopenStore()
+    // The migration must have folded the pane into the plane the binder actually reads.
+    expect(
+      store.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [],
+      'the migration did not hoist the pane into the local session'
+    ).toHaveLength(1)
 
     // The reattach bind: no hostId, refuses to create.
     const bound = store.persistPtyBinding({
@@ -125,5 +130,20 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
     })
 
     expect(bound, 'the pre-mayCreate path did not keep the pane either').toBe(true)
+  })
+
+  // Isolates the migration from its wiring: does the function itself hoist?
+  it('hoists the partition when called directly', async () => {
+    await createStore()
+    const { hoistSshPartitionsIntoLocalSession } = await import('./persistence')
+    const state = {
+      workspaceSession: { ...getDefaultWorkspaceSession() },
+      workspaceSessionsByHostId: { [SSH_PARTITION]: paneSession() }
+    } as never as Parameters<typeof hoistSshPartitionsIntoLocalSession>[0]
+
+    const changed = hoistSshPartitionsIntoLocalSession(state)
+
+    expect(changed, 'the function reported no change').toBe(true)
+    expect(state.workspaceSession?.tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(1)
   })
 })
