@@ -11,7 +11,14 @@ import {
   getActiveSshAiVaultHostInfos,
   requestActiveSshAiVaultSessionTitles
 } from '../../../ipc/ssh'
-import { AI_VAULT_AGENTS, AI_VAULT_SCOPE_PATHS_MAX_COUNT } from '../../../../shared/ai-vault-types'
+import { scanHostLegWithCache } from '../../../ipc/ai-vault-host-leg-cache'
+import { requestedAiVaultSessionDepth } from '../../../../shared/ai-vault-session-depth'
+import {
+  AI_VAULT_AGENTS,
+  AI_VAULT_SCOPE_PATHS_MAX_COUNT,
+  type AiVaultListArgs,
+  type AiVaultListResult
+} from '../../../../shared/ai-vault-types'
 import { AI_VAULT_SESSION_TITLE_REQUEST_MAX_COUNT } from '../../../../shared/ai-vault-session-title'
 import { LOCAL_EXECUTION_HOST_ID, parseExecutionHostId } from '../../../../shared/execution-host'
 
@@ -123,19 +130,13 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
         scopePaths: params.scopePaths
       }
       if (parsed?.kind === 'ssh') {
-        return scanSshAiVaultSessions(parsed.targetId, listArgs, {
-          timeoutMs: OWNED_SSH_SCAN_TIMEOUT_MS
-        })
+        return scanRuntimeSshAiVaultSessions(parsed.targetId, listArgs)
       }
       const sshHosts = params.includeOwnedSshHosts === true ? getActiveSshAiVaultHostInfos() : []
       const sshPromise =
         sshHosts.length > 0
           ? Promise.all(
-              sshHosts.map((host) =>
-                scanSshAiVaultSessions(host.targetId, listArgs, {
-                  timeoutMs: OWNED_SSH_SCAN_TIMEOUT_MS
-                })
-              )
+              sshHosts.map((host) => scanRuntimeSshAiVaultSessions(host.targetId, listArgs))
             )
           : Promise.resolve([])
       const result = await runtime.listAiVaultSessions(listArgs)
@@ -164,3 +165,24 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
       })
   })
 ]
+
+function scanRuntimeSshAiVaultSessions(
+  targetId: string,
+  args: AiVaultListArgs
+): Promise<AiVaultListResult> {
+  const scopePaths = args.scopePaths ?? []
+  return scanHostLegWithCache({
+    cacheKey: JSON.stringify({
+      route: 'runtime-rpc-ssh',
+      targetId,
+      scopePaths: [...new Set(scopePaths)].sort()
+    }),
+    depth: requestedAiVaultSessionDepth(args),
+    scopePaths,
+    force: args.force === true,
+    scan: () =>
+      scanSshAiVaultSessions(targetId, args, {
+        timeoutMs: OWNED_SSH_SCAN_TIMEOUT_MS
+      })
+  })
+}

@@ -38,6 +38,7 @@ import {
   listAiVaultSessions,
   resetAiVaultSessionListCacheForTests
 } from '../../../ai-vault/cached-session-list'
+import { resetAiVaultHostLegCacheForTests } from '../../../ipc/ai-vault-host-leg-cache'
 
 const SCANNED_AT = '2026-08-12T00:00:00.000Z'
 const SSH_HOST_OWNED_BY_RUNTIME = 'ssh:hub-owned-host'
@@ -98,6 +99,7 @@ function makeDispatcher(): RpcDispatcher {
 describe('a runtime can scan an SSH host that it owns', () => {
   beforeEach(() => {
     resetAiVaultSessionListCacheForTests()
+    resetAiVaultHostLegCacheForTests()
     scanAiVaultSessionsInWorker.mockReset()
     scanAiVaultSessionsInWorker.mockResolvedValue({
       sessions: [makeRuntimeLocalSession()],
@@ -122,6 +124,7 @@ describe('a runtime can scan an SSH host that it owns', () => {
 
   afterEach(() => {
     resetAiVaultSessionListCacheForTests()
+    resetAiVaultHostLegCacheForTests()
   })
 
   it('routes an SSH execution host to that host instead of rejecting it', async () => {
@@ -203,6 +206,35 @@ describe('a runtime can scan an SSH host that it owns', () => {
       'runtime:hub-runtime',
       'ssh:hub-owned-host'
     ])
+  })
+
+  it('reuses each SSH host leg across repeated non-force all-host scans', async () => {
+    const dispatcher = makeDispatcher()
+    const params = {
+      limit: 500,
+      executionHostId: 'runtime:hub-runtime',
+      includeOwnedSshHosts: true
+    }
+
+    await dispatcher.dispatch(makeRequest('aiVault.listSessions', params))
+    await dispatcher.dispatch(makeRequest('aiVault.listSessions', params))
+
+    expect(scanSshAiVaultSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('bypasses the SSH host-leg cache for a forced refresh', async () => {
+    const dispatcher = makeDispatcher()
+    const params = {
+      limit: 500,
+      force: true,
+      executionHostId: 'runtime:hub-runtime',
+      includeOwnedSshHosts: true
+    }
+
+    await dispatcher.dispatch(makeRequest('aiVault.listSessions', params))
+    await dispatcher.dispatch(makeRequest('aiVault.listSessions', params))
+
+    expect(scanSshAiVaultSessions).toHaveBeenCalledTimes(2)
   })
 
   it('resolves SSH session titles on the transcript-owning host', async () => {

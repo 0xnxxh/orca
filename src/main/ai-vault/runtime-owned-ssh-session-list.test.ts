@@ -17,11 +17,13 @@ vi.mock('../ipc/runtime-environment-transport-routing', () => ({
 const {
   findRuntimeOwningSshAiVaultHost,
   listRuntimeOwnedSshAiVaultTargets,
+  resetRuntimeOwnedSshOwnerCacheForTests,
   scanRuntimeOwnedSshAiVaultSessions
 } = await import('./runtime-owned-ssh-session-list')
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetRuntimeOwnedSshOwnerCacheForTests()
   mocks.listEnvironments.mockReturnValue([{ id: 'hub-runtime' }])
   mocks.callRuntimeEnvironment.mockResolvedValue({
     ok: true,
@@ -71,6 +73,37 @@ describe('runtime-owned SSH AI Vault inventory', () => {
       undefined,
       undefined
     )
+  })
+
+  it('reuses a bounded owner lookup for repeated title batches', async () => {
+    await findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+    await findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(1)
+  })
+
+  it('expires cached owner lookups after one minute', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-14T00:00:00.000Z') })
+    try {
+      await findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+      await vi.advanceTimersByTimeAsync(60_000)
+      await findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+
+      expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not share owner lookups across runtime inventories', async () => {
+    await findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+    mocks.listEnvironments.mockReturnValue([{ id: 'other-runtime' }])
+    mocks.callRuntimeEnvironment.mockResolvedValueOnce({ ok: true, result: { targets: [] } })
+
+    await expect(
+      findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+    ).resolves.toBeNull()
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(2)
   })
 
   it('does not treat recipe-VM targets as runtime-owned SSH history hosts', async () => {

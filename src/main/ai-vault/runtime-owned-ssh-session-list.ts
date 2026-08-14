@@ -30,6 +30,15 @@ export type RuntimeOwnedSshAiVaultScanOptions = {
 }
 
 const UNSUPPORTED_SSH_HOST_PARAM = /invalid (runtime )?execution host id/i
+const OWNER_CACHE_TTL_MS = 60_000
+const OWNER_CACHE_MAX_ENTRIES = 256
+
+type CachedRuntimeOwnedSshHost = {
+  owner: RuntimeOwnedSshAiVaultHost
+  expiresAt: number
+}
+
+const cachedOwners = new Map<string, CachedRuntimeOwnedSshHost>()
 
 export async function listRuntimeOwnedSshAiVaultTargets(
   userDataPath: string,
@@ -78,6 +87,15 @@ export async function findRuntimeOwningSshAiVaultHost(
     return null
   }
   const environments = listEnvironments(userDataPath)
+  const cacheKey = JSON.stringify({
+    userDataPath,
+    targetId,
+    environmentIds: environments.map((environment) => environment.id).sort()
+  })
+  const cached = cachedOwners.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.owner
+  }
   const inventories = await Promise.all(
     environments.map((environment) =>
       listRuntimeOwnedSshAiVaultTargets(userDataPath, environment.id, options)
@@ -86,10 +104,31 @@ export async function findRuntimeOwningSshAiVaultHost(
   for (const hosts of inventories) {
     const match = hosts.find((host) => host.targetId === targetId)
     if (match) {
+      cacheRuntimeOwnedSshHost(cacheKey, match)
       return match
     }
   }
   return null
+}
+
+function cacheRuntimeOwnedSshHost(cacheKey: string, owner: RuntimeOwnedSshAiVaultHost): void {
+  const now = Date.now()
+  for (const [key, entry] of cachedOwners) {
+    if (entry.expiresAt <= now) {
+      cachedOwners.delete(key)
+    }
+  }
+  if (!cachedOwners.has(cacheKey) && cachedOwners.size >= OWNER_CACHE_MAX_ENTRIES) {
+    const oldestKey = cachedOwners.keys().next().value
+    if (oldestKey) {
+      cachedOwners.delete(oldestKey)
+    }
+  }
+  cachedOwners.set(cacheKey, { owner, expiresAt: now + OWNER_CACHE_TTL_MS })
+}
+
+export function resetRuntimeOwnedSshOwnerCacheForTests(): void {
+  cachedOwners.clear()
 }
 
 export async function scanRuntimeOwnedSshAiVaultSessions(
