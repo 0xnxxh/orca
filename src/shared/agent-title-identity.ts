@@ -10,8 +10,10 @@ import {
   isPiAgentTitle,
   titleHasAgentName
 } from './agent-title-core'
+import { resolveAgentIdentityFrameType } from './agent-identity-frame'
 import { isOpenCodeNativeTitle } from './opencode-terminal-title'
 import { getPiCompatibleSyntheticAgentLabel } from './pi-compatible-synthetic-title'
+import { TUI_AGENT_DISPLAY_NAMES } from './tui-agent-display-names'
 
 /**
  * Returns true when the terminal title matches Claude Code's title conventions.
@@ -32,9 +34,15 @@ export function isClaudeAgent(title: string): boolean {
     return true
   }
   if (containsAgentSpinnerGlyph(title)) {
-    // Why: named non-Claude agents carry braille spinners too. Gate Cursor by its
-    // identity title, not the token, so a Claude title mentioning a cursor stays Claude.
-    return !isCursorAgentTitle(title) && !lower.includes('openclaude')
+    // Why: named non-Claude agents carry braille spinners too. Gate them by their
+    // identity frame, not a name token, so Claude task text that merely mentions
+    // one (`⠋ use cline for the fix`) stays Claude.
+    const frameAgent = resolveAgentIdentityFrameType(title)
+    return (
+      (frameAgent === null || frameAgent === 'claude') &&
+      !isCursorAgentTitle(title) &&
+      !lower.includes('openclaude')
+    )
   }
 
   const trimmedTitle = title.trimStart()
@@ -101,6 +109,12 @@ export function getAgentLabel(title: string): string | null {
   }
   if (titleHasAgentName(title, 'aider')) {
     return 'Aider'
+  }
+  // Why: registry-declared agents identify themselves by frame only, so this must
+  // run before Claude's generic braille heuristic but after the token matches above.
+  const frameAgent = resolveAgentIdentityFrameType(title)
+  if (frameAgent && frameAgent !== 'claude') {
+    return TUI_AGENT_DISPLAY_NAMES[frameAgent]
   }
   // Why: `cursor` is ordinary editor vocabulary, not identity. Match Cursor's closed
   // title set (mirrors @cursor routing), before `isClaudeAgent` claims the braille frame.

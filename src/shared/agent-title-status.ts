@@ -1,3 +1,4 @@
+import { resolveAgentIdentityFrameType } from './agent-identity-frame'
 import {
   AGY_AGENT_NAME_RE,
   BRAILLE_SPINNER_RE,
@@ -196,7 +197,16 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   const hasHermesAgentName = HERMES_AGENT_NAME_RE.test(title)
   const hasAgyAgentName = AGY_AGENT_NAME_RE.test(title)
   const hasLegacyAgentName = containsLegacyAgentName(title)
-  if (!hasLegacyAgentName && !hasDroidAgentName && !hasHermesAgentName && !hasAgyAgentName) {
+  // Why: registry-declared agents are deliberately absent from AGENT_NAMES — their
+  // names are too common to token-match — so their whole-title frame is the evidence.
+  const hasIdentityFrame = resolveAgentIdentityFrameType(title) !== null
+  if (
+    !hasLegacyAgentName &&
+    !hasDroidAgentName &&
+    !hasHermesAgentName &&
+    !hasAgyAgentName &&
+    !hasIdentityFrame
+  ) {
     return null
   }
   if (containsAny(title, ['action required', 'permission', 'waiting'])) {

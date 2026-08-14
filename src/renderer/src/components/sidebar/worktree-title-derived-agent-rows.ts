@@ -21,6 +21,7 @@ import {
 } from '../../../../shared/agent-title-owner'
 import { resolvePaneAgentOwner } from '../../../../shared/pane-agent-owner'
 import { isClaudeIdentityFrameTitle } from '../../../../shared/terminal-title-agent-type'
+import { ALL_TUI_AGENTS, TUI_AGENT_DISPLAY_NAMES } from '../../../../shared/tui-agent-display-names'
 
 const EMPTY_RUNTIME_TITLES: Record<string, Record<number, string>> = {}
 const EMPTY_LIVE_PTY_IDS: Record<string, string[]> = {}
@@ -43,6 +44,12 @@ const TITLE_AGENT_LABEL_TO_TYPE: Record<string, AgentType> = {
   Pi: 'pi',
   OMP: 'omp'
 }
+
+// Why: labels that already equal an agent's canonical display name need no second
+// table — registry-declared agents (agent-identity-frame.ts) resolve straight through.
+const DISPLAY_NAME_TO_AGENT_TYPE: Record<string, AgentType> = Object.fromEntries(
+  ALL_TUI_AGENTS.map((agent) => [TUI_AGENT_DISPLAY_NAMES[agent], agent as AgentType])
+)
 
 const CLAUDE_AGENT_TOKEN_RE = /(?<![\w./\\-])claude(?![\w./\\-])/i
 
@@ -201,7 +208,8 @@ export function resolveTitleDerivedAgentType(
   label: string,
   ownerAgentType?: AgentType | null
 ): AgentType | null {
-  const agentType = TITLE_AGENT_LABEL_TO_TYPE[label] ?? 'unknown'
+  const agentType =
+    TITLE_AGENT_LABEL_TO_TYPE[label] ?? DISPLAY_NAME_TO_AGENT_TYPE[label] ?? 'unknown'
   if (agentType !== 'claude') {
     return agentType
   }

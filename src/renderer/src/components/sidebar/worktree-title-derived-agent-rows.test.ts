@@ -202,6 +202,62 @@ describe('buildTitleDerivedAgentRows', () => {
     }
   })
 
+  // Why: cline 3.0.55 writes OSC 0 `Cline` and posts no hooks, so the title path is the
+  // only thing that can put the pane in the sidebar at all (STA-3906 / #13823).
+  it('adds an idle row for a registry-declared agent that only writes its own name', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: 'Cline' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: 'Cline' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-cline'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+
+    expect(rows.map((row) => [row.agentType, row.state, row.entry.lastAssistantMessage])).toEqual([
+      ['cline', 'idle', 'Idle']
+    ])
+    expect(rows[0]?.paneKey).toBe(makePaneKey('tab-1', LEAF_ID_1))
+  })
+
+  it('does not invent a Cline row from Claude task text that mentions cline', () => {
+    const unowned = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1')],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: '⠋ use cline for the sidebar fix' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-claude-task'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+    expect(unowned).toHaveLength(0)
+
+    const owned = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { launchAgent: 'claude' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: '⠋ use cline for the sidebar fix' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-claude-task'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+    expect(owned.map((row) => row.agentType)).toEqual(['claude'])
+  })
+
+  it('keeps a cline-named worktree path out of the sidebar', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: '~/orca/workspaces/cline-scratch' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: '~/orca/workspaces/cline-scratch' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-shell'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+    expect(rows).toHaveLength(0)
+  })
+
   it('attributes a spinner-only title to the launched agent when the title has no identity', () => {
     const launchAgent: TuiAgent = 'codex'
     const rows = buildWorktreeAgentRows({

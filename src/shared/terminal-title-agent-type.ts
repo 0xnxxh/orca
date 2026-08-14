@@ -4,14 +4,14 @@ import {
   HERMES_AGENT_NAME_RE,
   titleHasAgentName
 } from './agent-name-token-match'
+import { isAgentIdentityFrameTitleFor, resolveAgentIdentityFrameType } from './agent-identity-frame'
 import { containsAgentSpinnerGlyph, isCursorAgentTitle } from './agent-title-core'
-import { stripLeadingAgentTitleDecorationOrEmpty } from './agent-title-decoration'
 import { isOpenCodeNativeTitle } from './opencode-terminal-title'
-import { getWrapperTitleSegments } from './terminal-title-wrapper-segments'
 import {
   getPiCompatibleSyntheticAgentLabel,
   isLegacyPiCompatibleTitle
 } from './pi-compatible-synthetic-title'
+import { TUI_AGENT_DISPLAY_NAMES, ALL_TUI_AGENTS } from './tui-agent-display-names'
 import type { TuiAgent } from './tui-agent'
 
 export const CLAUDE_IDLE = '\u2733' // ✳ (eight-spoked asterisk — Claude Code idle prefix)
@@ -97,9 +97,15 @@ export function isClaudeAgent(title: string): boolean {
     return true
   }
   if (containsAgentSpinnerGlyph(title)) {
-    // Why: named non-Claude agents carry braille spinners too. Gate Cursor by its
-    // identity title, not the token, so a Claude title mentioning a cursor stays Claude.
-    return !isCursorAgentTitle(title) && !lower.includes('openclaude')
+    // Why: named non-Claude agents carry braille spinners too. Gate them by their
+    // identity frame, not a name token, so Claude task text that merely mentions
+    // one (`⠋ use cline for the fix`) stays Claude.
+    const frameAgent = resolveAgentIdentityFrameType(title)
+    return (
+      (frameAgent === null || frameAgent === 'claude') &&
+      !isCursorAgentTitle(title) &&
+      !lower.includes('openclaude')
+    )
   }
   // Why: permission/action-required Claude titles can omit the usual prefixes.
   // Token-match so cwd/worktree titles like "claude-scratch" do not become
@@ -184,6 +190,12 @@ export function getAgentLabel(title: string): string | null {
   if (titleHasAgentName(title, 'aider')) {
     return 'Aider'
   }
+  // Why: registry-declared agents identify themselves by frame only, so this must
+  // run before Claude's generic braille heuristic but after the token matches above.
+  const frameAgent = resolveAgentIdentityFrameType(title)
+  if (frameAgent && frameAgent !== 'claude') {
+    return TUI_AGENT_DISPLAY_NAMES[frameAgent]
+  }
   // Why: `cursor` is ordinary editor vocabulary, not identity. Match Cursor's closed
   // title set (mirrors @cursor routing), before `isClaudeAgent` claims the braille frame.
   if (isCursorAgentTitle(title)) {
@@ -229,6 +241,12 @@ const TITLE_LABEL_TO_AGENT: Partial<Record<string, TuiAgent>> = {
   OMP: 'omp'
 }
 
+// Why: labels that already equal an agent's canonical display name need no second
+// table — registry-declared agents (agent-identity-frame.ts) resolve straight through.
+const DISPLAY_NAME_TO_AGENT = new Map<string, TuiAgent>(
+  ALL_TUI_AGENTS.map((agent) => [TUI_AGENT_DISPLAY_NAMES[agent], agent])
+)
+
 function hasGenericClaudeStatusPrefix(title: string): boolean {
   return (
     containsAgentSpinnerGlyph(title) ||
@@ -239,10 +257,6 @@ function hasGenericClaudeStatusPrefix(title: string): boolean {
   )
 }
 
-// Claude's own name plus, at most, one of its status words — never free-form task text.
-const CLAUDE_IDENTITY_FRAME_RE =
-  /^claude(?: code)?(?:\s+(?:ready|idle|done|working|thinking|running))?(?:\s*-\s*action required)?$/
-
 /**
  * Whether a title PRESENTS Claude rather than merely mentioning it, once its leading
  * status decoration is stripped. A "claude" token inside free-form task text is a mention,
@@ -250,13 +264,7 @@ const CLAUDE_IDENTITY_FRAME_RE =
  * keep using `resolveExplicitTerminalTitleAgentType`, whose token match is looser.
  */
 export function isClaudeIdentityFrameTitle(title: string): boolean {
-  // Why segments: a multiplexer prefix (`zsh | ⠋ Claude Code`) would otherwise read as task
-  // text and cost a genuine Claude pane its identity.
-  return getWrapperTitleSegments(title).some((segment) =>
-    CLAUDE_IDENTITY_FRAME_RE.test(
-      stripLeadingAgentTitleDecorationOrEmpty(segment).trim().toLowerCase()
-    )
-  )
+  return isAgentIdentityFrameTitleFor(title, 'claude')
 }
 
 function isGenericClaudeStatusClaim(title: string, titleAgent: TuiAgent | null): boolean {
@@ -269,7 +277,10 @@ function isGenericClaudeStatusClaim(title: string, titleAgent: TuiAgent | null):
 
 export function resolveTerminalTitleAgentType(title: string): TuiAgent | null {
   const label = getAgentLabel(title)
-  return label ? (TITLE_LABEL_TO_AGENT[label] ?? null) : null
+  if (!label) {
+    return null
+  }
+  return TITLE_LABEL_TO_AGENT[label] ?? DISPLAY_NAME_TO_AGENT.get(label) ?? null
 }
 
 /**
