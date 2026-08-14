@@ -29,12 +29,24 @@ function readGitHistoryCursor(value: unknown): GitHistoryCursor | undefined {
   if (typeof value !== 'object' || value === null) {
     return undefined
   }
-  const { anchor, loaded } = value as { anchor?: unknown; loaded?: unknown }
-  if (typeof anchor !== 'string' || !FULL_GIT_OBJECT_ID.test(anchor)) {
+  const { anchor, loaded, after } = value as {
+    anchor?: unknown
+    loaded?: unknown
+    after?: unknown
+  }
+  // Why: without the seam there is nothing to verify the walk against, so a cursor missing it is
+  // not a cursor. Dropping it restarts at page 1 rather than resuming on an unchecked assumption.
+  if (
+    typeof anchor !== 'string' ||
+    !FULL_GIT_OBJECT_ID.test(anchor) ||
+    typeof after !== 'string' ||
+    !FULL_GIT_OBJECT_ID.test(after)
+  ) {
     return undefined
   }
   return {
     anchor,
+    after,
     loaded:
       typeof loaded === 'number' && Number.isFinite(loaded) ? Math.max(0, Math.trunc(loaded)) : 0
   }

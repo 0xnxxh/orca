@@ -8,6 +8,7 @@ import {
   GIT_HISTORY_DEFAULT_LIMIT,
   GIT_HISTORY_MAX_LIMIT,
   type GitHistoryExecutor,
+  type GitHistoryItem,
   type GitHistoryItemRef,
   type GitHistoryOptions,
   type GitHistoryResult
@@ -201,9 +202,12 @@ export async function loadGitHistoryFromExecutor(
   // dead anchor degrades to a fresh first page instead of failing the whole panel on a bad revision.
   const requestedAnchor = options.cursor?.anchor?.trim() || undefined
   const anchor = requestedAnchor ? await resolveCommit(git, cwd, requestedAnchor) : null
-  const walkTip = anchor ?? headOid
-  // Why: an unresolved anchor restarts at page 1, so its offset must go with it.
-  const skip = anchor ? Math.max(0, Math.trunc(options.cursor?.loaded ?? 0)) : 0
+  // Why: an unresolved anchor restarts at page 1, so its offset goes with it. `loaded` counts the
+  // rows already shown, and the last of those is re-read as the seam, hence -1.
+  const resume =
+    anchor && options.cursor && options.cursor.loaded > 0
+      ? { anchor, skip: Math.trunc(options.cursor.loaded) - 1, after: options.cursor.after }
+      : undefined
 
   let mergeBase: string | undefined
   if (remoteRef?.revision && currentRef.revision && remoteRef.revision !== currentRef.revision) {
@@ -215,25 +219,48 @@ export async function loadGitHistoryFromExecutor(
     }
   }
 
-  const { stdout } = await git(
-    [
-      'log',
-      `--format=${GIT_HISTORY_COMMIT_FORMAT}`,
-      '-z',
-      '--topo-order',
-      '--decorate=full',
-      // Why: +1 tells a full page apart from the last one without a second call.
-      `-n${limit + 1}`,
-      // Why: skipping into the walk keeps every page the same size however deep paging goes, and
-      // keeps the order identical to one uninterrupted walk, so no commit is repeated or dropped.
-      ...(skip > 0 ? [`--skip=${skip}`] : []),
-      walkTip
-    ],
-    cwd
-  )
-  const parsed = parseGitHistoryLog(stdout)
+  // Why: skipping into the walk keeps every page the same size however deep paging goes, and keeps
+  // the order identical to one uninterrupted walk, so no commit is repeated or dropped. The extra
+  // row a resumed page asks for is the seam: the last row already on screen, re-read to prove the
+  // walk still leads with it. +1 beyond that tells a full page apart from the last one.
+  const readPage = async (tip: string, skip: number, extra: number): Promise<GitHistoryItem[]> => {
+    const { stdout } = await git(
+      [
+        'log',
+        `--format=${GIT_HISTORY_COMMIT_FORMAT}`,
+        '-z',
+        '--topo-order',
+        '--decorate=full',
+        `-n${limit + 1 + extra}`,
+        ...(skip > 0 ? [`--skip=${skip}`] : []),
+        tip
+      ],
+      cwd
+    )
+    return parseGitHistoryLog(stdout)
+  }
+
+  let walkTip = resume?.anchor ?? headOid
+  let skip = resume?.skip ?? 0
+  let parsed = await readPage(walkTip, skip, resume ? 1 : 0)
+  let continuedCursor = false
+  if (resume) {
+    // Why: an anchor resolving does not prove its ancestry is unchanged — replace refs and grafts
+    // rewrite a commit's parents in place. If the walk no longer leads with the row the previous
+    // page ended on, this is a different history and splicing it on would skip and reorder commits.
+    continuedCursor = parsed[0]?.id === resume.after
+    if (continuedCursor) {
+      parsed = parsed.slice(1)
+    } else {
+      walkTip = headOid
+      skip = 0
+      parsed = await readPage(walkTip, skip, 0)
+    }
+  }
   const items = parsed.slice(0, limit)
   const hasMore = parsed.length > limit
+  // Rows of this walk now accounted for: those skipped, the seam, and this page.
+  const loaded = skip + (continuedCursor ? 1 : 0) + items.length
   const hasIncomingChanges =
     Boolean(remoteRef?.revision && mergeBase) && remoteRef?.revision !== mergeBase
   const hasOutgoingChanges =
@@ -250,7 +277,10 @@ export async function loadGitHistoryFromExecutor(
     hasOutgoingChanges,
     hasMore,
     limit,
-    pageAnchor: walkTip,
-    nextCursor: hasMore ? { anchor: walkTip, loaded: skip + items.length } : undefined
+    continuedCursor,
+    nextCursor:
+      hasMore && items.length > 0
+        ? { anchor: walkTip, loaded, after: items.at(-1)?.id ?? '' }
+        : undefined
   }
 }

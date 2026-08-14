@@ -234,7 +234,7 @@ describe('git RPC methods', () => {
       makeRequest('git.history', {
         worktree: 'id:wt-1',
         limit: 50,
-        cursor: { anchor: 'a'.repeat(40), loaded: 100 }
+        cursor: { anchor: 'a'.repeat(40), loaded: 100, after: 'b'.repeat(40) }
       })
     )
 
@@ -242,7 +242,7 @@ describe('git RPC methods', () => {
     expect(runtime.getRuntimeGitHistory).toHaveBeenCalledWith('id:wt-1', {
       limit: 50,
       baseRef: null,
-      cursor: { anchor: 'a'.repeat(40), loaded: 100 }
+      cursor: { anchor: 'a'.repeat(40), loaded: 100, after: 'b'.repeat(40) }
     })
   })
 

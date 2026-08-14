@@ -81,7 +81,7 @@ describe('git history cursor paging', () => {
     expect(result.items).toHaveLength(50)
     expect(result.items[0]?.id).toBe(oid(0))
     expect(result.hasMore).toBe(true)
-    expect(result.nextCursor).toEqual({ anchor: oid(0), loaded: 50 })
+    expect(result.nextCursor).toEqual({ anchor: oid(0), loaded: 50, after: oid(49) })
     // one lookahead past the page, and no offset on the first page
     expect(logCalls[0]).toContain('-n51')
     expect(logCalls[0]?.some((arg) => arg.startsWith('--skip='))).toBe(false)
@@ -92,16 +92,17 @@ describe('git history cursor paging', () => {
 
     const page = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(0), loaded: 50 }
+      cursor: { anchor: oid(0), loaded: 50, after: oid(49) }
     })
 
     expect(page.items[0]?.id).toBe(oid(50))
     expect(page.items.map((item) => item.id)).not.toContain(oid(49))
     expect(page.items).toHaveLength(50)
-    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 100 })
-    expect(logCalls[0]).toContain('--skip=50')
-    // Why: the walk never re-emits an already-shown commit, so no extra lookahead is needed.
-    expect(logCalls[0]).toContain('-n51')
+    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 100, after: oid(99) })
+    // Why: skip stops one short of the page so the walk re-emits the seam row, and the count
+    // covers that row, the page, and one lookahead.
+    expect(logCalls[0]).toContain('--skip=49')
+    expect(logCalls[0]).toContain('-n52')
   })
 
   // Why: this is the property the whole design turns on — page cost must not grow with depth.
@@ -111,13 +112,13 @@ describe('git history cursor paging', () => {
     for (const loaded of [50, 300, 900]) {
       await loadGitHistoryFromExecutor(executor, '/repo', {
         limit: 50,
-        cursor: { anchor: oid(0), loaded }
+        cursor: { anchor: oid(0), loaded, after: oid(loaded - 1) }
       })
     }
 
     expect(
       logCalls.map((args) => Number(args.find((arg) => arg.startsWith('-n'))?.slice(2)))
-    ).toEqual([51, 51, 51])
+    ).toEqual([52, 52, 52])
   })
 
   it('reports no further page, and no cursor, at the end of history', async () => {
@@ -125,7 +126,7 @@ describe('git history cursor paging', () => {
 
     const page = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(0), loaded: 50 }
+      cursor: { anchor: oid(0), loaded: 50, after: oid(49) }
     })
 
     expect(page.items).toHaveLength(10)
@@ -138,7 +139,7 @@ describe('git history cursor paging', () => {
 
     const deep = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(0), loaded: 200 }
+      cursor: { anchor: oid(0), loaded: 200, after: oid(199) }
     })
 
     expect(deep.items[0]?.id).toBe(oid(200))
@@ -154,14 +155,14 @@ describe('git history cursor paging', () => {
 
     const page = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(150), loaded: 150 }
+      cursor: { anchor: oid(150), loaded: 150, after: oid(149) }
     })
 
     expect(page.items[0]?.id).toBe(oid(0))
     // Why: the offset belongs to the dead walk, so it must be dropped with it — carrying it over
     // would skip the first 150 commits of the fresh page.
     expect(logCalls[0]?.some((arg) => arg.startsWith('--skip='))).toBe(false)
-    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 50 })
+    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 50, after: oid(49) })
   })
 })
 
@@ -293,13 +294,41 @@ describe('git history paging against a real repository', () => {
   it('degrades to a fresh first page when the anchor is not a known commit', async () => {
     const result = await loadGitHistoryFromExecutor(git, repoPath, {
       limit: 5,
-      cursor: { anchor: 'f'.repeat(40), loaded: 20 }
+      cursor: { anchor: 'f'.repeat(40), loaded: 20, after: 'e'.repeat(40) }
     })
 
     expect(result.items.map((item) => item.id)).toEqual(allCommits.slice(0, 5))
     // Why: the client tells a restart from a continuation by this, and only by this — without it
     // a fresh page 1 gets appended under the commits already on screen.
-    expect(result.pageAnchor).toBe(allCommits[0])
+    expect(result.continuedCursor).toBe(false)
+  })
+
+  // Why: an anchor resolving is not proof its ancestry is unchanged. `git replace --graft` rewrites
+  // a commit's parents in place, so the same anchor can walk a different history between two page
+  // requests — and an unverified resume would splice that history in, skipping and reordering rows.
+  it('restarts rather than splicing when the walk under the anchor changed', async () => {
+    const first = await loadGitHistoryFromExecutor(git, repoPath, { limit: 5 })
+    const cursor = first.nextCursor
+    expect(cursor).toBeDefined()
+
+    const graftTarget = first.items[1]?.id ?? ''
+    const orphanParent = allCommits.at(-1) ?? ''
+    await execFileAsync('git', ['replace', '--graft', graftTarget, orphanParent], { cwd: repoPath })
+    try {
+      const drifted = await loadGitHistoryFromExecutor(git, repoPath, {
+        limit: 5,
+        cursor: cursor as NonNullable<typeof cursor>
+      })
+
+      expect(drifted.continuedCursor).toBe(false)
+      // A restart is a fresh page 1 of the walk as it now stands, which the client replaces with.
+      const { stdout } = await execFileAsync('git', ['rev-list', '--topo-order', '-n5', 'HEAD'], {
+        cwd: repoPath
+      })
+      expect(drifted.items.map((item) => item.id)).toEqual(stdout.trim().split('\n'))
+    } finally {
+      await execFileAsync('git', ['replace', '-d', graftTarget], { cwd: repoPath })
+    }
   })
 
   // Why: this is what pinning the walk buys, and nothing else in the suite can see it. HEAD moving
@@ -325,7 +354,7 @@ describe('git history paging against a real repository', () => {
       let cursor = first.nextCursor
       while (cursor) {
         const next = await loadGitHistoryFromExecutor(git, repoPath, { limit: 5, cursor })
-        expect(next.pageAnchor).toBe(cursor.anchor)
+        expect(next.continuedCursor).toBe(true)
         seen.push(...next.items.map((item) => item.id))
         cursor = next.hasMore ? next.nextCursor : undefined
       }

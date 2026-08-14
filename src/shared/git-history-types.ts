@@ -68,6 +68,12 @@ export type GitHistoryItem = {
 export type GitHistoryCursor = {
   anchor: string
   loaded: number
+  // Id of the last commit the previous page emitted. The next page re-reads that one row and
+  // continues only if the walk still leads with it: an anchor resolving does not prove its
+  // ancestry is unchanged, because replace refs and grafts rewrite what a commit's parents are
+  // without touching the commit itself. Verifying the seam is what keeps a drifted walk from
+  // being spliced into the list as though it were the next page.
+  after: string
 }
 
 export type GitHistoryOptions = {
@@ -86,11 +92,11 @@ export type GitHistoryResult = {
   hasOutgoingChanges: boolean
   hasMore: boolean
   limit: number
-  // The commit this page's walk actually started from. A requested anchor that no longer resolves
-  // is answered with a fresh page from HEAD, and only this says so: a client comparing it against
-  // the anchor it asked for can tell a continuation from a restart and replace rather than stack a
-  // new history under a dead one. Absent from hosts too old to page.
-  pageAnchor?: string
+  // Whether this page continued the cursor the request carried. A cursor is not honored when its
+  // anchor no longer resolves (rebase, amend, prune, gc) or when the walk under it drifted, and in
+  // both cases the page is a fresh first page that must replace what is on screen rather than
+  // extend it. Absent — and so never a continuation — from hosts too old to page.
+  continuedCursor?: boolean
   // Cursor to send for the next page, present only when one exists. Carrying it on the response
   // keeps offset arithmetic out of the client, and a host too old to page simply omits it — the
   // client then hides "Load more" instead of offering a button that re-requests page one forever.

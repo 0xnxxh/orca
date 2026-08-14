@@ -3,10 +3,10 @@ import type { GitHistoryCursor, GitHistoryResult } from '../../../../shared/git-
 /**
  * Fold a newly fetched page onto the commits already on screen.
  *
- * Only a page that continued the walk we asked for may be appended. A refresh carries no cursor,
- * and an anchor that no longer resolves (rebase, amend, prune, gc) is answered with a fresh page
- * from HEAD — stacking either under the accumulated list would show a new history below a dead one.
- * Both replace instead, which is why the whole decision lives here rather than at the call site.
+ * Only a page that continued the cursor we sent may be appended. A refresh carries no cursor, and a
+ * cursor the host could not honor — dead anchor, or a walk that drifted under it — is answered with
+ * a fresh page from HEAD; stacking either under the accumulated list would show a new history below
+ * a dead one. Both replace instead, which is why the whole decision lives here, not at the call site.
  *
  * Page metadata (refs, merge base, incoming/outgoing, the next cursor) describes the branch and the
  * paging position rather than the page's contents, so the newest page wins.
@@ -16,7 +16,7 @@ export function foldGitHistoryPage(
   page: GitHistoryResult,
   requestedCursor: GitHistoryCursor | undefined
 ): GitHistoryResult {
-  const continued = Boolean(requestedCursor && page.pageAnchor === requestedCursor.anchor)
+  const continued = Boolean(requestedCursor && page.continuedCursor)
   if (!previous || !continued) {
     return page
   }

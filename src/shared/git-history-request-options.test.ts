@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { readGitHistoryOptions } from './git-history-request-options'
 
+const SEAM = 'c'.repeat(40)
+
 describe('readGitHistoryOptions', () => {
   // Why: every transport used to spell its own whitelist out, so `cursor` reached git on none of
   // them and "Load more" silently re-served page one. This is the one place that can regress now.
@@ -9,12 +11,12 @@ describe('readGitHistoryOptions', () => {
       readGitHistoryOptions({
         limit: 25,
         baseRef: 'origin/main',
-        cursor: { anchor: 'a'.repeat(40), loaded: 50 }
+        cursor: { anchor: 'a'.repeat(40), loaded: 50, after: 'b'.repeat(40) }
       })
     ).toEqual({
       limit: 25,
       baseRef: 'origin/main',
-      cursor: { anchor: 'a'.repeat(40), loaded: 50 }
+      cursor: { anchor: 'a'.repeat(40), loaded: 50, after: 'b'.repeat(40) }
     })
   })
 
@@ -28,13 +30,18 @@ describe('readGitHistoryOptions', () => {
 
   it.each([
     ['a non-object cursor', 'abc'],
-    ['a missing anchor', { loaded: 10 }],
-    ['a blank anchor', { anchor: '   ', loaded: 10 }],
-    ['a non-string anchor', { anchor: 42, loaded: 10 }],
-    ['an abbreviated anchor', { anchor: 'abc123', loaded: 10 }],
+    ['a missing anchor', { loaded: 10, after: 'b'.repeat(40) }],
+    // Why: without the seam there is nothing to verify a resume against.
+    ['a missing seam', { anchor: 'a'.repeat(40), loaded: 10 }],
+    ['a blank anchor', { anchor: '   ', loaded: 10, after: 'b'.repeat(40) }],
+    ['a non-string anchor', { anchor: 42, loaded: 10, after: 'b'.repeat(40) }],
+    ['an abbreviated anchor', { anchor: 'abc123', loaded: 10, after: 'b'.repeat(40) }],
     // Why: the anchor is spent on a git revision argument, and requests cross a host boundary
     // (relay, paired web), so an option-shaped anchor must never reach argv.
-    ['an option-shaped anchor', { anchor: '--output=/tmp/pwned', loaded: 10 }]
+    [
+      'an option-shaped anchor',
+      { anchor: '--output=/tmp/pwned', loaded: 10, after: 'b'.repeat(40) }
+    ]
   ])('drops %s', (_label, cursor) => {
     expect(readGitHistoryOptions({ cursor }).cursor).toBeUndefined()
   })
@@ -45,16 +52,18 @@ describe('readGitHistoryOptions', () => {
     [Number.NaN, 0]
   ])('normalizes a loaded offset of %s to %s', (loaded, expected) => {
     const anchor = 'a'.repeat(40)
-    expect(readGitHistoryOptions({ cursor: { anchor, loaded } }).cursor).toEqual({
+    expect(readGitHistoryOptions({ cursor: { anchor, loaded, after: SEAM } }).cursor).toEqual({
       anchor,
+      after: SEAM,
       loaded: expected
     })
   })
 
   it('accepts a sha-256 object id', () => {
     const anchor = 'b'.repeat(64)
-    expect(readGitHistoryOptions({ cursor: { anchor, loaded: 5 } }).cursor).toEqual({
+    expect(readGitHistoryOptions({ cursor: { anchor, loaded: 5, after: SEAM } }).cursor).toEqual({
       anchor,
+      after: SEAM,
       loaded: 5
     })
   })

@@ -8,12 +8,12 @@ function item(id: string): GitHistoryItem {
 
 const ANCHOR = 'a'.repeat(40)
 // The cursor a Load more click sends, and the anchor a page continuing that walk comes back with.
-const REQUESTED = { anchor: ANCHOR, loaded: 2 }
+const REQUESTED = { anchor: ANCHOR, loaded: 2, after: 'b'.repeat(40) }
 
 function page(ids: string[], overrides: Partial<GitHistoryResult> = {}): GitHistoryResult {
   return {
     items: ids.map(item),
-    pageAnchor: ANCHOR,
+    continuedCursor: true,
     hasIncomingChanges: false,
     hasOutgoingChanges: false,
     hasMore: true,
@@ -39,20 +39,20 @@ describe('foldGitHistoryPage', () => {
     expect(merged.items.map((i) => i.id)).toEqual(['c', 'd'])
   })
 
-  // Why: an anchor killed by a rebase/amend/prune/gc is answered with a fresh page from HEAD, and
-  // the differing pageAnchor is the only thing that says so. Appending it would render an
-  // unrelated history below a dead one, children after their parents.
-  it('replaces when the page came back on a different walk than the one requested', () => {
-    const restarted = page(['x', 'y'], { pageAnchor: 'b'.repeat(40) })
+  // Why: a cursor the host could not honor — dead anchor, or a walk that drifted under it — comes
+  // back as a fresh page from HEAD, and this flag is the only thing that says so. Appending it
+  // would render an unrelated history below a dead one, children after their parents.
+  it('replaces when the host could not honor the cursor', () => {
+    const restarted = page(['x', 'y'], { continuedCursor: false })
     const merged = foldGitHistoryPage(page(['a', 'b']), restarted, REQUESTED)
     expect(merged.items.map((i) => i.id)).toEqual(['x', 'y'])
   })
 
-  // Why: a host too old to page echoes no anchor at all, so it can never be a continuation.
-  it('replaces when the host echoes no page anchor', () => {
+  // Why: a host too old to page echoes nothing at all, so it can never be a continuation.
+  it('replaces when the host says nothing about the cursor', () => {
     const merged = foldGitHistoryPage(
       page(['a', 'b']),
-      page(['c', 'd'], { pageAnchor: undefined }),
+      page(['c', 'd'], { continuedCursor: undefined }),
       REQUESTED
     )
     expect(merged.items.map((i) => i.id)).toEqual(['c', 'd'])
@@ -67,12 +67,12 @@ describe('foldGitHistoryPage', () => {
 
   it('takes hasMore, the next cursor, and branch metadata from the newest page', () => {
     const merged = foldGitHistoryPage(
-      page(['a'], { mergeBase: 'old', nextCursor: { anchor: ANCHOR, loaded: 1 } }),
-      page(['b'], { mergeBase: 'new', nextCursor: { anchor: ANCHOR, loaded: 2 } }),
+      page(['a'], { mergeBase: 'old', nextCursor: { anchor: ANCHOR, loaded: 1, after: 'a' } }),
+      page(['b'], { mergeBase: 'new', nextCursor: { anchor: ANCHOR, loaded: 2, after: 'b' } }),
       REQUESTED
     )
     expect(merged.hasMore).toBe(true)
-    expect(merged.nextCursor).toEqual({ anchor: ANCHOR, loaded: 2 })
+    expect(merged.nextCursor).toEqual({ anchor: ANCHOR, loaded: 2, after: 'b' })
     expect(merged.mergeBase).toBe('new')
   })
 
@@ -81,7 +81,7 @@ describe('foldGitHistoryPage', () => {
   it('stops paging when a continuing page adds nothing new', () => {
     const merged = foldGitHistoryPage(
       page(['a', 'b']),
-      page(['a', 'b'], { nextCursor: { anchor: ANCHOR, loaded: 2 } }),
+      page(['a', 'b'], { nextCursor: { anchor: ANCHOR, loaded: 2, after: 'b' } }),
       REQUESTED
     )
     expect(merged.items.map((i) => i.id)).toEqual(['a', 'b'])
