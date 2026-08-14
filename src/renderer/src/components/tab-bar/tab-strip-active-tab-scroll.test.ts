@@ -68,31 +68,59 @@ describe('computeTabStripEndInset', () => {
   })
 })
 
+// Derives scrollWidth from the live pad policy so tests can't assert unreachable geometry.
+function lastTabGeometry({
+  stripClientWidth,
+  lastTabWidth,
+  lastTabOffsetLeft
+}: {
+  stripClientWidth: number
+  lastTabWidth: number
+  lastTabOffsetLeft: number
+}): {
+  stripScrollWidth: number
+  stripClientWidth: number
+  tabOffsetLeft: number
+  tabWidth: number
+} {
+  const contentWidth = lastTabOffsetLeft + lastTabWidth
+  const pad = computeTabStripEndInset({ stripClientWidth, lastTabWidth, contentWidth })
+  return {
+    stripScrollWidth: contentWidth + pad,
+    stripClientWidth,
+    tabOffsetLeft: lastTabOffsetLeft,
+    tabWidth: lastTabWidth
+  }
+}
+
 describe('computeTabStripScrollLeft', () => {
-  it('centers a last tab when trailing pad makes that scroll reachable', () => {
-    expect(
-      computeTabStripScrollLeft({
-        stripScrollWidth: 1010,
-        stripClientWidth: 400,
-        stripScrollLeft: 0,
-        tabOffsetLeft: 720,
-        tabWidth: 180,
-        inline: 'center'
-      })
-    ).toBe(610)
+  it('stops a normal-width last tab at the fade inset because the pad caps the range', () => {
+    const geometry = lastTabGeometry({
+      stripClientWidth: 400,
+      lastTabWidth: 180,
+      lastTabOffsetLeft: 720
+    })
+    const scrollLeft = computeTabStripScrollLeft({
+      ...geometry,
+      stripScrollLeft: 0,
+      inline: 'center'
+    })
+
+    expect(scrollLeft).toBe(geometry.stripScrollWidth - geometry.stripClientWidth)
+    const tabEnd = geometry.tabOffsetLeft + geometry.tabWidth - scrollLeft
+    expect(geometry.stripClientWidth - tabEnd).toBe(TAB_STRIP_REVEAL_INSET_PX)
   })
 
-  it('clamps a last-tab center to the end when there is no trailing pad', () => {
-    expect(
-      computeTabStripScrollLeft({
-        stripScrollWidth: 900,
-        stripClientWidth: 400,
-        stripScrollLeft: 0,
-        tabOffsetLeft: 720,
-        tabWidth: 180,
-        inline: 'center'
-      })
-    ).toBe(500)
+  it('centers a last tab once the pad covers the required trailing range', () => {
+    const geometry = lastTabGeometry({
+      stripClientWidth: 200,
+      lastTabWidth: 190,
+      lastTabOffsetLeft: 210
+    })
+
+    expect(computeTabStripScrollLeft({ ...geometry, stripScrollLeft: 0, inline: 'center' })).toBe(
+      geometry.tabOffsetLeft + geometry.tabWidth / 2 - geometry.stripClientWidth / 2
+    )
   })
 
   it('keeps a fully visible middle tab in place', () => {

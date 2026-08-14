@@ -27,6 +27,8 @@ export function computeTabStripEndInset({
   }
   // Why: a half-viewport pad centered the last tab but hid earlier tabs and
   // created a drop dead-zone; a fade-sized inset keeps the close control clear.
+  // Trade-off: a center request only lands centered while the strip is within
+  // 2x this inset of the last tab's width; wider gaps settle at end + inset.
   return Math.min(TAB_STRIP_REVEAL_INSET_PX, Math.max(0, stripClientWidth - lastTabWidth))
 }
 
