@@ -18,7 +18,6 @@ import type { RemoteRuntimeSocketLivenessOptions } from './remote-runtime-socket
 import * as sharedControlSubscriptions from './remote-runtime-shared-control-subscriptions'
 import { startSharedControlSubscription } from './remote-runtime-shared-control-subscription-start'
 import { SharedControlSocketGeneration } from './remote-runtime-shared-control-socket-generation'
-import type { RuntimeRpcResponse } from './runtime-rpc-envelope'
 import type * as SharedControlTypes from './remote-runtime-shared-control-types'
 type PendingRequest = SharedControlTypes.SharedControlPendingRequest<unknown>
 type LogicalSubscription = SharedControlTypes.SharedControlLogicalSubscription<unknown>
@@ -56,14 +55,16 @@ export class RemoteRuntimeSharedControlConnection {
     method: string,
     params: unknown,
     timeoutMs: number,
+    envelope?: Parameters<typeof requestSharedControl>[0]['envelope'],
     signal?: AbortSignal
-  ): Promise<RuntimeRpcResponse<TResult>> {
-    return requestSharedControl({
+  ): ReturnType<typeof requestSharedControl<TResult>> {
+    return requestSharedControl<TResult>({
       pendingRequests: this.pendingRequests,
       deviceToken: this.pairing.deviceToken,
       method,
       params,
       timeoutMs,
+      envelope,
       ensureReady: () => this.ensureReadyWithTimeout(timeoutMs, signal),
       send: (requestId) => this.sendRequest(requestId),
       retireRequestId: (requestId) => this.retiredRequestIds.retire(requestId),

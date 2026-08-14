@@ -15,7 +15,6 @@ function skill(name: string): DiscoveredSkill {
     directoryPath: `/home/dev/.agents/skills/${name}`,
     skillFilePath: `/home/dev/.agents/skills/${name}/SKILL.md`,
     installed: true,
-    fileCount: 1,
     updatedAt: null
   }
 }

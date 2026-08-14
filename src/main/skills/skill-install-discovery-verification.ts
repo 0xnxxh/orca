@@ -88,6 +88,7 @@ async function discoverInstalledSkill(input: {
   return discoverSkills({
     homeDir: input.homeDirectory,
     repos: [],
+    refresh: true,
     ...(input.scope === 'workspace' && input.workspaceDirectory
       ? { cwd: input.workspaceDirectory }
       : { includeCwd: false }),

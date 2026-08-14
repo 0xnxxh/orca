@@ -183,7 +183,7 @@ export class RuntimeRpcCallQueuePool {
     const targetQueue = call.background ? queue.background : queue.foreground
     const head = call.background ? queue.backgroundHead : queue.foregroundHead
     const index = targetQueue.indexOf(call as QueuedRuntimeCall<unknown>, head)
-    if (index < 0) {
+    if (index === -1) {
       return
     }
     targetQueue.splice(index, 1)

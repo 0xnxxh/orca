@@ -21,7 +21,6 @@ const skill: DiscoveredSkill = {
   directoryPath: '/home/skills/private-skill',
   skillFilePath: '/home/skills/private-skill/SKILL.md',
   installed: true,
-  fileCount: 1,
   updatedAt: null
 }
 

@@ -43,7 +43,6 @@ function discovery(rootPaths: string[]): SkillDiscoveryResult {
         directoryPath: `${rootPaths[0]}/review`,
         skillFilePath: `${rootPaths[0]}/review/SKILL.md`,
         installed: true,
-        fileCount: 1,
         updatedAt: null
       }
     ],

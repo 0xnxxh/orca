@@ -22,10 +22,10 @@ export function SkillInstallTargetFields(props: {
   onWorkspaceChange(value: string): void
   executionTarget: { kind: 'wsl'; distro: string } | null
   onExecutionTargetChange(value: { kind: 'wsl'; distro: string } | null): void
-  runtimeEnvironments: { id: string; name: string }[]
+  runtimeEnvironments: readonly { id: string; name: string }[]
   runtimeStatus: Map<string, { status: { capabilities?: string[] } | null }>
-  sshConnections: { id: string; label: string; connected: boolean }[]
-  workspaceChoices: SkillInstallWorkspaceChoice[]
+  sshConnections: readonly { id: string; label: string; connected: boolean }[]
+  workspaceChoices: readonly SkillInstallWorkspaceChoice[]
   requiredCapability?: string
   providers: ReadonlySet<SkillInstallProviderId>
   detectedAgents: readonly string[] | null

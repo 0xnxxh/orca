@@ -56,7 +56,7 @@ export function SkillsList({
   const handleSelection = (index: number, selected: boolean, range: boolean): void => {
     const skill = skills[index]
     const anchorIndex = skills.findIndex((candidate) => candidate.id === anchorIdRef.current)
-    if (range && selected && anchorIndex >= 0) {
+    if (range && selected && anchorIndex !== -1) {
       const [from, to] = [anchorIndex, index].sort((a, b) => a - b)
       onSelectResults(skills.slice(from, to + 1))
       return

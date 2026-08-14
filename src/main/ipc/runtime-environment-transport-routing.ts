@@ -1,6 +1,7 @@
 import { waitForPromiseWithSignal } from '../../shared/abort-signal-reason'
 import { getPreferredPairingOffer } from '../../shared/runtime-environments'
 import { resolveEnvironment, markEnvironmentUsed } from '../../shared/runtime-environment-store'
+import { isOrchestrationMutation } from '../../shared/orchestration-rpc-contract'
 import type {
   RuntimeOrchestrationEnvelope,
   RuntimeRpcResponse
@@ -15,10 +16,13 @@ import { withRemoteRuntimeTailscaleHint } from '../../shared/remote-runtime-tail
 import { enqueueRuntimeCall } from './runtime-environment-call-queue'
 import {
   reconnectRemoteRuntimeSharedControlConnection,
-  sendRemoteRuntimeConnectionRequest,
-  sendRemoteRuntimeSharedControlRequest,
   subscribeRemoteRuntimeSharedControlRequest
 } from './runtime-environment-request-connections'
+import {
+  sendRemoteRuntimeConnectionRequestAbortable,
+  sendRemoteRuntimeRequestAbortable,
+  sendRemoteRuntimeSharedControlRequestAbortable
+} from './runtime-environment-abortable-requests'
 import { attachRemoteControlDiagnostics } from './runtime-environment-status-diagnostics'
 import { runtimeEnvironmentRevisionFailure } from './runtime-environment-revision-guard'
 import { withTailscaleHintForResponse } from './runtime-environment-tailscale-response'
@@ -113,8 +117,9 @@ export async function callRuntimeEnvironment(
         const pairing = getPreferredPairingOffer(currentEnvironment)
         endpoint = pairing.endpoint
         const effectiveTimeoutMs = timeoutMs ?? DEFAULT_REMOTE_RUNTIME_TIMEOUT_MS
-        if (envelope) {
-          const response = await sendRemoteRuntimeRequest(
+        const sharedControlEnvelope = shouldUseSharedControlEnvelope(method, params, envelope)
+        if (envelope && !sharedControlEnvelope) {
+          const response = await sendRemoteRuntimeRequestAbortable(
             pairing,
             method,
             params,
@@ -126,7 +131,7 @@ export async function callRuntimeEnvironment(
           return response
         }
         if (shouldUseCachedRequestConnection(method)) {
-          const response = await sendRemoteRuntimeConnectionRequest(
+          const response = await sendRemoteRuntimeConnectionRequestAbortable(
             currentEnvironment.id,
             pairing,
             method,
@@ -141,21 +146,17 @@ export async function callRuntimeEnvironment(
           method !== 'status.get' &&
           !shouldUseOneShotRequest(method) &&
           (await waitForPromiseWithSignal(
-            supportsSharedControl(
-              userDataPath,
-              currentEnvironment,
-              pairing,
-              Math.min(effectiveTimeoutMs, DEFAULT_REMOTE_RUNTIME_TIMEOUT_MS)
-            ),
+            supportsSharedControl(userDataPath, currentEnvironment, pairing, effectiveTimeoutMs),
             options?.signal
           ))
         ) {
-          const response = await sendRemoteRuntimeSharedControlRequest(
+          const response = await sendRemoteRuntimeSharedControlRequestAbortable(
             currentEnvironment.id,
             pairing,
             method,
             params,
             effectiveTimeoutMs,
+            sharedControlEnvelope,
             options?.signal
           )
           markEnvironmentUsedFromResponse(userDataPath, currentEnvironment.id, response)
@@ -163,12 +164,12 @@ export async function callRuntimeEnvironment(
         }
         // Why: startup/control-plane RPCs use the proven one-shot path so repo
         // hydration cannot be coupled to a stale terminal-control connection.
-        const response = await sendRemoteRuntimeRequest(
+        const response = await sendRemoteRuntimeRequestAbortable(
           pairing,
           method,
           params,
           effectiveTimeoutMs,
-          undefined,
+          sharedControlEnvelope,
           options?.signal
         )
         markEnvironmentUsedFromResponse(userDataPath, currentEnvironment.id, response)
@@ -276,6 +277,16 @@ function markEnvironmentUsedFromResponse(
 
 function shouldUseCachedRequestConnection(method: string): boolean {
   return method === 'terminal.send' || method === 'terminal.updateViewport'
+}
+
+function shouldUseSharedControlEnvelope(
+  method: string,
+  params: unknown,
+  envelope: RuntimeOrchestrationEnvelope | undefined
+): RuntimeOrchestrationEnvelope | undefined {
+  return envelope && method.startsWith('orchestration.') && !isOrchestrationMutation(method, params)
+    ? envelope
+    : undefined
 }
 
 function shouldUseOneShotRequest(method: string): boolean {

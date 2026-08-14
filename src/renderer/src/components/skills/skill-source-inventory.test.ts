@@ -31,7 +31,6 @@ function skill(overrides: Partial<DiscoveredSkill> = {}): DiscoveredSkill {
     directoryPath: '/home/dev/.agents/skills/skill',
     skillFilePath: '/home/dev/.agents/skills/skill/SKILL.md',
     installed: true,
-    fileCount: 1,
     updatedAt: null,
     ...overrides
   }

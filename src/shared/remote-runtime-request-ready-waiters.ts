@@ -16,7 +16,7 @@ export function waitForRemoteRuntimeRequestReady(
     let waiter!: RemoteRuntimeRequestReadyWaiter
     const remove = (): void => {
       const index = waiters.indexOf(waiter)
-      if (index >= 0) {
+      if (index !== -1) {
         waiters.splice(index, 1)
       }
       signal?.removeEventListener('abort', onAbort)

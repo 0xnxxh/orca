@@ -791,6 +791,15 @@ describe('createUISlice hydratePersistedUI', () => {
     expect(store.getState().activeView).toBe('terminal')
   })
 
+  it('restores a persisted skills view', () => {
+    const store = createUIStore()
+    store.setState({ activeView: 'tasks' })
+
+    store.getState().hydratePersistedUI(makePersistedUI({ activeView: 'skills' }), 'startup')
+
+    expect(store.getState().activeView).toBe('skills')
+  })
+
   it('falls back to terminal when the persisted active view is not a known view', () => {
     const store = createUIStore()
 

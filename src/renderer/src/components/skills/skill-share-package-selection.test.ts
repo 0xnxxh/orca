@@ -15,7 +15,6 @@ function skill(name: string): DiscoveredSkill {
     directoryPath: `/skills/${name}`,
     skillFilePath: `/skills/${name}/SKILL.md`,
     installed: true,
-    fileCount: 1,
     updatedAt: null
   }
 }

@@ -10,7 +10,10 @@ vi.mock('../../../skills/skill-discovery-target', () => ({
   discoverSkillsOnTarget: vi.fn(async () => ({ skills: [], sources: [], scannedAt: 1 }))
 }))
 import { SKILL_METHODS } from './skills'
-import { resolveSkillDiscoveryTarget } from '../../../skills/skill-discovery-target'
+import {
+  discoverSkillsOnTarget,
+  resolveSkillDiscoveryTarget
+} from '../../../skills/skill-discovery-target'
 
 const WSL_RUNTIME = {
   status: 'resolved',
@@ -84,6 +87,24 @@ describe('skills.discover RPC', () => {
     expect(vi.mocked(resolveSkillDiscoveryTarget)).toHaveBeenLastCalledWith(
       expect.objectContaining({ projectRuntime: WSL_RUNTIME })
     )
+  })
+
+  it('only bypasses the host scan cache when the caller asks for a refresh', async () => {
+    await discoverMethod().handler({ cwd: '/repo' }, makeContext({}))
+    expect(vi.mocked(discoverSkillsOnTarget)).toHaveBeenLastCalledWith(expect.anything(), [], {
+      providerRootOverrides: {},
+      refresh: false
+    })
+
+    await discoverMethod().handler({ cwd: '/repo', refresh: true }, makeContext({}))
+    expect(vi.mocked(discoverSkillsOnTarget)).toHaveBeenLastCalledWith(expect.anything(), [], {
+      providerRootOverrides: {},
+      refresh: true
+    })
+  })
+
+  it('accepts a params payload from an older client that cannot send refresh', () => {
+    expect(discoverMethod().params?.parse({ cwd: '/repo' })).toEqual({ cwd: '/repo' })
   })
 })
 

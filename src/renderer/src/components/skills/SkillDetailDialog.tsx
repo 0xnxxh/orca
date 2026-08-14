@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { translate } from '@/i18n/i18n'
 import type { DiscoveredSkill } from '../../../../shared/skills'
-import { fileCountLabel, sourceKindLabel } from './skill-display-labels'
+import { sourceKindLabel } from './skill-display-labels'
 import { skillAgentLabel } from './skill-agent-filter'
 
 const updatedFormatter = new Intl.DateTimeFormat(undefined, {
@@ -116,11 +116,6 @@ export function SkillDetailDialog({
                 {agents.join(', ')}
               </DetailRow>
             ) : null}
-            <DetailRow
-              label={translate('auto.components.skills.SkillRow.detailContents', 'Contents')}
-            >
-              {fileCountLabel(skill.fileCount)}
-            </DetailRow>
             <DetailRow
               label={translate('auto.components.skills.SkillDetailDialog.updated', 'Updated')}
             >

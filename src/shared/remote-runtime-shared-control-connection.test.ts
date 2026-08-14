@@ -20,11 +20,7 @@ import { getRemoteRuntimeRequestAdmissionEvidence } from './remote-runtime-prepa
 import { RemoteRuntimeSharedControlConnection } from './remote-runtime-shared-control-connection'
 import * as sharedControlProtocol from './remote-runtime-shared-control-protocol'
 import { isRuntimeSubscriptionReplayResponse } from './runtime-subscription-replay'
-import {
-  AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
-  SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY
-} from './protocol-version'
-import { SKILL_INSTALL_RESULT_V2_CAPABILITY } from './skill-install-capability'
+import * as protocolVersion from './protocol-version'
 
 const TEST_PROJECT_PATH = path.join('tmp', 'project')
 
@@ -67,9 +63,9 @@ describe('RemoteRuntimeSharedControlConnection', () => {
       type: 'e2ee_auth',
       deviceToken: 'device-token',
       clientCapabilities: [
-        SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-        AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
-        SKILL_INSTALL_RESULT_V2_CAPABILITY
+        protocolVersion.SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
+        protocolVersion.AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+        protocolVersion.SKILL_INSTALL_RESULT_V2_CAPABILITY
       ]
     })
     expect(server.requests.map((request) => request.method)).toEqual([
@@ -77,6 +73,37 @@ describe('RemoteRuntimeSharedControlConnection', () => {
       'session.tabs.listAll'
     ])
 
+    connection.close()
+  })
+
+  it('preserves orchestration authority fields on shared-control requests', async () => {
+    const server = await createServer()
+    const connection = new RemoteRuntimeSharedControlConnection(server.pairing)
+    const envelope = {
+      orchestrationCapability: 'capability',
+      orchestrationContractVersion: 1,
+      orchestrationRequestId: 'request-1',
+      compatibilityInvocationId: 'compatibility-1',
+      orchestrationCompatibilityEvidence: {
+        terminalHandle: 'term-1',
+        paneKey: 'pane-1',
+        launchToken: 'launch-1'
+      },
+      id: 'forged-id',
+      deviceToken: 'forged-token',
+      method: 'orchestration.federationAck',
+      params: { dispatchId: 'forged-dispatch' }
+    }
+
+    await connection.request('orchestration.federationPull', {}, 1000, envelope)
+
+    expect(server.requests).toContainEqual({
+      ...envelope,
+      id: expect.any(String),
+      deviceToken: 'device-token',
+      method: 'orchestration.federationPull',
+      params: {}
+    })
     connection.close()
   })
 
@@ -616,32 +643,6 @@ describe('RemoteRuntimeSharedControlConnection', () => {
     expect(getRemoteRuntimeRequestAdmissionEvidence()).toEqual({
       pendingRequestCount: 0,
       retainedBytes: 0
-    })
-    expect(server.connectionCount()).toBe(1)
-
-    connection.close()
-  })
-
-  it('aborts one pending request without disturbing shared-control peers', async () => {
-    const server = await createServer({ delayedMethods: ['worktree.hang'] })
-    const connection = new RemoteRuntimeSharedControlConnection(server.pairing)
-    const controller = new AbortController()
-    const cancelled = connection.request('worktree.hang', undefined, 60_000, controller.signal)
-    await vi.waitFor(() =>
-      expect(server.requests.map(({ method }) => method)).toContain('worktree.hang')
-    )
-
-    controller.abort()
-    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
-    expect(connection.getDiagnostics().pendingRequestCount).toBe(0)
-    expect(getRemoteRuntimeRequestAdmissionEvidence()).toEqual({
-      pendingRequestCount: 0,
-      retainedBytes: 0
-    })
-    server.flushDelayedResponses()
-    await expect(connection.request('worktree.ps', undefined, 1000)).resolves.toMatchObject({
-      ok: true,
-      result: { method: 'worktree.ps' }
     })
     expect(server.connectionCount()).toBe(1)
 

@@ -42,7 +42,7 @@ export function waitForSharedControlReadyWithTimeout(args: {
       }
       settled = true
       const index = args.readyWaiters.indexOf(waiter)
-      if (index >= 0) {
+      if (index !== -1) {
         args.readyWaiters.splice(index, 1)
       }
       args.signal?.removeEventListener('abort', onAbort)
@@ -55,7 +55,7 @@ export function waitForSharedControlReadyWithTimeout(args: {
       settled = true
       clearTimeout(timeout)
       const index = args.readyWaiters.indexOf(waiter)
-      if (index >= 0) {
+      if (index !== -1) {
         args.readyWaiters.splice(index, 1)
       }
       reject(abortSignalReason(args.signal!))
@@ -90,7 +90,7 @@ export function waitForSharedControlReadyWithTimeout(args: {
       args.open()
     } catch (error) {
       const index = args.readyWaiters.indexOf(waiter)
-      if (index >= 0) {
+      if (index !== -1) {
         args.readyWaiters.splice(index, 1)
       }
       waiter.reject(error instanceof Error ? error : remoteRuntimeUnavailableError(String(error)))

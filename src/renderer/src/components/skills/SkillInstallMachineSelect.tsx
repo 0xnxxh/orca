@@ -12,8 +12,8 @@ export function SkillInstallMachineSelect(props: {
   localLabel: string
   sshLabel: string
   disconnectedLabel: string
-  environments: { id: string; name: string }[]
-  sshTargets: { id: string; label: string; connected: boolean }[]
+  environments: readonly { id: string; name: string }[]
+  sshTargets: readonly { id: string; label: string; connected: boolean }[]
 }): React.JSX.Element {
   return (
     <Select value={props.value} onValueChange={props.onChange}>

@@ -54,7 +54,7 @@ export function packagedNodePtyFloorDockerArgs({ workspaceDirectory, appDirector
 
 function parseAppDirectory(argv) {
   const index = argv.indexOf('--app-dir')
-  const value = index >= 0 ? argv[index + 1] : undefined
+  const value = index !== -1 ? argv[index + 1] : undefined
   if (!value || isAbsolute(value) || value.startsWith('-')) {
     throw new Error('Usage: run-linux-packaged-node-pty-floor-smoke.mjs --app-dir <relative-path>')
   }

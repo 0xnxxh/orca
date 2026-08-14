@@ -29,8 +29,8 @@ function belongsToEnvironment(
 
 export function skillInstallWorkspaceChoices(input: {
   environmentId: string
-  worktreesByRepo: Record<string, Worktree[]>
-  folderWorkspaces: FolderWorkspace[]
+  worktreesByRepo: Readonly<Record<string, readonly Worktree[]>>
+  folderWorkspaces: readonly FolderWorkspace[]
   repos: readonly Repo[]
 }): SkillInstallWorkspaceChoice[] {
   const repos = new Map(input.repos.map((repo) => [repo.id, repo]))
