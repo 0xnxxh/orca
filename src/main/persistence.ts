@@ -193,60 +193,60 @@ import {
 import {
   isLegacyOpenCodeSessionCookie,
   isLegacySshPtyOwnerLease
-} from './persistence/persistence-secret-validation'
+} from './persistence/secret-validation'
 import {
   getDataFile,
   getGithubCacheFile,
   readGithubCacheSnapshot
-} from './persistence/persistence-user-data-path'
+} from './persistence/user-data-path'
 export {
   getCanonicalUserDataPath,
   initDataPath,
   migrateMobilePairingDataToCanonicalUserDataPath
-} from './persistence/persistence-user-data-path'
+} from './persistence/user-data-path'
 import {
   STALE_DURABLE_WRITE_TEMP_AGE_MS,
   gcStaleWorktreeMeta,
   normalizeWorktreeLinkedItemMetadata
-} from './persistence/persistence-worktree-metadata-normalization'
+} from './persistence/worktree-metadata-normalization'
 import {
   migrateAgentYoloDefaults,
   migrateTerminalScrollbackRows,
   migrateTerminalTuiScrollSensitivityDefault,
   stripRetiredGlobalSettings
-} from './persistence/persistence-terminal-settings-migrations'
+} from './persistence/terminal-settings-migrations'
 import {
   normalizeRightSidebarTab,
   normalizeShowDotfilesByWorktree,
   normalizeSortBy
-} from './persistence/persistence-ui-selection-normalization'
-export { normalizeRightSidebarTab } from './persistence/persistence-ui-selection-normalization'
+} from './persistence/ui-selection-normalization'
+export { normalizeRightSidebarTab } from './persistence/ui-selection-normalization'
 import {
   normalizeWorkspaceLineageByChildKey,
   stripMainOwnedTelemetryMarkerFromUI
-} from './persistence/persistence-ui-interaction-merge'
+} from './persistence/ui-interaction-merge'
 import {
   backfillLegacyAutomationContexts,
   normalizeAutomationRunWorkspaceDisplayName
-} from './persistence/persistence-automation-context-migration'
+} from './persistence/automation-context-migration'
 import {
   normalizeLoadedOnboardingState,
   normalizeNotificationSettings,
   readDeprecatedExperimentFlag,
   readLegacySidekickFlag,
   resolveSetupGuideSidebarDismissedOnLoad
-} from './persistence/persistence-onboarding-normalization'
-export { sanitizeOnboardingUpdate } from './persistence/persistence-onboarding-normalization'
+} from './persistence/onboarding-normalization'
+export { sanitizeOnboardingUpdate } from './persistence/onboarding-normalization'
 import {
   canonicalizePersistedFloatingWorkspaceDirectory,
   normalizeFloatingWorkspaceTrustedCwds
-} from './persistence/persistence-floating-workspace-normalization'
+} from './persistence/floating-workspace-normalization'
 import {
   ENCRYPTED_SSH_PTY_OWNER_LEASE_MAX_LENGTH,
   normalizeSshPtyConsumerRecovery,
   normalizeSshRemotePtyLease,
   normalizeSshTarget
-} from './persistence/persistence-ssh-normalization'
+} from './persistence/ssh-normalization'
 import {
   type SshTargetStateOperations,
   addClaudeLivePtySessionId as addClaudeLivePtySessionIdOperation,
@@ -264,11 +264,11 @@ import {
   removeRemovedSshTargetTombstone as removeRemovedSshTargetTombstoneOperation,
   removeSshTarget as removeSshTargetOperation,
   updateSshTarget as updateSshTargetOperation
-} from './persistence/persistence-ssh-target-state'
+} from './persistence/ssh-target-state'
 import {
   reassignSshTargetId as reassignSshTargetIdOperation,
   type SshTargetReassignmentOperations
-} from './persistence/persistence-ssh-target-reassignment'
+} from './persistence/ssh-target-reassignment'
 import {
   getSshRemotePtyLeases as getSshRemotePtyLeasesOperation,
   markSshRemotePtyLease as markSshRemotePtyLeaseOperation,
@@ -280,90 +280,87 @@ import {
   removeSshRemotePtyLeases as removeSshRemotePtyLeasesOperation,
   type SshPtyLeaseOperations,
   upsertSshRemotePtyLease as upsertSshRemotePtyLeaseOperation
-} from './persistence/persistence-ssh-pty-lease-operations'
+} from './persistence/ssh-pty-lease-operations'
 import {
   getSshPtyConsumerRecovery as getSshPtyConsumerRecoveryOperation,
   removeSshPtyConsumerRecovery as removeSshPtyConsumerRecoveryOperation,
   type SshPtyConsumerRecoveryOperations,
   upsertSshPtyConsumerRecovery as upsertSshPtyConsumerRecoveryOperation
-} from './persistence/persistence-ssh-pty-consumer-recovery'
+} from './persistence/ssh-pty-consumer-recovery'
 import {
   clearSshRemotePtyBindingsForLeases as clearSshRemotePtyBindingsForLeasesOperation,
   clearSshRemotePtyBindingsForTarget as clearSshRemotePtyBindingsForTargetOperation,
   type SshPtyBindingCleanupOperations
-} from './persistence/persistence-ssh-pty-binding-cleanup'
+} from './persistence/ssh-pty-binding-cleanup'
 import {
   cloneLayoutNode,
   layoutContainsLeafId,
   preserveMissingLeafRecordEntries
-} from './persistence/persistence-terminal-layout-normalization'
-import { findWorktreeIdForTab } from './persistence/persistence-pane-identity-migration'
+} from './persistence/terminal-layout-normalization'
+import { findWorktreeIdForTab } from './persistence/pane-identity-migration'
 import {
   normalizeClaudeLivePtySessionIds,
   normalizeLegacyPaneKeyAliasEntries,
   normalizeMigrationUnsupportedPtyEntries,
   registerPersistedPaneKeyAlias
-} from './persistence/persistence-pane-alias-normalization'
+} from './persistence/pane-alias-normalization'
 import {
   normalizePersistedPaneIdentityState,
   normalizeWorkspaceSessionPaneIdentities,
   remapAcknowledgedAgentPaneKeys,
   remapSshRemotePtyLeaseLeafIds
-} from './persistence/persistence-workspace-pane-normalization'
+} from './persistence/workspace-pane-normalization'
 import {
   mergeProjectHostSetupCompatibilityState,
   projectHostSetupCompatibilityStateEqual
-} from './persistence/persistence-project-host-compatibility'
+} from './persistence/project-host-compatibility'
 import {
   cloneWorkspaceSessionState,
   createMinimalPersistedTerminalTab
-} from './persistence/persistence-session-owner-fields'
+} from './persistence/session-owner-fields'
 import {
   removeWorkspaceSessionOwner,
   workspaceSessionOwnerPartitionForHost,
   workspaceSessionPartitionIdsForHost
-} from './persistence/persistence-session-owner-removal'
-import { backfillFolderScopeConnectionIds } from './persistence/persistence-folder-scope-migration'
+} from './persistence/session-owner-removal'
+import { backfillFolderScopeConnectionIds } from './persistence/folder-scope-migration'
 import {
   createAutomation as createAutomationOperation,
   deleteAutomation as deleteAutomationOperation,
   listAutomations as listAutomationsOperation,
   updateAutomation as updateAutomationOperation,
   type AutomationDefinitionOperations
-} from './persistence/persistence-automation-definition-operations'
+} from './persistence/automation-definition-operations'
 import {
   createAutomationRun as createAutomationRunOperation,
   listAutomationRuns as listAutomationRunsOperation,
   snapshotAutomationRunWorkspaceDisplayName as snapshotAutomationRunWorkspaceDisplayNameOperation,
   updateAutomationRun as updateAutomationRunOperation,
   type AutomationRunOperations
-} from './persistence/persistence-automation-run-operations'
+} from './persistence/automation-run-operations'
 import {
   advanceAutomationNextRun as advanceAutomationNextRunOperation,
   getLatestAutomationOccurrence as getLatestAutomationOccurrenceOperation
-} from './persistence/persistence-automation-schedule-operations'
-import { migrateWorktreeIdentity as migrateWorktreeIdentityOperation } from './persistence/persistence-worktree-identity-migration'
+} from './persistence/automation-schedule-operations'
+import { migrateWorktreeIdentity as migrateWorktreeIdentityOperation } from './persistence/worktree-identity-migration'
 import {
   updateSettings as updateSettingsOperation,
   type SettingsMutationOperations
-} from './persistence/persistence-settings-update'
-import { getPersistedUI } from './persistence/persistence-ui-state-read'
-import {
-  updatePersistedUI,
-  type UIUpdateOperations
-} from './persistence/persistence-ui-state-update'
-import { ProjectGroupPersistenceOperations } from './persistence/persistence-project-group-operations'
-import { FolderWorkspacePersistenceOperations } from './persistence/persistence-folder-workspace-operations'
-import { RepoOrderPersistenceOperations } from './persistence/persistence-repo-order-operations'
-import { pruneWorktreeStateForRepo as pruneWorktreeStateForRepoOperation } from './persistence/persistence-repo-worktree-pruning'
-import { ProjectHostPersistenceOperations } from './persistence/persistence-project-host-operations'
+} from './persistence/settings-update'
+import { getPersistedUI } from './persistence/ui-state-read'
+import { updatePersistedUI, type UIUpdateOperations } from './persistence/ui-state-update'
+import { ProjectGroupPersistenceOperations } from './persistence/project-group-operations'
+import { FolderWorkspacePersistenceOperations } from './persistence/folder-workspace-operations'
+import { RepoOrderPersistenceOperations } from './persistence/repo-order-operations'
+import { pruneWorktreeStateForRepo as pruneWorktreeStateForRepoOperation } from './persistence/repo-worktree-pruning'
+import { ProjectHostPersistenceOperations } from './persistence/project-host-operations'
 import {
   recordFeatureInteraction as recordFeatureInteractionOperation,
   type FeatureInteractionOperations
-} from './persistence/persistence-feature-interaction-recording'
-import { hydrateRepo as hydrateRepoOperation } from './persistence/persistence-repo-hydration'
-import { RepoUpdatePersistenceOperations } from './persistence/persistence-repo-update-operations'
-import { ProjectHostSetupPersistenceOperations } from './persistence/persistence-project-host-setup-update'
+} from './persistence/feature-interaction-recording'
+import { hydrateRepo as hydrateRepoOperation } from './persistence/repo-hydration'
+import { RepoUpdatePersistenceOperations } from './persistence/repo-update-operations'
+import { ProjectHostSetupPersistenceOperations } from './persistence/project-host-setup-update'
 
 // Why (issue #1158): keep 5 rolling backups at >=1h spacing so a corrupt/empty write leaves an earlier copy recoverable.
 const BACKUP_COUNT = 5
