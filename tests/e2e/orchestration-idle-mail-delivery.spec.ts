@@ -539,7 +539,7 @@ test.describe('orchestration push-on-idle mail delivery', () => {
     expect(readMailRow(userDataDir, messageId)).toMatchObject({
       run_id: runA.result.run.id,
       delivery_contract: 'current_delivery',
-      to_handle: pane.handle,
+      to_handle: `run:${runA.result.run.id}`,
       read: 0,
       delivered_at: null
     })
