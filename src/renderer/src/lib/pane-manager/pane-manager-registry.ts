@@ -1,5 +1,6 @@
 import { recordTerminalWebglDiagnostic } from '../../../../shared/terminal-webgl-diagnostics'
 import { registerRendererMemoryProfileContributor } from '../renderer-memory-profile'
+import { deferPaneManagerRepaintUntilReveal } from './pane-hidden-repaint-deferral'
 import type { PaneRenderingDiagnostics } from './pane-manager-types'
 
 type RegisteredPaneManager = {
@@ -164,6 +165,12 @@ export function forEachLivePaneForDesyncSentinel(
 export function refitAndRefreshAllTerminalPanes(): void {
   for (const manager of liveManagers) {
     try {
+      if (manager.isVisibleForAtlasRecovery?.() === false) {
+        // Why: a hidden tab's panes have no measurable box, so the fit below
+        // refuses them and the refresh presents nothing. Park the repaint on the
+        // manager's reveal, which is the next moment it can actually land.
+        deferPaneManagerRepaintUntilReveal(manager)
+      }
       // Why: after bulk desktop restore, background panes may have correct
       // cols/rows but a stale xterm renderer until focus forces a repaint.
       manager.fitAllPanes?.()
