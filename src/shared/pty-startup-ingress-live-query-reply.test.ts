@@ -197,6 +197,23 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     ingress.drainAndClose()
   })
 
+  it('splits a mixed OSC and DA1 payload without letting DA1 overtake', () => {
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      write: (data) => writes.push(data),
+      onEmission: () => {}
+    })
+    const da1 = '\x1b[?1;2c'
+
+    expect(ingress.answerLiveQueryReply(OSC_COLOR_REPLY + da1)).toBe(true)
+    expect(writes).toEqual([])
+    vi.advanceTimersByTime(0)
+    expect(writes).toEqual([OSC_COLOR_REPLY, da1])
+    ingress.drainAndClose()
+  })
+
   it('preserves identical replies after a quiet CSI write', async () => {
     vi.useFakeTimers()
     const writes: string[] = []

@@ -27,7 +27,6 @@ import {
   type PtyIngressEmission,
   type PtyStartupIngressIntent
 } from '../../shared/pty-startup-ingress'
-import { extractOnlyCookedEchoSafeQueryReplies } from '../../shared/terminal-query-reply'
 import type {
   PendingOutputRecord,
   SessionState,
@@ -36,7 +35,10 @@ import type {
   TerminalSnapshot
 } from './types'
 import type { PtyOwnerBackend } from '../../shared/pty-owner-backend'
-import { createPtySlaveEchoProbe } from '../../shared/pty-slave-line-discipline-echo'
+import {
+  createPtySlaveEchoProbe,
+  type PtySlaveEchoSyncProbe
+} from '../../shared/pty-slave-line-discipline-echo'
 
 const SHELL_READY_TIMEOUT_MS = 15_000
 // Why: Codex skips marker-gated command delivery; this only bounds older daemon/local paths that still report shell-ready for Codex.
@@ -69,6 +71,9 @@ export type SubprocessHandle = {
   /** Slave device path, so startup replies can read the line discipline's ECHO bit before
    *  writing. Absent on handles with no POSIX slave to read (ConPTY, tests). */
   slavePath?: string
+  /** Fork-free read of the same ECHO bit, so a reply that needs no wait is not deferred
+   *  into the next turn (#13892). Absent when node-pty lacks Orca's patch. */
+  echoSyncProbe?: PtySlaveEchoSyncProbe
   write(data: string): void
   resize(cols: number, rows: number): void
   /** Stop reading the PTY fd (node-pty pause()) so a flooding child blocks on write. Optional:
@@ -201,7 +206,8 @@ export class Session {
       ...(opts.ownerBackend ? { ownerBackend: opts.ownerBackend } : {}),
       write: (data) => this.subprocess.write(data),
       onEmission: (emission) => this.emitSubprocessOutput(emission),
-      ...(echoProbe ? { echoProbe } : {})
+      ...(echoProbe ? { echoProbe } : {}),
+      ...(this.subprocess.echoSyncProbe ? { echoSyncProbe: this.subprocess.echoSyncProbe } : {})
     })
     if (this._shellState === 'pending') {
       this.shellPromptReadinessProbe = createShellPromptReadinessProbe({
@@ -268,10 +274,8 @@ export class Session {
     }
 
     // Daemon POSIX PTYs need the local provider's cooked-echo containment (#13137).
-    if (
-      extractOnlyCookedEchoSafeQueryReplies(data) &&
-      this.startupIngress.answerLiveQueryReply(data)
-    ) {
+    // DA1/CPR stay immediate unless an echo-safe reply is already held (#13892).
+    if (this.startupIngress.answerLiveQueryReply(data)) {
       return
     }
 

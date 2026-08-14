@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/headless'
 import { describe, expect, it } from 'vitest'
 import {
   extractOnlyCookedEchoSafeQueryReplies,
+  extractOnlyTerminalQueryReplies,
   isTerminalQueryReply,
   needsCookedEchoSafeQueryReply
 } from './terminal-query-reply'
@@ -87,6 +88,15 @@ describe('isTerminalQueryReply', () => {
       '\x1b[?997;1n'
     ])
     expect(extractOnlyCookedEchoSafeQueryReplies('\x1b[?997;1ny')).toBe(null)
+    expect(extractOnlyTerminalQueryReplies('\x1b[?1;2c\x1b[1;1R')).toEqual([
+      '\x1b[?1;2c',
+      '\x1b[1;1R'
+    ])
+    expect(extractOnlyTerminalQueryReplies('\x1b]11;rgb:2828/2c2c/3434\x1b\\\x1b[?1;2c')).toEqual([
+      '\x1b]11;rgb:2828/2c2c/3434\x1b\\',
+      '\x1b[?1;2c'
+    ])
+    expect(extractOnlyTerminalQueryReplies('\x1b[?1;2chello')).toBe(null)
   })
 
   it('does NOT match ordinary typed input or navigation sequences', () => {

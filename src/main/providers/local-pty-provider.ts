@@ -68,12 +68,12 @@ import { ORCA_HERMES_STARTUP_QUERY_ENV } from '../../shared/hermes-startup-query
 import { PhysicalExitTracker } from '../../shared/physical-exit-tracker'
 import { mergeGitConfigEnvProtocol } from '../../shared/git-credential-prompt-env'
 import { PtyStartupIngress, type PtyIngressEmission } from '../../shared/pty-startup-ingress'
-import { extractOnlyCookedEchoSafeQueryReplies } from '../../shared/terminal-query-reply'
 import { resolvePtyOwnerBackend } from '../../shared/pty-owner-backend'
 import { signalPosixPtyForegroundGroup } from '../pty/posix-pty-foreground-group'
 import { readPtsName } from '../pty/node-pty-pts-name'
 import {
   createPtySlaveEchoProbe,
+  createPtySlaveEchoSyncProbe,
   readPtySlavePath
 } from '../../shared/pty-slave-line-discipline-echo'
 import {
@@ -970,6 +970,7 @@ export class LocalPtyProvider implements IPtyProvider {
       }
     }
     const startupEchoProbe = createPtySlaveEchoProbe(readPtySlavePath(proc))
+    const startupEchoSyncProbe = createPtySlaveEchoSyncProbe(proc)
     const startupIngress = new PtyStartupIngress({
       ...(args.startupIngress ? { intent: args.startupIngress } : {}),
       ownerBackend: resolvePtyOwnerBackend({
@@ -979,7 +980,8 @@ export class LocalPtyProvider implements IPtyProvider {
       }),
       write: (data) => proc.write(data),
       onEmission: emitIngressData,
-      ...(startupEchoProbe ? { echoProbe: startupEchoProbe } : {})
+      ...(startupEchoProbe ? { echoProbe: startupEchoProbe } : {}),
+      ...(startupEchoSyncProbe ? { echoSyncProbe: startupEchoSyncProbe } : {})
     })
     startupIngressByPty.set(id, startupIngress)
 
@@ -1151,12 +1153,10 @@ export class LocalPtyProvider implements IPtyProvider {
     return ptyProcesses.has(id)
   }
   write(id: string, data: string): void {
-    // Cooked PTYs echo private DSR/OSC replies; CPR/DA remain immediate (#13137, #7329).
-    if (extractOnlyCookedEchoSafeQueryReplies(data)) {
-      const ingress = startupIngressByPty.get(id)
-      if (ingress?.answerLiveQueryReply(data)) {
-        return
-      }
+    // Cooked PTYs echo private DSR/OSC replies; CPR/DA remain immediate unless
+    // an echo-safe reply is already held, so they cannot overtake it (#13137, #7329, #13892).
+    if (startupIngressByPty.get(id)?.answerLiveQueryReply(data)) {
+      return
     }
     ptyProcesses.get(id)?.write(data)
   }
