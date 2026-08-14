@@ -233,6 +233,18 @@ describe('SshRelaySession reattach failures never fabricate an exit', () => {
     ])
   })
 
+  // The twin path (`retireExitedPty`, live-stream exit) releases these. This path learns the same
+  // fact from an incarnation-matched proof at reattach — which is how a desktop restart or a
+  // reconnect discovers it — and recording only the lease left every per-pty map holding entries
+  // for a shell nobody can reach again. The unproven cases above assert these are NOT released;
+  // nothing asserted they ARE, which is how the asymmetry survived.
+  it('releases main-process pty state on an exit the relay proved', async () => {
+    await reattachFailsWith(formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-proven-exit'))
+
+    expect(deletePtyOwnership).toHaveBeenCalledWith(APP_PTY_ID)
+    expect(clearProviderPtyState).toHaveBeenCalledWith(APP_PTY_ID)
+  })
+
   it('persists a reconnect batch of proven exits in one async write', async () => {
     const deps = createMockDeps()
     const secondPtyId = 'pty-second'

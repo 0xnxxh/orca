@@ -2763,6 +2763,25 @@ export class SshRelaySession {
     )
     if (exitProof) {
       terminatedLeaseIds.add(ptyId)
+      // Release the same main-process per-pty state `retireExitedPty` releases. Both paths learn
+      // the shell is dead; this one learns it from an incarnation-matched exit proof at reattach —
+      // which is how a desktop restart or reconnect discovers it — and recording only the lease
+      // left ptyOwnership, sizes, incarnations, agent-session owners and the provider's hook state
+      // holding entries for a shell nobody can reach again.
+      //
+      // Deliberately NOT sending `pty:exit`: the renderer's disconnected-pane affordance owns what
+      // the user sees here, and an exit push would race it. Only the state that would otherwise
+      // leak is freed.
+      // `ptyId` here is the RELAY-scoped id (it is what the lease batch records); these maps are
+      // keyed by the APP-scoped one. Passing the wrong scope is silent — it clears nothing.
+      const appPtyId = toAppSshPtyId(this.targetId, ptyId)
+      clearProviderPtyState(appPtyId)
+      deletePtyOwnership(appPtyId)
+
+      this.rejectedPtyRecoveryAttempts.delete(appPtyId)
+      const recovery = getSshPtyConsumerRecovery(this.targetId)
+      recovery?.checkpointsByAppPtyId.delete(appPtyId)
+      recovery?.checkpointsByAppPtyId.delete(ptyId)
     }
     // Nothing else proves it — not even a not-found, which the relay also returns when it merely
     // cannot hand this id back — so every other failure leaves the pane detached and recoverable.
