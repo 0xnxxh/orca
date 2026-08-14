@@ -48,6 +48,8 @@ vi.mock('./ssh', () => ({
 }))
 
 const { _internals, registerAiVaultHandlers } = await import('./ai-vault')
+const { scanAiVaultSessionsByHostScope } = await import('./ai-vault-host-scope-scan')
+const { scanSshAiVaultSessionsByOwner } = await import('./ai-vault-runtime-owned-ssh')
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -63,6 +65,98 @@ beforeEach(() => {
 })
 
 describe('runtime-owned SSH AI Vault routing', () => {
+  it('does not start a named runtime-owned SSH hop after owner lookup is cancelled', async () => {
+    let resolveOwner!: (owner: {
+      environmentId: string
+      targetId: string
+      executionHostId: 'ssh:hub-owned-host'
+    }) => void
+    const findOwner = vi.fn(
+      () =>
+        new Promise<{
+          environmentId: string
+          targetId: string
+          executionHostId: 'ssh:hub-owned-host'
+        }>((resolve) => {
+          resolveOwner = resolve
+        })
+    )
+    const scanOwned = vi.fn().mockResolvedValue(result([]))
+    const controller = new AbortController()
+    const pending = scanSshAiVaultSessionsByOwner({
+      targetId: 'hub-owned-host',
+      signal: controller.signal,
+      timeoutMs: 20_000,
+      findOwner,
+      scanOwned
+    })
+    await vi.waitFor(() => expect(findOwner).toHaveBeenCalledTimes(1))
+
+    controller.abort()
+    resolveOwner({
+      environmentId: 'hub-runtime',
+      targetId: 'hub-owned-host',
+      executionHostId: 'ssh:hub-owned-host'
+    })
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(scanOwned).not.toHaveBeenCalled()
+  })
+
+  it('does not start all-host runtime-owned SSH legs after cancellation', async () => {
+    let resolveTargets!: (
+      targets: readonly {
+        environmentId: string
+        targetId: string
+        executionHostId: 'ssh:hub-owned-host'
+        connected: true
+      }[]
+    ) => void
+    const listRuntimeOwnedSshAiVaultTargets = vi.fn(
+      () =>
+        new Promise<
+          readonly {
+            environmentId: string
+            targetId: string
+            executionHostId: 'ssh:hub-owned-host'
+            connected: true
+          }[]
+        >((resolve) => {
+          resolveTargets = resolve
+        })
+    )
+    const scanOwned = vi.fn().mockResolvedValue(result([]))
+    const controller = new AbortController()
+    const pending = scanAiVaultSessionsByHostScope(
+      { executionHostScope: 'all' },
+      'all',
+      controller.signal,
+      'all-hosts',
+      {
+        getActiveRuntimeAiVaultHostInfos: () => [
+          { environmentId: 'hub-runtime', executionHostId: 'runtime:hub-runtime' }
+        ],
+        listRuntimeOwnedSshAiVaultTargets,
+        scanRuntimeOwnedSshAiVaultSessions: scanOwned,
+        scanLocal: async () => result([])
+      }
+    )
+    await vi.waitFor(() => expect(listRuntimeOwnedSshAiVaultTargets).toHaveBeenCalledTimes(1))
+
+    controller.abort()
+    resolveTargets([
+      {
+        environmentId: 'hub-runtime',
+        targetId: 'hub-owned-host',
+        executionHostId: 'ssh:hub-owned-host',
+        connected: true
+      }
+    ])
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(scanOwned).not.toHaveBeenCalled()
+  })
+
   it('routes an SSH host the local process does not own through its paired runtime', async () => {
     const scanRuntimeOwnedSshAiVaultSessions = vi
       .fn()

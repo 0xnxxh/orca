@@ -208,6 +208,30 @@ describe('a runtime can scan an SSH host that it owns', () => {
     ])
   })
 
+  it('keeps healthy SSH results when the runtime-local scan throws', async () => {
+    scanAiVaultSessionsInWorker.mockRejectedValue(new Error('WSL home resolution failed'))
+    const dispatcher = makeDispatcher()
+
+    const response = (await dispatcher.dispatch(
+      makeRequest('aiVault.listSessions', {
+        executionHostId: 'runtime:hub-runtime',
+        includeOwnedSshHosts: true
+      })
+    )) as { ok: boolean; result: AiVaultListResult }
+
+    expect(response.ok).toBe(true)
+    expect(response.result.sessions).toEqual([
+      expect.objectContaining({ executionHostId: 'ssh:hub-owned-host' })
+    ])
+    expect(response.result.issues).toEqual([
+      expect.objectContaining({
+        executionHostId: 'runtime:hub-runtime',
+        kind: 'host',
+        message: 'WSL home resolution failed'
+      })
+    ])
+  })
+
   it('reuses each SSH host leg across repeated non-force all-host scans', async () => {
     const dispatcher = makeDispatcher()
     const params = {

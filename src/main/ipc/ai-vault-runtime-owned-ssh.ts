@@ -1,6 +1,14 @@
-import type { AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
+import {
+  isAiVaultScanCancelledError,
+  type AiVaultListArgs,
+  type AiVaultListResult
+} from '../../shared/ai-vault-types'
 import { isRuntimeOwnedSshTargetId } from '../../shared/execution-host'
 import { scanSshAiVaultSessions } from '../ai-vault/ssh-session-list'
+import {
+  abandonRemoteSessionScanOnCancel,
+  throwIfAiVaultScanCancelled
+} from '../ai-vault/ai-vault-scan-cancellation'
 import type { RuntimeOwnedSshAiVaultHost } from '../ai-vault/runtime-owned-ssh-session-list'
 import { getActiveSshAiVaultHostInfo } from './ssh'
 
@@ -28,11 +36,18 @@ export async function scanSshAiVaultSessionsByOwner(args: {
     try {
       const owner = await args.findOwner(args.targetId)
       if (owner) {
-        return await args.scanOwned(owner.environmentId, owner.targetId, args.listArgs ?? {}, {
-          timeoutMs: args.timeoutMs
-        })
+        throwIfAiVaultScanCancelled(args.signal)
+        return await abandonRemoteSessionScanOnCancel(
+          args.scanOwned(owner.environmentId, owner.targetId, args.listArgs ?? {}, {
+            timeoutMs: args.timeoutMs
+          }),
+          args.signal
+        )
       }
-    } catch {
+    } catch (error) {
+      if (isAiVaultScanCancelledError(error)) {
+        throw error
+      }
       // Fall through to the local SSH issue path so one dead pairing cannot
       // discard sibling all-hosts legs.
     }

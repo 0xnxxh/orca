@@ -35,6 +35,39 @@ describe('AI Vault host-leg cache', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([RESULT, RESULT])
   })
 
+  it('retries when a deeper caller cancels an in-flight scan', async () => {
+    let rejectScan!: (error: Error) => void
+    const scan = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<AiVaultListResult>((_resolve, reject) => {
+            rejectScan = reject
+          })
+      )
+      .mockResolvedValue(RESULT)
+    const first = scanHostLegWithCache({
+      cacheKey: 'host-a',
+      depth: 1000,
+      force: false,
+      scan
+    })
+    const second = scanHostLegWithCache({
+      cacheKey: 'host-a',
+      depth: 500,
+      force: false,
+      scan
+    })
+    const cancelled = new Error('cancelled')
+    cancelled.name = 'AbortError'
+
+    rejectScan(cancelled)
+
+    await expect(first).rejects.toBe(cancelled)
+    await expect(second).resolves.toBe(RESULT)
+    expect(scan).toHaveBeenCalledTimes(2)
+  })
+
   it('evicts an earlier healthy result when a forced refresh returns a host issue', async () => {
     const hostFailure: AiVaultListResult = {
       ...RESULT,

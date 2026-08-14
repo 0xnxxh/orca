@@ -1,5 +1,8 @@
 import { scanSshAiVaultSessions } from '../ai-vault/ssh-session-list'
-import { abandonRemoteSessionScanOnCancel } from '../ai-vault/ai-vault-scan-cancellation'
+import {
+  abandonRemoteSessionScanOnCancel,
+  throwIfAiVaultScanCancelled
+} from '../ai-vault/ai-vault-scan-cancellation'
 import { aiVaultScanIssueResult, mergeAiVaultListResults } from '../ai-vault/session-list-results'
 import { requestedAiVaultSessionDepth } from '../../shared/ai-vault-session-depth'
 import {
@@ -213,13 +216,15 @@ async function scanRuntimeOwnedSshHosts(
         depth,
         scopePaths,
         force: args?.force === true,
-        scan: () =>
-          abandonRemoteSessionScanOnCancel(
+        scan: () => {
+          throwIfAiVaultScanCancelled(signal)
+          return abandonRemoteSessionScanOnCancel(
             scanOwned(host.environmentId, host.targetId, args ?? {}, {
               timeoutMs: AI_VAULT_ALL_HOST_SSH_TIMEOUT_MS
             }),
             signal
           )
+        }
       })
     )
   )

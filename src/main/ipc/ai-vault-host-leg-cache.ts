@@ -1,4 +1,4 @@
-import type { AiVaultListResult } from '../../shared/ai-vault-types'
+import { isAiVaultScanCancelledError, type AiVaultListResult } from '../../shared/ai-vault-types'
 import {
   aiVaultSessionDepthCovers,
   truncateAiVaultListResult,
@@ -53,7 +53,13 @@ export async function scanHostLegWithCache(args: {
   }
   const inFlight = inFlightHostLegs.get(args.cacheKey)
   if (!args.force && inFlight && aiVaultSessionDepthCovers(inFlight.depth, args.depth)) {
-    return truncateAiVaultListResult(await inFlight.promise, args.depth, args.scopePaths)
+    try {
+      return truncateAiVaultListResult(await inFlight.promise, args.depth, args.scopePaths)
+    } catch (error) {
+      if (!isAiVaultScanCancelledError(error)) {
+        throw error
+      }
+    }
   }
   const promise = scanAndCacheHostLeg(args, now, startGeneration)
   if (args.force) {

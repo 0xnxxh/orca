@@ -34,7 +34,7 @@ const OWNER_CACHE_TTL_MS = 60_000
 const OWNER_CACHE_MAX_ENTRIES = 256
 
 type CachedRuntimeOwnedSshHost = {
-  owner: RuntimeOwnedSshAiVaultHost
+  owner: RuntimeOwnedSshAiVaultHost | null
   expiresAt: number
 }
 
@@ -117,9 +117,7 @@ export async function findRuntimeOwningSshAiVaultHost(
   inFlightOwnerLookups.set(cacheKey, lookup)
   try {
     const owner = await lookup
-    if (owner) {
-      cacheRuntimeOwnedSshHost(cacheKey, owner)
-    }
+    cacheRuntimeOwnedSshHost(cacheKey, owner)
     return owner
   } finally {
     if (inFlightOwnerLookups.get(cacheKey) === lookup) {
@@ -142,7 +140,10 @@ async function findRuntimeOwnedSshHostInInventories(
   return inventories.flat().find((host) => host.targetId === targetId) ?? null
 }
 
-function cacheRuntimeOwnedSshHost(cacheKey: string, owner: RuntimeOwnedSshAiVaultHost): void {
+function cacheRuntimeOwnedSshHost(
+  cacheKey: string,
+  owner: RuntimeOwnedSshAiVaultHost | null
+): void {
   const now = Date.now()
   for (const [key, entry] of cachedOwners) {
     if (entry.expiresAt <= now) {

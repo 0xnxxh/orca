@@ -82,6 +82,15 @@ describe('runtime-owned SSH AI Vault inventory', () => {
     expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(1)
   })
 
+  it('caches a missing owner instead of repeating runtime inventory fanout', async () => {
+    mocks.callRuntimeEnvironment.mockResolvedValue({ ok: true, result: { targets: [] } })
+
+    await findRuntimeOwningSshAiVaultHost('/user-data', 'disconnected-local-host')
+    await findRuntimeOwningSshAiVaultHost('/user-data', 'disconnected-local-host')
+
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(1)
+  })
+
   it('deduplicates concurrent owner lookups', async () => {
     let resolveInventory!: (value: { ok: true; result: { targets: { id: string }[] } }) => void
     mocks.callRuntimeEnvironment.mockReturnValueOnce(

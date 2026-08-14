@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { defineMethod, type RpcMethod } from '../core'
 import { OptionalBoolean } from '../schemas'
 import {
+  aiVaultScanIssueResult,
   mergeAiVaultListResults,
   restampAiVaultListResult
 } from '../../../ai-vault/session-list-results'
@@ -139,7 +140,19 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
               sshHosts.map((host) => scanRuntimeSshAiVaultSessions(host.targetId, listArgs))
             )
           : Promise.resolve([])
-      const result = await runtime.listAiVaultSessions(listArgs)
+      let result: AiVaultListResult
+      try {
+        result = await runtime.listAiVaultSessions(listArgs)
+      } catch (error) {
+        if (params.includeOwnedSshHosts !== true) {
+          throw error
+        }
+        result = aiVaultScanIssueResult({
+          executionHostId: LOCAL_EXECUTION_HOST_ID,
+          path: 'this computer',
+          message: error instanceof Error ? error.message : 'Local session scan failed.'
+        })
+      }
       // Why: web clients consume this response directly (no parent-side retag),
       // so host-local sessions must come back stamped as the runtime they addressed.
       const stamped =
