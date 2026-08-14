@@ -10,16 +10,17 @@ import { parseJiraIssueUrl, type ParsedJiraIssueUrl } from '../../../shared/jira
 import { parseLinearIssueUrlIntent, type LinearIssueUrlIntent } from '../../../shared/linear-links'
 import type { Repo, Worktree } from '../../../shared/types'
 import { normalizeLinearIdentifier } from './linear-issue-workspace-attachment'
+import {
+  worktreeMatchesGitLabUrl,
+  type GitLabIssueOrMRLink
+} from './worktree-palette-gitlab-url-match'
 import { isWorktreePaletteQueryTooLarge } from './worktree-palette-query-bounds'
 import type { PaletteSearchResult, PaletteSupportingText } from './worktree-palette-search'
 
 export type CmdJTaskSourceUrl =
   | { provider: 'github'; link: GitHubIssueOrPRLink }
   | { provider: 'linear'; intent: LinearIssueUrlIntent }
-  | {
-      provider: 'gitlab'
-      link: NonNullable<ReturnType<typeof parseGitLabIssueOrMRLink>>
-    }
+  | { provider: 'gitlab'; link: GitLabIssueOrMRLink }
   | { provider: 'jira'; parsed: ParsedJiraIssueUrl }
 
 export type CmdJTaskUrlCreatePreview = {
@@ -237,27 +238,6 @@ function worktreeMatchesLinearUrl(worktree: Worktree, intent: LinearIssueUrlInte
   return true
 }
 
-function worktreeMatchesGitLabUrl(
-  worktree: Worktree,
-  link: NonNullable<ReturnType<typeof parseGitLabIssueOrMRLink>>
-): boolean {
-  const linkedUrl = worktree.linkedWorkItem?.url
-    ? parseGitLabIssueOrMRLink(worktree.linkedWorkItem.url)
-    : null
-  if (
-    linkedUrl &&
-    linkedUrl.number === link.number &&
-    linkedUrl.type === link.type &&
-    linkedUrl.slug.host.toLowerCase() === link.slug.host.toLowerCase() &&
-    linkedUrl.slug.path.toLowerCase() === link.slug.path.toLowerCase()
-  ) {
-    return true
-  }
-  return link.type === 'mr'
-    ? worktree.linkedGitLabMR === link.number
-    : worktree.linkedGitLabIssue === link.number
-}
-
 function worktreeMatchesJiraUrl(worktree: Worktree, parsed: ParsedJiraIssueUrl): boolean {
   if (worktree.linkedWorkItem?.jiraIdentifier?.toUpperCase() === parsed.issueKey) {
     return true
@@ -300,7 +280,7 @@ export function matchWorktreePaletteTaskUrl(args: {
     return result(worktree.id, 'issue', supportingText('issue', intent.intent.identifier))
   }
   if (intent.provider === 'gitlab') {
-    if (!worktreeMatchesGitLabUrl(worktree, intent.link)) {
+    if (!worktreeMatchesGitLabUrl(worktree, intent.link, repo, review)) {
       return null
     }
     return result(
