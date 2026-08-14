@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentJournalMessageItem } from '../../shared/agent-session-journal-types'
-import { dispatchClaudeTurn } from './claude-structured-dispatch'
+import { dispatchClaudeTurn, resolveClaudeReplayWaiter } from './claude-structured-dispatch'
 import type { ClaudeSession } from './claude-structured-session-state'
 
 function sessionFor(send = vi.fn().mockResolvedValue(undefined)): ClaudeSession {
@@ -26,6 +26,60 @@ function userMessage(blocks: AgentJournalMessageItem['blocks']): AgentJournalMes
 }
 
 describe('Claude structured dispatch image limits', () => {
+  it('accepts a slash command from its result receipt when Claude omits the user replay', async () => {
+    const session = sessionFor()
+    const dispatched = dispatchClaudeTurn(
+      session,
+      { clientMessageId: 'client-1', body: userMessage([{ type: 'text', text: '/permissions' }]) },
+      100
+    )
+    await vi.waitFor(() => expect(session.dispatchWaiters).toHaveLength(1))
+
+    resolveClaudeReplayWaiter(session, {
+      type: 'result',
+      subtype: 'success',
+      session_id: 'provider-session',
+      uuid: 'command-result-uuid'
+    })
+
+    await expect(dispatched).resolves.toEqual({
+      state: 'accepted',
+      providerIdentity: {
+        provider: 'claude',
+        sessionId: 'provider-session',
+        uuid: 'command-result-uuid'
+      }
+    })
+  })
+
+  it('does not mistake a normal turn result for its missing user replay', async () => {
+    const session = sessionFor()
+    const dispatched = dispatchClaudeTurn(
+      session,
+      { clientMessageId: 'client-1', body: userMessage([{ type: 'text', text: 'hello' }]) },
+      100
+    )
+    await vi.waitFor(() => expect(session.dispatchWaiters).toHaveLength(1))
+
+    resolveClaudeReplayWaiter(session, {
+      type: 'result',
+      session_id: 'provider-session',
+      uuid: 'unrelated-result-uuid'
+    })
+    expect(session.dispatchWaiters).toHaveLength(1)
+    resolveClaudeReplayWaiter(session, {
+      type: 'user',
+      parent_tool_use_id: null,
+      session_id: 'provider-session',
+      uuid: 'user-replay-uuid'
+    })
+
+    await expect(dispatched).resolves.toMatchObject({
+      state: 'accepted',
+      providerIdentity: { uuid: 'user-replay-uuid' }
+    })
+  })
+
   it('rejects more than twenty URL images before sending', async () => {
     const session = sessionFor()
     const body = userMessage(

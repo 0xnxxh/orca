@@ -18,7 +18,6 @@ import type {
   AgentSessionSendResult,
   AgentSessionWireRefusal
 } from '../../../shared/agent-session-wire'
-import { readAgentSessionHistory } from './agent-session-history-page'
 import type { AgentSessionAttachParams } from './structured-agent-session-attach'
 import { performAttach } from './structured-agent-session-attach-flow'
 import {
@@ -54,6 +53,7 @@ import type {
   StructuredAgentSessionHostDeps,
   StructuredAgentSessionHostSession
 } from './structured-agent-session-host-types'
+import { readStructuredAgentSessionHistoryResult } from './structured-agent-session-history-result'
 export type {
   StructuredAgentSessionCaller,
   StructuredAgentSessionHostDeps
@@ -292,12 +292,12 @@ export class StructuredAgentSessionHost {
   }
 
   history(request: AgentSessionHistoryRequest): AgentSessionHistoryResult {
-    const result = readAgentSessionHistory(this.requireSession(request.sessionId).journal, request)
-    const fence = this.deps.store.getRecord(request.sessionId)?.lease.runtimeFence
-    if (fence === undefined) {
-      return result
-    }
-    return result.ok ? { ...result, page: { ...result.page, fence } } : { ...result, fence }
+    const record = this.deps.store.getRecord(request.sessionId)
+    return readStructuredAgentSessionHistoryResult({
+      journal: this.requireSession(request.sessionId).journal,
+      record,
+      request
+    })
   }
 
   subscribe(input: AgentSessionSubscribeInput): () => void {

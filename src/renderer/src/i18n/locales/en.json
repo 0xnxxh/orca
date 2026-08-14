@@ -15202,7 +15202,10 @@
         "allow": "Allow",
         "deny": "Deny"
       },
-      "launchPromptNotDelivered": "Not delivered — check the terminal"
+      "launchPromptNotDelivered": "Not delivered — check the terminal",
+      "structuredSession": {
+        "discardOutboxEntry": "Discard"
+      }
     },
     "tab": {
       "bar": {

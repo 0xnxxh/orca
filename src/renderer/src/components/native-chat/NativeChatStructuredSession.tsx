@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, Trash2 } from 'lucide-react'
 import type { AgentType } from '../../../../shared/agent-status-types'
 import { dispatchStructuredAgentSessionComposerCommand } from '../../../../shared/structured-agent-session-composer'
 import { structuredAgentSessionPaneKey } from '../../../../shared/structured-agent-session-projection'
@@ -221,18 +221,29 @@ export function NativeChatStructuredSession(props: {
                   'Message was not sent.'
                 )}
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            onClick={() => controller.retry(retryableOutboxEntry.clientMessageId)}
-          >
-            <RotateCcw className="size-3" />
-            {translate(
-              'auto.components.native.chat.NativeChatStructuredSession.a5e7f14068',
-              'Retry'
-            )}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => controller.discard(retryableOutboxEntry.clientMessageId)}
+            >
+              <Trash2 className="size-3" />
+              {translate('components.native-chat.structuredSession.discardOutboxEntry', 'Discard')}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => controller.retry(retryableOutboxEntry.clientMessageId)}
+            >
+              <RotateCcw className="size-3" />
+              {translate(
+                'auto.components.native.chat.NativeChatStructuredSession.a5e7f14068',
+                'Retry'
+              )}
+            </Button>
+          </div>
         </div>
       ) : null}
       {controller.error || composerError ? (

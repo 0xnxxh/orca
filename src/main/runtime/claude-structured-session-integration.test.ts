@@ -382,6 +382,15 @@ describe('a structured Claude session over agentSession.*', () => {
       CLAUDE_CONFIG_DIR: join(root, 'claude-home'),
       [CLAUDE_SPAWN_TOKEN_ENV]: expect.any(String)
     })
+    const history = await call('agentSession.history', {
+      sessionId: SESSION,
+      direction: 'tail',
+      limit: 1
+    })
+    expect(history).toMatchObject({
+      ok: true,
+      result: { providerSession: { key: 'session_id', id: PROVIDER_SESSION } }
+    })
     const stream = await subscribe()
 
     const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'List files' }] }

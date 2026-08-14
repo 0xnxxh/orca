@@ -232,6 +232,7 @@ export function useStructuredAgentSession(args: {
     blockedClientMessageId: outboxController.blockedClientMessageId,
     send: outboxController.send,
     retry: outboxController.retry,
+    discard: outboxController.discard,
     isWorking: turnId !== null,
     turnId,
     cancel: (turnId: string) => mutate('agentSession.cancel', 'agentSession.cancel', { turnId }),

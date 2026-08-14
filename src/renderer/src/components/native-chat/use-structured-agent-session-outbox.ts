@@ -270,5 +270,30 @@ export function useStructuredAgentSessionOutbox(args: {
     outboxRef.current = next
     setOutbox(next)
   }
-  return { outbox, error, blockedClientMessageId: blockedIdRef.current, send, retry }
+  const discard = (clientMessageId: string): void => {
+    const discarded = outboxRef.current.find((entry) => entry.clientMessageId === clientMessageId)
+    const next = outboxRef.current.filter((entry) => entry.clientMessageId !== clientMessageId)
+    if (!writeOutbox(sessionId, next)) {
+      setError('Message could not be removed from the outbox')
+      return
+    }
+    const clearsError =
+      discarded?.state === 'unconfirmed' || blockedIdRef.current === clientMessageId
+    if (blockedIdRef.current === clientMessageId) {
+      blockedIdRef.current = null
+    }
+    if (clearsError) {
+      setError(null)
+    }
+    outboxRef.current = next
+    setOutbox(next)
+  }
+  return {
+    outbox,
+    error,
+    blockedClientMessageId: blockedIdRef.current,
+    send,
+    retry,
+    discard
+  }
 }

@@ -32,6 +32,7 @@ vi.mock('./use-structured-agent-session', () => ({
     blockedClientMessageId: null,
     send: vi.fn(),
     retry: vi.fn(),
+    discard: vi.fn(),
     isWorking: false,
     turnId: null,
     cancel: vi.fn(),

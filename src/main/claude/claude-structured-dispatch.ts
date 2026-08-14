@@ -54,14 +54,19 @@ export function resolveClaudeReplayWaiter(
   session: ClaudeSession,
   message: Record<string, unknown>
 ): void {
+  const isUserReplay = message.type === 'user' && message.parent_tool_use_id === null
+  const isCompletedCommand = message.type === 'result'
   if (
-    message.type !== 'user' ||
-    message.parent_tool_use_id !== null ||
+    (!isUserReplay && !isCompletedCommand) ||
     readClaudeFrameString(message, 'session_id') !== session.providerSessionId
   ) {
     return
   }
   const uuid = readClaudeFrameString(message, 'uuid')
+  const current = session.dispatchWaiters[0]
+  if (isCompletedCommand && !current?.acceptsResult) {
+    return
+  }
   const waiter = uuid ? session.dispatchWaiters.shift() : undefined
   if (waiter && uuid) {
     clearTimeout(waiter.timer)
@@ -121,9 +126,14 @@ async function messageContent(body: AgentJournalMessageItem): Promise<unknown[]>
   return content
 }
 
-function waitForReplay(session: ClaudeSession, timeoutMs: number): Promise<string | null> {
+function waitForReplay(
+  session: ClaudeSession,
+  timeoutMs: number,
+  acceptsResult: boolean
+): Promise<string | null> {
   return new Promise((resolve) => {
     const waiter = {
+      acceptsResult,
       resolve,
       timer: setTimeout(() => {
         const index = session.dispatchWaiters.indexOf(waiter)
@@ -149,7 +159,10 @@ export async function dispatchClaudeTurn(
   } catch (error) {
     return { state: 'rejected', reason: (error as Error).message }
   }
-  const replayed = waitForReplay(session, timeoutMs)
+  const acceptsResult = input.body.blocks.some(
+    (block) => block.type === 'text' && block.text.trimStart().startsWith('/')
+  )
+  const replayed = waitForReplay(session, timeoutMs, acceptsResult)
   try {
     await session.connection.send({
       type: 'user',

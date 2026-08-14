@@ -169,6 +169,7 @@ export type AgentStatusSlice = {
       providerSession?: AgentProviderSessionMetadata
       launchConfig?: SleepingAgentLaunchConfig
       launchToken?: string
+      terminalResumeEligible?: false
     }
   ) => void
 
@@ -534,7 +535,11 @@ function sleepingRecordFromEntry(args: {
   origin?: SleepingAgentSessionRecord['origin']
 }): SleepingAgentSessionRecord | null {
   const agent = args.entry.agentType
-  if (!isResumableTuiAgent(agent) || !args.entry.providerSession) {
+  if (
+    args.entry.terminalResumeEligible === false ||
+    !isResumableTuiAgent(agent) ||
+    !args.entry.providerSession
+  ) {
     return null
   }
   if (!getAgentResumeArgv(agent, args.entry.providerSession)) {
@@ -1941,6 +1946,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             ? existing?.subagents
             : payload.subagents,
           ...(providerSession ? { providerSession } : {}),
+          ...(metadata?.terminalResumeEligible === false
+            ? { terminalResumeEligible: false as const }
+            : {}),
           ...(promptInteractionKey ? { promptInteractionKey } : {}),
           ...(payload.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
           // Why: `interrupted` is done-only; parseAgentStatusPayload already clamps it for non-done states, so write it through directly.
