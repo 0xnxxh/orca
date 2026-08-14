@@ -7209,6 +7209,56 @@ describe('Last-status persistence', () => {
     }
   })
 
+  it('keeps an unmatched restored child unconfirmed after current-runtime work drains', async () => {
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    await postHookEvent(
+      firstServer,
+      buildBody({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a0000000000000005',
+        agent_type: 'reviewer'
+      })
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      await postHookEvent(
+        server,
+        buildBody({
+          hook_event_name: 'SubagentStart',
+          agent_id: 'a0000000000000006',
+          agent_type: 'reviewer'
+        })
+      )
+      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
+
+      await postHookEvent(
+        server,
+        buildBody({ hook_event_name: 'SubagentStop', agent_id: 'a0000000000000006' })
+      )
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        restoredUnconfirmed: true,
+        subagents: [expect.objectContaining({ id: 'a0000000000000005' })]
+      })
+      expect(server.getStatusChangeSnapshot()[0]?.observedInCurrentRuntime).toBe(false)
+
+      await postHookEvent(
+        server,
+        buildBody({ hook_event_name: 'SubagentStop', agent_id: 'a0000000000000005' })
+      )
+      expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'done' })
+      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
+      expect(server.getStatusSnapshot()[0]?.subagents).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
   it('confirms done when a post-restart idle matches a restored teammate', async () => {
     const firstServer = new AgentHookServer()
     await firstServer.start({ env: 'production', userDataPath })

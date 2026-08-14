@@ -176,7 +176,7 @@ describe('Claude child lifecycle events with no cached lead state', () => {
     ])
   })
 
-  it('does not reconfirm an unrelated restored child after runtime work drains', () => {
+  it('leaves an unrelated restored child explicitly unconfirmed after runtime work drains', () => {
     const state = createHookListenerState()
     const paneKey = makePaneKey('restored-sibling-after-runtime-drain', LEAF_ID)
     seedClaudeSubagentRosterFromSnapshots(state, paneKey, [
@@ -201,8 +201,28 @@ describe('Claude child lifecycle events with no cached lead state', () => {
       agent_id: 'a0000000000000009'
     })
 
-    expect(stopped?.payload.state).toBe('done')
-    expect(stopped?.payload.subagents).toBeUndefined()
+    expect(stopped).toMatchObject({
+      restoredUnconfirmed: true,
+      payload: {
+        state: 'working',
+        subagents: [expect.objectContaining({ id: 'a0000000000000008', state: 'working' })]
+      }
+    })
+    expect(state.claudeSubagentRosterByPaneKey.get(paneKey)).toEqual(
+      new Map([
+        [
+          'a0000000000000008',
+          expect.objectContaining({ state: 'working', restoredFromSnapshot: true })
+        ]
+      ])
+    )
+
+    expect(
+      claudeEvent(state, paneKey, {
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a0000000000000008'
+      })?.payload.state
+    ).toBe('done')
     expect(state.claudeSubagentRosterByPaneKey.size).toBe(0)
   })
 

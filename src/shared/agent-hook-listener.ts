@@ -27,6 +27,7 @@ import {
 import { normalizeOptionalField } from './agent-status-field-normalization'
 import { isAskUserQuestionTool } from './agent-question-answered-intent'
 import {
+  claudeRosterHasRestoredSnapshotSubagent,
   claudeRosterHasRuntimeWorkingSubagent,
   claudeRosterHasWorkingSubagent,
   claudeRosterToSnapshots,
@@ -134,6 +135,8 @@ export type HookListenerState = {
   claudeSubagentRosterByPaneKey: Map<string, ClaudeSubagentRoster>
   /** Last state from the LEAD session's own events (subagent events carry agent_id, excluded), so a SubagentStop can re-emit pane status; `interrupted` persists so the eventual done still carries it. */
   claudeLeadStateByPaneKey: Map<string, ClaudeLeadTurnState>
+  /** One-normalization provenance marker for a status backed only by restored child state. */
+  claudeUnconfirmedRestoredStatusPaneKeys: Set<string>
   /** Panes whose latest authoritative Claude task inventory still has running non-agent work. */
   claudeRunningNonAgentTaskPaneKeys: Set<string>
   /** Panes whose latest authoritative Claude cron inventory still has a scheduled job. */
@@ -173,6 +176,7 @@ export function createHookListenerState(): HookListenerState {
     ampCompletedCacheKeys: new Set(),
     claudeSubagentRosterByPaneKey: new Map(),
     claudeLeadStateByPaneKey: new Map(),
+    claudeUnconfirmedRestoredStatusPaneKeys: new Set(),
     claudeRunningNonAgentTaskPaneKeys: new Set(),
     claudeActiveSessionCronPaneKeys: new Set(),
     codexSubagentRosterByPaneKey: new Map(),
@@ -189,6 +193,7 @@ export function clearPaneCacheState(state: HookListenerState, paneKey: string): 
   deletePaneScopedSetEntry(state.ampCompletedCacheKeys, paneKey)
   state.claudeSubagentRosterByPaneKey.delete(paneKey)
   state.claudeLeadStateByPaneKey.delete(paneKey)
+  state.claudeUnconfirmedRestoredStatusPaneKeys.delete(paneKey)
   state.claudeRunningNonAgentTaskPaneKeys.delete(paneKey)
   state.claudeActiveSessionCronPaneKeys.delete(paneKey)
   state.codexSubagentRosterByPaneKey.delete(paneKey)
@@ -235,6 +240,7 @@ export function movePaneCacheState(
   movePaneScopedSetEntries(state.ampCompletedCacheKeys, fromPaneKey, toPaneKey)
   movePaneScopedMapEntries(state.claudeSubagentRosterByPaneKey, fromPaneKey, toPaneKey)
   movePaneScopedMapEntries(state.claudeLeadStateByPaneKey, fromPaneKey, toPaneKey)
+  movePaneScopedSetEntries(state.claudeUnconfirmedRestoredStatusPaneKeys, fromPaneKey, toPaneKey)
   movePaneScopedSetEntries(state.claudeRunningNonAgentTaskPaneKeys, fromPaneKey, toPaneKey)
   movePaneScopedSetEntries(state.claudeActiveSessionCronPaneKeys, fromPaneKey, toPaneKey)
   movePaneScopedMapEntries(state.codexSubagentRosterByPaneKey, fromPaneKey, toPaneKey)
@@ -279,6 +285,7 @@ export function clearAllListenerCaches(state: HookListenerState): void {
   state.warnedEnvs.clear()
   state.claudeSubagentRosterByPaneKey.clear()
   state.claudeLeadStateByPaneKey.clear()
+  state.claudeUnconfirmedRestoredStatusPaneKeys.clear()
   state.claudeRunningNonAgentTaskPaneKeys.clear()
   state.claudeActiveSessionCronPaneKeys.clear()
   state.codexSubagentRosterByPaneKey.clear()
@@ -329,6 +336,8 @@ export type AgentHookEventPayload = {
   connectionId: string | null
   /** True when the event carried prompt text directly, not the listener's cached prompt from an earlier event in the pane. */
   hasExplicitPrompt?: boolean
+  /** The emitted nonterminal state is backed only by child state restored from disk. */
+  restoredUnconfirmed?: true
   /** Stable per-turn key to distinguish duplicate hook delivery from a same-text prompt rerun (when the source exposes enough context). */
   promptInteractionKey?: string
   /** Raw agent hook event name, used by main-process transition guards. */
@@ -2650,11 +2659,13 @@ function normalizeClaudeSubagentLifecycleEvent(
     }
   }
   const workingChildEvidence = claudeRosterHasRuntimeWorkingSubagent(roster)
-  if (!hasCachedLeadEvidence && endedChildWork && !workingChildEvidence && roster) {
-    reapUnconfirmedRestoredClaudeSubagents(roster)
-  }
+  const hasUnconfirmedChild = claudeRosterHasRestoredSnapshotSubagent(roster)
   if (roster?.size === 0) {
     state.claudeSubagentRosterByPaneKey.delete(paneKey)
+  }
+  if (!hasCachedLeadEvidence && endedChildWork && !workingChildEvidence && hasUnconfirmedChild) {
+    // Why: this ending proves nothing about a different child restored from disk; keep the aggregate explicitly unconfirmed instead of publishing fresh work or completion.
+    state.claudeUnconfirmedRestoredStatusPaneKeys.add(paneKey)
   }
   return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
     workingChildEvidence,
@@ -4230,6 +4241,9 @@ export function normalizeHookPayload(
   const launchToken = readStringField(record, 'launchToken')
 
   const hookPayloadRecord = hookPayload as Record<string, unknown>
+  if (source === 'claude') {
+    state.claudeUnconfirmedRestoredStatusPaneKeys.delete(paneKey)
+  }
   let promptInteractionKey: string | undefined
   const eventName =
     readFirstString(record, ['hook_event_name', 'hookEventName', 'hook_type', 'hookType']) ??
@@ -4421,6 +4435,8 @@ export function normalizeHookPayload(
     (providerSessionOnly
       ? normalizeAgentStatusPayload({ state: 'done', prompt: '', agentType: source })
       : null)
+  const restoredUnconfirmed =
+    source === 'claude' && state.claudeUnconfirmedRestoredStatusPaneKeys.delete(paneKey)
   return transportPayload
     ? {
         paneKey,
@@ -4430,6 +4446,7 @@ export function normalizeHookPayload(
         worktreeId,
         // Why: normalization is transport-agnostic — only ingestRemote knows the mux identity to stamp here.
         connectionId: null,
+        ...(restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
         hasExplicitPrompt:
           source === 'amp'
             ? hasExplicitPromptForSource(source, eventName, promptText, hookPayloadRecord)
