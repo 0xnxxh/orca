@@ -46,15 +46,14 @@ describe('WorkspaceCleanupFilterBar', () => {
     expect(screen.queryByRole('button', { name: 'Scan' })).toBeNull()
   })
 
-  it('caps the facet panel height on the scroll viewport so it stays scrollable', () => {
+  it('keeps the footer visible while the facet panel scrolls', () => {
     renderFilterBar(true)
 
-    // Why: on the ScrollArea Root the cap only clips — the h-full viewport
-    // collapses under an indefinite height and the last facet groups become
-    // unreachable behind the footer.
-    const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')
+    const content = document.querySelector('[data-slot="popover-content"]')
     const root = document.querySelector('[data-slot="scroll-area"]')
-    expect(viewport?.className).toContain('max-h-[420px]')
-    expect(root?.className).not.toContain('max-h-')
+    expect(content?.className).toContain(
+      'h-[min(471px,var(--radix-popover-content-available-height))]'
+    )
+    expect(root?.className).toContain('min-h-0 flex-1')
   })
 })
