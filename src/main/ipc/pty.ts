@@ -1118,8 +1118,10 @@ function normalizeNodePtySpawnError(err: unknown): Error {
  * not-found proves an exit only from a provider that owns its ptys; a replacement relay answers the
  * same for shells its predecessor is still running.
  */
-function isPtyProvenGoneForReplacement(err: unknown, ptyId: string): boolean {
-  if (!parseAppSshPtyId(ptyId)) {
+/** Exported for test: this had zero coverage, which is how an always-false id comparison shipped. */
+export function isPtyProvenGoneForReplacement(err: unknown, ptyId: string): boolean {
+  const parsedPtyId = parseAppSshPtyId(ptyId)
+  if (!parsedPtyId) {
     return isPtyAlreadyGoneError(err)
   }
   const message = err instanceof Error ? err.message : String(err)
@@ -1134,7 +1136,10 @@ function isPtyProvenGoneForReplacement(err: unknown, ptyId: string): boolean {
   // panes whose exit really was proven and for which no incarnation exists to check. Require the
   // proof to name THIS pty: without an incarnation that is the only evidence there is, and an id
   // mismatch is exactly the case that must not authorize a respawn.
-  return parsePtyExitedError(message)?.id === ptyId
+  // Against the RELAY id: the relay formats `params.id`, which is what the caller sent it, and
+  // callers send the relay-scoped id. Comparing the app-scoped id here never matched, so this
+  // read as a blanket refusal — the stranding it exists to avoid.
+  return parsePtyExitedError(message)?.id === parsedPtyId.relayPtyId
 }
 
 function isPtyAlreadyGoneError(err: unknown): boolean {

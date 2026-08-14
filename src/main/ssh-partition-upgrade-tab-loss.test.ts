@@ -225,7 +225,7 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
         expandedLeafId: null,
         ptyIdsByLeafId: { [LEAF_TWO]: PTY }
       }
-    }
+    } as typeof second.terminalLayoutsByTabId
     upgraded.setWorkspaceSession(second as never, SSH_PARTITION)
     upgraded.flushOrThrow()
 
@@ -254,5 +254,24 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB],
       'an orphan layout was hoisted into local with no tab to reach it'
     ).toBeUndefined()
+  })
+
+  // A background or CLI-created tab persists with `tab.ptyId` and no layout until its pane first
+  // mounts, and hydration falls back to `tab.ptyId` for that shape. Requiring a layout stranded
+  // exactly the CLI/headless cohort whose live writes this hoist exists to carry.
+  it('hoists a tab that has no layout yet', async () => {
+    const before = await createStore()
+    const layoutless = paneSession()
+    layoutless.terminalLayoutsByTabId = {} as typeof layoutless.terminalLayoutsByTabId
+    before.setWorkspaceSession(layoutless as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const store = await reopenStore()
+
+    expect(
+      store.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [],
+      'a tab whose pane had not mounted yet was stranded in the partition'
+    ).toHaveLength(1)
   })
 })

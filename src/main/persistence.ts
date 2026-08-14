@@ -2889,15 +2889,13 @@ export function hoistSshPartitionsIntoLocalSession(
     for (const [worktreeId, tabs] of Object.entries(partition.tabsByWorktree ?? {})) {
       const existing = local.tabsByWorktree?.[worktreeId] ?? []
       const known = new Set(existing.map((tab) => tab.id))
-      // Both halves or neither: field-level salvage can drop a tab while keeping its layout, or
-      // the reverse. A tab with no layout blanks its pane, and an orphan layout is unreachable —
-      // so a partially-salvaged pane stays quarantined in the partition rather than moving the
-      // damage into local.
+      // Deliberately NOT requiring a layout: a background or CLI-created tab persists with
+      // `tab.ptyId` and no layout entry until its pane first mounts, and hydration falls back to
+      // `tab.ptyId` for exactly that shape. Refusing those stranded the CLI/headless cohort —
+      // the original tab loss, for the very users whose live writes this hoist exists to carry.
+      // The orphan-layout direction is handled independently by the `hasTab` guard below.
       const missing = (tabs ?? []).filter(
-        (tab) =>
-          !known.has(tab.id) &&
-          !alreadyHoisted.has(tab.id) &&
-          Boolean(partition.terminalLayoutsByTabId?.[tab.id])
+        (tab) => !known.has(tab.id) && !alreadyHoisted.has(tab.id)
       )
       if (missing.length === 0) {
         continue
