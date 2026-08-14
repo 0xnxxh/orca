@@ -1,31 +1,23 @@
 export const SIDEBAR_TREE_INDENT = 18
-// Why: project-grouped cards need to read as children even after the card
-// surface inset is subtracted, while lineage rows keep the base tree step.
+// Why: keeps project-grouped cards reading as children after the surface inset is subtracted.
 const PROJECT_WORKTREE_CARD_EXTRA_INDENT = 2
-// Why: flush cards span the full row, so their content is pulled back from the
-// raw tree indent to sit under the group header. A smaller pullback nudges
-// content rightward for clearer nesting; this is the knob to tune that gap.
+// Why: seats full-row flush-card content under the group header; smaller pullback = more indent.
 export const FLUSH_CARD_CONTENT_PULLBACK = 4
-// Why: experimental cards reserve a fixed status lane inside the padded
-// content box; pull the box back so title/meta text stay on the tree step.
+// Why: offsets the experimental card's fixed status lane so title/meta stay on the tree step.
 export const NEW_CARD_STYLE_STATUS_LANE_EXTRA_PULLBACK = 6
-// Why: even at zero indent a flush card keeps this minimal left inset so its
-// surface never sits hard against the sidebar edge.
+// Why: keeps a zero-indent flush card off the sidebar edge.
 export const FLUSH_CARD_MIN_CONTENT_INSET = 2
 export const WORKTREE_CARD_SURFACE_MARGIN = 4
-// Why: pre-refactor level-1 lineage used the grouped card content step; keep
-// that anchor while nested levels advance evenly instead of accumulating depth.
+// Why: level-1 lineage keeps the grouped-card anchor; deeper levels advance evenly, not cumulatively.
 export const LINEAGE_IMMEDIATE_PARENT_STEP =
   SIDEBAR_TREE_INDENT + PROJECT_WORKTREE_CARD_EXTRA_INDENT
 export const LINEAGE_NESTED_ROW_SURFACE_INSET = 0
 export const LINEAGE_CHILDREN_INLINE_OFFSET =
   LINEAGE_IMMEDIATE_PARENT_STEP - WORKTREE_CARD_SURFACE_MARGIN - FLUSH_CARD_MIN_CONTENT_INSET
-// Why: grouped workspace cards should move their surface inward without using
-// the full tree step, preserving the existing compact child-card rhythm.
+// Why: sub-tree-step surface indent preserving the compact grouped child-card rhythm.
 const GROUPED_WORKTREE_CARD_SURFACE_INDENT = 14
 export const PROJECT_GROUP_HEADER_BASE_PADDING = 10
-// Why: workspace/status headers and project headers occupy the same sidebar
-// row role, so their titles should not shift when switching grouping modes.
+// Why: shared with project headers so titles don't shift when grouping mode changes.
 export const WORKTREE_SECTION_HEADER_PADDING_LEFT = PROJECT_GROUP_HEADER_BASE_PADDING
 export const PROJECT_GROUP_HEADER_INDENT = 10
 export const MAX_PROJECT_GROUP_HEADER_DEPTH = 6
@@ -55,8 +47,7 @@ export function getFolderBackedRepoWorktreeCardContentIndent(args: {
   groupDepth: number
   lineageDepth: number
 }): number {
-  // Why: folder-scanned groups indent repo headers by the compact header step;
-  // worktree rows should follow that rhythm instead of adding a full tree step.
+  // Why: follows the compact header step of folder-scanned repo headers, not the full tree step.
   return (
     getProjectGroupHeaderPaddingLeft(args.groupDepth) +
     PROJECT_GROUP_HEADER_BASE_PADDING +
@@ -76,15 +67,13 @@ export function getFolderBackedRepoWorktreeCardSurfaceInset(args: {
   const maxSurfaceInset =
     contentAnchor - WORKTREE_CARD_SURFACE_MARGIN - FLUSH_CARD_MIN_CONTENT_INSET
 
-  // Why: compact folder-backed repo rows still use flush-card margin/padding;
-  // cap the surface before those fixed insets overshoot the target anchor.
+  // Why: caps the surface so flush-card margin/padding don't overshoot the content anchor.
   return Math.min(genericSurfaceInset, Math.max(0, maxSurfaceInset))
 }
 
 export function getFolderWorkspaceCardContentIndent(args: { groupDepth: number }): number {
   const parentGroupDepth = Math.max(0, clampDepth(args.groupDepth) - 1)
-  // Why: folder workspaces are direct children of their owning folder group,
-  // so they advance by the same compact header step as group -> repo.
+  // Why: folder workspaces are direct children of their folder group: one compact header step.
   return getProjectGroupHeaderPaddingLeft(parentGroupDepth) + PROJECT_GROUP_HEADER_INDENT
 }
 
@@ -97,8 +86,7 @@ export function getFolderWorkspaceCardSurfaceInset(args: {
   const maxSurfaceInset =
     contentAnchor - WORKTREE_CARD_SURFACE_MARGIN - FLUSH_CARD_MIN_CONTENT_INSET
 
-  // Why: flush cards add their own margin and minimum padding, so deep folder
-  // workspace surfaces must be capped to keep the final content anchor compact.
+  // Why: caps deep surfaces so flush-card margin plus minimum padding keep the anchor compact.
   return Math.min(genericSurfaceInset, Math.max(0, maxSurfaceInset))
 }
 
@@ -113,8 +101,7 @@ export function getFolderWorkspaceRowGeometry(args: {
   cardContentIndent: number
 } {
   if (args.experimentalNewWorktreeCardStyle && args.isFolderBackedWorkspaceChild) {
-    // Why: standalone folder workspace rows do not get a lineage wrapper
-    // offset, so align them to the comparable folder-backed repo row anchor.
+    // Why: standalone rows get no lineage wrapper offset, so align to the folder-backed repo anchor.
     const contentAnchor = getFolderBackedRepoWorktreeCardContentIndent({
       groupDepth: args.groupDepth,
       lineageDepth: 0
@@ -139,8 +126,7 @@ export function getFolderWorkspaceRowGeometry(args: {
         groupDepth: args.groupDepth,
         lineageDepth: args.lineageDepth
       })
-  // Why: legacy folder-scanned folder workspaces keep their compact anchor,
-  // while all other folder rows share the normal worktree row surface path.
+  // Why: legacy folder-scanned workspaces keep the compact anchor; other rows use the normal path.
   const surfaceInset = args.isFolderBackedWorkspaceChild
     ? getFolderWorkspaceCardSurfaceInset({
         isGrouped: true,
@@ -195,8 +181,7 @@ export function getNewCardStyleParentContentMarginLeft(contentIndent: number): n
     return 0
   }
 
-  // Why: shallow rows hit the flush-card padding floor; finish the status-lane
-  // offset with margin, but never pull content past the card's inner edge.
+  // Why: shallow rows hit the padding floor; finish with margin but never pass the inner edge.
   const rawMargin = -remainingShift
   return Math.max(-newInnerPadding, rawMargin)
 }
@@ -211,8 +196,7 @@ export function getLineageNestedRowGeometry(args: {
   lineageChildrenInlineOffset: number
 } {
   if (args.experimentalNewWorktreeCardStyle) {
-    // Why: the parent card already contributes the inherited/group baseline;
-    // adding global lineage depth here would double-count nested descendants.
+    // Why: the parent card already contributes the baseline; lineage depth would double-count.
     return {
       surfaceInset: LINEAGE_NESTED_ROW_SURFACE_INSET,
       cardContentIndent: 0,
