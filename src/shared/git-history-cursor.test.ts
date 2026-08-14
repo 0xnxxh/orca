@@ -222,7 +222,10 @@ describe('git history paging against a real repository', () => {
       })
     }
 
-    await run(['init', '-q', '-b', 'main', '.'])
+    // `git init -b` is Git 2.28; the project baseline is 2.25. Naming the branch through
+    // symbolic-ref works on every supported Git and ignores the user's init.defaultBranch.
+    await run(['init', '-q', '.'])
+    await run(['symbolic-ref', 'HEAD', 'refs/heads/main'])
     await commit('base')
     // A long-lived branch: both lines of history grow past a page before being merged, so a page
     // boundary necessarily lands inside one of them while the other is still unshown.
