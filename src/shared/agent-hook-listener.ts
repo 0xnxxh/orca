@@ -2580,21 +2580,30 @@ function updateClaudeRunningNonAgentTask(
   }
 }
 
+/** The pane state to report, plus whether a lead `done` was gated up to `working`
+ *  purely by leftover background work. That provenance is what lets presentation
+ *  surfaces stop drawing a finished turn as active foreground work (STA-4119)
+ *  while liveness, keep-awake, hibernation and teardown keep seeing `working`. */
+type ClaudePaneStateResolution = {
+  state: AgentStatusState
+  backgroundOnly?: true
+}
+
 function resolveClaudePaneState(
   state: HookListenerState,
   paneKey: string,
   lead: Pick<ClaudeLeadTurnState, 'state' | 'interrupted'>
-): AgentStatusState {
+): ClaudePaneStateResolution {
   if (lead.state !== 'done') {
-    return lead.state
+    return { state: lead.state }
   }
   const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
   return claudeRosterHasWorkingSubagent(roster) ||
     (!lead.interrupted &&
       (state.claudeRunningNonAgentTaskPaneKeys.has(paneKey) ||
         state.claudeActiveSessionCronPaneKeys.has(paneKey)))
-    ? 'working'
-    : 'done'
+    ? { state: 'working', backgroundOnly: true }
+    : { state: 'done' }
 }
 
 /** SubagentStart/Stop/TeammateIdle update the roster and re-emit the lead's last known state with the fresh child list, so the sidebar reflects spawn/finish even when a background child outlives the lead turn with no other hook traffic. */
@@ -2753,7 +2762,7 @@ function clearClaudePendingWaitForAgent(
 export function clearClaudeAnsweredQuestionWait(
   state: HookListenerState,
   paneKey: string
-): Pick<ClaudeLeadTurnState, 'state' | 'interrupted'> {
+): Pick<ClaudeLeadTurnState, 'state' | 'interrupted'> & { backgroundOnly?: true } {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
   const restored =
     lead?.state === 'waiting'
@@ -2767,8 +2776,10 @@ export function clearClaudeAnsweredQuestionWait(
       ? { lastAssistantMessage: previousTool.lastAssistantMessage }
       : {}
   )
-  const effectiveState = resolveClaudePaneState(state, paneKey, restored)
-  return effectiveState === restored.state ? restored : { state: effectiveState }
+  const resolved = resolveClaudePaneState(state, paneKey, restored)
+  return resolved.state === restored.state
+    ? restored
+    : { state: resolved.state, ...(resolved.backgroundOnly ? { backgroundOnly: true } : {}) }
 }
 
 /** Re-emit the cached lead state without touching its tool/prompt caches; child churn and parallel completions must not dismiss live cards. */
@@ -2796,11 +2807,13 @@ function buildClaudeCachedLeadStatusPayload(
       return null
     }
   }
+  const resolved = resolveClaudePaneState(state, paneKey, {
+    state: leadState,
+    interrupted: lead?.interrupted
+  })
   return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
-    stateName: resolveClaudePaneState(state, paneKey, {
-      state: leadState,
-      interrupted: lead?.interrupted
-    }),
+    stateName: resolved.state,
+    backgroundOnly: resolved.backgroundOnly,
     updateToolSnapshot: false,
     interrupted: lead?.interrupted
   })
@@ -2966,8 +2979,10 @@ function normalizeClaudeEvent(
     // Restore the stashed lead state, not this child's 'working': the lead may already be done, and the done-gate never upgrades working back to done once the roster drains.
     const restored = lead.stateBeforeWait ?? { state: 'working' as const }
     state.claudeLeadStateByPaneKey.set(paneKey, restored)
+    const resolvedRestored = resolveClaudePaneState(state, paneKey, restored)
     return buildClaudeStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
-      stateName: resolveClaudePaneState(state, paneKey, restored),
+      stateName: resolvedRestored.state,
+      backgroundOnly: resolvedRestored.backgroundOnly,
       updateToolSnapshot: true,
       interrupted: restored.interrupted
     })
@@ -3018,10 +3033,11 @@ function normalizeClaudeEvent(
     state.claudeActiveSessionCronPaneKeys.delete(paneKey)
   }
 
-  const effectiveState = resolveClaudePaneState(state, paneKey, {
+  const resolved = resolveClaudePaneState(state, paneKey, {
     state: reportedStateName,
     interrupted
   })
+  const effectiveState = resolved.state
   const effectiveRoster = state.claudeSubagentRosterByPaneKey.get(paneKey)
   if (
     isTurnBoundary &&
@@ -3038,6 +3054,7 @@ function normalizeClaudeEvent(
 
   return buildClaudeStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
     stateName: effectiveState,
+    backgroundOnly: resolved.backgroundOnly,
     updateToolSnapshot: true,
     interrupted
   })
@@ -3054,6 +3071,7 @@ function buildClaudeStatusPayload(
     updateToolSnapshot: boolean
     interrupted?: boolean
     sessionBoundary?: boolean
+    backgroundOnly?: true
   }
 ): ParsedAgentStatusPayload | null {
   // Why: child-driven refreshes are roster bookkeeping, not lead tool activity; read the cached snapshot without merging so they can't clear a live AskUserQuestion card or clobber the tool preview.
@@ -3078,6 +3096,7 @@ function buildClaudeStatusPayload(
     lastAssistantMessage: snapshot.lastAssistantMessage,
     interrupted: options.interrupted,
     sessionBoundary: options.sessionBoundary,
+    backgroundOnly: options.backgroundOnly,
     subagents: claudeRosterToSnapshots(state.claudeSubagentRosterByPaneKey.get(paneKey))
   })
 }

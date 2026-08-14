@@ -18406,6 +18406,7 @@ export class OrcaRuntimeService {
         stateStartedAt: number
         updatedAt: number
         restoredUnconfirmed?: boolean
+        backgroundOnly?: boolean
       }
     >()
     for (const snapshot of this.latestAgentStatusByPaneKey.values()) {
@@ -18424,7 +18425,8 @@ export class OrcaRuntimeService {
         toolInput: payload.toolInput ?? null,
         interrupted: payload.interrupted ?? false,
         stateStartedAt: snapshot.stateStartedAt,
-        updatedAt: snapshot.updatedAt
+        updatedAt: snapshot.updatedAt,
+        ...(payload.backgroundOnly ? { backgroundOnly: true } : {})
       })
     }
     for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
@@ -18451,7 +18453,8 @@ export class OrcaRuntimeService {
         interrupted: entry.interrupted ?? false,
         stateStartedAt: entry.stateStartedAt,
         updatedAt: entry.receivedAt,
-        ...(entry.restoredUnconfirmed ? { restoredUnconfirmed: true } : {})
+        ...(entry.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
+        ...(entry.backgroundOnly ? { backgroundOnly: true } : {})
       })
     }
     if (rowSources.size === 0) {
@@ -18516,7 +18519,8 @@ export class OrcaRuntimeService {
         interrupted: src.interrupted,
         stateStartedAt: src.stateStartedAt,
         updatedAt: src.updatedAt,
-        ...(src.restoredUnconfirmed ? { restoredUnconfirmed: true } : {})
+        ...(src.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
+        ...(src.backgroundOnly ? { backgroundOnly: true } : {})
       }
       // Why: SSH/runtime projections can spell an equivalent path differently;
       // bucket by the canonical summary id so mobile keeps the agent activity.

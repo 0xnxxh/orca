@@ -1,6 +1,7 @@
 import type { AgentDotState } from '@/components/AgentStateDot'
 import type { DashboardAgentRow as DashboardAgentRowData } from '@/components/dashboard/useDashboardData'
 import { formatAgentTypeLabel } from '@/lib/agent-status'
+import { isBackgroundOnlyAgentActivity } from '../../../../shared/agent-background-only-activity'
 import type { AgentStatusState } from '../../../../shared/agent-status-types'
 
 export type SummaryAgentGroup = {
@@ -13,6 +14,7 @@ const SUMMARY_STATE_ORDER: AgentDotState[] = [
   'blocked',
   'interrupted',
   'working',
+  'background',
   'done',
   'idle'
 ]
@@ -30,7 +32,16 @@ function asDotState(state: AgentStatusState | 'idle'): AgentDotState {
 }
 
 export function getAgentDotState(agent: DashboardAgentRowData): AgentDotState {
-  return agent.entry.interrupted === true ? 'interrupted' : asDotState(agent.state)
+  if (agent.entry.interrupted === true) {
+    return 'interrupted'
+  }
+  // Why: the row's own `state` is the gated pane state; only the entry marker says the
+  // foreground turn already ended. Subagent child rows build their own entry without it,
+  // so live children keep spinning under a settled parent (STA-4119).
+  if (agent.state === 'working' && isBackgroundOnlyAgentActivity(agent.entry)) {
+    return 'background'
+  }
+  return asDotState(agent.state)
 }
 
 export function formatSummaryStateLabel(state: AgentDotState): string {
@@ -45,6 +56,8 @@ export function formatSummaryStateLabel(state: AgentDotState): string {
       return 'failed'
     case 'working':
       return 'working'
+    case 'background':
+      return 'running in background'
     case 'done':
       return 'done'
     case 'idle':

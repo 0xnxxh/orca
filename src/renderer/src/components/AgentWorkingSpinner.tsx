@@ -32,16 +32,28 @@ function handleSpinnerAnimationStart(event: React.AnimationEvent<HTMLSpanElement
 // Why: the working-state ring animates via CSS (.agent-working-spinner in
 // main.css) so rotation runs on the compositor and never touches the input
 // thread. Callers size it via className (size-2 etc.).
-export function AgentWorkingSpinner({ className }: { className?: string }): React.JSX.Element {
+// `paused` renders the same ring complete and still — the reduced-motion form —
+// for work that is running but not in the foreground turn (STA-4119).
+export function AgentWorkingSpinner({
+  className,
+  paused = false
+}: {
+  className?: string
+  paused?: boolean
+}): React.JSX.Element {
   return (
     <span
-      onAnimationStart={handleSpinnerAnimationStart}
+      onAnimationStart={paused ? undefined : handleSpinnerAnimationStart}
       data-agent-spinner=""
+      data-agent-spinner-paused={paused ? '' : undefined}
       className={cn(
+        'block rounded-full border-2 border-yellow-500',
         // Why: under reduced motion the animation is disabled, so fill the top
         // border too — a frozen transparent-top ring reads as a broken
         // spinner; a complete ring reads as an intentional static marker (#9515).
-        'agent-working-spinner block rounded-full border-2 border-yellow-500 border-t-transparent motion-reduce:border-t-yellow-500',
+        paused
+          ? 'opacity-70'
+          : 'agent-working-spinner border-t-transparent motion-reduce:border-t-yellow-500',
         className
       )}
     />

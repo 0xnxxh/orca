@@ -2150,6 +2150,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           ...(providerSession ? { providerSession } : {}),
           ...(promptInteractionKey ? { promptInteractionKey } : {}),
           ...(payload.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
+          // Why: working-only marker; parseAgentStatusPayload already clamps it, and a plain
+          // working ping must clear it so a new foreground turn spins again.
+          ...(payload.backgroundOnly ? { backgroundOnly: true } : {}),
           // Why: `interrupted` is done-only; parseAgentStatusPayload already clamps it for non-done states, so write it through directly.
           interrupted: payload.interrupted,
           // Why: done→done repaints (OSC 9999, reconnect snapshot replays) re-deliver a
@@ -2193,9 +2196,13 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           existing?.state === 'done' &&
           entry.state === 'done' &&
           agentEntryCompletionAt(existing) !== agentEntryCompletionAt(entry)
+        // Why: the STA-4119 edge is working → working with only this flag flipping; without it
+        // the epoch never bumps and the memoized card/tab summaries keep the stale spinner.
+        const backgroundOnlyChanged = existing?.backgroundOnly !== entry.backgroundOnly
         const sortRelevantChange =
           !existing ||
           existing.state !== payload.state ||
+          backgroundOnlyChanged ||
           !wasFresh ||
           attributionChanged ||
           commandCodeNewTurn ||

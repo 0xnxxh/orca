@@ -3182,6 +3182,8 @@ export function useIpcEvents(): void {
         lastAssistantMessage: data.lastAssistantMessage,
         interrupted: data.interrupted,
         sessionBoundary: data.sessionBoundary,
+        // Why: same whitelist trap — dropping it renders a finished turn as active foreground work for the whole background lifetime (STA-4119).
+        backgroundOnly: data.backgroundOnly,
         // Why: same trap as interactivePrompt — this rebuild is a field whitelist, so subagent child rows vanish if omitted.
         subagents: data.subagents
       })

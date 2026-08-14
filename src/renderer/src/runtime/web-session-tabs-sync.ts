@@ -1947,6 +1947,7 @@ function agentStatusEntryEqual(a: AgentStatusEntry | undefined, b: AgentStatusEn
     a.interrupted === b.interrupted &&
     a.promptInteractionKey === b.promptInteractionKey &&
     a.restoredUnconfirmed === b.restoredUnconfirmed &&
+    a.backgroundOnly === b.backgroundOnly &&
     agentProviderSessionsEqual(a.agentType, a.providerSession, b.providerSession) &&
     sameAgentStateHistory(a.stateHistory, b.stateHistory)
   )

@@ -8,24 +8,11 @@ import { DashboardAgentChildDisclosure } from './DashboardAgentChildDisclosure'
 import { DashboardAgentRowMessage } from './DashboardAgentRowMessage'
 import { DashboardAgentRowTrailingControls } from './DashboardAgentRowTrailingControls'
 import { DashboardAgentRowToolStep } from './DashboardAgentRowToolStep'
-import type { AgentStatusState } from '../../../../shared/agent-status-types'
 import type { DashboardAgentRow as DashboardAgentRowData } from './useDashboardData'
+import { getAgentDotState } from '@/components/sidebar/worktree-card-agent-summary'
 import { getAgentRowPrimaryText } from '@/lib/agent-row-primary-text'
 import { useAgentRowConversationName } from './use-agent-row-conversation-name'
 import { lastEnteredDoneAt } from './agent-finished-timestamp'
-
-// Why: narrow the dashboard's rollup states to shared dot states, defaulting unknowns to 'idle' so a row never crashes.
-function asDotState(state: AgentStatusState | 'idle'): AgentDotState {
-  switch (state) {
-    case 'working':
-    case 'blocked':
-    case 'waiting':
-    case 'done':
-    case 'idle':
-      return state
-  }
-  return 'idle'
-}
 
 function formatTimeAgo(ts: number, now: number): string {
   const delta = now - ts
@@ -142,10 +129,14 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   const conversationName = useAgentRowConversationName(agent)
   const prompt = conversationName ?? getAgentRowPrimaryText(agent.entry)
   // Why: prompt is '' when unknown, so fall back to the state label to keep the row labeled.
-  const displayLabel = prompt || agentStateLabel(asDotState(agent.state))
+  // Why: interrupted is a terminal outcome and a background-only 'working' is a settled
+  // turn; both are resolved once, by the same seam the sidebar rows use.
+  const dotState: AgentDotState = getAgentDotState(agent)
+  const displayLabel = prompt || agentStateLabel(dotState)
   const model = agent.entry.model?.trim() ?? ''
-  // Why: gate tool fields on 'working' — a stale tool line on a done row reads as still-running.
-  const isWorking = agent.state === 'working'
+  // Why: gate tool fields on foreground 'working' — a stale tool line on a done or
+  // background-only row reads as still-running.
+  const isWorking = dotState === 'working'
   const toolName = isWorking ? (agent.entry.toolName?.trim() ?? '') : ''
   const toolInput = isWorking ? (agent.entry.toolInput?.trim() ?? '') : ''
   const lastAssistantMessage = agent.entry.lastAssistantMessage?.trim() ?? ''
@@ -160,8 +151,6 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
           lineageChildCount === 1 ? 'agent' : 'agents'
         }`
       : [formatAgentTypeLabel(agent.agentType), model].filter(Boolean).join(' · ')
-  // Why: interrupted is a terminal outcome, so surface it in the leading state dot.
-  const dotState: AgentDotState = isInterrupted ? 'interrupted' : asDotState(agent.state)
   const dotTooltipLabel = stateDotTooltipLabel(agent, dotState)
 
   // Why: always show the chevron so the row's right edge doesn't flicker as content grows/shrinks.

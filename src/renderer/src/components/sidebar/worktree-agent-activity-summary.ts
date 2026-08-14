@@ -6,6 +6,7 @@ import {
   parseAgentStatusPaneIdentity,
   resolveAgentStatusWorktreeId
 } from '@/lib/agent-status-worktree-attribution'
+import { isBackgroundOnlyAgentActivity } from '../../../../shared/agent-background-only-activity'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
   type AgentStatusEntry,
@@ -214,10 +215,14 @@ function agentStatusPaneIdsByTabIdEqual(
 
 function applyLiveAgentState(
   summary: WorktreeAgentActivitySummary,
-  entry: Pick<AgentStatusEntry, 'state'>
+  entry: Pick<AgentStatusEntry, 'state' | 'backgroundOnly'>
 ): void {
   if (entry.state === 'blocked' || entry.state === 'waiting') {
     summary.hasPermission = true
+  } else if (isBackgroundOnlyAgentActivity(entry)) {
+    // Why: the card dot reports the foreground turn, which finished; the pane's own
+    // row still shows the live background work (STA-4119).
+    summary.hasLiveDone = true
   } else if (entry.state === 'working') {
     summary.hasLiveWorking = true
   } else if (entry.state === 'done') {

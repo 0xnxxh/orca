@@ -17,6 +17,11 @@ import { AgentWorkingSpinner } from '@/components/AgentWorkingSpinner'
 
 export type AgentDotState =
   | 'working'
+  // Why: the foreground turn ended but registered background work (shell,
+  // subagent, monitor, session cron) keeps the pane live. Same yellow ring as
+  // 'working' — work really is running — but still, because nothing is
+  // happening in the turn the user is watching (STA-4119).
+  | 'background'
   | 'blocked'
   | 'waiting'
   | 'interrupted'
@@ -37,6 +42,8 @@ export function agentStateLabel(state: AgentDotState): string {
   switch (state) {
     case 'working':
       return 'Working'
+    case 'background':
+      return 'Background work'
     case 'blocked':
       return 'Blocked'
     case 'waiting':
@@ -70,13 +77,13 @@ export const AgentStateDot = React.memo(function AgentStateDot({
   const inner = size === 'md' ? 'size-2' : 'size-1.5'
   const icon = size === 'md' ? 'size-3' : 'size-2.5'
 
-  if (state === 'working') {
+  if (state === 'working' || state === 'background') {
     return (
       <span
         className={cn('inline-flex shrink-0 items-center justify-center', box, className)}
         aria-label={agentStateLabel(state)}
       >
-        <AgentWorkingSpinner className={inner} />
+        <AgentWorkingSpinner className={inner} paused={state === 'background'} />
       </span>
     )
   }

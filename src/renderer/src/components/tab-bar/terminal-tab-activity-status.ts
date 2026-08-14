@@ -1,5 +1,6 @@
 import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
 import { resolveWorktreeStatus, type WorktreeStatus } from '@/lib/worktree-status'
+import { isBackgroundOnlyAgentActivity } from '../../../../shared/agent-background-only-activity'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
   type AgentStatusEntry
@@ -74,6 +75,10 @@ function getTerminalTabActivityFlags(
     flags.paneIds.add(identity.paneId)
     if (entry.state === 'blocked' || entry.state === 'waiting') {
       flags.hasPermission = true
+    } else if (isBackgroundOnlyAgentActivity(entry)) {
+      // Why: mirrors the sidebar summary — a finished turn holding background work
+      // is not foreground activity, so the tab glyph must not spin (STA-4119).
+      flags.hasLiveDone = true
     } else if (entry.state === 'working') {
       flags.hasLiveWorking = true
     } else if (entry.state === 'done') {

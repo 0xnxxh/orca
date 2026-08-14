@@ -4047,8 +4047,12 @@ describe('shared agent-hook-listener', () => {
       expect(wait?.payload.state).toBe('waiting')
 
       // Why: the lead already finished; the answer resumes the child, so the
-      // emitted state is gated up to working only while that child still runs.
-      expect(clearClaudeAnsweredQuestionWait(state, PANE_KEY)).toEqual({ state: 'working' })
+      // emitted state is gated up to working only while that child still runs,
+      // and carries the background-only provenance for presentation (STA-4119).
+      expect(clearClaudeAnsweredQuestionWait(state, PANE_KEY)).toEqual({
+        state: 'working',
+        backgroundOnly: true
+      })
       expect(state.claudeLeadStateByPaneKey.get(PANE_KEY)).toEqual({ state: 'done' })
 
       const drained = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a1' })

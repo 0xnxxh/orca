@@ -761,6 +761,9 @@ export type RuntimeWorktreeAgentRow = {
   updatedAt: number
   /** See AgentStatusEntry.restoredUnconfirmed — set for hydrated nonterminal rows so clients don't render them as confirmed activity. */
   restoredUnconfirmed?: boolean
+  /** See AgentStatusEntry.backgroundOnly — a `working` row whose foreground turn
+   *  already ended. Clients that predate the field render it as plain `working`. */
+  backgroundOnly?: boolean
 }
 
 export type RuntimeWorktreePsSummary = {

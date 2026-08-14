@@ -40,7 +40,9 @@ function getCompactAgentSecondary(agent: DashboardAgentRowData): string {
   if (agent.entry.interrupted === true) {
     return 'Interrupted by user'
   }
-  if (agent.state === 'working') {
+  // Why: gate on the resolved dot state — a background-only row's tool line is from the
+  // turn that already ended and would read as still-running (STA-4119).
+  if (getAgentDotState(agent) === 'working') {
     const toolName = agent.entry.toolName?.trim() ?? ''
     const toolInput = agent.entry.toolInput?.trim() ?? ''
     if (toolName && toolInput) {

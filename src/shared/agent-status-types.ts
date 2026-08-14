@@ -135,6 +135,10 @@ export type AgentStatusEntry = {
   interrupted?: boolean
   /** True when this `done` is a session boundary, not a completed turn. See AgentStatusPayload. */
   sessionBoundary?: boolean
+  /** True when this `working` is held up only by registered background work
+   *  (shell, subagent, monitor, session cron) after the foreground turn ended.
+   *  See AgentStatusPayload. */
+  backgroundOnly?: boolean
   /** Orchestration dispatch context for panes spawned by another agent.
    *  Why: parent/child hierarchy is pane-level state, not worktree lineage — workers often share the coordinator's worktree. */
   orchestration?: AgentStatusOrchestrationContext
@@ -184,6 +188,13 @@ export type AgentStatusPayload = {
    *  completions (notifications, automation runs, unread badges, finished timestamps)
    *  must ignore it. Only meaningful on `done`. */
   sessionBoundary?: boolean
+  /** True when the pane's `working` is held up only by registered background work
+   *  (background shell, subagent, monitor, session cron) whose owning foreground
+   *  turn has already ended. The pane is still genuinely live — liveness,
+   *  keep-awake, hibernation and teardown must keep treating it as `working` —
+   *  but presentation surfaces must not render it as active foreground work
+   *  (#14253 / STA-4119). Only meaningful on `working`. */
+  backgroundOnly?: boolean
   /** Live in-process children of the reporting session. See AgentStatusEntry. */
   subagents?: AgentSubagentSnapshot[]
 }
@@ -217,6 +228,7 @@ export function pickParsedAgentStatusPayload(
       : {}),
     ...(row.interrupted !== undefined ? { interrupted: row.interrupted } : {}),
     ...(row.sessionBoundary !== undefined ? { sessionBoundary: row.sessionBoundary } : {}),
+    ...(row.backgroundOnly !== undefined ? { backgroundOnly: row.backgroundOnly } : {}),
     ...(row.subagents !== undefined ? { subagents: row.subagents } : {})
   }
 }
@@ -417,6 +429,8 @@ function normalizeAgentStatusObject(parsed: unknown): ParsedAgentStatusPayload |
     // Why: only meaningful on `done`; coerce to undefined elsewhere so it can't leak stale truth across transitions.
     interrupted: obj.interrupted === true && state === 'done' ? true : undefined,
     sessionBoundary: obj.sessionBoundary === true && state === 'done' ? true : undefined,
+    // Why: only meaningful on `working`; a stale marker on any other state would let a presentation surface mute a real foreground turn.
+    backgroundOnly: obj.backgroundOnly === true && state === 'working' ? true : undefined,
     subagents: normalizeSubagentsField(obj.subagents)
   }
 }
