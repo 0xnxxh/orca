@@ -153,9 +153,11 @@ test.describe('an upgrading profile keeps the tabs its old build left in the ssh
       // panes, so this covers one of the three tabs — two could restore blank and this still
       // passes. Assertion 3 is weaker still: a bare shell count is satisfied by N killed and N
       // respawned, so it cannot show the panes reattached to the SAME shells. A verified patch
-      // exists that clicks each tab and compares ptyIds captured before quit; it did not apply
-      // cleanly here (its [data-tab-id] locator does not resolve in this tree) and is left for a
-      // follow-up rather than landed red.
+      // exists that clicks each tab and compares ptyIds captured before quit. It applies but fails
+      // at runtime here, and the cause is narrowed: the attribute is fine — SortableTab.tsx:220
+      // renders data-tab-id={tab.id} — so the mismatch is WHICH id the helper feeds it. Terminal
+      // tabs carry both an id and an entityId, and getTabBarOrder returns entityId, so a locator
+      // built from that order finds nothing. Resolve tab.id (not entityId) before clicking.
       await expect
         .poll(
           async () => {
