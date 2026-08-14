@@ -24,6 +24,7 @@ describe('LinearIssueWorkspace header actions', () => {
     expect(header).toContain("'Start workspace'")
     expect(header).toContain("'Start workspace from issue'")
     expect(header).not.toContain("'Copy issue identifier'")
-    expect(header).not.toContain('size="icon-sm"\n                  onClick={handleOpenOrUseIssue}')
+    expect(header).toMatch(/size="sm"[\s\S]*onClick=\{handleOpenOrUseIssue\}/)
+    expect(header).not.toMatch(/size="icon-sm"\s+onClick=\{handleOpenOrUseIssue\}/)
   })
 })
