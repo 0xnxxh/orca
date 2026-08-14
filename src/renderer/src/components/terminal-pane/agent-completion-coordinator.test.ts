@@ -1277,7 +1277,7 @@ describe('agent completion coordinator', () => {
     )
   })
 
-  it('pairs a background all-clear with the turn it announced even after a working title blip', () => {
+  it('does not replay a stamped turn or its all-clear after a working title blip', () => {
     const dispatchCompletion = vi.fn()
     const dispatchHookLifecycle = vi.fn()
     const coordinator = createAgentCompletionCoordinator({
@@ -1307,6 +1307,15 @@ describe('agent completion coordinator', () => {
 
     vi.advanceTimersByTime(2_000)
     coordinator.observeTitleWorking()
+
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
 
     coordinator.observeHookStatus({
       state: 'done',

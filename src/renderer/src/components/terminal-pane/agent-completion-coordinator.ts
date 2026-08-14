@@ -832,7 +832,11 @@ export function createAgentCompletionCoordinator(
         : undefined
       if (turnCompletedAt !== undefined) {
         // Why: Claude's lead Stop already ended the turn; the pane stays `working` only for background inventory. Announce now, keep lifecycle on the reported working row.
-        if (workingStatusObserved) {
+        if (
+          workingStatusObserved &&
+          !turnCompletedAtAlreadyNotified(turnCompletedAt) &&
+          lastCompletionIdentity?.lastTurnCompletedAtNotified !== turnCompletedAt
+        ) {
           const completionSnapshot: AgentCompletionStatusSnapshot = {
             ...payload,
             state: 'done',
