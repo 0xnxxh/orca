@@ -126,6 +126,24 @@ describe('PtyStartupIngress live OSC 10/11 answers', () => {
     ingress.drainAndClose()
   })
 
+  it('leaves Windows WSL color queries renderer-handled', () => {
+    const emissions: PtyIngressEmission[] = []
+    const writes: string[] = []
+    const ingress = new PtyStartupIngress({
+      liveOscColors: COLORS,
+      ownerBackend: 'windows-wsl',
+      write: (data) => writes.push(data),
+      onEmission: (emission) => emissions.push(emission)
+    })
+    const tornQuery = '\x1b]11;?'
+    ingress.accept(tornQuery)
+    expect(writes).toEqual([])
+    expect(visible(emissions)).toBe(tornQuery)
+    ingress.accept('\x1b\\\x1b[6n')
+    expect(visible(emissions)).toBe(`${tornQuery}\x1b\\\x1b[6n`)
+    ingress.drainAndClose()
+  })
+
   it('keeps a torn live OSC 11 held across query-authority close', async () => {
     vi.useFakeTimers()
     const emissions: PtyIngressEmission[] = []

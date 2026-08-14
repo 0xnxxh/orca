@@ -70,7 +70,7 @@ export class PtyStartupIngress {
     this.onEmission = options.onEmission
     this.operationHost = {
       ownerBackend: this.ownerBackend,
-      keepLiveQueryHold: Boolean(this.liveOscColors),
+      keepLiveQueryHold: Boolean(this.liveOscColors) && this.ownerBackend === 'posix-pty',
       processEchoSpan: (span) => this.processEchoSpan(span),
       endQueryAuthority: () => {
         this.queryOpen = false
@@ -238,9 +238,10 @@ export class PtyStartupIngress {
   private processQuerySpan(span: PtyIngressSourceSpan): void {
     const input = combinePtyIngressSourceSpans(this.queryPending, span)
     this.queryPending = null
-    const suppressConptyQuery = this.ownerBackend === 'windows-conpty'
-    const canAnswerColorQuery = Boolean(this.liveOscColors || (this.queryOpen && this.intent))
-    if (!canAnswerColorQuery && !suppressConptyQuery) {
+    const canAnswerColorQuery =
+      (Boolean(this.liveOscColors) && this.ownerBackend === 'posix-pty') ||
+      Boolean(this.queryOpen && this.intent)
+    if (!canAnswerColorQuery && this.ownerBackend !== 'windows-conpty') {
       this.emit(input, false)
       return
     }
@@ -296,11 +297,8 @@ export class PtyStartupIngress {
           ownerBackend: this.ownerBackend,
           delivery: this.delivery
         })
-      if (answered || suppressConptyQuery) {
-        this.emit(querySpan, true, '')
-      } else {
-        this.emit(querySpan, false)
-      }
+      const suppressQuery = answered || this.ownerBackend === 'windows-conpty'
+      this.emit(querySpan, suppressQuery, suppressQuery ? '' : querySpan.data)
       scanOffset = query.endIndex
       emittedOffset = query.endIndex
     }

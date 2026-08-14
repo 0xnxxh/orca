@@ -17,7 +17,7 @@ export function answerLiveOscColorQuery(args: {
   ownerBackend: PtyOwnerBackend
   delivery: ColorReplyDelivery
 }): boolean {
-  if (!args.colors || args.ownerBackend === 'windows-conpty') {
+  if (!args.colors || args.ownerBackend !== 'posix-pty') {
     return false
   }
   const replies = terminalOscColorQueryReplies(args.colors, args.slots)
