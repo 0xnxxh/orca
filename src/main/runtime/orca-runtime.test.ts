@@ -14280,6 +14280,8 @@ describe('OrcaRuntimeService', () => {
       command: 'claude --resume claude-session',
       env: {
         CLAUDE_PROFILE: 'captured',
+        // Why: native panes need an absolute CLI; without one the plan degrades to in-process teammates.
+        ORCA_AGENT_TEAMS_SHIM_BIN: '/opt/orca/bin/orca-ide',
         ORCA_AGENT_TEAMS_TEAM_ID: 'stale-team',
         ORCA_AGENT_TEAMS_TOKEN: 'stale-token',
         TMUX: '/tmp/orca-claude-agent-teams/stale-team,0,1'
@@ -14290,6 +14292,7 @@ describe('OrcaRuntimeService', () => {
         agentArgs: '--teammate-mode auto',
         agentEnv: {
           CLAUDE_PROFILE: 'captured',
+          ORCA_AGENT_TEAMS_SHIM_BIN: '/opt/orca/bin/orca-ide',
           ORCA_AGENT_TEAMS_TEAM_ID: 'stale-team',
           ORCA_AGENT_TEAMS_TOKEN: 'stale-token',
           TMUX: '/tmp/orca-claude-agent-teams/stale-team,0,1'
@@ -14304,6 +14307,7 @@ describe('OrcaRuntimeService', () => {
     expect(spawnCall?.env).toMatchObject({
       CLAUDE_PROFILE: 'captured',
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      ORCA_AGENT_TEAMS_SHIM_BIN: '/opt/orca/bin/orca-ide',
       TMUX_PANE: '%1'
     })
     expect(spawnCall?.env?.ORCA_AGENT_TEAMS_TEAM_ID).toMatch(/^team-/)
