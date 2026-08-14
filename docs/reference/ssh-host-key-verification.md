@@ -276,6 +276,20 @@ false; no prompt channel denies; runtime-owned targets are exempt; the denial st
 `isAuthError`; and — catching the worst regression — **the verifier returns nothing**, so a refactor
 to `async` reddens a test rather than reaching a user.
 
+**Checked against a live client, not just the file format.** Two assumptions the design leans on were
+verified by running an OpenSSH 10.2p1 client against a real `sshd` on `127.0.0.1:2222` and recording
+its verdict:
+
+- **The bare-host fallback pass never reports a change.** With `StrictHostKeyChecking=accept-new`, a
+  bare line holding a *different* key, dialed on a non-default port, made ssh connect and append a
+  new `[127.0.0.1]:2222` line — first contact, no `IDENTIFICATION HAS CHANGED`. Reporting `mismatch`
+  on that pass would refuse hosts ssh connects to happily, and would have looked like the cautious
+  choice.
+- **`unknown-type-known-host` is ssh's own behaviour.** known_hosts holding `ssh-rsa` while the
+  server offers ed25519 makes ssh print `IDENTIFICATION HAS CHANGED` and refuse. So the rejection is
+  neither stricter nor laxer than ssh — and treating it as first contact, which a naive type-scoped
+  lookup does, is the laxer mistake. It also means `ssh-keygen -R` is the right remedy to name there.
+
 ## What Phase 1 shipped, and what review changed
 
 The design above survived implementation. Every defect found afterwards was in the wiring, and the
