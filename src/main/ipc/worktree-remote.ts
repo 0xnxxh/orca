@@ -6,21 +6,25 @@ import { posix, win32 } from 'node:path'
 import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import type { Store } from '../persistence'
+import type { GlobalSettings } from '../../shared/global-settings-types'
+import type { Repo } from '../../shared/repo-types'
+import type {
+  LocalBaseRefRefreshResult,
+  LocalBaseRefUpdateSuggestion
+} from '../../shared/worktree/base-ref-drift-types'
+import type {
+  CreateWorktreeArgs,
+  CreateWorktreeResult,
+  WorktreeCreateBaseFallback
+} from '../../shared/worktree/create-types'
+import type { WorktreeMeta } from '../../shared/worktree/meta-types'
 import type {
   AutomationWorkspaceProvenance,
   CliWorkspaceProvenance,
-  CreateWorktreeArgs,
-  CreateWorktreeResult,
   GitPushTarget,
-  GlobalSettings,
-  LocalBaseRefRefreshResult,
-  LocalBaseRefUpdateSuggestion,
-  Repo,
   Worktree,
-  WorktreeCreateBaseFallback,
-  WorktreeHeadIdentity,
-  WorktreeMeta
-} from '../../shared/types'
+  WorktreeHeadIdentity
+} from '../../shared/worktree/types'
 import { getPRForBranch } from '../github/client'
 import { listWorktrees, addWorktree, addSparseWorktree } from '../git/worktree'
 import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
