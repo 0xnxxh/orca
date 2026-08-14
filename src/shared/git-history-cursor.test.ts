@@ -13,6 +13,11 @@ function oid(index: number): string {
   return index.toString(16).padStart(40, '0')
 }
 
+// The fake chain is linear, so row N's only parent is row N+1.
+function seam(index: number): { id: string; parentIds: string[] } {
+  return { id: oid(index), parentIds: [oid(index + 1)] }
+}
+
 function logRecord(hash: string, message: string, parents: string[]): string {
   return `${[hash, 'Ada Lovelace', 'ada@example.com', '1700000000', '1700000000', parents.join(' '), '', message].join('\n')}\0`
 }
@@ -81,7 +86,7 @@ describe('git history cursor paging', () => {
     expect(result.items).toHaveLength(50)
     expect(result.items[0]?.id).toBe(oid(0))
     expect(result.hasMore).toBe(true)
-    expect(result.nextCursor).toEqual({ anchor: oid(0), loaded: 50, after: oid(49) })
+    expect(result.nextCursor).toEqual({ anchor: oid(0), loaded: 50, after: seam(49) })
     // one lookahead past the page, and no offset on the first page
     expect(logCalls[0]).toContain('-n51')
     expect(logCalls[0]?.some((arg) => arg.startsWith('--skip='))).toBe(false)
@@ -92,13 +97,13 @@ describe('git history cursor paging', () => {
 
     const page = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(0), loaded: 50, after: oid(49) }
+      cursor: { anchor: oid(0), loaded: 50, after: seam(49) }
     })
 
     expect(page.items[0]?.id).toBe(oid(50))
     expect(page.items.map((item) => item.id)).not.toContain(oid(49))
     expect(page.items).toHaveLength(50)
-    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 100, after: oid(99) })
+    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 100, after: seam(99) })
     // Why: skip stops one short of the page so the walk re-emits the seam row, and the count
     // covers that row, the page, and one lookahead.
     expect(logCalls[0]).toContain('--skip=49')
@@ -112,7 +117,7 @@ describe('git history cursor paging', () => {
     for (const loaded of [50, 300, 900]) {
       await loadGitHistoryFromExecutor(executor, '/repo', {
         limit: 50,
-        cursor: { anchor: oid(0), loaded, after: oid(loaded - 1) }
+        cursor: { anchor: oid(0), loaded, after: seam(loaded - 1) }
       })
     }
 
@@ -126,7 +131,7 @@ describe('git history cursor paging', () => {
 
     const page = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(0), loaded: 50, after: oid(49) }
+      cursor: { anchor: oid(0), loaded: 50, after: seam(49) }
     })
 
     expect(page.items).toHaveLength(10)
@@ -139,7 +144,7 @@ describe('git history cursor paging', () => {
 
     const deep = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(0), loaded: 200, after: oid(199) }
+      cursor: { anchor: oid(0), loaded: 200, after: seam(199) }
     })
 
     expect(deep.items[0]?.id).toBe(oid(200))
@@ -155,14 +160,14 @@ describe('git history cursor paging', () => {
 
     const page = await loadGitHistoryFromExecutor(executor, '/repo', {
       limit: 50,
-      cursor: { anchor: oid(150), loaded: 150, after: oid(149) }
+      cursor: { anchor: oid(150), loaded: 150, after: seam(149) }
     })
 
     expect(page.items[0]?.id).toBe(oid(0))
     // Why: the offset belongs to the dead walk, so it must be dropped with it — carrying it over
     // would skip the first 150 commits of the fresh page.
     expect(logCalls[0]?.some((arg) => arg.startsWith('--skip='))).toBe(false)
-    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 50, after: oid(49) })
+    expect(page.nextCursor).toEqual({ anchor: oid(0), loaded: 50, after: seam(49) })
   })
 })
 
@@ -294,7 +299,7 @@ describe('git history paging against a real repository', () => {
   it('degrades to a fresh first page when the anchor is not a known commit', async () => {
     const result = await loadGitHistoryFromExecutor(git, repoPath, {
       limit: 5,
-      cursor: { anchor: 'f'.repeat(40), loaded: 20, after: 'e'.repeat(40) }
+      cursor: { anchor: 'f'.repeat(40), loaded: 20, after: { id: 'e'.repeat(40), parentIds: [] } }
     })
 
     expect(result.items.map((item) => item.id)).toEqual(allCommits.slice(0, 5))
@@ -312,6 +317,7 @@ describe('git history paging against a real repository', () => {
     expect(cursor).toBeDefined()
 
     const graftTarget = first.items[1]?.id ?? ''
+    expect(graftTarget).not.toBe(first.items.at(-1)?.id)
     const orphanParent = allCommits.at(-1) ?? ''
     await execFileAsync('git', ['replace', '--graft', graftTarget, orphanParent], { cwd: repoPath })
     try {
@@ -328,6 +334,31 @@ describe('git history paging against a real repository', () => {
       expect(drifted.items.map((item) => item.id)).toEqual(stdout.trim().split('\n'))
     } finally {
       await execFileAsync('git', ['replace', '-d', graftTarget], { cwd: repoPath })
+    }
+  })
+
+  // Why: the seam keeping its id is not enough. Grafting the seam commit itself leaves the id at
+  // the same walk offset while replacing everything below it, so an id-only check would splice the
+  // grafted chain under a row whose drawn parent edge points at a commit the list no longer holds.
+  it('restarts when the seam keeps its id but its parents were rewritten', async () => {
+    const first = await loadGitHistoryFromExecutor(git, repoPath, { limit: 5 })
+    const cursor = first.nextCursor
+    expect(cursor).toBeDefined()
+
+    const seamId = first.items.at(-1)?.id ?? ''
+    const orphanParent = allCommits.at(-1) ?? ''
+    expect(seamId).toBe(cursor?.after.id)
+    await execFileAsync('git', ['replace', '--graft', seamId, orphanParent], { cwd: repoPath })
+    try {
+      const drifted = await loadGitHistoryFromExecutor(git, repoPath, {
+        limit: 5,
+        cursor: cursor as NonNullable<typeof cursor>
+      })
+
+      // The seam is still the first row of the resumed read, so only the parent check can catch it.
+      expect(drifted.continuedCursor).toBe(false)
+    } finally {
+      await execFileAsync('git', ['replace', '-d', seamId], { cwd: repoPath })
     }
   })
 

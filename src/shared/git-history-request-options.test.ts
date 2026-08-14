@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readGitHistoryOptions } from './git-history-request-options'
 
-const SEAM = 'c'.repeat(40)
+const SEAM = { id: 'c'.repeat(40), parentIds: ['d'.repeat(40)] }
 
 describe('readGitHistoryOptions', () => {
   // Why: every transport used to spell its own whitelist out, so `cursor` reached git on none of
@@ -11,12 +11,12 @@ describe('readGitHistoryOptions', () => {
       readGitHistoryOptions({
         limit: 25,
         baseRef: 'origin/main',
-        cursor: { anchor: 'a'.repeat(40), loaded: 50, after: 'b'.repeat(40) }
+        cursor: { anchor: 'a'.repeat(40), loaded: 50, after: SEAM }
       })
     ).toEqual({
       limit: 25,
       baseRef: 'origin/main',
-      cursor: { anchor: 'a'.repeat(40), loaded: 50, after: 'b'.repeat(40) }
+      cursor: { anchor: 'a'.repeat(40), loaded: 50, after: SEAM }
     })
   })
 
@@ -30,18 +30,24 @@ describe('readGitHistoryOptions', () => {
 
   it.each([
     ['a non-object cursor', 'abc'],
-    ['a missing anchor', { loaded: 10, after: 'b'.repeat(40) }],
+    ['a missing anchor', { loaded: 10, after: SEAM }],
     // Why: without the seam there is nothing to verify a resume against.
     ['a missing seam', { anchor: 'a'.repeat(40), loaded: 10 }],
-    ['a blank anchor', { anchor: '   ', loaded: 10, after: 'b'.repeat(40) }],
-    ['a non-string anchor', { anchor: 42, loaded: 10, after: 'b'.repeat(40) }],
-    ['an abbreviated anchor', { anchor: 'abc123', loaded: 10, after: 'b'.repeat(40) }],
+    ['a seam with no id', { anchor: 'a'.repeat(40), loaded: 10, after: { parentIds: [] } }],
+    [
+      'a seam with an abbreviated parent',
+      { anchor: 'a'.repeat(40), loaded: 10, after: { id: 'c'.repeat(40), parentIds: ['dead'] } }
+    ],
+    [
+      'a seam whose parents are not an array',
+      { anchor: 'a'.repeat(40), loaded: 10, after: { id: 'c'.repeat(40), parentIds: 'x' } }
+    ],
+    ['a blank anchor', { anchor: '   ', loaded: 10, after: SEAM }],
+    ['a non-string anchor', { anchor: 42, loaded: 10, after: SEAM }],
+    ['an abbreviated anchor', { anchor: 'abc123', loaded: 10, after: SEAM }],
     // Why: the anchor is spent on a git revision argument, and requests cross a host boundary
     // (relay, paired web), so an option-shaped anchor must never reach argv.
-    [
-      'an option-shaped anchor',
-      { anchor: '--output=/tmp/pwned', loaded: 10, after: 'b'.repeat(40) }
-    ]
+    ['an option-shaped anchor', { anchor: '--output=/tmp/pwned', loaded: 10, after: SEAM }]
   ])('drops %s', (_label, cursor) => {
     expect(readGitHistoryOptions({ cursor }).cursor).toBeUndefined()
   })

@@ -68,12 +68,20 @@ export type GitHistoryItem = {
 export type GitHistoryCursor = {
   anchor: string
   loaded: number
-  // Id of the last commit the previous page emitted. The next page re-reads that one row and
-  // continues only if the walk still leads with it: an anchor resolving does not prove its
-  // ancestry is unchanged, because replace refs and grafts rewrite what a commit's parents are
-  // without touching the commit itself. Verifying the seam is what keeps a drifted walk from
-  // being spliced into the list as though it were the next page.
-  after: string
+  // The last row the previous page emitted. The next page re-reads that one row and continues only
+  // if the walk still produces exactly it — same commit and same parents.
+  //
+  // Both halves are load-bearing. An anchor resolving does not prove its ancestry is unchanged, and
+  // an id matching does not either: replace refs and grafts rewrite a commit's parents in place, so
+  // the seam can keep its id while everything below it becomes a different chain. Checking the
+  // parents too is what stops two walks being spliced into one list under a row whose drawn edge
+  // points at a commit the list no longer contains.
+  after: GitHistorySeam
+}
+
+export type GitHistorySeam = {
+  id: string
+  parentIds: string[]
 }
 
 export type GitHistoryOptions = {

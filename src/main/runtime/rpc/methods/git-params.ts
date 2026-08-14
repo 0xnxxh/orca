@@ -79,7 +79,12 @@ export const GitHistory = WorktreeSelector.extend({
     .object({
       anchor: FullGitObjectId,
       loaded: z.number().int().min(0),
-      after: FullGitObjectId
+      // Why: bounded so a hostile client cannot make the seam arbitrarily large; far above any
+      // real merge's parent count.
+      after: z.object({
+        id: FullGitObjectId,
+        parentIds: z.array(FullGitObjectId).max(256)
+      })
     })
     .optional()
 })

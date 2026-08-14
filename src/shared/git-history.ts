@@ -11,11 +11,13 @@ import {
   type GitHistoryItem,
   type GitHistoryItemRef,
   type GitHistoryOptions,
-  type GitHistoryResult
+  type GitHistoryResult,
+  type GitHistorySeam
 } from './git-history-types'
 
 export type {
   GitHistoryCursor,
+  GitHistorySeam,
   GitHistoryExecutor,
   GitHistoryGraphColorId,
   GitHistoryItem,
@@ -166,6 +168,14 @@ async function resolveNamedRef(
   return revision ? gitHistoryRefFromFullName(fullName, normalized, revision) : undefined
 }
 
+function isGitHistorySeam(row: GitHistoryItem | undefined, seam: GitHistorySeam): boolean {
+  return (
+    row?.id === seam.id &&
+    row.parentIds.length === seam.parentIds.length &&
+    row.parentIds.every((parentId, index) => parentId === seam.parentIds[index])
+  )
+}
+
 export async function loadGitHistoryFromExecutor(
   git: GitHistoryExecutor,
   cwd: string,
@@ -245,10 +255,11 @@ export async function loadGitHistoryFromExecutor(
   let parsed = await readPage(walkTip, skip, resume ? 1 : 0)
   let continuedCursor = false
   if (resume) {
-    // Why: an anchor resolving does not prove its ancestry is unchanged — replace refs and grafts
-    // rewrite a commit's parents in place. If the walk no longer leads with the row the previous
-    // page ended on, this is a different history and splicing it on would skip and reorder commits.
-    continuedCursor = parsed[0]?.id === resume.after
+    // Why: an anchor resolving does not prove its ancestry is unchanged, and neither does the seam
+    // keeping its id — replace refs and grafts rewrite a commit's parents in place. If the walk no
+    // longer produces exactly the row the previous page ended on, this is a different history and
+    // splicing it on would skip commits and leave the seam's drawn edge pointing at nothing.
+    continuedCursor = isGitHistorySeam(parsed[0], resume.after)
     if (continuedCursor) {
       parsed = parsed.slice(1)
     } else {
@@ -258,6 +269,7 @@ export async function loadGitHistoryFromExecutor(
     }
   }
   const items = parsed.slice(0, limit)
+  const seamRow = items.at(-1)
   const hasMore = parsed.length > limit
   // Rows of this walk now accounted for: those skipped, the seam, and this page.
   const loaded = skip + (continuedCursor ? 1 : 0) + items.length
@@ -280,7 +292,11 @@ export async function loadGitHistoryFromExecutor(
     continuedCursor,
     nextCursor:
       hasMore && items.length > 0
-        ? { anchor: walkTip, loaded, after: items.at(-1)?.id ?? '' }
+        ? {
+            anchor: walkTip,
+            loaded,
+            after: { id: seamRow?.id ?? '', parentIds: seamRow?.parentIds ?? [] }
+          }
         : undefined
   }
 }
