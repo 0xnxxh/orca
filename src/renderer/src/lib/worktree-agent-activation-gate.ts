@@ -2,12 +2,21 @@ import { useAppStore } from '@/store'
 import type { PtyListedSession } from '../../../shared/pty-listed-session'
 import { parsePtySessionId, PTY_SESSION_ID_SEPARATOR } from '../../../shared/pty-session-id-format'
 import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
+import { parsePaneKey } from '../../../shared/stable-pane-id'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
-import { resumeSleepingAgentSessionsForWorktree } from './resume-sleeping-agent-session'
+import {
+  resumeSleepingAgentSessionsForWorktree,
+  type ResumeSleepingAgentSessionsOptions
+} from './resume-sleeping-agent-session'
+import { getProviderSessionClaimKey } from './sleeping-agent-pane-ownership'
 
 type ActivationStore = Pick<
   ReturnType<typeof useAppStore.getState>,
-  'createTab' | 'ptyIdsByTabId' | 'unifiedTabsByWorktree'
+  | 'createTab'
+  | 'ptyIdsByTabId'
+  | 'sleepingAgentSessionsByPaneKey'
+  | 'terminalLayoutsByTabId'
+  | 'unifiedTabsByWorktree'
 >
 
 type ActivationGateDeps = {
@@ -15,7 +24,7 @@ type ActivationGateDeps = {
   awaitReady?: () => Promise<boolean>
   listSessions: () => Promise<PtyListedSession[]>
   hasStructuredSession?: (worktreeId: string) => Promise<boolean>
-  resume: (worktreeId: string) => number
+  resume: (worktreeId: string, options?: ResumeSleepingAgentSessionsOptions) => number
 }
 
 export type WorktreeAgentActivationOutcome = 'adopted' | 'structured' | 'resumed' | 'blocked'
@@ -80,6 +89,30 @@ function sessionBelongsToWorkspace(sessionId: string, worktreeId: string): boole
   )
 }
 
+function liveSleepingAgentClaimKeys(
+  store: ActivationStore,
+  worktreeId: string,
+  livePtyIds: ReadonlySet<string>
+): Set<string> {
+  const keys = new Set<string>()
+  for (const record of Object.values(store.sleepingAgentSessionsByPaneKey)) {
+    if (record.worktreeId !== worktreeId) {
+      continue
+    }
+    const stable = parsePaneKey(record.paneKey)
+    const tabId = record.tabId ?? stable?.tabId
+    const persistedPtyId = stable
+      ? store.terminalLayoutsByTabId[stable.tabId]?.ptyIdsByLeafId?.[stable.leafId]
+      : tabId && store.ptyIdsByTabId[tabId]?.length === 1
+        ? store.ptyIdsByTabId[tabId][0]
+        : undefined
+    if (persistedPtyId && livePtyIds.has(persistedPtyId)) {
+      keys.add(getProviderSessionClaimKey(record))
+    }
+  }
+  return keys
+}
+
 export async function runWorktreeAgentActivationGate(
   worktreeId: string,
   deps: ActivationGateDeps
@@ -102,6 +135,7 @@ export async function runWorktreeAgentActivationGate(
   const liveWorkspaceSessions = sessions.filter((session) =>
     sessionBelongsToWorkspace(session.id, worktreeId)
   )
+  const liveWorkspacePtyIds = new Set(liveWorkspaceSessions.map((session) => session.id))
   if (liveWorkspaceSessions.length > 0) {
     for (const session of liveWorkspaceSessions) {
       const store = deps.getState()
@@ -114,21 +148,33 @@ export async function runWorktreeAgentActivationGate(
         recordInteraction: false
       })
     }
-    return 'adopted'
+    if (!workspaceHasSleepingAgentSessions(deps.getState(), worktreeId)) {
+      return 'adopted'
+    }
   }
 
+  let structured = false
   try {
-    if (
+    structured = Boolean(
       hasStructuredSession(deps.getState(), worktreeId) ||
       (await deps.hasStructuredSession?.(worktreeId))
-    ) {
+    )
+    if (structured && !workspaceHasSleepingAgentSessions(deps.getState(), worktreeId)) {
       return 'structured'
     }
   } catch {
     return 'blocked'
   }
-  deps.resume(worktreeId)
-  return 'resumed'
+  const launched = deps.resume(worktreeId, {
+    skipClaimKeys: liveSleepingAgentClaimKeys(deps.getState(), worktreeId, liveWorkspacePtyIds)
+  })
+  return launched > 0
+    ? 'resumed'
+    : liveWorkspaceSessions.length > 0
+      ? 'adopted'
+      : structured
+        ? 'structured'
+        : 'resumed'
 }
 
 export function gateWorktreeAgentActivation(

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { getDefaultWorkspaceSession } from '../../shared/constants'
 import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import { createEphemeralAgentSessionClaimSigner } from './agent-session-claim-identity'
 import { agentSessionPtyWriteGate } from './agent-session-pty-write-gate'
@@ -91,16 +92,50 @@ describe('structured TUI launch tab binding', () => {
       })
       const terminalHandle = 'term_current_runtime'
       const leafId = '23013912-13f8-44e5-818f-d40a1ff4e8c5'
+      const conflictingLeafId = '33013912-13f8-44e5-818f-d40a1ff4e8c5'
       resolvePinnedCodexRolloutProof.mockResolvedValue('/tmp/codex-home/sessions/thread-1.jsonl')
       const writeAgentSessionProof = vi.fn(() => false)
-      const runtime = new OrcaRuntimeService(undefined, undefined, {
-        agentSessionClaimSigner: signer
-      })
+      const persistedSession = {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: {
+          [WORKTREE_ID]: [
+            {
+              id: 'tab-cold-owner',
+              ptyId: 'pty-cold-owner',
+              worktreeId: WORKTREE_ID,
+              title: 'Codex',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'tab-cold-owner': {
+            root: { type: 'leaf' as const, leafId },
+            activeLeafId: leafId,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [leafId]: 'pty-cold-owner' }
+          }
+        },
+        terminalPtyIncarnationsByPaneKey: {
+          [`tab-cold-owner:${leafId}`]: 'incarnation-1'
+        }
+      }
+      const runtime = new OrcaRuntimeService(
+        { getWorkspaceSession: () => persistedSession } as never,
+        undefined,
+        {
+          agentSessionClaimSigner: signer
+        }
+      )
       runtime.setPtyController({
         listProcesses: vi.fn(async () => [
           {
             id: 'pty-cold-owner',
             incarnationId: 'incarnation-1',
+            rootProcessId: 31337,
             cwd: '/tmp/structured-handoff',
             title: 'codex',
             worktreeId: WORKTREE_ID,
@@ -116,6 +151,29 @@ describe('structured TUI launch tab binding', () => {
                   tabId: 'tab-cold-owner',
                   leafId,
                   terminalHandle: durableTerminalHandle
+                }
+              }
+            ]
+          },
+          {
+            id: 'pty-conflicting-owner',
+            incarnationId: 'incarnation-2',
+            rootProcessId: 41337,
+            cwd: '/tmp/structured-handoff',
+            title: 'codex',
+            worktreeId: WORKTREE_ID,
+            terminalHandle: 'term_conflicting_runtime',
+            agentSessionOwners: [
+              {
+                claim,
+                generation: 'generation-2',
+                phase: 'live' as const,
+                ptyId: 'pty-conflicting-owner',
+                surface: {
+                  worktreeId: WORKTREE_ID,
+                  tabId: 'tab-conflicting-owner',
+                  leafId: conflictingLeafId,
+                  terminalHandle: 'term_conflicting_runtime'
                 }
               }
             ]
@@ -159,6 +217,12 @@ describe('structured TUI launch tab binding', () => {
         outcome: 'identity-matched',
         matchedOn: ['process-start-time']
       })
+      readStructuredTuiProcessIdentity.mockResolvedValue({
+        hostId: 'local',
+        pid: 4243,
+        processStartTimeMs: 10,
+        spawnToken: 'spawn-token'
+      })
 
       await internal.refreshMobileSessionPtyRecords()
       const coldPty = internal.ptysById.get('pty-cold-owner')!
@@ -197,7 +261,11 @@ describe('structured TUI launch tab binding', () => {
         'thread-1'
       )
       expect(writeAgentSessionProof).not.toHaveBeenCalled()
+      expect(readStructuredTuiProcessIdentity).toHaveBeenCalledWith(
+        expect.objectContaining({ rootPid: 31337, spawnToken: 'spawn-token' })
+      )
       expect(agentSessionPtyWriteGate.boundSessionId('pty-cold-owner')).toBe('session-1')
+      expect(agentSessionPtyWriteGate.boundSessionId('pty-conflicting-owner')).toBeNull()
       agentSessionPtyWriteGate.unbindPty('pty-cold-owner')
     }
   )

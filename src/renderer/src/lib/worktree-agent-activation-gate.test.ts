@@ -1,19 +1,63 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { SleepingAgentSessionRecord } from '../../../shared/agent-session-resume'
 import type { PtyListedSession } from '../../../shared/pty-listed-session'
 import { runWorktreeAgentActivationGate } from './worktree-agent-activation-gate'
 
 const WORKTREE_ID = 'repo::/worktree'
+const LIVE_LEAF_ID = '11111111-1111-4111-8111-111111111111'
+const DEAD_LEAF_ID = '22222222-2222-4222-8222-222222222222'
 
 function listed(id: string): PtyListedSession {
   return { id, cwd: '/worktree', title: 'Codex', agentOwnership: 'present' }
 }
 
-function testDeps(args: { sessions?: PtyListedSession[]; structured?: boolean }) {
+function sleepingRecord(
+  tabId: string,
+  leafId: string,
+  providerSessionId: string
+): SleepingAgentSessionRecord {
+  return {
+    paneKey: `${tabId}:${leafId}`,
+    tabId,
+    worktreeId: WORKTREE_ID,
+    agent: 'codex',
+    providerSession: { key: 'session_id', id: providerSessionId },
+    prompt: 'resume',
+    state: 'working',
+    capturedAt: 1,
+    updatedAt: 1
+  }
+}
+
+function testDeps(args: {
+  sessions?: PtyListedSession[]
+  sleeping?: SleepingAgentSessionRecord[]
+  structured?: boolean
+  resumeCount?: number
+}) {
   const createTab = vi.fn()
-  const resume = vi.fn(() => 1)
+  const resume = vi.fn(() => args.resumeCount ?? 1)
+  const sleeping = args.sleeping ?? []
   const store = {
     createTab,
     ptyIdsByTabId: {},
+    sleepingAgentSessionsByPaneKey: Object.fromEntries(
+      sleeping.map((record) => [record.paneKey, record])
+    ),
+    terminalLayoutsByTabId: Object.fromEntries(
+      sleeping.map((record) => {
+        const leafId = record.paneKey.slice(record.paneKey.indexOf(':') + 1)
+        return [
+          record.tabId!,
+          {
+            root: { type: 'leaf' as const, leafId },
+            activeLeafId: leafId,
+            expandedLeafId: null,
+            ptyIdsByLeafId: {}
+          }
+        ]
+      })
+    ),
     unifiedTabsByWorktree: {
       [WORKTREE_ID]: args.structured
         ? [
@@ -149,6 +193,34 @@ describe('worktree agent activation gate', () => {
 
     expect(createTab).not.toHaveBeenCalled()
     expect(resume).toHaveBeenCalledOnce()
-    expect(resume).toHaveBeenCalledWith(WORKTREE_ID)
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
+  })
+
+  it('resumes a dead agent when the workspace only has a non-agent PTY', async () => {
+    const dead = sleepingRecord('tab-dead', DEAD_LEAF_ID, 'dead-session')
+    const plainPtyId = `${WORKTREE_ID}@@plain-shell`
+    const { deps, resume } = testDeps({
+      sessions: [{ ...listed(plainPtyId), title: 'zsh', agentOwnership: 'absent' }],
+      sleeping: [dead]
+    })
+
+    await expect(runWorktreeAgentActivationGate(WORKTREE_ID, deps)).resolves.toBe('resumed')
+
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
+  })
+
+  it('suppresses only the exact live agent session while resuming a dead sibling', async () => {
+    const live = sleepingRecord('tab-live', LIVE_LEAF_ID, 'live-session')
+    const dead = sleepingRecord('tab-dead', DEAD_LEAF_ID, 'dead-session')
+    const livePtyId = `${WORKTREE_ID}@@live-agent`
+    const { deps, resume } = testDeps({ sessions: [listed(livePtyId)], sleeping: [live, dead] })
+    const store = deps.getState()
+    store.terminalLayoutsByTabId['tab-live']!.ptyIdsByLeafId[LIVE_LEAF_ID] = livePtyId
+
+    await expect(runWorktreeAgentActivationGate(WORKTREE_ID, deps)).resolves.toBe('resumed')
+
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, {
+      skipClaimKeys: new Set([`${WORKTREE_ID}\0codex\0session_id\0live-session`])
+    })
   })
 })

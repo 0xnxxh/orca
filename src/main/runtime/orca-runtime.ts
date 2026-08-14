@@ -91,7 +91,10 @@ import {
   proveCodexTuiRollout,
   resolvePinnedCodexRolloutProof
 } from '../codex/codex-tui-rollout-proof'
-import { probeAgentSessionProcessIdentity } from './agent-session-process-identity-probe'
+import {
+  PROCESS_START_TIME_TOLERANCE_MS,
+  probeAgentSessionProcessIdentity
+} from './agent-session-process-identity-probe'
 import { waitForStructuredTuiExitProof } from './structured-tui-exit-proof'
 import { readStructuredTuiProcessIdentity } from './structured-tui-process-identity'
 import { hasStructuredTuiIdleEvidence } from './structured-tui-idle-evidence'
@@ -9273,23 +9276,29 @@ export class OrcaRuntimeService {
             }),
             canonicalWorktreeId: workspace.id
           })
-          const recovered = [...this.ptysById.values()]
+          const recoveredCandidates = [...this.ptysById.values()]
             .flatMap((pty) => pty.agentSessionOwners.map((owner) => ({ pty, owner })))
-            .find(
+            .filter(
               ({ pty, owner }) =>
                 pty.connected &&
+                owner.phase === 'live' &&
+                owner.ptyId === pty.ptyId &&
                 Boolean(pty.incarnationId) &&
                 runtimeWorktreeIdsEqual(pty.worktreeId, workspace.id) &&
                 runtimeWorktreeIdsEqual(owner.surface.worktreeId, workspace.id) &&
-                scopedAgentSessionClaimsEqual(owner.claim, claim)
+                scopedAgentSessionClaimsEqual(owner.claim, claim) &&
+                this.hasExactPersistedTerminalSurfaceIdentity({
+                  worktreeId: owner.surface.worktreeId,
+                  tabId: owner.surface.tabId,
+                  leafId: owner.surface.leafId,
+                  ptyId: owner.ptyId,
+                  incarnationId: pty.incarnationId!
+                })
             )
-          const processProof = recovered
-            ? await probeAgentSessionProcessIdentity({ identity })
-            : null
+          const recovered = recoveredCandidates.length === 1 ? recoveredCandidates[0] : null
           if (
             !recovered ||
-            processProof?.outcome !== 'identity-matched' ||
-            processProof.matchedOn.length === 0
+            !(await this.proveRecoveredStructuredTuiPtyProcess(recovered.pty, identity))
           ) {
             throw new Error('The owning agent terminal could not be recovered.')
           }
@@ -9359,6 +9368,36 @@ export class OrcaRuntimeService {
         this.notifier?.focusEditorTab?.(structuredAgentSessionTabId(sessionId), workspaceId)
       },
       stopFailedTuiLaunch: async (owner) => void (await this.closeStructuredTuiOwner(owner))
+    }
+  }
+
+  private async proveRecoveredStructuredTuiPtyProcess(
+    pty: RuntimePtyWorktreeRecord,
+    identity: NonNullable<AgentSessionRecord['lease']['ownerProcess']>
+  ): Promise<boolean> {
+    const listings = await this.ptyController?.listProcesses?.(pty.connectionId)
+    const listed = listings?.find(
+      (candidate) => candidate.id === pty.ptyId && candidate.incarnationId === pty.incarnationId
+    )
+    if (!listed?.rootProcessId || identity.processStartTimeMs === null) {
+      return false
+    }
+    try {
+      const observed = await readStructuredTuiProcessIdentity({
+        hostId: identity.hostId,
+        rootPid: listed.rootProcessId,
+        spawnToken: identity.spawnToken,
+        agent: 'codex'
+      })
+      return (
+        observed.hostId === identity.hostId &&
+        observed.pid === identity.pid &&
+        observed.processStartTimeMs !== null &&
+        Math.abs(observed.processStartTimeMs - identity.processStartTimeMs) <=
+          PROCESS_START_TIME_TOLERANCE_MS
+      )
+    } catch {
+      return false
     }
   }
 
