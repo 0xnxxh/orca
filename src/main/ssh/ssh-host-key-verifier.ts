@@ -194,7 +194,8 @@ export function createHostKeyVerifier(
         strictHostKeyChecking: deps.strictHostKeyChecking,
         isEphemeralRuntimeTarget: deps.isEphemeralRuntimeTarget,
         verificationSourcesIncomplete: deps.verificationSourcesIncomplete,
-        displayHost: deps.displayHost
+        displayHost: deps.displayHost,
+        port: deps.port
       })
 
       deps.onDecision?.({ ...decision, fingerprint, keyType })

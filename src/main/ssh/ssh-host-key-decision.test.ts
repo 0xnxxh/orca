@@ -9,6 +9,7 @@ function input(overrides: Partial<HostKeyDecisionInput> = {}): HostKeyDecisionIn
     isEphemeralRuntimeTarget: false,
     verificationSourcesIncomplete: false,
     displayHost: 'build-01',
+    port: 22,
     ...overrides
   }
 }
@@ -79,6 +80,28 @@ describe('deciding what to do with a presented host key', () => {
       const decision = decideHostKey(input({ knownHostsOutcome: 'mismatch' }))
       expect(decision.disagreeingSource).toBe('known-hosts')
       expect(decision.reason).toContain('ssh-keygen -R build-01')
+    })
+
+    // Verified against OpenSSH 10.2p1: with both `[h]:2222` and `h` on file, `ssh-keygen -R h`
+    // removes ONLY the bare line, and there is no port flag — `-R h -p 2222` is "Too many
+    // arguments". So naming the bare host for an off-port target sends the user to run a command
+    // that removes nothing and reconnect into the identical failure.
+    it('names the bracketed entry when the port is not the default', () => {
+      const decision = decideHostKey(input({ knownHostsOutcome: 'mismatch', port: 2222 }))
+      expect(decision.reason).toContain("ssh-keygen -R '[build-01]:2222'")
+    })
+
+    it('does not bracket the host on the default port', () => {
+      const decision = decideHostKey(input({ knownHostsOutcome: 'mismatch', port: 22 }))
+      expect(decision.reason).toContain('ssh-keygen -R build-01')
+      expect(decision.reason).not.toContain('[build-01]')
+    })
+
+    it('names the bracketed entry for an unfamiliar key type on a non-default port too', () => {
+      const decision = decideHostKey(
+        input({ knownHostsOutcome: 'unknown-type-known-host', port: 2222 })
+      )
+      expect(decision.reason).toContain("ssh-keygen -R '[build-01]:2222'")
     })
 
     it('does not tell the user to edit known_hosts when our own record disagrees', () => {

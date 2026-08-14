@@ -40,6 +40,20 @@ export type HostKeyDecisionInput = {
    */
   verificationSourcesIncomplete: boolean
   displayHost: string
+  /** Needed for the remedy string: an off-port entry is keyed `[host]:port` in known_hosts. */
+  port: number
+}
+
+/**
+ * The name `ssh-keygen -R` must be given, which is NOT always the host name.
+ *
+ * Verified against OpenSSH 10.2p1: with both `[h.example]:2222` and `h.example` on file,
+ * `ssh-keygen -R h.example` removes only the bare line and leaves the bracketed one — and there is
+ * no port flag, `-R host -p 2222` is "Too many arguments". So for an off-port target the obvious
+ * command removes nothing, the user reconnects, and it fails identically.
+ */
+function keygenRemoveTarget(displayHost: string, port: number): string {
+  return port === 22 ? displayHost : `'[${displayHost}]:${port}'`
 }
 
 /**
@@ -95,7 +109,8 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
     storeOutcome,
     isEphemeralRuntimeTarget,
     verificationSourcesIncomplete,
-    displayHost
+    displayHost,
+    port
   } = input
   const strict = input.strictHostKeyChecking.toLowerCase()
 
@@ -119,7 +134,7 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
       disagreeingSource: 'known-hosts',
       reason: rejection(
         displayHost,
-        `The key does not match the entry in your known_hosts file. ssh and git will refuse this host too. Run: ssh-keygen -R ${displayHost}`
+        `The key does not match the entry in your known_hosts file. ssh and git will refuse this host too. Run: ssh-keygen -R ${keygenRemoveTarget(displayHost, port)}`
       )
     }
   }
@@ -170,7 +185,7 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
         // mismatch left this case with a diagnosis and no way out.
         `The host offered a key of a type we have not seen for it before, while a key of another type is already known. This can mean the host was rebuilt, or that something is impersonating it.${
           fromKnownHosts
-            ? ` ssh and git will refuse this host too. Run: ssh-keygen -R ${displayHost}`
+            ? ` ssh and git will refuse this host too. Run: ssh-keygen -R ${keygenRemoveTarget(displayHost, port)}`
             : ` ${CHANGED_KEY_HINT}`
         }`
       )
