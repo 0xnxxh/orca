@@ -11,7 +11,7 @@ import {
 import type { RuntimeOwnedSshAiVaultHost } from '../ai-vault/runtime-owned-ssh-session-list'
 import { resolveLocalAiVaultSessionTitles } from '../ai-vault/session-title-resolver'
 import { parseAiVaultSessionTitlesResult } from '../ai-vault/session-title-result-validation'
-import { requestActiveSshAiVaultSessionTitles } from './ssh'
+import { getActiveSshAiVaultHostInfo, requestActiveSshAiVaultSessionTitles } from './ssh'
 
 export type RuntimeAiVaultSessionTitleResolver = (
   environmentId: string,
@@ -70,6 +70,7 @@ async function resolveSshAiVaultSessionTitles(
   }
   if (
     isRuntimeOwnedSshTargetId(targetId) ||
+    getActiveSshAiVaultHostInfo(targetId) ||
     !options.findRuntimeOwningSshAiVaultHost ||
     !options.resolveRuntimeOwnedSsh
   ) {

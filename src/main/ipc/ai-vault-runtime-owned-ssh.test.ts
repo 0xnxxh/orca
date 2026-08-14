@@ -290,6 +290,27 @@ describe('runtime-owned SSH AI Vault routing', () => {
       }
     )
   })
+
+  it('does not resolve titles through another runtime for a locally owned SSH target', async () => {
+    mocks.requestActiveSshAiVaultSessionTitles.mockResolvedValue(null)
+    mocks.getActiveSshAiVaultHostInfo.mockReturnValue({})
+    const findRuntimeOwningSshAiVaultHost = vi.fn()
+    const resolveRuntimeOwnedSshAiVaultSessionTitles = vi.fn()
+    registerAiVaultHandlers({
+      findRuntimeOwningSshAiVaultHost,
+      resolveRuntimeOwnedSshAiVaultSessionTitles
+    })
+
+    await expect(
+      _internals.resolveAiVaultSessionTitles({
+        executionHostScope: 'ssh:dev-box',
+        requests: [{ agent: 'codex', sessionId: 'session-1' }]
+      })
+    ).resolves.toEqual({ titles: [] })
+
+    expect(findRuntimeOwningSshAiVaultHost).not.toHaveBeenCalled()
+    expect(resolveRuntimeOwnedSshAiVaultSessionTitles).not.toHaveBeenCalled()
+  })
 })
 
 function result(sessions: AiVaultSession[]): AiVaultListResult {
