@@ -3870,6 +3870,9 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
     if (typeof result.settings.artifactSharingEnabled === 'boolean') {
       runtimeSettings.artifactSharingEnabled = result.settings.artifactSharingEnabled
     }
+    if (typeof result.settings.agentSkillSharingEnabled === 'boolean') {
+      runtimeSettings.agentSkillSharingEnabled = result.settings.agentSkillSharingEnabled
+    }
     const next = mergeSettings(local, runtimeSettings)
     writeStoredSettings(next)
     return next

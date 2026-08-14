@@ -19,6 +19,7 @@ export function ShareSkillsSettingsPane(): React.JSX.Element {
   const fetchAuthStatus = useAppStore((state) => state.fetchOrcaProfileAuthStatus)
   const signedIn = authStatus?.state === 'connected'
   const isWebClient = isWebClientLocation()
+  const agentSharingEnabled = settings?.agentSkillSharingEnabled === true
 
   useEffect(() => {
     if (!authStatus) {
@@ -80,6 +81,27 @@ export function ShareSkillsSettingsPane(): React.JSX.Element {
           )}
         </p>
       </section>
+
+      <SettingsSwitchRow
+        label={translate(
+          'auto.components.settings.shareSkills.allowAgentPublishing',
+          'Allow agents and the Orca CLI to publish skill links'
+        )}
+        description={
+          isWebClient
+            ? translate(
+                'auto.components.settings.shareSkills.allowAgentPublishingWebDescription',
+                'Desktop only. Open Settings → Share Skills on the host device to change this setting.'
+              )
+            : translate(
+                'auto.components.settings.shareSkills.allowAgentPublishingDescription',
+                'Let commands publish explicitly named installed skills. Skill folders can contain scripts, configuration, or secrets, so this is off by default.'
+              )
+        }
+        checked={agentSharingEnabled}
+        disabled={isWebClient}
+        onChange={() => void updateSettings({ agentSkillSharingEnabled: !agentSharingEnabled })}
+      />
 
       {!isWebClient ? (
         <SettingsSwitchRow

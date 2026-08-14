@@ -1645,3 +1645,34 @@ disconnect boundaries remain separate gates below.
 - [x] Document organization removal, user departure, package retention, and reconciliation
       semantics before enabling policy-driven installs. The admin guide explicitly leaves legal
       retention and ownership-transfer approval as human release gates.
+
+## 16. Agent and Orca CLI publishing
+
+- [x] Add a separate `agentSkillSharingEnabled` capability that defaults off and accepts only an
+      exact persisted `true` value. Manual desktop publishing remains independent.
+- [x] Let only the local desktop Settings → Share Skills switch grant the capability. Runtime
+      `settings.get` exposes a fail-closed read-only projection; `settings.update`, paired web,
+      mobile, agents, and the CLI cannot enable it.
+- [x] Add `orca skills installed --json` with discovery IDs and names but no local filesystem paths.
+- [x] Add `orca skills share` with repeated explicit `--skill` selectors, a required bundle name,
+      one unlisted link for multi-skill bundles, and no `--all` or arbitrary-path input.
+- [x] Resolve exact discovery IDs before unambiguous names; fail missing, ambiguous, and duplicate
+      bundle-folder names with actionable errors.
+- [x] Enforce the capability in the executing runtime before discovery, before package reads, and
+      again before publishing. CLI preflight is an optimization, not the authority.
+- [x] Reject forwarded WSL, SSH, and paired-runtime CLI contexts before discovery so native file
+      APIs cannot read a path belonging to another machine. Native runtimes remain supported on
+      macOS, Linux, and Windows.
+- [x] Reuse the reviewed bundle preparation and Cloud publisher, propagate RPC cancellation into
+      upload, and remove per-operation preparation files after success, denial, cancellation,
+      authentication failure, or Cloud failure.
+- [x] Admit one agent bundle preparation/publish at a time per host so concurrent agents cannot
+      multiply the bounded per-bundle disk and CPU budget.
+- [x] Keep CLI JSON limited to the unlisted URL, public share/package/version IDs, bundle name, and
+      selected skill summaries; never return auth tokens or source paths.
+- [x] Add gate, persistence, RPC grant-denial, selector, archive-content, cancellation, cleanup,
+      web mirror, Windows-path contract, CLI parser/help, and Settings UI tests.
+- [ ] Complete a live signed-in production publish through the dev CLI, resolve the returned link,
+      revoke it, and confirm a later resolution fails while the local source skills remain intact.
+- [ ] Complete independent OpenCode and release-readiness review, full repository validation, PR
+      CI, and an ad hoc build from the final commit.

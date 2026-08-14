@@ -8,6 +8,14 @@ import { COMPUTER_ERROR_CODES } from '../../../shared/runtime-types'
 import { LINEAR_ERROR_CODES } from '../../../shared/linear/agent-access'
 import { AGENT_SESSION_RPC_ERROR_CODES } from '../../../shared/agent-session-host-authority'
 import { ARTIFACT_SHARING_DISABLED_CODE } from '../../../shared/artifact-sharing-gate'
+import { AGENT_SKILL_SHARING_DISABLED_CODE } from '../../../shared/agent-skill-sharing-gate'
+import {
+  AGENT_SKILL_NOT_SHAREABLE_CODE,
+  AGENT_SKILL_SELECTOR_AMBIGUOUS_CODE,
+  AGENT_SKILL_SELECTOR_NOT_FOUND_CODE,
+  AGENT_SKILL_SHARING_BUSY_CODE,
+  AGENT_SKILL_SHARING_UNSUPPORTED_ENVIRONMENT_CODE
+} from '../../../shared/agent-skill-sharing-contract'
 import {
   SKILL_INSTALL_RPC_ERROR_CODE,
   classifySkillInstallFailureCode
@@ -103,6 +111,12 @@ const STRUCTURED_RUNTIME_PASSTHROUGH_CODES: ReadonlySet<string> = new Set([
   'waiter_exists',
   'invalid_argument',
   ARTIFACT_SHARING_DISABLED_CODE,
+  AGENT_SKILL_SHARING_DISABLED_CODE,
+  AGENT_SKILL_NOT_SHAREABLE_CODE,
+  AGENT_SKILL_SELECTOR_AMBIGUOUS_CODE,
+  AGENT_SKILL_SELECTOR_NOT_FOUND_CODE,
+  AGENT_SKILL_SHARING_BUSY_CODE,
+  AGENT_SKILL_SHARING_UNSUPPORTED_ENVIRONMENT_CODE,
   SKILL_INSTALL_RPC_ERROR_CODE
 ])
 

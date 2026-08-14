@@ -11071,6 +11071,9 @@
         "shareSkills": {
           "title": "Share Skills",
           "description": "Share your skills with an unlisted link. Anyone who has it can install them.",
+          "allowAgentPublishing": "Allow agents and the Orca CLI to publish skill links",
+          "allowAgentPublishingDescription": "Let commands publish explicitly named installed skills. Skill folders can contain scripts, configuration, or secrets, so this is off by default.",
+          "allowAgentPublishingWebDescription": "Desktop only. Open Settings → Share Skills on the host device to change this setting.",
           "selectTitle": "Select one or more skills",
           "selectDescription": "Open Skills, choose Share skills, and select the skills to bundle behind one link.",
           "reviewTitle": "Review and publish",

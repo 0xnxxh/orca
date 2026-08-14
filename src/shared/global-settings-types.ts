@@ -212,6 +212,8 @@ export type GlobalSettings = {
   artifactsEnabled?: boolean
   /** Capability gate for agent-driven publishing; off until granted, enforced in main, not just the UI. */
   artifactSharingEnabled?: boolean
+  /** Capability gate for agent/CLI skill publishing; manual reviewed publishing remains available. */
+  agentSkillSharingEnabled?: boolean
   /** Only toggles the sidebar shortcut; Artifacts stay reachable from Settings. */
   showArtifactsButton?: boolean
   /** Only toggles the sidebar shortcut; Skills stay reachable from Settings. */

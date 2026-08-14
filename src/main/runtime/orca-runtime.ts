@@ -14,6 +14,10 @@ import {
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
 import { planWorktreeSortOrderUpdates } from '../../shared/worktree/sort-order-update'
 import { isArtifactSharingEnabled } from '../../shared/artifact-sharing-gate'
+import {
+  assertAgentSkillSharingAllowed,
+  isAgentSkillSharingEnabled
+} from '../../shared/agent-skill-sharing-gate'
 import { sortDirEntries } from '../../shared/file-name-sort'
 import { isServerDriveListRequest, listWindowsDrives } from './windows-drive-listing'
 import { extractLastOsc7Uri, extractOscScanTail } from '../daemon/osc7-uri-extraction'
@@ -157,6 +161,16 @@ import type {
   SkillCloudVersion
 } from '../../shared/skill-cloud-contract'
 import type { SkillCloudService } from '../skills/skill-cloud-service'
+import {
+  AGENT_SKILL_NOT_SHAREABLE_CODE,
+  AGENT_SKILL_SHARING_BUSY_CODE,
+  AgentSkillSharingError,
+  type AgentSkillShareOperation,
+  type AgentSkillShareRequest
+} from '../../shared/agent-skill-sharing-contract'
+import type { DiscoveredSkill } from '../../shared/skills'
+import { selectDiscoveredSkills } from '../skills/agent-skill-selection'
+import { SkillSharePreparationService } from '../skills/skill-share-preparation-service'
 import type {
   SkillInstallPreview,
   SkillInstallPreviewRequest,
@@ -1248,6 +1262,7 @@ type RuntimeStore = {
     minimaxUsageModels?: GlobalSettings['minimaxUsageModels']
     prBotAuthorOverrides?: GlobalSettings['prBotAuthorOverrides']
     artifactSharingEnabled?: GlobalSettings['artifactSharingEnabled']
+    agentSkillSharingEnabled?: GlobalSettings['agentSkillSharingEnabled']
     terminalQuickCommands?: GlobalSettings['terminalQuickCommands']
     gitlabProjects?: GlobalSettings['gitlabProjects']
     mobileAutoRestoreFitMs?: number | null
@@ -3382,6 +3397,7 @@ export class OrcaRuntimeService {
   private automationService: AutomationService | null = null
   private artifactService: ArtifactCloudService | null = null
   private skillCloudService: SkillCloudService | null = null
+  private agentSkillShareInProgress = false
   private skillUploadSessions: SkillUploadSessionService | null = null
   private readonly skillTransactionRecovery: Promise<unknown>
   private readonly skillInstallOperations = new Map<string, AbortController>()
@@ -3596,6 +3612,7 @@ export class OrcaRuntimeService {
     // Read-only on purpose: clients preflight the publish capability here, but SettingsUpdate
     // still omits the key so no RPC caller can grant it to itself.
     | 'artifactSharingEnabled'
+    | 'agentSkillSharingEnabled'
   > {
     if (!this.store?.getSettings) {
       throw new Error('runtime_unavailable')
@@ -3619,7 +3636,8 @@ export class OrcaRuntimeService {
       minimaxGroupId: settings.minimaxGroupId ?? '',
       minimaxUsageModels: settings.minimaxUsageModels ?? 'general',
       prBotAuthorOverrides: settings.prBotAuthorOverrides ?? [],
-      artifactSharingEnabled: isArtifactSharingEnabled(settings)
+      artifactSharingEnabled: isArtifactSharingEnabled(settings),
+      agentSkillSharingEnabled: isAgentSkillSharingEnabled(settings)
     }
   }
 
@@ -4674,6 +4692,107 @@ export class OrcaRuntimeService {
 
   setSkillCloudService(service: SkillCloudService): void {
     this.skillCloudService = service
+  }
+
+  assertAgentSkillSharingAllowed(): void {
+    assertAgentSkillSharingAllowed(() => isAgentSkillSharingEnabled(this.store?.getSettings()))
+  }
+
+  async publishDiscoveredSkillsFromAgent(
+    request: AgentSkillShareRequest,
+    discoveredSkills: readonly DiscoveredSkill[],
+    signal?: AbortSignal
+  ): Promise<AgentSkillShareOperation> {
+    this.assertAgentSkillSharingAllowed()
+    if (this.agentSkillShareInProgress) {
+      throw new AgentSkillSharingError(
+        AGENT_SKILL_SHARING_BUSY_CODE,
+        'Another agent skill bundle is being published. Wait for it to finish and try again.'
+      )
+    }
+    this.agentSkillShareInProgress = true
+    try {
+      return await this.executeAgentSkillShare(request, discoveredSkills, signal)
+    } finally {
+      this.agentSkillShareInProgress = false
+    }
+  }
+
+  private async executeAgentSkillShare(
+    request: AgentSkillShareRequest,
+    discoveredSkills: readonly DiscoveredSkill[],
+    signal?: AbortSignal
+  ): Promise<AgentSkillShareOperation> {
+    const selectedSkills = selectDiscoveredSkills(discoveredSkills, request.skillSelectors)
+    const operationRoot = join(app.getPath('userData'), 'agent-skill-share-operations')
+    const cloud = this.requireSkillCloudService()
+    const preparations = new SkillSharePreparationService(operationRoot, {
+      publishVersion: (input) => cloud.publishVersion(input),
+      createShare: (packageId, input) => cloud.createShare(packageId, input)
+    })
+    let preparationId: string | null = null
+    const cancel = (): void => {
+      if (preparationId) {
+        preparations.cancel(preparationId)
+      }
+    }
+    signal?.addEventListener('abort', cancel, { once: true })
+    try {
+      if (signal?.aborted) {
+        throw signal.reason ?? new Error('skill-share-cancelled')
+      }
+      const preview = await preparations
+        .prepare({
+          sources: selectedSkills.map((skill) => ({
+            id: skill.name,
+            sourceDirectory: skill.directoryPath
+          })),
+          bundleName: request.bundleName,
+          description:
+            selectedSkills.length === 1
+              ? (selectedSkills[0].description ?? '')
+              : `${selectedSkills.length} shared skills`
+        })
+        .catch((error: unknown) => {
+          if (
+            error instanceof Error &&
+            ['skill-package-skill-name-required', 'skill-package-skill-name-invalid'].includes(
+              error.message
+            )
+          ) {
+            throw new AgentSkillSharingError(
+              AGENT_SKILL_NOT_SHAREABLE_CODE,
+              'A selected skill cannot be shared. Its SKILL.md must declare a lowercase name containing only letters, numbers, and hyphens.'
+            )
+          }
+          throw error
+        })
+      preparationId = preview.preparationId
+      if (signal?.aborted) {
+        throw signal.reason ?? new Error('skill-share-cancelled')
+      }
+      this.assertAgentSkillSharingAllowed()
+      const published = await preparations.publish({
+        preparationId,
+        releaseNotes: request.releaseNotes
+      })
+      return published.status === 'ok'
+        ? {
+            status: 'ok',
+            value: {
+              ...published.value,
+              selectedSkills: selectedSkills.map(({ id, name, description }) => ({
+                id,
+                name,
+                description
+              }))
+            }
+          }
+        : published
+    } finally {
+      signal?.removeEventListener('abort', cancel)
+      await preparations.dispose()
+    }
   }
 
   publishSkillPackage(

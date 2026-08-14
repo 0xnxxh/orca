@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcContext } from '../core'
 
 vi.mock('electron', () => ({
@@ -227,6 +227,96 @@ describe('skills.install RPC', () => {
         runtime: { getSharedSkillInstallProgress }
       } as unknown as RpcContext)
     ).toEqual(progress)
+  })
+})
+
+describe('skills.share RPC', () => {
+  const request = {
+    skillSelectors: ['alpha', 'beta'],
+    bundleName: 'team-skills',
+    releaseNotes: '',
+    target: { cwd: '/repo' }
+  }
+
+  beforeEach(() => {
+    vi.mocked(discoverSkillsOnTarget).mockClear()
+    vi.mocked(resolveSkillDiscoveryTarget).mockImplementation((target) => ({
+      kind: 'native-host',
+      cwd: target?.cwd ?? undefined
+    }))
+  })
+
+  it('checks permission before discovery', async () => {
+    const denial = new Error('denied')
+    const assertAgentSkillSharingAllowed = vi.fn(() => {
+      throw denial
+    })
+
+    await expect(
+      method('skills.share').handler(request, {
+        runtime: { assertAgentSkillSharingAllowed }
+      } as unknown as RpcContext)
+    ).rejects.toBe(denial)
+    expect(discoverSkillsOnTarget).not.toHaveBeenCalled()
+  })
+
+  it('discovers on the executing host and delegates the selected bundle', async () => {
+    const discoveredSkills = [{ id: 'alpha' }, { id: 'beta' }]
+    vi.mocked(discoverSkillsOnTarget).mockResolvedValueOnce({
+      skills: discoveredSkills,
+      sources: [],
+      scannedAt: 1
+    } as never)
+    const publishDiscoveredSkillsFromAgent = vi.fn(async () => ({ status: 'ok' }))
+    const runtime = {
+      assertAgentSkillSharingAllowed: vi.fn(),
+      resolveProjectRuntimeForWorktree: vi.fn(),
+      resolveSkillDiscoveryProviderRoots: vi.fn(async () => ({})),
+      listRepos: vi.fn(() => []),
+      publishDiscoveredSkillsFromAgent
+    }
+    const signal = new AbortController().signal
+
+    await method('skills.share').handler(request, { runtime, signal } as unknown as RpcContext)
+
+    expect(discoverSkillsOnTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'native-host', cwd: '/repo' }),
+      [],
+      { providerRootOverrides: {}, refresh: true }
+    )
+    expect(publishDiscoveredSkillsFromAgent).toHaveBeenCalledWith(request, discoveredSkills, signal)
+  })
+
+  it('rejects WSL before attempting to read Linux paths with native fs', async () => {
+    vi.mocked(resolveSkillDiscoveryTarget).mockReturnValueOnce({
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      homeDir: '/home/alice',
+      cwd: '/repo'
+    })
+    const runtime = {
+      assertAgentSkillSharingAllowed: vi.fn(),
+      resolveProjectRuntimeForWorktree: vi.fn()
+    }
+
+    await expect(
+      method('skills.share').handler(request, { runtime } as unknown as RpcContext)
+    ).rejects.toMatchObject({ code: 'agent_skill_sharing_unsupported_environment' })
+    expect(discoverSkillsOnTarget).not.toHaveBeenCalled()
+  })
+
+  it('rejects paired runtime callers before discovery', async () => {
+    const runtime = {
+      assertAgentSkillSharingAllowed: vi.fn()
+    }
+
+    await expect(
+      method('skills.share').handler(request, {
+        runtime,
+        clientKind: 'runtime'
+      } as unknown as RpcContext)
+    ).rejects.toMatchObject({ code: 'agent_skill_sharing_unsupported_environment' })
+    expect(discoverSkillsOnTarget).not.toHaveBeenCalled()
   })
 })
 

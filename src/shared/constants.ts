@@ -280,6 +280,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     showAutomationsButton: true,
     artifactsEnabled: true,
     artifactSharingEnabled: false,
+    agentSkillSharingEnabled: false,
     showArtifactsButton: false,
     showSkillsButton: false,
     showMobileButton: true,
