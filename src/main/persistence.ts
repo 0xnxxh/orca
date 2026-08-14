@@ -2970,11 +2970,31 @@ export function hoistSshPartitionsIntoLocalSession(
       local.tabGroupLayouts = { ...local.tabGroupLayouts, [worktreeId]: structuredClone(layout) }
       changed = true
     }
+    // Per TAB, matching the tabsByWorktree loop above. This is the load-bearing fold: hydration
+    // iterates `unifiedTabs` for membership and never reads `tabsByWorktree`, so a tab whose
+    // unified record does not travel is invisible in the tab bar no matter what else is hoisted.
+    //
+    // Whole-record-per-worktree was wrong because this plane is LIVE: once local has any record
+    // for the worktree, every tab the CLI or a headless surface later adds to the partition would
+    // be folded into tabsByWorktree — satisfying persistPtyBinding, so a Store-level oracle stays
+    // green — stamped as hoisted, and never reach unifiedTabs. Permanently invisible, for exactly
+    // the cohort this migration exists to serve.
     for (const [worktreeId, tabs] of Object.entries(partition.unifiedTabs ?? {})) {
-      if (local.unifiedTabs?.[worktreeId]) {
+      const localTabs = local.unifiedTabs?.[worktreeId]
+      if (!localTabs) {
+        local.unifiedTabs = { ...local.unifiedTabs, [worktreeId]: structuredClone(tabs) }
+        changed = true
         continue
       }
-      local.unifiedTabs = { ...local.unifiedTabs, [worktreeId]: structuredClone(tabs) }
+      const known = new Set(localTabs.map((tab) => tab.id))
+      const additions = (tabs ?? []).filter((tab) => !known.has(tab.id))
+      if (additions.length === 0) {
+        continue
+      }
+      local.unifiedTabs = {
+        ...local.unifiedTabs,
+        [worktreeId]: [...localTabs, ...structuredClone(additions)]
+      }
       changed = true
     }
     for (const [worktreeId, groupId] of Object.entries(partition.activeGroupIdByWorktree ?? {})) {
