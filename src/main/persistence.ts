@@ -7537,8 +7537,20 @@ export class Store {
     } else {
       this.state.sshRemotePtyLeases.push(next)
     }
-    this.supersedeSiblingLeasesForPane(next, now)
-    this.flush()
+    const undoSupersession = this.supersedeSiblingLeasesForPane(next, now)
+    if (this.quitFlushStarted) {
+      // Why: flushOrThrow rejects during quit where flush() returns early; rolling back here would
+      // discard a retirement for a write that was never going to happen this run.
+      this.flush()
+      return
+    }
+    try {
+      this.flushOrThrow()
+    } catch (err) {
+      undoSupersession()
+      this.scheduleSave()
+      console.error('[persistence] Failed to persist pane lease supersession:', err)
+    }
   }
 
   /**
@@ -7551,12 +7563,15 @@ export class Store {
    * Superseded leases are marked `expired`, not terminated: the remote shell is
    * deliberately left running, because losing a lease is not proof the shell died.
    */
-  private supersedeSiblingLeasesForPane(winner: SshRemotePtyLease, now: number): void {
+  /** Returns an undo closure so a failed flush cannot leave memory claiming a retirement disk
+   *  never recorded — the same protection the async twin already has. */
+  private supersedeSiblingLeasesForPane(winner: SshRemotePtyLease, now: number): () => void {
+    const noop = (): void => {}
     if (!winner.worktreeId || !winner.tabId || !winner.leafId) {
-      return
+      return noop
     }
     if (winner.state === 'terminated' || winner.state === 'expired') {
-      return
+      return noop
     }
     // Why consult the binding here: at upsert time the caller's lease may not be
     // the one the pane is bound to yet. Expiring the bound predecessor would
@@ -7564,9 +7579,10 @@ export class Store {
     // binding in hand.
     const boundPtyId = this.durablyBoundPtyIdForPane(winner.targetId, winner.tabId, winner.leafId)
     if (boundPtyId && boundPtyId !== winner.ptyId) {
-      return
+      return noop
     }
     const superseded: SshRemotePtyLease[] = []
+    const restore: (() => void)[] = []
     for (const lease of this.state.sshRemotePtyLeases ?? []) {
       if (
         lease.ptyId !== winner.ptyId &&
@@ -7584,6 +7600,12 @@ export class Store {
         if (lease.state === 'terminated') {
           continue
         }
+        const priorState = lease.state
+        const priorUpdatedAt = lease.updatedAt
+        restore.push(() => {
+          lease.state = priorState
+          lease.updatedAt = priorUpdatedAt
+        })
         lease.state = 'expired'
         lease.updatedAt = now
         this.advanceSshRemotePtyLeaseMutationVersion(lease)
@@ -7593,6 +7615,11 @@ export class Store {
     // Why: matching on lease ptyId first means this scrubs only the predecessor's
     // stale binding — the winner's own binding cannot match and is left intact.
     this.clearSshRemotePtyBindingsForLeases(winner.targetId, superseded, 'local')
+    return () => {
+      for (const undo of restore) {
+        undo()
+      }
+    }
   }
 
   /** The PTY a pane is durably bound to. The desktop plane's home is `local` — the renderer is its
