@@ -52,15 +52,52 @@ export function readHostKeyType(key: Buffer): string | undefined {
   return key.subarray(4, 4 + length).toString('utf8')
 }
 
+/**
+ * Whether the blob is exactly consumed by its own SSH-wire structure.
+ *
+ * A public key blob is a run of length-prefixed fields — name, then the algorithm's parameters — and
+ * nothing else. Checking only the algorithm header leaves trailing bytes undetected, and ssh parses
+ * the whole structure: verified live against OpenSSH 10.2p1, a valid ed25519 key with four extra
+ * base64 characters appended is still valid base64 and still reports `ssh-ed25519`, but ssh reports
+ * "No ED25519 host key is known" and drops the line, where we decoded 54 bytes instead of 51 and
+ * raised a CHANGED alarm from an entry the user's own ssh ignores.
+ *
+ * Deliberately algorithm-agnostic: the field walk is the same for every key type, so a type we do
+ * not model is checked as well as one we do.
+ */
+function isWellFormedHostKeyBlob(key: Buffer): boolean {
+  let offset = 0
+  while (offset < key.length) {
+    if (offset + 4 > key.length) {
+      return false
+    }
+    const fieldLength = key.readUInt32BE(offset)
+    offset += 4
+    if (fieldLength > key.length - offset) {
+      return false
+    }
+    offset += fieldLength
+  }
+  return offset === key.length
+}
+
 /** `SHA256:...` exactly as `ssh-keygen -lf` prints it, base64 with padding stripped. */
 export function formatHostKeyFingerprint(sha256Base64: string): string {
   return `SHA256:${sha256Base64.replace(/=+$/, '')}`
 }
 
 function decodeKey(raw: string): Buffer | undefined {
-  // Why the round-trip check: Buffer.from never throws on bad base64, it silently truncates.
+  // Buffer.from never throws on bad base64 — it silently SKIPS invalid characters, so `<valid>!!!`
+  // and a blob with `@@` spliced into it both decode to the same correct key. ssh rejects those
+  // lines outright ("parse error in hostkeys file"), so accepting them grants trust from a line the
+  // user's own ssh ignores; `<valid>AAAA` is worse still, decoding to different bytes that still
+  // parse, which reads as a CHANGED key. Re-encoding and comparing is what makes us as strict.
   const decoded = Buffer.from(raw, 'base64')
-  return decoded.length > 0 ? decoded : undefined
+  if (decoded.length === 0) {
+    return undefined
+  }
+  const canonical = decoded.toString('base64').replace(/=+$/, '')
+  return canonical === raw.replace(/=+$/, '') ? decoded : undefined
 }
 
 function parseHashedPatterns(field: string): KnownHostsEntry['hashed'] | undefined {
@@ -71,7 +108,10 @@ function parseHashedPatterns(field: string): KnownHostsEntry['hashed'] | undefin
   }
   const salt = Buffer.from(parts[2] ?? '', 'base64')
   const hash = Buffer.from(parts[3] ?? '', 'base64')
-  if (salt.length === 0 || hash.length !== SHA1_DIGEST_BYTES) {
+  // ssh requires BOTH to be exactly one SHA1 digest — extract_salt rejects anything else with
+  // "expected salt len 20, got N". Accepting a shorter salt would let us match a line ssh treats as
+  // a parse error, so the entry would be invisible to the user's own ssh but trusted by us.
+  if (salt.length !== SHA1_DIGEST_BYTES || hash.length !== SHA1_DIGEST_BYTES) {
     return undefined
   }
   return { salt, hash }
@@ -109,7 +149,7 @@ export function parseKnownHostsLine(line: string): KnownHostsEntry | undefined {
   }
 
   const key = decodeKey(keyBase64)
-  if (!key || readHostKeyType(key) !== keyType) {
+  if (!key || readHostKeyType(key) !== keyType || !isWellFormedHostKeyBlob(key)) {
     return undefined
   }
 

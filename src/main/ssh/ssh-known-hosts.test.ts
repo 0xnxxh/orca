@@ -253,6 +253,60 @@ describe('matching a presented key', () => {
  * client's verdict recorded from its own output. Everything else in this file states what we believe
  * ssh does; these state what it did.
  */
+describe('lines ssh itself refuses to parse', () => {
+  const ED = 'AAAAC3NzaC1lZDI1NTE5AAAAIKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
+
+  // Buffer.from SKIPS invalid base64 characters instead of failing, so each of these decodes to
+  // something. Verified live against OpenSSH 10.2p1 on 127.0.0.1:2224: the valid control reached
+  // authentication and ALL THREE of these produced "No ED25519 host key is known" — ssh drops the
+  // line. Honouring them means granting trust from a line the user's own ssh ignores, and for the
+  // padded variant it means raising a CHANGED alarm from one.
+  it.each([
+    ['trailing junk', `${ED}!!!`],
+    ['invalid characters spliced into the middle', ED.replace(/^(.{20})/, '$1@@')]
+  ])('drops a key field with %s, as ssh does', (_label, keyField) => {
+    expect(parseKnownHostsLine(`example.com ssh-ed25519 ${keyField}`)).toBeUndefined()
+  })
+
+  // Still VALID base64 — 68 characters plus 4 is a legal length — and the algorithm header still
+  // reads ssh-ed25519, so neither the base64 check nor the header check catches it. ssh parses the
+  // whole key structure and drops the line; we decoded 54 bytes where the key is 51 and reported a
+  // CHANGED alarm from an entry ssh ignores.
+  it('drops a key blob with trailing bytes its own structure does not account for', () => {
+    expect(parseKnownHostsLine(`example.com ssh-ed25519 ${ED}AAAA`)).toBeUndefined()
+  })
+
+  it('drops a key blob whose own length prefix overruns the buffer', () => {
+    const overrun = Buffer.concat([
+      Buffer.from([0, 0, 0, 11]),
+      Buffer.from('ssh-ed25519'),
+      Buffer.from([0, 0, 0, 99])
+    ])
+    expect(
+      parseKnownHostsLine(`example.com ssh-ed25519 ${overrun.toString('base64')}`)
+    ).toBeUndefined()
+  })
+
+  it('still accepts the unmodified key field', () => {
+    expect(parseKnownHostsLine(`example.com ssh-ed25519 ${ED}`)).toBeDefined()
+  })
+
+  // ssh's extract_salt demands exactly one SHA1 digest: "expected salt len 20, got 16". A shorter
+  // salt is still a usable HMAC key for us, so we could match a hand-crafted line that is invisible
+  // to the user's ssh. ssh-keygen -H always writes 20 bytes, so refusing loses no real entry.
+  it('drops a hashed entry whose salt is not a full SHA1 digest', () => {
+    const shortSalt = Buffer.alloc(16, 1).toString('base64')
+    const hash = Buffer.alloc(20, 2).toString('base64')
+    expect(parseKnownHostsLine(`|1|${shortSalt}|${hash} ssh-ed25519 ${ED}`)).toBeUndefined()
+  })
+
+  it('accepts a hashed entry whose salt is a full SHA1 digest', () => {
+    const salt = Buffer.alloc(20, 1).toString('base64')
+    const hash = Buffer.alloc(20, 2).toString('base64')
+    expect(parseKnownHostsLine(`|1|${salt}|${hash} ssh-ed25519 ${ED}`)).toBeDefined()
+  })
+})
+
 describe('agreement with a live OpenSSH client', () => {
   const SERVER_KEY = 'AAAAC3NzaC1lZDI1NTE5AAAAIM2eSSqUqU9LERdg8qNjFiU59unM+JyfwFHLkMxR13oq'
   const OTHER_KEY = 'AAAAC3NzaC1lZDI1NTE5AAAAIKmVZ4Z+MJ3VYnZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm'
