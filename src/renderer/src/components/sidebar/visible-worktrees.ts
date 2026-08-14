@@ -1,7 +1,12 @@
 import type { Repo } from '../../../../shared/repo-types'
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
 import type { WorktreeLineage } from '../../../../shared/worktree/lineage-types'
-import type { Worktree } from '../../../../shared/worktree/types'
+import type {
+  Worktree,
+  WorkspaceStatus,
+  WorkspaceStatusDefinition
+} from '../../../../shared/worktree/types'
+import { getWorkspaceStatus } from '../../../../shared/workspace-statuses'
 import { buildWorktreeComparator, sortWorktreesSmart } from './smart-sort'
 import { getWorktreeIdsWithLiveAgent, isInactiveWorkspace } from '@/lib/worktree-activity-state'
 import { useAppStore } from '@/store'
@@ -10,7 +15,6 @@ import {
   getRepoMapFromState,
   getWorktreeMapFromState
 } from '@/store/selectors'
-import { DEFAULT_SHOW_SLEEPING_WORKSPACES } from '../../../../shared/constants'
 import {
   ALL_EXECUTION_HOSTS_SCOPE,
   getSettingsFocusedExecutionHostId,
@@ -82,87 +86,6 @@ export function isDetachedHeadWorkspace(worktree: Worktree): boolean {
   return getWorktreeGitIdentityDisplay(worktree)?.kind === 'detached'
 }
 
-/** Inputs describing sidebar filter settings that the Clear Filters path owns. */
-export type SidebarFilterState = {
-  showSleepingWorkspaces: boolean
-  filterRepoIds: readonly string[]
-  hideDefaultBranchWorkspace: boolean
-  hideAutomationGeneratedWorkspaces: boolean
-  hideCliCreatedWorkspaces: boolean
-  hideDetachedHeadWorkspaces: boolean
-  hideWorkspacesFromOtherDevices: boolean
-  /** Keeps each project's main workspace out of the "Hide sleeping" sweep; absent means on. */
-  alwaysShowDefaultBranchWorkspace?: boolean
-  visibleWorkspaceHostIds?: readonly ExecutionHostId[] | null
-  workspaceHostScope?: ExecutionHostScope
-}
-
-/**
- * Whether at least one sidebar filter is active — drives the "Clear Filters"
- * escape hatch in the empty-state message. Kept pure so it can be unit-tested
- * alongside the sorting pipeline.
- *
- * Why include hideDefaultBranchWorkspace here: without it, a user whose only
- * worktree is the default-branch row and who toggles hide-on would see the
- * "No workspaces found" message with no in-sidebar recovery path.
- */
-export function sidebarHasActiveFilters(state: SidebarFilterState): boolean {
-  return (
-    state.showSleepingWorkspaces !== DEFAULT_SHOW_SLEEPING_WORKSPACES ||
-    state.filterRepoIds.length > 0 ||
-    state.hideDefaultBranchWorkspace ||
-    state.hideAutomationGeneratedWorkspaces ||
-    state.hideCliCreatedWorkspaces ||
-    state.hideDetachedHeadWorkspaces ||
-    state.hideWorkspacesFromOtherDevices ||
-    // Why: turning this off is the only way to narrow the list below the
-    // default, so Clear Filters must be able to undo it like any other filter.
-    state.alwaysShowDefaultBranchWorkspace === false ||
-    state.visibleWorkspaceHostIds != null ||
-    (state.workspaceHostScope != null && state.workspaceHostScope !== ALL_EXECUTION_HOSTS_SCOPE)
-  )
-}
-
-/** Describes which mutators the Clear Filters button must invoke, separated
- *  from the mutators themselves so the decision logic is testable. */
-export type ClearFilterActions = {
-  resetShowSleepingWorkspaces: boolean
-  resetFilterRepoIds: boolean
-  resetHideDefaultBranchWorkspace: boolean
-  resetHideAutomationGeneratedWorkspaces: boolean
-  resetHideCliCreatedWorkspaces: boolean
-  resetHideDetachedHeadWorkspaces: boolean
-  resetHideWorkspacesFromOtherDevices: boolean
-  resetAlwaysShowDefaultBranchWorkspace: boolean
-  resetVisibleWorkspaceHostIds: boolean
-}
-
-/**
- * Determines which sidebar filters the Clear Filters button needs to reset.
- * Returning an explicit action plan (rather than just calling the setters)
- * keeps the pure decision separate from the impure mutations, so tests can
- * verify the logic without mounting the component.
- *
- * Why reset only the ones that are set: keeps Clear Filters from churning
- * UI state (and the debounced ui.set write-back) on every click when the
- * flag was already off.
- */
-export function computeClearFilterActions(state: SidebarFilterState): ClearFilterActions {
-  return {
-    resetShowSleepingWorkspaces: state.showSleepingWorkspaces !== DEFAULT_SHOW_SLEEPING_WORKSPACES,
-    resetFilterRepoIds: state.filterRepoIds.length > 0,
-    resetHideDefaultBranchWorkspace: state.hideDefaultBranchWorkspace,
-    resetHideAutomationGeneratedWorkspaces: state.hideAutomationGeneratedWorkspaces,
-    resetHideCliCreatedWorkspaces: state.hideCliCreatedWorkspaces,
-    resetHideDetachedHeadWorkspaces: state.hideDetachedHeadWorkspaces,
-    resetHideWorkspacesFromOtherDevices: state.hideWorkspacesFromOtherDevices,
-    resetAlwaysShowDefaultBranchWorkspace: state.alwaysShowDefaultBranchWorkspace === false,
-    resetVisibleWorkspaceHostIds:
-      state.visibleWorkspaceHostIds != null ||
-      (state.workspaceHostScope != null && state.workspaceHostScope !== ALL_EXECUTION_HOSTS_SCOPE)
-  }
-}
-
 /**
  * Shared pure utility that computes the ordered list of visible (non-archived,
  * non-filtered) worktree IDs. Both the App-level Cmd+1–9 handler and
@@ -178,6 +101,17 @@ export function computeVisibleWorktreeIds(
   sortedIds: string[],
   opts: {
     filterRepoIds: readonly string[]
+    /**
+     * Selected workspace-status ids; empty shows every status.
+     *
+     * Why optional, and why paired with `workspaceStatuses`: resolving a
+     * worktree's effective status needs the live catalog to fall back on. A
+     * caller that passes ids without the catalog would resolve every row to the
+     * default id and narrow the list to one status, so the pair fails *open* —
+     * omit either and no status filtering happens.
+     */
+    filterWorkspaceStatuses?: readonly WorkspaceStatus[]
+    workspaceStatuses?: readonly WorkspaceStatusDefinition[]
     showSleepingWorkspaces: boolean
     tabsByWorktree: Record<string, Pick<TerminalTab, 'id'>[]> | null
     ptyIdsByTabId: Record<string, string[]> | null
@@ -259,6 +193,16 @@ export function computeVisibleWorktreeIds(
   if (opts.filterRepoIds.length > 0) {
     const selectedRepoIds = new Set(opts.filterRepoIds)
     all = all.filter((w) => selectedRepoIds.has(w.repoId))
+  }
+
+  // Filter by workspace (card) status. Empty selection shows every status.
+  // Why here and not per row at render time: workspaceStatus is a plain field
+  // on the worktree, so this is one O(worktrees) pass with a Set lookup inside
+  // the pipeline that already runs once per filter/sort snapshot.
+  if (opts.filterWorkspaceStatuses?.length && opts.workspaceStatuses) {
+    const selectedStatusIds = new Set(opts.filterWorkspaceStatuses)
+    const statuses = opts.workspaceStatuses
+    all = all.filter((w) => selectedStatusIds.has(getWorkspaceStatus(w, statuses)))
   }
 
   if (!opts.showSleepingWorkspaces) {
@@ -411,6 +355,8 @@ export function getVisibleWorktreeIds(): string[] {
 
   const visibleIds = computeVisibleWorktreeIds(state.worktreesByRepo, sortedIds, {
     filterRepoIds: state.filterRepoIds,
+    filterWorkspaceStatuses: state.filterWorkspaceStatuses,
+    workspaceStatuses: state.workspaceStatuses,
     showSleepingWorkspaces: state.showSleepingWorkspaces,
     tabsByWorktree: state.tabsByWorktree,
     ptyIdsByTabId: state.ptyIdsByTabId,

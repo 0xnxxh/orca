@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { computeVisibleWorktreeIds, type SidebarFilterState } from './visible-worktrees'
+import { computeVisibleWorktreeIds } from './visible-worktrees'
+import type { SidebarFilterState } from './sidebar-filter-state'
 import { isDefaultBranchWorkspace } from './default-branch-workspace'
 import type { Repo } from '../../../../shared/repo-types'
 import type { Worktree } from '../../../../shared/worktree/types'
