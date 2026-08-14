@@ -6,7 +6,7 @@ import {
 import {
   effectiveWorktreeSourceVisibility,
   type WorktreeVisibilitySourceMatcher
-} from './worktree-visibility-sources'
+} from './worktree/visibility-sources'
 import type { GlobalSettings, Repo, Worktree, WorktreeOwnership } from './types'
 
 export function shouldShowWorktree(args: {

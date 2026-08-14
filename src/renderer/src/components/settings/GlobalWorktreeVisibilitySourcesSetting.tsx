@@ -7,11 +7,11 @@ import type {
 import {
   MAX_CUSTOM_WORKTREE_VISIBILITY_SOURCES,
   normalizeCustomWorktreeVisibilitySources
-} from '../../../../shared/worktree-visibility-sources'
+} from '../../../../shared/worktree/visibility-sources'
 import {
   buildDefaultWorktreeSourcePreferenceUpdate,
   removeDefaultCustomWorktreeSourcePreference
-} from '../../../../shared/worktree-visibility-source-preferences'
+} from '../../../../shared/worktree/visibility-source-preferences'
 import WorktreeVisibilitySourceList, {
   type WorktreeVisibilitySourceAddResult,
   type WorktreeVisibilitySourceRow

@@ -2,7 +2,7 @@ import { normalizeRuntimePathSeparators } from './cross-platform-path'
 import {
   normalizeCustomWorktreeVisibilitySources,
   normalizeWorktreeVisibilitySourcePreferences
-} from './worktree-visibility-sources'
+} from './worktree/visibility-sources'
 import type { ExternalWorktreeVisibility, Repo, WorktreeVisibilityDefaults } from './types'
 
 export const EXTERNAL_WORKTREE_VISIBILITY_ROLLOUT_AT = Date.UTC(2026, 4, 23)

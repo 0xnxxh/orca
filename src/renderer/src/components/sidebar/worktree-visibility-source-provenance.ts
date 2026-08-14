@@ -10,7 +10,7 @@ import {
   effectiveDefaultCustomWorktreeSourceVisibility,
   normalizeCustomWorktreeVisibilitySources,
   normalizeWorktreeVisibilitySourcePreferences
-} from '../../../../shared/worktree-visibility-sources'
+} from '../../../../shared/worktree/visibility-sources'
 import type { WorktreeVisibilitySourceRow } from './WorktreeVisibilitySourceList'
 
 export type WorktreeVisibilitySourceProvenance = {

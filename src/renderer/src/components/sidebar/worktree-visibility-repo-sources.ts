@@ -7,7 +7,7 @@ import type {
 import {
   normalizeCustomWorktreeVisibilitySources,
   resolveCustomWorktreeVisibilitySources
-} from '../../../../shared/worktree-visibility-sources'
+} from '../../../../shared/worktree/visibility-sources'
 import { getRepoHostIdentity } from '@/store/slices/repo-host-identity'
 
 export function getLatestRepoForVisibilityScope(scope: string): Repo | null {

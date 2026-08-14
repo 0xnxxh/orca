@@ -10,8 +10,8 @@ import {
 import {
   effectiveBuiltInWorktreeSourceVisibility,
   effectiveCustomWorktreeSourceVisibility
-} from '../../../../shared/worktree-visibility-sources'
-import { buildWorktreeSourcePreferenceUpdate } from '../../../../shared/worktree-visibility-source-preferences'
+} from '../../../../shared/worktree/visibility-sources'
+import { buildWorktreeSourcePreferenceUpdate } from '../../../../shared/worktree/visibility-source-preferences'
 import type { RepoUpdate } from '@/store/slices/repos'
 import type { WorktreeVisibilitySourceRow } from './WorktreeVisibilitySourceList'
 
