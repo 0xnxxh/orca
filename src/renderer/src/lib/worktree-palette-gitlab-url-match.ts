@@ -28,11 +28,16 @@ function gitLabLinksEqual(left: GitLabIssueOrMRLink, right: GitLabIssueOrMRLink)
 
 /** Tri-state like `repoMatchesGitHubSlug`: `'unknown'` stays permissive for forks and host aliases. */
 function repoMatchesGitLabSlug(repo: Repo | undefined, slug: ProjectSlug): boolean | 'unknown' {
-  const canonicalKey = repo?.gitRemoteIdentity?.canonicalKey
-  if (!canonicalKey) {
+  const identity = repo?.gitRemoteIdentity
+  if (!identity?.canonicalKey) {
     return 'unknown'
   }
-  return canonicalKey.replace(/\/+$/, '').toLowerCase() === gitLabProjectKey(slug)
+  if (identity.canonicalKey.replace(/\/+$/, '').toLowerCase() === gitLabProjectKey(slug)) {
+    return true
+  }
+  // Why not false: identity keeps one remote and prefers `upstream`, so a fork's own `origin` is
+  // invisible here. Rejecting would drop MR URLs from the fork the user actually checked out.
+  return identity.remoteName === 'upstream' ? 'unknown' : false
 }
 
 export function worktreeMatchesGitLabUrl(

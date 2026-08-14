@@ -282,6 +282,33 @@ describe('matchWorktreePaletteTaskUrl', () => {
     ).toMatchObject({ matchedField: 'pr' })
   })
 
+  it('stays permissive for a fork whose identity resolved to the upstream remote', () => {
+    // `deriveGitRemoteIdentity` prefers `upstream`, so the fork's own `origin` is not visible here.
+    const forkRepo: Repo = {
+      ...gitLabRepo('gitlab.com/acme/orca'),
+      gitRemoteIdentity: {
+        canonicalKey: 'gitlab.com/acme/orca',
+        remoteName: 'upstream',
+        remoteUrl: 'git@gitlab.com:acme/orca.git'
+      }
+    }
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedGitLabMR: 17 }),
+        intent: parseCmdJTaskSourceUrl('https://gitlab.com/me/orca/-/merge_requests/17')!,
+        repo: forkRepo
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+    // An `origin`-derived identity is authoritative, so a different project still loses.
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedGitLabMR: 17 }),
+        intent: parseCmdJTaskSourceUrl('https://gitlab.com/me/orca/-/merge_requests/17')!,
+        repo: gitLabRepo('gitlab.com/acme/orca')
+      })
+    ).toBeNull()
+  })
+
   it('matches both GitLab issue URL forms and rejects other projects', () => {
     for (const url of [
       'https://gitlab.com/acme/orca/-/issues/17',
