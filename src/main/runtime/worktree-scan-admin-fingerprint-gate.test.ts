@@ -1,5 +1,6 @@
 // The fingerprint's own behaviour is covered against real Git in repo-worktree-admin-fingerprint.test.ts.
 // This suite pins the cache wiring: when the probe may skip a `git worktree list`, and when it may not.
+// Also listed in pr.yml's Windows boundary step, so the gate's repo-path handling stays honest there.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electronMocks = vi.hoisted(() => {

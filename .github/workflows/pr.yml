@@ -429,11 +429,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Why these files: each one asserts a boundary the Linux shards cannot reach.
-      # The worktree fingerprint reads Git's admin layout directly (`.git` files,
-      # `commondir`, per-worktree `HEAD`/`gitdir`/`locked`), so it depends on Windows
-      # path resolution, CRLF in those files, and whether `worktree move`/`lock` and
-      # deleting a live checkout behave as they do on POSIX.
       - name: Test Windows-specific boundaries
         run: >-
           pnpm exec vitest run --config config/vitest.config.ts
