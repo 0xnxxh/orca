@@ -6590,6 +6590,25 @@ export class Store {
     return normalizeExecutionHostId(hostId) ?? LOCAL_EXECUTION_HOST_ID
   }
 
+  /**
+   * Re-run the partition hoist against current state.
+   *
+   * Why this is not construction-only: `ssh:<target>` is a LIVE plane. A tab the CLI or a headless
+   * surface creates mid-session lands there, `local` never learns of it, and a reattach then
+   * refuses it as `noTab` — the shell runs on unbound and its tab stays invisible until the app
+   * restarts. Re-hoisting on that refusal closes the window without polling.
+   */
+  hoistSshPartitionsNow(): boolean {
+    const changed = hoistSshPartitionsIntoLocalSession(
+      this.state,
+      this.state.workspaceSessionsByHostId
+    )
+    if (changed) {
+      this.scheduleSave()
+    }
+    return changed
+  }
+
   /** Read once, immediately after a refused `persistPtyBinding`. Clearing on read keeps a stale
    *  reason from being attributed to a later call that never set one. */
   consumePtyBindingRefusalReason(): PtyBindingRefusalReason | undefined {
