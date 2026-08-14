@@ -130,22 +130,6 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
       replaceWorkspaceKeys
     })
     currentStore.hydrateTabsSession(merged, { replaceWorkspaceKeys })
-    // KNOWN DEFECT, deliberately not repaired here (STA-3077 follow-up).
-    //
-    // A remote snapshot is terminal-only: `RemoteWorkspaceSession` has no `unifiedTabs` or
-    // `tabGroups` field to carry, so replacing `tabsByWorktree` leaves the tab model inconsistent
-    // in BOTH directions — remote tabs that no group's `tabOrder` names, and group entries naming
-    // a local tab whose record the replace removed. The tab bar renders from `tabOrder`, so those
-    // tabs exist and are invisible. Same user-visible symptom as the partition-upgrade bug, but
-    // reachable with no partition at all: a fresh client, a reset profile, or tabs created from
-    // another client. The load-time partition hoist does NOT cover it.
-    //
-    // `reconcileWorktreeTabModel` already adopts reconnectable records and prunes unrenderable
-    // ones, and calling it here is the obvious fix — but doing so breaks
-    // "converges the active-terminal repair instead of re-running it forever", i.e. it reopens a
-    // repair loop. Any fix has to converge; the durable answer is probably to teach the snapshot
-    // to carry the group model, which is a capability-negotiated wire change.
-    //
     // Why: direct SSH snapshots project terminal state only; global editor/browser hydration would reset unrelated hosts.
     currentStore.markRemoteWorkspaceHydrated(authority.targetId)
     currentStore.setRemoteWorkspaceSyncStatus(authority.targetId, {
@@ -179,6 +163,15 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
     }
     if (isArrivalCurrent(authority.targetId, arrival) && isPreparationTokenCurrent(token)) {
       finalizeHydratedTerminals(authority)
+      // Why here and not beside the hydrate above: a snapshot is terminal-only —
+      // `RemoteWorkspaceSession` has no `unifiedTabs`/`tabGroups` to carry — so replacing
+      // `tabsByWorktree` leaves tabs that no group's `tabOrder` names, and the tab bar renders
+      // from `tabOrder`. Those tabs exist and are invisible. Reconciling earlier does NOT work:
+      // hydration nulls `ptyId`, so before reconnect rebinds the panes the records own no PTY,
+      // the orphan sweep classifies them as dead and DELETES them rather than adopting them.
+      for (const worktreeId of replaceWorkspaceKeys) {
+        store.getState().reconcileWorktreeTabModel(worktreeId)
+      }
     }
   } finally {
     snapshotWriteSuppressUntil = Date.now() + REMOTE_WORKSPACE_SNAPSHOT_WRITE_SUPPRESS_MS
