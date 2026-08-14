@@ -322,6 +322,38 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       ).toBeUndefined()
     })
 
+    // The reset on entry is the only thing stopping one call's reason being attributed to the
+    // next. It matters whenever a reason goes unconsumed — which the store type now permits,
+    // since `consumePtyBindingRefusalReason` is optional on the caller's view of the store.
+    it('does not carry a reason over from a previous refusal that was never consumed', async () => {
+      const store = await createStore()
+      store.setWorkspaceSession(paneSession() as never)
+
+      // A membership refusal whose reason is deliberately NOT consumed.
+      store.persistPtyBinding({
+        worktreeId: WORKTREE,
+        tabId: TAB,
+        leafId: LEAF_TWO,
+        ptyId: PTY,
+        mayCreate: false
+      })
+
+      // A compare-and-set refusal, which must record nothing of its own.
+      store.persistPtyBinding({
+        worktreeId: WORKTREE,
+        tabId: TAB,
+        leafId: LEAF,
+        ptyId: PTY,
+        mayCreate: false,
+        expectedBinding: { ptyId: 'a-pty-that-does-not-own-this-pane' }
+      })
+
+      expect(
+        store.consumePtyBindingRefusalReason(),
+        'a stale reason from an earlier call was attributed to a lost ownership race'
+      ).toBeUndefined()
+    })
+
     it('reports noMembership when the tab is live but the leaf is not in its layout', async () => {
       const store = await createStore()
       // A live tab with a layout that does not contain the leaf being bound.
