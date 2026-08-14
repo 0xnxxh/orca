@@ -5,8 +5,8 @@ import type {
 import {
   isRuntimeOwnedSshTargetId,
   LOCAL_EXECUTION_HOST_ID,
-  normalizeExecutionHostScope,
-  parseExecutionHostId
+  parseExecutionHostId,
+  requestedExecutionHostScope
 } from '../../shared/execution-host'
 import type { RuntimeOwnedSshAiVaultHost } from '../ai-vault/runtime-owned-ssh-session-list'
 import { resolveLocalAiVaultSessionTitles } from '../ai-vault/session-title-resolver'
@@ -34,9 +34,7 @@ export async function resolveAiVaultSessionTitlesByHost(
     resolveRuntimeOwnedSsh?: RuntimeOwnedSshAiVaultSessionTitleResolver
   } = {}
 ): Promise<AiVaultSessionTitlesResult> {
-  const executionHostScope = normalizeExecutionHostScope(
-    args.executionHostScope ?? LOCAL_EXECUTION_HOST_ID
-  )
+  const executionHostScope = requestedExecutionHostScope(args.executionHostScope)
   if (executionHostScope === LOCAL_EXECUTION_HOST_ID) {
     return resolveLocalAiVaultSessionTitles(args.requests)
   }

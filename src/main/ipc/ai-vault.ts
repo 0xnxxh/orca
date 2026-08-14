@@ -21,7 +21,7 @@ import {
 } from '../../shared/ai-vault-types'
 import { handleAiVaultGetFirstUserPrompt } from '../ai-vault/session-first-user-prompt-handler'
 import { registerAiVaultResumeHandler, type AiVaultResumeHandlerOptions } from './ai-vault-resume'
-import { LOCAL_EXECUTION_HOST_ID, normalizeExecutionHostScope } from '../../shared/execution-host'
+import { LOCAL_EXECUTION_HOST_ID, requestedExecutionHostScope } from '../../shared/execution-host'
 import { createSenderScopedRequestCancellations } from './sender-scoped-request-cancellation'
 import type { RuntimeAiVaultHostInfo, RuntimeAiVaultScanner } from './ai-vault-runtime-scan'
 import {
@@ -77,9 +77,7 @@ async function listAiVaultSessions(
   args?: AiVaultListArgs,
   options: { signal?: AbortSignal } = {}
 ): Promise<AiVaultListResult> {
-  const executionHostScope = normalizeExecutionHostScope(
-    args?.executionHostScope ?? LOCAL_EXECUTION_HOST_ID
-  )
+  const executionHostScope = requestedExecutionHostScope(args?.executionHostScope)
   // Scope paths change the result set, so they must be part of the cache key.
   // A scanner consumes at most 64 paths, so smaller equivalent workspace sets
   // can share a snapshot regardless of which worktree was selected first.
