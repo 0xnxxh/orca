@@ -177,24 +177,52 @@ import type {
   AutomationUpdateInput,
   AutomationWorkspaceMode
 } from '../../shared/automations-types'
+import type { DirEntry, FilesystemPathFlavor } from '../../shared/filesystem-entry-types'
+import type { FolderWorkspace, WorkspaceKey } from '../../shared/folder-workspace-types'
 import type {
-  AutomationWorkspaceProvenance,
-  CliWorkspaceProvenance,
-  BaseRefSearchResult,
-  CreateWorktreeResult,
-  DetectedWorktree,
-  DetectedWorktreeListResult,
-  ForceDeleteWorktreeBranchResult,
-  GitHubPrStartPoint,
-  GitPushTarget,
-  BranchPrefixStrategy,
-  GitWorktreeInfo,
+  GitHubPRReviewCommentInput,
+  GitHubReactionContent
+} from '../../shared/github/comment-types'
+import type { PRRefreshOutcome } from '../../shared/github/pull-request-refresh-types'
+import type { GitHubOwnerRepo, GitHubPRFile } from '../../shared/github/pull-request-types'
+import type { ListWorkItemsResult } from '../../shared/github/work-item-types'
+import type {
+  GitLabIssueUpdate,
+  GitLabMRInlineCommentInput,
+  GitLabProjectRef,
+  GitLabWorkItem,
+  MRListState
+} from '../../shared/gitlab-types'
+import type { GlobalSettings } from '../../shared/global-settings-types'
+import type {
   GitHubCreateIssueFields,
-  GitHubOwnerRepo,
-  GlobalSettings,
-  PersistedUIState,
+  GitHubIssueUpdate,
+  GitHubPullRequestStateUpdate,
+  LinearIssueUpdate
+} from '../../shared/issue-mutation-types'
+import type {
+  JiraConnectArgs,
+  JiraCreateIssueArgs,
+  JiraIssueFilter,
+  JiraIssueUpdate,
+  JiraSiteSelection
+} from '../../shared/jira-types'
+import type { LinearCustomViewModel, LinearProjectSummary } from '../../shared/linear/project-types'
+import type { LinearWorkspaceSelection } from '../../shared/linear/workspace-types'
+import type {
+  ClaudeRateLimitAccountsState,
+  CodexRateLimitAccountsState
+} from '../../shared/managed-account-types'
+import type { PersistedUIState } from '../../shared/persisted-ui-state-types'
+import type { MemorySnapshot, StatsSummary } from '../../shared/process-stats-types'
+import type {
+  NestedRepoScanResult,
+  ProjectGroup,
+  ProjectGroupImportMode,
+  ProjectGroupImportResult
+} from '../../shared/project-group-types'
+import type {
   Project,
-  ProjectUpdateArgs,
   ProjectHostSetup,
   ProjectHostSetupCloneArgs,
   ProjectHostSetupCreateArgs,
@@ -205,60 +233,47 @@ import type {
   ProjectHostSetupResult,
   ProjectHostSetupUpdateArgs,
   ProjectHostSetupUpdateResult,
-  Repo,
-  RemoveWorktreeResult,
-  StatsSummary,
-  Worktree,
-  WorktreeLineage,
-  WorkspaceLineage,
-  WorkspaceKey,
-  WorktreeLineageWarning,
-  WorktreeMeta,
-  WorktreeBaseStatusEvent,
-  WorktreeRemoteBranchConflictEvent,
-  WorktreeStartupLaunch,
-  LinearCustomViewModel,
-  JiraConnectArgs,
-  JiraCreateIssueArgs,
-  JiraIssueFilter,
-  JiraIssueUpdate,
-  JiraSiteSelection,
-  LinearIssueUpdate,
-  LinearProjectSummary,
-  LinearWorkspaceSelection,
-  NestedRepoScanResult,
-  ProjectGroup,
-  FolderWorkspace,
-  ProjectGroupImportMode,
-  ProjectGroupImportResult,
-  MemorySnapshot,
-  Tab,
-  TabGroupLayoutNode,
-  TerminalQuickCommand,
+  ProjectUpdateArgs
+} from '../../shared/project-types'
+import type { BaseRefSearchResult, Repo } from '../../shared/repo-types'
+import type { Tab, TabGroupLayoutNode } from '../../shared/tab-types'
+import type { TerminalQuickCommand } from '../../shared/terminal-quick-command-types'
+import type {
   TerminalLayoutSnapshot,
   TerminalPaneLayoutNode,
-  TerminalTab,
-  TuiAgent,
-  WorkspaceCreateTelemetrySource,
-  WorkspaceSessionState,
+  TerminalTab
+} from '../../shared/terminal-tab-types'
+import type { TuiAgent } from '../../shared/tui-agent'
+import type { BranchPrefixStrategy } from '../../shared/ui-chrome-types'
+import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
+import type { WorkspaceSource as WorkspaceCreateTelemetrySource } from '../../shared/workspace-source'
+import type {
+  WorktreeBaseStatusEvent,
+  WorktreeRemoteBranchConflictEvent
+} from '../../shared/worktree/base-ref-drift-types'
+import type {
+  CreateWorktreeResult,
+  ForceDeleteWorktreeBranchResult,
+  RemoveWorktreeResult
+} from '../../shared/worktree/create-types'
+import type { WorktreeStartupLaunch } from '../../shared/worktree/launch-types'
+import type {
+  WorkspaceLineage,
+  WorktreeLineage,
+  WorktreeLineageWarning
+} from '../../shared/worktree/lineage-types'
+import type { WorktreeMeta } from '../../shared/worktree/meta-types'
+import type {
+  AutomationWorkspaceProvenance,
+  CliWorkspaceProvenance,
+  DetectedWorktree,
+  DetectedWorktreeListResult,
+  GitHubPrStartPoint,
+  GitPushTarget,
+  GitWorktreeInfo,
   WorkspaceLinkedItem,
-  DirEntry,
-  FilesystemPathFlavor,
-  GitHubIssueUpdate,
-  GitHubPullRequestStateUpdate,
-  GitHubPRFile,
-  GitHubPRReviewCommentInput,
-  GitHubReactionContent,
-  GitLabIssueUpdate,
-  GitLabMRInlineCommentInput,
-  GitLabProjectRef,
-  GitLabWorkItem,
-  ListWorkItemsResult,
-  MRListState,
-  PRRefreshOutcome,
-  ClaudeRateLimitAccountsState,
-  CodexRateLimitAccountsState
-} from '../../shared/types'
+  Worktree
+} from '../../shared/worktree/types'
 import type { TaskSourceContext } from '../../shared/task-source-context'
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree/removal'
 import {

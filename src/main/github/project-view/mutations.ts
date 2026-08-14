@@ -18,7 +18,9 @@ import {
 } from './internals'
 import { classifyProjectError, rateLimitedError } from './project-error-classification'
 import { githubProjectHost } from '../../../shared/github/project-identity'
-import type { GitHubAssignableUser, GitHubWorkItemDetails, PRComment } from '../../../shared/types'
+import type { PRComment } from '../../../shared/github/comment-types'
+import type { GitHubAssignableUser } from '../../../shared/github/pull-request-types'
+import type { GitHubWorkItemDetails } from '../../../shared/github/work-item-types'
 import type {
   AddIssueCommentBySlugArgs,
   ClearProjectItemFieldArgs,

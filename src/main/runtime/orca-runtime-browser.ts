@@ -52,7 +52,7 @@ import type {
 import type {
   BrowserCertificateProceedResult,
   BrowserSessionUserAgentMode
-} from '../../shared/types'
+} from '../../shared/browser-workspace-types'
 import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
 import type { BrowserBackend } from '../browser/browser-backend'
 import { browserCertificateTrustController, browserManager } from '../browser/browser-manager'
