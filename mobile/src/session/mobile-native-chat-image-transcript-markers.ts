@@ -3,11 +3,14 @@
 // on the caption turn), and both render and echo reconciliation must
 // agree with desktop on how those marker turns are interpreted.
 export {
+  countImagePromptMarkers,
   imageSourcePathFromText,
   hasImagePromptMarker,
   isImageSourceUserTurn,
+  nativeChatUserMessageMatchText,
   normalizeImageTranscriptMessages,
   normalizeNativeChatUserText,
+  normalizeNativeChatUserTextWithLiteralFallback,
   normalizedNativeChatUserMessageText,
   stripImagePromptMarker
 } from '../../../src/shared/native-chat-image-transcript-markers'

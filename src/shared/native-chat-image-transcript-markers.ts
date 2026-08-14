@@ -1,4 +1,9 @@
-import { isTextBlock, type NativeChatBlock, type NativeChatMessage } from './native-chat-types'
+import {
+  isImageRefBlock,
+  isTextBlock,
+  type NativeChatBlock,
+  type NativeChatMessage
+} from './native-chat-types'
 
 const IMAGE_SOURCE_MARKER = /^\[Image:\s*source:\s*(.+?)\]\s*$/
 const IMAGE_PROMPT_MARKER = /\[Image #\d+\]/
@@ -40,17 +45,40 @@ export function normalizeNativeChatUserText(text: string): string {
   return stripImagePromptMarker(text).trim().replace(/\s+/g, ' ')
 }
 
+/** Marker text that stripping would erase entirely is text the user typed
+ *  literally — a real marker always rides on an image turn, which normalization
+ *  has already folded away by the time echo matching runs. */
+export function normalizeNativeChatUserTextWithLiteralFallback(text: string): string {
+  return normalizeNativeChatUserText(text) || text.trim().replace(/\s+/g, ' ')
+}
+
+function joinedUserText(message: NativeChatMessage): string {
+  return message.blocks
+    .filter(isTextBlock)
+    .map((block) => block.text)
+    .join(' ')
+}
+
 export function normalizedNativeChatUserMessageText(message: NativeChatMessage): string | null {
   if (message.role !== 'user') {
     return null
   }
-  const normalized = normalizeNativeChatUserText(
-    message.blocks
-      .filter(isTextBlock)
-      .map((block) => block.text)
-      .join(' ')
-  )
-  return normalized || null
+  return normalizeNativeChatUserText(joinedUserText(message)) || null
+}
+
+/** The text an optimistic echo matches a landed turn on. Keeps literal marker
+ *  text keyable so the pending path and the render path agree about which
+ *  `[Image #n]` runs are the user's own words. */
+export function nativeChatUserMessageMatchText(message: NativeChatMessage): string | null {
+  if (message.role !== 'user') {
+    return null
+  }
+  const joined = joinedUserText(message)
+  const normalized = normalizeNativeChatUserText(joined)
+  if (normalized || message.blocks.some(isImageRefBlock)) {
+    return normalized || null
+  }
+  return normalizeNativeChatUserTextWithLiteralFallback(joined) || null
 }
 
 function stripImagePromptMarkersFromTextBlocks(
@@ -92,6 +120,16 @@ function removeEmptyFirstTextBlock(blocks: readonly NativeChatBlock[]): NativeCh
 
 export function hasImagePromptMarker(message: NativeChatMessage): boolean {
   return message.blocks.some((block) => isTextBlock(block) && IMAGE_PROMPT_MARKER.test(block.text))
+}
+
+/** Markers carried by a turn. One marker vouches for one image, so a send of N
+ *  images is only echoed by a turn bearing N of them. */
+export function countImagePromptMarkers(message: NativeChatMessage): number {
+  return message.blocks.reduce(
+    (count, block) =>
+      count + (isTextBlock(block) ? (block.text.match(IMAGE_PROMPT_MARKERS)?.length ?? 0) : 0),
+    0
+  )
 }
 
 /** Claude records image paths as source turns followed by a prompt carrying
