@@ -192,6 +192,27 @@ describe('validated cookie replacement', () => {
     expect(disposeClearStoreMock).toHaveBeenCalledOnce()
   })
 
+  // Why: restoreClearIdentities attaches a debugger before it iterates, so calling it with an
+  // empty restore set would create a hidden BrowserWindow to put nothing back.
+  it('does not reach for CDP when the rollback has nothing to restore', async () => {
+    cookiesGetMock.mockResolvedValue([])
+    cookiesSetMock
+      .mockResolvedValue(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('cookie rejected'))
+    const filePath = writeCookies([
+      { domain: '.example.com', name: 'first', value: 'new', secure: true },
+      { domain: '.example.com', name: 'second', value: 'new', secure: true }
+    ])
+
+    const result = await importCookiesFromFile(filePath, 'persist:test')
+
+    expect(result.ok).toBe(false)
+    // Why: the imported cookie is still removed — that half of the rollback is lossless.
+    expect(cookiesRemoveMock.mock.calls).toEqual([['https://example.com/', 'first']])
+    expect(restoreClearIdentitiesMock).not.toHaveBeenCalled()
+  })
+
   it('fails closed when existing cookies cannot be replaced', async () => {
     cookiesGetMock.mockRejectedValue(new Error('cookie store unavailable'))
     const filePath = writeCookies([

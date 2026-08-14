@@ -681,10 +681,14 @@ async function importValidatedCookies(
           rollbackFailures.push(err)
         }
       }
-      try {
-        await cookieClearStore.restoreClearIdentities(replaced.identities.toReversed())
-      } catch (err) {
-        rollbackFailures.push(err)
+      // Why: restoreClearIdentities attaches the debugger before it iterates, so an empty
+      // restore set would spin up a hidden BrowserWindow to put nothing back.
+      if (replaced.identities.length > 0) {
+        try {
+          await cookieClearStore.restoreClearIdentities(replaced.identities.toReversed())
+        } catch (err) {
+          rollbackFailures.push(err)
+        }
       }
       if (rollbackFailures.length > 0) {
         diag(`  cookie replacement rollback failed: ${rollbackFailures.length} operation(s)`)
