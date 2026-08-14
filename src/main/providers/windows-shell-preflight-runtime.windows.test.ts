@@ -125,7 +125,7 @@ describeWindows('Windows Codex shell preflight runtime', () => {
       root,
       root,
       undefined,
-      'echo launched>cmd-started & exit',
+      'echo launched>cmd-started & exit /b 0',
       preflight
     )
 
