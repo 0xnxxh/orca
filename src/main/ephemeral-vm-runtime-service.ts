@@ -19,6 +19,9 @@ import {
   prepareEphemeralVmCompatibilityPersistence
 } from './ephemeral-vm-runtime-provisioning-persistence'
 import { getProvisionedRootResumeIntegrityError } from './ephemeral-vm-resume-integrity'
+import { runControlledEphemeralVmRuntimeCleanup } from './ephemeral-vm-runtime-cleanup-control'
+
+export { stopEphemeralVmRuntimeCleanup } from './ephemeral-vm-runtime-cleanup-control'
 
 export type ProvisionEphemeralVmRuntimeArgs = {
   userDataPath: string
@@ -56,7 +59,6 @@ export type CleanupEphemeralVmRuntimeArgs = {
   recipe: OrcaVmRecipe
   runtimeId: string
   now?: number
-  destroyTimeoutMs?: number
   signal?: AbortSignal
   onStdout?: (chunk: string) => void
   onStderr?: (chunk: string) => void
@@ -98,8 +100,6 @@ export type ResumeEphemeralVmRuntimeResult =
       error: string
     }
 
-const cleanupInFlight = new Map<string, Promise<CleanupEphemeralVmRuntimeResult>>()
-
 export async function provisionEphemeralVmRuntime(
   args: ProvisionEphemeralVmRuntimeArgs
 ): Promise<ProvisionEphemeralVmRuntimeResult> {
@@ -140,21 +140,12 @@ export async function provisionEphemeralVmRuntime(
 export function cleanupEphemeralVmRuntime(
   args: CleanupEphemeralVmRuntimeArgs
 ): Promise<CleanupEphemeralVmRuntimeResult> {
-  const key = `${args.userDataPath}\0${args.runtimeId}`
-  const existing = cleanupInFlight.get(key)
-  if (existing) {
-    return existing
-  }
-
-  const cleanup = cleanupEphemeralVmRuntimeOnce(args)
-  cleanupInFlight.set(key, cleanup)
-  const forget = (): void => {
-    if (cleanupInFlight.get(key) === cleanup) {
-      cleanupInFlight.delete(key)
-    }
-  }
-  void cleanup.then(forget, forget)
-  return cleanup
+  return runControlledEphemeralVmRuntimeCleanup({
+    userDataPath: args.userDataPath,
+    runtimeId: args.runtimeId,
+    signal: args.signal,
+    run: (signal) => cleanupEphemeralVmRuntimeOnce({ ...args, signal })
+  })
 }
 
 async function cleanupEphemeralVmRuntimeOnce(
@@ -187,7 +178,6 @@ async function cleanupEphemeralVmRuntimeOnce(
     recipe: args.recipe,
     context: contextFromRuntime(args.repoPath, running),
     recipeResult: running.recipeResult,
-    timeoutMs: args.destroyTimeoutMs,
     signal: args.signal,
     onStdout: args.onStdout,
     onStderr: args.onStderr

@@ -63,6 +63,7 @@ export type EphemeralVmApi = {
   suspendWorkspace: (args: { workspaceId: string }) => Promise<EphemeralVmRuntimeRecord | null>
   resumeWorkspace: (args: { workspaceId: string }) => Promise<EphemeralVmRuntimeRecord | null>
   cleanup: (args: { runtimeId: string }) => Promise<EphemeralVmRuntimeRecord>
+  stopCleanup: (args: { runtimeId: string }) => Promise<EphemeralVmRuntimeRecord>
   getCleanupCommand: (args: { runtimeId: string }) => Promise<{
     runtimeId: string
     command: string | null

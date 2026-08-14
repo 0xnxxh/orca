@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodePairingOffer, PAIRING_OFFER_VERSION } from '../shared/pairing'
 import {
   getEphemeralVmRuntimeStorePath,
@@ -15,7 +15,8 @@ import {
 import {
   cleanupEphemeralVmRuntime,
   provisionEphemeralVmRuntime,
-  resumeEphemeralVmRuntime
+  resumeEphemeralVmRuntime,
+  stopEphemeralVmRuntimeCleanup
 } from './ephemeral-vm-runtime-service'
 import type { OrcaVmRecipe } from '../shared/orca-yaml-hook-types'
 
@@ -159,7 +160,7 @@ describe('ephemeral VM runtime service', () => {
     expect(readFileSync(join(repoPath, 'cleanup-count.txt'), 'utf8')).toBe('x')
   })
 
-  it('times out a hung destroy and starts a fresh retry', async () => {
+  it('stops a hung destroy and starts a fresh retry', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-service-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-service-repo-')
     const cleanupPath = join(repoPath, 'cleanup.js')
@@ -195,19 +196,21 @@ describe('ephemeral VM runtime service', () => {
       userDataPath,
       repoPath,
       recipe,
-      runtimeId: 'runtime-1',
-      destroyTimeoutMs: 100
+      runtimeId: 'runtime-1'
     }
 
-    await expect(cleanupEphemeralVmRuntime(cleanupArgs)).resolves.toMatchObject({
+    const cleanup = cleanupEphemeralVmRuntime(cleanupArgs)
+    await vi.waitFor(() => expect(readFileSync(countPath, 'utf8')).toBe('x'))
+    const stopping = stopEphemeralVmRuntimeCleanup({ userDataPath, runtimeId: 'runtime-1' })
+    expect(stopping).not.toBeNull()
+    await expect(stopping).resolves.toMatchObject({
       ok: false,
       runtime: { status: 'cleanup_failed', cleanupStatus: 'failed' },
-      error: expect.stringContaining('timed out')
+      error: 'Cleanup stopped by user.'
     })
+    await expect(cleanup).resolves.toMatchObject({ ok: false })
     writeFileSync(cleanupPath, `require('fs').appendFileSync(${JSON.stringify(countPath)}, 'x')`)
-    await expect(
-      cleanupEphemeralVmRuntime({ ...cleanupArgs, destroyTimeoutMs: 2_000 })
-    ).resolves.toMatchObject({
+    await expect(cleanupEphemeralVmRuntime(cleanupArgs)).resolves.toMatchObject({
       ok: true,
       runtime: { status: 'cleaned', cleanupStatus: 'succeeded' }
     })

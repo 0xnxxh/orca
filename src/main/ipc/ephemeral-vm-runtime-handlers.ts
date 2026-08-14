@@ -16,6 +16,7 @@ import {
 import {
   cleanupEphemeralVmRuntime,
   resumeEphemeralVmRuntime,
+  stopEphemeralVmRuntimeCleanup,
   suspendEphemeralVmRuntime
 } from '../ephemeral-vm-runtime-service'
 import { removeEphemeralVmRuntimeSshTarget } from '../ephemeral-vm-runtime-ssh-cleanup'
@@ -44,6 +45,7 @@ export function registerEphemeralVmRuntimeHandlers(store: Store): void {
   ipcMain.removeHandler('ephemeralVm:attachWorkspace')
   ipcMain.removeHandler('ephemeralVm:listRuntimes')
   ipcMain.removeHandler('ephemeralVm:cleanup')
+  ipcMain.removeHandler('ephemeralVm:stopCleanup')
   ipcMain.removeHandler('ephemeralVm:suspendWorkspace')
   ipcMain.removeHandler('ephemeralVm:resumeWorkspace')
   ipcMain.removeHandler('ephemeralVm:getCleanupCommand')
@@ -118,6 +120,35 @@ export function registerEphemeralVmRuntimeHandlers(store: Store): void {
         userDataPath,
         runtime: result.runtime,
         removeTarget: removeRuntimeOwnedSshTarget
+      })
+    }
+  )
+
+  ipcMain.handle(
+    'ephemeralVm:stopCleanup',
+    async (_event, args: { runtimeId: string }): Promise<EphemeralVmRuntimeRecord> => {
+      const userDataPath = app.getPath('userData')
+      const stopping = stopEphemeralVmRuntimeCleanup({
+        userDataPath,
+        runtimeId: args.runtimeId
+      })
+      if (stopping) {
+        return (await stopping).runtime
+      }
+
+      const runtime = listEphemeralVmRuntimes(userDataPath).find(
+        (entry) => entry.id === args.runtimeId
+      )
+      if (!runtime) {
+        throw new Error(`Unknown ephemeral VM runtime: ${args.runtimeId}`)
+      }
+      if (runtime.cleanupStatus !== 'running') {
+        return runtime
+      }
+      return updateEphemeralVmRuntimeStatus(userDataPath, runtime.id, {
+        status: 'cleanup_failed',
+        cleanupStatus: 'failed',
+        cleanupLastError: 'Cleanup was interrupted. Retry cleanup to continue.'
       })
     }
   )
