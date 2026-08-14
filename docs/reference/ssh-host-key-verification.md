@@ -275,3 +275,55 @@ accept path; revoked fails; background reconnect denies; aborted connect settles
 false; no prompt channel denies; runtime-owned targets are exempt; the denial string does not match
 `isAuthError`; and — catching the worst regression — **the verifier returns nothing**, so a refactor
 to `async` reddens a test rather than reaching a user.
+
+## What Phase 1 shipped, and what review changed
+
+The design above survived implementation. Every defect found afterwards was in the wiring, and the
+pattern is worth recording because it repeats: **each one made us either blind or unusable, never
+subtly wrong.**
+
+Fixed after review:
+
+1. **Our own store was type-downgradable.** The inline lookup filtered by key type first and could
+   only answer match/mismatch/unknown, so a record of a *different* type read as `unknown`. D3's
+   downgrade, applied to the records we create ourselves. Stored types now also feed the algorithm
+   ordering — without that the guard is only half present.
+2. **We keyed on the Orca label.** `ssh -G` echoes its own argument back as `hostname` when no Host
+   block matches, so for a manual target `resolved.hostname` *is* the label — the one name D2
+   forbids. We consulted no entries at all.
+3. **A refused key still walked the credential ladder.** ssh2 reports a denial as a generic auth
+   failure, so we went on to prompt for the passphrase and hand it to the host we had just refused.
+   Rejections are now a typed error recognised before any fallback.
+4. **Fail-closed nearly became fail-always.** "No readable known_hosts" counted a *missing* file the
+   same as an unreadable one, so a profile that had never connected — everyone's first run — would
+   have been refused, and the suite passed only because dev machines have a `known_hosts`.
+5. **Ephemeral runtimes were refused for a policy they cannot satisfy.** The carve-out sat below the
+   incomplete-sources check, so a HOME-divergent environment turned on-demand runtimes off entirely.
+
+## Action items (STA-4319)
+
+**Before Phase 2:**
+
+- **`UpdateHostKeys` (out of scope above, now the highest-value gap).** We read it and use nothing,
+  so a rotated key is a hard failure the user must resolve by hand. Combined with D5 this is the
+  routine path for key rotation, and it will be the most common way a legitimate user meets a
+  rejection. Decide whether Phase 2 honours it or D5's recovery surface absorbs it.
+- **The web user never sees the reason.** `runtime/rpc/methods/ssh.ts` rethrows
+  `getPublicSshError(status)`, so a paired-web client gets a generic failure. Pre-existing, but it
+  makes the Phase 2 dialog message unreachable there without a change.
+- **RPC fail-fast** becomes load-bearing the moment the dialog exists (see Phasing).
+
+**Known gaps that Phase 1 accepts, listed so they are choices and not surprises:**
+
+- **WSL** — a distro's `known_hosts` is unreachable, so WSL users get first-contact treatment for
+  hosts they already verified through `ssh` inside the distro.
+- **`CheckHostIP`** — candidates are formed from the hostname only.
+- **`ca-only`** hosts cannot connect on this transport at all; the message points at
+  `ORCA_SSH_FORCE_SYSTEM_TRANSPORT=1`. Anyone on an SSH CA is affected on day one.
+- **`DEFAULT_SERVER_HOST_KEY_ALGORITHMS`** is a hand-copy of an ssh2 internal. A test pins it, so an
+  ssh2 upgrade that changes it fails CI rather than shipping — but the pin has to be honoured, not
+  deleted, because ssh2 throws `Unsupported algorithm` and every target stops connecting.
+
+**Rollout:** the first release carrying this is the first time Orca can refuse an SSH connection at
+all. Worth a staged rollout or a kill switch: the failure modes we could not find are, by the shape
+of the five above, far more likely to be "a legitimate host is refused" than "a bad key is accepted".
