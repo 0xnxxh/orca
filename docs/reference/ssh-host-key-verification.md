@@ -206,9 +206,23 @@ zero startup storms and zero web hang.
 **Phase 2** — the TOFU dialog, `StrictHostKeyChecking` honouring, `ca-only`, `userInitiated`
 plumbing, and the D5 settings surface.
 
-Carve-outs required before Phase 1 ships: runtime-owned ephemeral targets are exempt from persistence
-(new key every launch is expected, not suspicious); RPC-originated connects are non-interactive and
-fail fast with a message naming the desktop app.
+Carve-outs required before Phase 1 ships:
+
+- **Runtime-owned ephemeral targets are exempt from persistence** — a new key every launch is
+  expected, not suspicious, and recording one would accumulate a row per launch that eventually
+  reads as a spurious change. Implemented via `target.owner?.type === 'on-demand-runtime'`.
+- **RPC-originated connects: NOT needed in Phase 1, required in Phase 2.** The review asked for
+  these to fail fast rather than leave a paired-web user watching a spinner for the 120s prompt
+  timeout. That hang is only reachable if a prompt exists, and Phase 1 has none — the decision
+  function is pinned by a test asserting it never returns `prompt`. An RPC connect therefore behaves
+  exactly like a local one: it accepts and records on first contact, or fails immediately with the
+  host-key reason. Adding a fail-fast path now would introduce a failure mode for a hang that cannot
+  occur. It becomes load-bearing the moment the dialog lands, and is listed in Phase 2.
+
+  Worth noting for Phase 2: `runtime/rpc/methods/ssh.ts` already swallows the specific error and
+  rethrows `getPublicSshError(status)`, so a web client sees a generic failure rather than the
+  host-key reason. Pre-existing, but it means the Phase 2 message will not reach the web user
+  without a change there too.
 
 ## Traps
 
