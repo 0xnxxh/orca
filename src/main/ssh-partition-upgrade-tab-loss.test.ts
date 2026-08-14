@@ -8,7 +8,7 @@
  * survivors blank", and no oracle covered it because every test writes both planes consistently.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getDefaultPersistedState, getDefaultWorkspaceSession } from '../shared/constants'
@@ -42,6 +42,17 @@ async function createStore(state: Record<string, unknown> = {}) {
   const { Store, initDataPath } = await import('./persistence')
   initDataPath()
   return new Store()
+}
+
+/** A pre-upgrade profile has the partition and no hoist marker; the marker only exists because
+ *  this build writes it. Stripping it models the on-disk state an upgrading user actually has. */
+function stripHoistMarker(): void {
+  const file = join(testState.dir, 'orca-data.json')
+  const state = JSON.parse(readFileSync(file, 'utf-8')) as {
+    settings?: { sshPartitionHoistSeed?: string }
+  }
+  delete state.settings?.sshPartitionHoistSeed
+  writeFileSync(file, JSON.stringify(state), 'utf-8')
 }
 
 /** Reopen the SAME profile — the upgrade launch. The hoist migration runs at load, so a test that
@@ -100,6 +111,7 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
     ).toHaveLength(1)
     expect(before.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(0)
     before.flushOrThrow()
+    stripHoistMarker()
 
     // The upgrade launch.
     const store = await reopenStore()
@@ -131,6 +143,7 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
     const before = await createStore()
     before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
     before.flushOrThrow()
+    stripHoistMarker()
     const store = await reopenStore()
 
     const bound = store.persistPtyBinding({
@@ -164,6 +177,7 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
     const before = await createStore()
     before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
     before.flushOrThrow()
+    stripHoistMarker()
 
     // The upgrade launch hoists the pane.
     const upgraded = await reopenStore()

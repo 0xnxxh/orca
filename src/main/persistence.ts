@@ -2850,6 +2850,10 @@ export type PtyBindingSourceExpectation = {
 }
 
 
+/** Expired leases are unreachable from reattach; kept only long enough to outlive any in-flight
+ *  recovery window by orders of magnitude. */
+const EXPIRED_SSH_LEASE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
 /**
  * Fold SSH pane membership left in `workspaceSessionsByHostId["ssh:<target>"]` into the local
  * session, which is the only plane the binding writer maintains.
@@ -2864,6 +2868,9 @@ export function hoistSshPartitionsIntoLocalSession(
   /** Passed explicitly: pane-identity normalization prunes partitions before this runs. */
   sourcePartitions?: PersistedState['workspaceSessionsByHostId']
 ): boolean {
+  if (state.settings?.sshPartitionHoistSeed === 'done') {
+    return false
+  }
   const partitions = sourcePartitions ?? state.workspaceSessionsByHostId
   if (!partitions) {
     return false
@@ -2913,16 +2920,12 @@ export function hoistSshPartitionsIntoLocalSession(
       local.activeTabIdByWorktree = { ...local.activeTabIdByWorktree, [worktreeId]: tabId }
       changed = true
     }
-    // Consume the source. A migration that leaves it behind runs again every launch and
-    // resurrects panes the user has since closed, because "local has no such tab" is exactly
-    // what this function treats as "needs hoisting".
-    if (state.workspaceSessionsByHostId?.[hostId]) {
-      const remaining = { ...state.workspaceSessionsByHostId }
-      delete remaining[hostId]
-      state.workspaceSessionsByHostId = remaining
-      changed = true
-    }
   }
+  // Mark it done even when nothing moved. The partition itself must SURVIVE — headless and CLI
+  // own panes in that plane — so the only way to stop re-hoisting is to record that we have run.
+  // Without this, "local has no such tab" is both the hoist condition and the state produced by
+  // the user closing a tab, so closed panes came back on the next launch.
+  state.settings = { ...state.settings, sshPartitionHoistSeed: 'done' }
   return changed
 }
 
@@ -2984,13 +2987,15 @@ export class Store {
       fallbackSnapshotRoot: legacySnapshotRoot === profileSnapshotRoot ? null : legacySnapshotRoot
     }
     const loaded = this.load()
-    const normalized = normalizePersistedPaneIdentityState(loaded)
-    this.state = normalized.state
     // Why: earlier builds wrote SSH pane membership into `ssh:<target>` partitions; this build's
     // binding writer is local-only and its reattach refuses to create, so an unhoisted partition
-    // means every pane is refused and the user's tabs are discarded. Runs after pane-identity
-    // normalization, which rebuilds the session and would otherwise drop the hoisted panes.
-    if (hoistSshPartitionsIntoLocalSession(this.state, this.sshPartitionsAtLoad)) {
+    // means every pane is refused and the user's tabs are discarded. Runs BEFORE pane-identity
+    // normalization so hoisted panes are normalized with everything else — a partition can carry
+    // a legacy non-UUID leaf, and injecting one raw re-creates the same tab loss for that pane.
+    const hoisted = hoistSshPartitionsIntoLocalSession(loaded, this.sshPartitionsAtLoad)
+    const normalized = normalizePersistedPaneIdentityState(loaded)
+    this.state = normalized.state
+    if (hoisted) {
       this.loadNeedsSave = true
     }
     // Why: activeView is a frequent, tiny preference; keeping it beside the
@@ -3999,6 +4004,20 @@ export class Store {
     result = folderScopeConnectionMigration.state
 
     if (normalizeWorktreeLinkedItemMetadata(result)) {
+      this.loadNeedsSave = true
+    }
+
+    // Why: an expired lease is unreachable from every reattach path, and only host deletion ever
+    // removed one, so the list grew for the life of the profile. Retention sits far above the
+    // pane-recovery grace window, which is the only remaining reader.
+    const retainedLeases = (result.sshRemotePtyLeases ?? []).filter(
+      (lease) =>
+        lease.state !== 'expired' ||
+        !lease.updatedAt ||
+        Date.now() - lease.updatedAt <= EXPIRED_SSH_LEASE_RETENTION_MS
+    )
+    if (retainedLeases.length !== (result.sshRemotePtyLeases ?? []).length) {
+      result = { ...result, sshRemotePtyLeases: retainedLeases }
       this.loadNeedsSave = true
     }
 

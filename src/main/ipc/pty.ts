@@ -1121,10 +1121,12 @@ function isPtyProvenGoneForReplacement(err: unknown, ptyId: string): boolean {
   if (!parseAppSshPtyId(ptyId)) {
     return isPtyAlreadyGoneError(err)
   }
-  // For SSH, the two proving answers are the relay's own observed exit and the expiry the reattach
-  // mints only after verifying that proof names this shell. A bare not-found is neither.
+  // The ONLY proving answer is the expiry the reattach mints after verifying the relay's proof
+  // names this shell and this incarnation. Accepting a bare SSH_PTY_EXITED too was over-acceptance:
+  // the reattach deliberately rethrows one it could NOT tie to us, and honouring that here retires
+  // the owner and respawns onto a shell somebody else is still using.
   const message = err instanceof Error ? err.message : String(err)
-  return isSshPtyExitedError(err) || message.includes(SSH_SESSION_EXPIRED_ERROR)
+  return message.includes(SSH_SESSION_EXPIRED_ERROR)
 }
 
 function isPtyAlreadyGoneError(err: unknown): boolean {

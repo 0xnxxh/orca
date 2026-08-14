@@ -3210,6 +3210,8 @@ export type GlobalSettings = {
   /** One-shot cohort marker for the tab-switch keybinding swap. 'pending' =
    *  pre-existing install (seed pins old chords, then flips to 'done'); 'done' = fresh install. */
   tabSwitchKeybindingSeed?: 'pending' | 'done'
+  /** One-shot: SSH host session partitions have been folded into the local session. */
+  sshPartitionHoistSeed?: 'done'
   /** Local voice/dictation config. Optional for pre-voice profiles; getDefaultSettings() hydrates defaults via the persistence merge. */
   voice?: VoiceSettings
 }
