@@ -1222,9 +1222,15 @@ export class SshConnection {
     )
     // `-F` suppresses /etc/ssh/ssh_config, so a site-wide StrictHostKeyChecking is invisible to us
     // on that path. Joined below with the other way a source can go silent: an unreadable file.
-    const siteConfigSuppressed = sshGArgsForHost(
-      this.target.configHost || this.target.label
-    ).includes('-F')
+    //
+    // Gated on `ssh -G` having actually produced something. sshGArgsForHost only reports which args
+    // WOULD be used, so without this a machine where ssh is missing, broken or timed out was judged
+    // by whether it happens to have a ~/.ssh/config — incoherently, since the same broken machine
+    // WITHOUT one was fully permissive. The flag is a claim about a config file we could not read,
+    // and when ssh never ran there is no such claim to make.
+    const siteConfigSuppressed =
+      hostKeyResolved !== null &&
+      sshGArgsForHost(this.target.configHost || this.target.label).includes('-F')
     const knownHostsEvidence = await loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved))
     const knownHostsEntries = knownHostsEvidence.entries
     // Preloaded because ssh2's verifier decides synchronously; the same reason known_hosts is read
