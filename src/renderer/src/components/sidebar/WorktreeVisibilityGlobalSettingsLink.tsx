@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { GLOBAL_WORKTREE_VISIBILITY_SETTINGS_TARGET_ID } from '@/lib/settings-navigation-types'
 import { useAppStore } from '@/store'
-import type { Repo, WorktreeVisibilityDefaults } from '../../../../shared/types'
+import type { WorktreeVisibilityDefaults } from '../../../../shared/global-settings-types'
+import type { Repo } from '../../../../shared/repo-types'
 import {
   listInheritedWorktreeVisibilitySources,
   worktreeVisibilityValueLabel

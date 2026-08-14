@@ -30,7 +30,7 @@ import WorktreeVisibilitySourceList, {
   type WorktreeVisibilitySourceAddResult,
   type WorktreeVisibilitySourceRow
 } from './WorktreeVisibilitySourceList'
-import type { CustomWorktreeVisibilitySource, Repo } from '../../../../shared/types'
+import type { CustomWorktreeVisibilitySource, Repo } from '../../../../shared/repo-types'
 import {
   MAX_CUSTOM_WORKTREE_VISIBILITY_SOURCES,
   effectiveCustomWorktreeSourceVisibility,

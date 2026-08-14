@@ -3,16 +3,16 @@ import type { StateCreator } from 'zustand'
 import { toast } from 'sonner'
 import type { AppState } from '../types'
 import type { SshRepoReadoption } from '../../../../shared/ssh-types'
+import type { FolderWorkspace } from '../../../../shared/folder-workspace-types'
+import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import type {
-  GlobalSettings,
-  Project,
-  ProjectUpdateArgs,
-  Repo,
-  ProjectGroup,
-  ProjectHostSetup,
-  FolderWorkspace,
-  ProjectGroupImportResult,
   NestedRepoScanResult,
+  ProjectGroup,
+  ProjectGroupImportResult
+} from '../../../../shared/project-group-types'
+import type {
+  Project,
+  ProjectHostSetup,
   ProjectHostSetupCloneArgs,
   ProjectHostSetupCreateArgs,
   ProjectHostSetupCreateResult,
@@ -21,8 +21,10 @@ import type {
   ProjectHostSetupExistingFolderArgs,
   ProjectHostSetupResult,
   ProjectHostSetupUpdateArgs,
-  ProjectHostSetupUpdateResult
-} from '../../../../shared/types'
+  ProjectHostSetupUpdateResult,
+  ProjectUpdateArgs
+} from '../../../../shared/project-types'
+import type { Repo } from '../../../../shared/repo-types'
 import {
   getProjectIdentityKey,
   mergeCatalogCreatedAt,

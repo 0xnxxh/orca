@@ -7,11 +7,11 @@ import { translate } from '@/i18n/i18n'
 import type {
   BuiltInWorktreeVisibilitySourceId,
   CustomWorktreeVisibilitySource,
-  DetectedWorktree,
   ExternalWorktreeVisibility,
-  Repo,
-  WorktreeVisibilityDefaults
-} from '../../../../shared/types'
+  Repo
+} from '../../../../shared/repo-types'
+import type { DetectedWorktree } from '../../../../shared/worktree/types'
+import type { WorktreeVisibilityDefaults } from '../../../../shared/global-settings-types'
 import {
   createWorktreeVisibilitySourceMatcher,
   effectiveDefaultBuiltInWorktreeSourceVisibility,

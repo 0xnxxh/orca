@@ -3,7 +3,7 @@ import {
   LOCAL_EXECUTION_HOST_ID,
   toRuntimeExecutionHostId
 } from '../../../../shared/execution-host'
-import type { GlobalSettings } from '../../../../shared/types'
+import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import type { AppState } from '../types'
 
 export async function persistVisibilityAwareSettings(args: {

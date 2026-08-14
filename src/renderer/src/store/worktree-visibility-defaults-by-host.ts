@@ -1,6 +1,10 @@
 import { getRepoExecutionHostId, parseExecutionHostId } from '../../../shared/execution-host'
 import type { ExecutionHostId } from '../../../shared/execution-host'
-import type { GlobalSettings, Repo, WorktreeVisibilityDefaults } from '../../../shared/types'
+import type {
+  GlobalSettings,
+  WorktreeVisibilityDefaults
+} from '../../../shared/global-settings-types'
+import type { Repo } from '../../../shared/repo-types'
 
 export function getRepoOwnerWorktreeVisibilityDefaults(
   repo: Pick<Repo, 'connectionId' | 'executionHostId'>,

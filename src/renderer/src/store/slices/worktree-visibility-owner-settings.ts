@@ -8,7 +8,10 @@ import {
   toRuntimeExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
-import type { GlobalSettings, WorktreeVisibilityDefaults } from '../../../../shared/types'
+import type {
+  GlobalSettings,
+  WorktreeVisibilityDefaults
+} from '../../../../shared/global-settings-types'
 import { normalizeWorktreeVisibilityDefaults } from '../../../../shared/external-worktree-visibility'
 import { WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 

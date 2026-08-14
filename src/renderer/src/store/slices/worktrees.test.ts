@@ -2,15 +2,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { create } from 'zustand'
 import type { AppState } from '../types'
-import type {
-  DetectedWorktreeListResult,
-  FolderWorkspace,
-  LocalBaseRefRefreshResult,
-  TerminalTab,
-  Worktree,
-  WorktreeLineage,
-  WorkspaceLineage
-} from '../../../../shared/types'
+import type { FolderWorkspace } from '../../../../shared/folder-workspace-types'
+import type { TerminalTab } from '../../../../shared/terminal-tab-types'
+import type { LocalBaseRefRefreshResult } from '../../../../shared/worktree/base-ref-drift-types'
+import type { WorkspaceLineage, WorktreeLineage } from '../../../../shared/worktree/lineage-types'
+import type { DetectedWorktreeListResult, Worktree } from '../../../../shared/worktree/types'
 import { toast } from 'sonner'
 import {
   createCompatibleRuntimeStatusResponse,
@@ -143,6 +139,9 @@ const mockApi = {
   },
   hooks: {
     check: vi.fn().mockResolvedValue({ hasHooks: false, hooks: null, mayNeedUpdate: false })
+  },
+  workspaceCleanup: {
+    recordRemovalSnapshotPrune: vi.fn().mockResolvedValue(undefined)
   },
   runtimeEnvironments: {
     call: runtimeEnvironmentTransportCall
@@ -6530,7 +6529,9 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { repo1: [wt] }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(wt.id)
+    const result = await store.getState().removeWorktree(wt.id, false, {
+      snapshotPruneBatchId: 'batch-1'
+    })
 
     expect(result).toEqual({ ok: true })
     expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
@@ -6539,14 +6540,20 @@ describe('worktree remote runtime mutations', () => {
       params: {
         worktree: `id:${wt.id}`,
         hostId: 'runtime:env-1',
-        force: undefined,
+        force: false,
         allowUnverifiedPtyStop: false,
         runHooks: true
       },
       timeoutMs: 60_000,
-      expectedEnvironmentPairingRevision: undefined
+      expectedEnvironmentPairingRevision: undefined,
+      expectedRuntimeId: undefined
     })
     expect(mockApi.worktrees.remove).not.toHaveBeenCalled()
+    expect(mockApi.workspaceCleanup.recordRemovalSnapshotPrune).toHaveBeenCalledExactlyOnceWith({
+      batchId: 'batch-1',
+      worktreeId: wt.id,
+      executionHostId: 'runtime:env-1'
+    })
     expect(store.getState().shutdownWorktreeTerminals).toHaveBeenCalledWith(wt.id, {
       shutdownReason: 'remove-worktree',
       backendOwnsPtyTeardown: true

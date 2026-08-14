@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import type { CustomWorktreeVisibilitySource } from '../../../../shared/repo-types'
 import type {
-  CustomWorktreeVisibilitySource,
   GlobalSettings,
   WorktreeVisibilityDefaults
-} from '../../../../shared/types'
+} from '../../../../shared/global-settings-types'
 import {
   MAX_CUSTOM_WORKTREE_VISIBILITY_SOURCES,
   normalizeCustomWorktreeVisibilitySources

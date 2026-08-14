@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Repo } from '../types'
+import type { Repo } from '../repo-types'
 import {
   buildDefaultWorktreeSourcePreferenceUpdate,
   buildWorktreeSourcePreferenceUpdate

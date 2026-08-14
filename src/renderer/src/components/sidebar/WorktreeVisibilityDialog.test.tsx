@@ -4,7 +4,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DetectedWorktree, DetectedWorktreeListResult, Repo } from '../../../../shared/types'
+import type { Repo } from '../../../../shared/repo-types'
+import type {
+  DetectedWorktree,
+  DetectedWorktreeListResult
+} from '../../../../shared/worktree/types'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -174,10 +178,7 @@ async function renderDialog(): Promise<void> {
   })
 }
 
-function deferred<T>(): {
-  promise: Promise<T>
-  resolve: (value: T) => void
-} {
+function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((resolvePromise) => {
     resolve = resolvePromise
@@ -207,9 +208,7 @@ function sourceSegment(label: string, visibility: 'show' | 'hide'): HTMLButtonEl
 }
 
 /** The Show segment, whose aria-checked mirrors whether the source is shown. */
-function sourceSwitch(label = 'Claude Code'): HTMLButtonElement {
-  return sourceSegment(label, 'show')
-}
+const sourceSwitch = (label = 'Claude Code'): HTMLButtonElement => sourceSegment(label, 'show')
 
 function sourceRow(label: string): HTMLElement {
   const row = sourceSwitch(label).closest<HTMLElement>('[data-source-row]')

@@ -1,9 +1,9 @@
 import type {
   ExternalWorktreeVisibility,
   Repo,
-  WorktreeVisibilityDefaults,
   WorktreeVisibilitySourcePreferences
-} from '../types'
+} from '../repo-types'
+import type { WorktreeVisibilityDefaults } from '../global-settings-types'
 import {
   normalizeWorktreeVisibilitySourcePreferences,
   type WorktreeVisibilitySourceMatch

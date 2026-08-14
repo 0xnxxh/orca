@@ -7,7 +7,9 @@ import {
   effectiveWorktreeSourceVisibility,
   type WorktreeVisibilitySourceMatcher
 } from './worktree/visibility-sources'
-import type { GlobalSettings, Repo, Worktree, WorktreeOwnership } from './types'
+import type { GlobalSettings } from './global-settings-types'
+import type { Repo } from './repo-types'
+import type { Worktree, WorktreeOwnership } from './worktree/types'
 
 export function shouldShowWorktree(args: {
   worktree: Pick<Worktree, 'path'>

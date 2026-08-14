@@ -1,9 +1,6 @@
 import { useAppStore } from '@/store'
-import type {
-  CustomWorktreeVisibilitySource,
-  Repo,
-  WorktreeVisibilityDefaults
-} from '../../../../shared/types'
+import type { CustomWorktreeVisibilitySource, Repo } from '../../../../shared/repo-types'
+import type { WorktreeVisibilityDefaults } from '../../../../shared/global-settings-types'
 import {
   normalizeCustomWorktreeVisibilitySources,
   resolveCustomWorktreeVisibilitySources

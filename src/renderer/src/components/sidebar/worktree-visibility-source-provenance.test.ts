@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Repo, WorktreeVisibilityDefaults } from '../../../../shared/types'
+import type { WorktreeVisibilityDefaults } from '../../../../shared/global-settings-types'
+import type { Repo } from '../../../../shared/repo-types'
 
 vi.mock('@/i18n/i18n', () => ({
   translate: (_key: string, fallback: string, values?: Record<string, unknown>) =>

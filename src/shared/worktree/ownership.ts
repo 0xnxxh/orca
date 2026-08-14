@@ -18,15 +18,10 @@ import {
 } from './visibility-sources'
 import { isLegacyRepoForExternalWorktreeVisibility } from '../external-worktree-visibility'
 import { shouldShowWorktree } from '../worktree-visibility-resolution'
-import type {
-  DetectedWorktree,
-  GlobalSettings,
-  OrcaWorkspaceLayout,
-  Repo,
-  Worktree,
-  WorktreeMeta,
-  WorktreeOwnership
-} from '../types'
+import type { GlobalSettings, OrcaWorkspaceLayout } from '../global-settings-types'
+import type { Repo } from '../repo-types'
+import type { WorktreeMeta } from './meta-types'
+import type { DetectedWorktree, Worktree, WorktreeOwnership } from './types'
 
 export {
   effectiveAgentWorktreeVisibility,
