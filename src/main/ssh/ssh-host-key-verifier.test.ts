@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { parseKnownHosts } from './ssh-known-hosts'
 import {
   createHostKeyVerifier,
+  DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
   hostKeyFingerprintOf,
   orderServerHostKeyAlgorithms,
   type HostKeyVerifierDeps
@@ -21,7 +22,7 @@ function deps(overrides: Partial<HostKeyVerifierDeps> = {}): HostKeyVerifierDeps
     displayHost: 'example.com',
     strictHostKeyChecking: 'ask',
     isEphemeralRuntimeTarget: false,
-    siteConfigSuppressed: false,
+    verificationSourcesIncomplete: false,
     entries: [],
     isTrusted: () => 'unknown',
     rememberHostKey: vi.fn(),
@@ -196,6 +197,37 @@ describe('the ssh2 host key verifier', () => {
       run({ onDecision, isCurrentAttempt: () => false })
       expect(onDecision).not.toHaveBeenCalled()
     })
+  })
+})
+
+// The list we reorder is a hand-copy of ssh2's internal default. If ssh2 changes it, our proposal
+// silently stops matching what ssh2 supports — and ssh2 throws `Unsupported algorithm` on any entry
+// outside its supported list, so the whole transport stops connecting.
+describe('the copied ssh2 default algorithm list', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- the only way to read ssh2's internal constant
+  const ssh2Constants = require('ssh2/lib/protocol/constants.js') as {
+    DEFAULT_SERVER_HOST_KEY: string[]
+    SUPPORTED_SERVER_HOST_KEY: string[]
+  }
+
+  it('still matches ssh2, in the same order', () => {
+    expect(DEFAULT_SERVER_HOST_KEY_ALGORITHMS).toEqual(ssh2Constants.DEFAULT_SERVER_HOST_KEY)
+  })
+
+  // The failure mode if it ever diverges: client.connect() throws synchronously before a socket is
+  // opened, so every target fails with a message about an algorithm the user never chose.
+  it('proposes nothing ssh2 would refuse', () => {
+    for (const algorithm of DEFAULT_SERVER_HOST_KEY_ALGORITHMS) {
+      expect(ssh2Constants.SUPPORTED_SERVER_HOST_KEY).toContain(algorithm)
+    }
+  })
+
+  // Type scoping is only safe because we can promote the type we hold, and RSA is negotiated under
+  // three different names for one key.
+  it('contains the RSA signature algorithms the ordering maps onto', () => {
+    expect(DEFAULT_SERVER_HOST_KEY_ALGORITHMS).toEqual(
+      expect.arrayContaining(['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512'])
+    )
   })
 })
 

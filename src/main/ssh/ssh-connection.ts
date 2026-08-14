@@ -38,19 +38,13 @@ import {
   type SshConnectionCallbacks
 } from './ssh-connection-utils'
 import { resolveEffectiveProxy, spawnProxyCommand } from './ssh-proxy-command'
-import { createHostKeyVerifier, orderServerHostKeyAlgorithms } from './ssh-host-key-verifier'
+import {
+  createHostKeyVerifier,
+  DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
+  orderServerHostKeyAlgorithms
+} from './ssh-host-key-verifier'
 import { HostKeyVerificationError, isHostKeyVerificationError } from './ssh-host-key-decision'
 import { sshGArgsForHost } from './ssh-g-config-resolution'
-// ssh2's own default order, which leads with ed25519 and places RSA fifth through seventh.
-const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = [
-  'ssh-ed25519',
-  'ecdsa-sha2-nistp256',
-  'ecdsa-sha2-nistp384',
-  'ecdsa-sha2-nistp521',
-  'rsa-sha2-512',
-  'rsa-sha2-256',
-  'ssh-rsa'
-]
 import { loadTrustedHostKeys, trustHostKey } from './ssh-host-key-store'
 import {
   loadKnownHostsEvidence,
@@ -1219,7 +1213,7 @@ export class SshConnection {
     const hostKeyResolved = this.hostKeyResolvedConfig
     const hostKeyLookupHost = resolveKnownHostsLookupHost(hostKeyResolved, config.host ?? '')
     // `-F` suppresses /etc/ssh/ssh_config, so a site-wide policy is invisible to us on that path.
-    const siteConfigSuppressed = sshGArgsForHost(
+    const verificationSourcesIncomplete = sshGArgsForHost(
       this.target.configHost || this.target.label
     ).includes('-F')
     const knownHostsEvidence = await loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved))
@@ -1270,7 +1264,8 @@ export class SshConnection {
         // read, so recording trust would accept a changed key the one time we could not check.
         // Reuses the strict path rather than adding a fifth outcome. An ABSENT file is not this —
         // that is the normal state for a fresh profile and genuinely means nothing is known.
-        siteConfigSuppressed: siteConfigSuppressed || knownHostsEvidence.unreadableFileCount > 0,
+        verificationSourcesIncomplete:
+          verificationSourcesIncomplete || knownHostsEvidence.unreadableFileCount > 0,
         entries: knownHostsEntries,
         isTrusted: ({ host, port, keyType, key }) => {
           const forHost = trustedHostKeys.filter(

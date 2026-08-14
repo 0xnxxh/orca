@@ -7,7 +7,7 @@ function input(overrides: Partial<HostKeyDecisionInput> = {}): HostKeyDecisionIn
     storeOutcome: 'unknown',
     strictHostKeyChecking: 'ask',
     isEphemeralRuntimeTarget: false,
-    siteConfigSuppressed: false,
+    verificationSourcesIncomplete: false,
     displayHost: 'build-01',
     ...overrides
   }
@@ -129,17 +129,51 @@ describe('deciding what to do with a presented host key', () => {
       expect(decision.action).toBe('reject')
     })
 
-    // We could not read the system ssh_config, so a site-wide policy may forbid this and we cannot
-    // see it. Being laxer than ssh is the one outcome that is never acceptable.
-    it('denies an unknown host when the system SSH config could not be read', () => {
-      expect(decideHostKey(input({ siteConfigSuppressed: true })).action).toBe('reject')
+    // We could not read something that decides this — the system ssh_config, or a known_hosts file
+    // that exists and will not open. Being laxer than ssh is the one outcome that is never
+    // acceptable.
+    it('denies an unknown host when a source could not be read', () => {
+      expect(decideHostKey(input({ verificationSourcesIncomplete: true })).action).toBe('reject')
     })
 
-    it('still accepts a known host when the system SSH config could not be read', () => {
+    // Only NEW trust is withheld. A host we already know is decided before this is reached, so
+    // being unable to read one source does not disconnect everything the user already verified.
+    it('still accepts a known host when a source could not be read', () => {
       const decision = decideHostKey(
-        input({ siteConfigSuppressed: true, knownHostsOutcome: 'match' })
+        input({ verificationSourcesIncomplete: true, knownHostsOutcome: 'match' })
       )
       expect(decision.action).toBe('accept')
+    })
+
+    // A VM provisioned a minute ago cannot be in known_hosts, so no policy — seen or unseen — is
+    // satisfiable by it. Refusing would not make the connection safer, it would turn on-demand
+    // runtimes off for everyone whose HOME diverges from their passwd home.
+    it('still accepts an ephemeral target when a source could not be read', () => {
+      const decision = decideHostKey(
+        input({ isEphemeralRuntimeTarget: true, verificationSourcesIncomplete: true })
+      )
+      expect(decision.action).toBe('accept')
+    })
+
+    // The exception to the exception: an explicit StrictHostKeyChecking=yes is a policy we can
+    // actually read and the user actually asked for, so it outranks the carve-out.
+    it('denies an ephemeral target under an explicit StrictHostKeyChecking=yes', () => {
+      const decision = decideHostKey(
+        input({ isEphemeralRuntimeTarget: true, strictHostKeyChecking: 'yes' })
+      )
+      expect(decision.action).toBe('reject')
+    })
+
+    // The carve-out is about first contact only; a key that CHANGED is still a change.
+    it('still rejects a changed key for an ephemeral target with sources incomplete', () => {
+      const decision = decideHostKey(
+        input({
+          isEphemeralRuntimeTarget: true,
+          verificationSourcesIncomplete: true,
+          storeOutcome: 'mismatch'
+        })
+      )
+      expect(decision.action).toBe('reject')
     })
   })
 
@@ -158,7 +192,7 @@ describe('deciding what to do with a presented host key', () => {
       { strictHostKeyChecking: 'yes' },
       { strictHostKeyChecking: 'no' },
       { isEphemeralRuntimeTarget: true },
-      { siteConfigSuppressed: true }
+      { verificationSourcesIncomplete: true }
     ]
     for (const overrides of cases) {
       expect(decideHostKey(input(overrides)).action).not.toBe('prompt')

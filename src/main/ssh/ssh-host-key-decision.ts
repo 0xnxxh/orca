@@ -32,10 +32,13 @@ export type HostKeyDecisionInput = {
    */
   isEphemeralRuntimeTarget: boolean
   /**
-   * `ssh -G` ran on the HOME-divergent `-F` path, so /etc/ssh/ssh_config was suppressed and a
-   * site-wide StrictHostKeyChecking may be invisible to us. Never be laxer than ssh would be.
+   * Something that decides this was unreadable, so we cannot prove we are seeing what ssh sees:
+   * `ssh -G` ran on the HOME-divergent `-F` path and suppressed a possible site-wide
+   * StrictHostKeyChecking, or a known_hosts file exists and would not open. Extending NEW trust
+   * while blind is the one outcome that is never acceptable — a host we already know still
+   * connects, because a match is decided before this is consulted.
    */
-  siteConfigSuppressed: boolean
+  verificationSourcesIncomplete: boolean
   displayHost: string
 }
 
@@ -78,7 +81,7 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
     knownHostsOutcome,
     storeOutcome,
     isEphemeralRuntimeTarget,
-    siteConfigSuppressed,
+    verificationSourcesIncomplete,
     displayHost
   } = input
   const strict = input.strictHostKeyChecking.toLowerCase()
@@ -164,22 +167,34 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
       )
     }
   }
-  if (siteConfigSuppressed) {
-    // We could not read the system ssh_config, so we cannot prove a site policy does not forbid
-    // this. Failing strict here is the only way to avoid being laxer than ssh.
+  // Deliberately ABOVE the incomplete-sources check, and deliberately BELOW explicit strict.
+  //
+  // A machine provisioned a minute ago cannot be in known_hosts, by construction — no policy, seen
+  // or unseen, can be satisfied by it. So refusing here would not make the connection safer, it
+  // would turn on-demand runtimes off entirely for anyone whose HOME diverges from their passwd
+  // home (sandboxes, E2E isolation), and the reason we would print names a config file they cannot
+  // fix. Incomplete sources is a statement that we might be missing a policy; it is not a policy.
+  // An EXPLICIT StrictHostKeyChecking=yes still wins above, because that one we can actually read
+  // and the user asked for it.
+  //
+  // Accepting without recording is the rest of it: a new key every launch would otherwise grow a
+  // row per VM, and a stale row eventually reads as a mismatch against a host that did nothing
+  // wrong.
+  if (isEphemeralRuntimeTarget) {
+    return { action: 'accept', outcome: 'unknown' }
+  }
+  if (verificationSourcesIncomplete) {
+    // We could not read something that decides this, so we cannot prove a policy does not forbid it
+    // or that a known_hosts entry does not contradict it. Refusing to extend NEW trust while blind
+    // is the only way to avoid being laxer than ssh.
     return {
       action: 'reject',
       outcome: 'unknown',
       reason: rejection(
         displayHost,
-        'The host is unknown and the system SSH configuration could not be read, so its host key policy is unknown.'
+        'The host is unknown and part of the SSH configuration could not be read, so its host key policy cannot be checked.'
       )
     }
-  }
-  if (isEphemeralRuntimeTarget) {
-    // Expected to differ every launch; accepting without recording keeps the store from growing a
-    // row per VM and keeps a stale record from ever becoming a spurious mismatch.
-    return { action: 'accept', outcome: 'unknown' }
   }
   if (strict === 'no' || strict === 'off') {
     // OpenSSH accepts here but does not write. Persisting would silently convert a deliberately

@@ -30,7 +30,7 @@ export type HostKeyVerifierDeps = {
   displayHost: string
   strictHostKeyChecking: string
   isEphemeralRuntimeTarget: boolean
-  siteConfigSuppressed: boolean
+  verificationSourcesIncomplete: boolean
   /** Already unioned across every known_hosts file. */
   entries: readonly KnownHostsEntry[]
   isTrusted: TrustedHostKeyLookup
@@ -50,6 +50,25 @@ export type HostKeyVerifierDeps = {
    */
   isCurrentAttempt?: () => boolean
 }
+
+/**
+ * ssh2's own default host-key proposal order, which we reorder rather than replace.
+ *
+ * A hand-copy, because ssh2 exports it only from a deep internal path. Two things make that safe:
+ * ssh2 THROWS `Unsupported algorithm` on any entry outside its supported list, so drift fails loudly
+ * at connect rather than silently; and a test pins this against the real list so an ssh2 upgrade
+ * that changes it is a review, not a surprise. Adopting a new proposal order automatically is the
+ * wrong default — the order is what makes type-scoped matching safe.
+ */
+export const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = [
+  'ssh-ed25519',
+  'ecdsa-sha2-nistp256',
+  'ecdsa-sha2-nistp384',
+  'ecdsa-sha2-nistp521',
+  'rsa-sha2-512',
+  'rsa-sha2-256',
+  'ssh-rsa'
+]
 
 export function hostKeyFingerprintOf(key: Buffer): string {
   return formatHostKeyFingerprint(createHash('sha256').update(key).digest('base64'))
@@ -174,7 +193,7 @@ export function createHostKeyVerifier(
         storeOutcome: deps.isTrusted({ host: deps.host, port: deps.port, keyType, key }),
         strictHostKeyChecking: deps.strictHostKeyChecking,
         isEphemeralRuntimeTarget: deps.isEphemeralRuntimeTarget,
-        siteConfigSuppressed: deps.siteConfigSuppressed,
+        verificationSourcesIncomplete: deps.verificationSourcesIncomplete,
         displayHost: deps.displayHost
       })
 
