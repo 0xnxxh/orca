@@ -23,6 +23,13 @@ export type SshResolvedConfig = {
   controlMaster: string
   controlPath?: string
   controlPersist: string
+  /** May hold the literal `none`, which OpenSSH prints for an explicit opt-out. */
+  userKnownHostsFiles: string[]
+  globalKnownHostsFiles: string[]
+  strictHostKeyChecking: string
+  hostKeyAlias?: string
+  hashKnownHosts: boolean
+  updateHostKeys: string
 }
 
 const SSH_G_TIMEOUT_MS = 5000
@@ -118,6 +125,41 @@ export function parseSshGOutput(stdout: string): SshResolvedConfig {
   return buildSshResolvedConfig(map, identityFiles)
 }
 
+/**
+ * `userknownhostsfile` / `globalknownhostsfile` arrive as one space-separated line; a path
+ * containing spaces is double-quoted. Older OpenSSH leaves `~` unexpanded, newer expands it.
+ */
+function parseKnownHostsFileList(value: string | undefined): string[] {
+  if (!value) {
+    return []
+  }
+  const paths: string[] = []
+  let current = ''
+  let inQuotes = false
+  let hasToken = false
+  for (const char of value) {
+    if (char === '"') {
+      inQuotes = !inQuotes
+      hasToken = true
+      continue
+    }
+    if (!inQuotes && /\s/.test(char)) {
+      if (hasToken) {
+        paths.push(current)
+        current = ''
+        hasToken = false
+      }
+      continue
+    }
+    current += char
+    hasToken = true
+  }
+  if (hasToken) {
+    paths.push(current)
+  }
+  return paths.map(resolveSshConfigHomePath)
+}
+
 function buildSshResolvedConfig(
   map: Map<string, string>,
   identityFiles: string[]
@@ -150,6 +192,13 @@ function buildSshResolvedConfig(
     proxyJump,
     controlMaster: map.get('controlmaster') ?? 'no',
     controlPath,
-    controlPersist: map.get('controlpersist') ?? 'no'
+    controlPersist: map.get('controlpersist') ?? 'no',
+    userKnownHostsFiles: parseKnownHostsFileList(map.get('userknownhostsfile')),
+    globalKnownHostsFiles: parseKnownHostsFileList(map.get('globalknownhostsfile')),
+    // OpenSSH's own default, so an unreadable line never resolves laxer than ssh would.
+    strictHostKeyChecking: map.get('stricthostkeychecking') ?? 'ask',
+    hostKeyAlias: map.get('hostkeyalias') || undefined,
+    hashKnownHosts: map.get('hashknownhosts') === 'yes',
+    updateHostKeys: map.get('updatehostkeys') ?? 'no'
   }
 }
