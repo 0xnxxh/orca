@@ -1793,6 +1793,8 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
       const owned = await callRuntimeResultWithOwner<{ worktree: Worktree }>('worktree.create', {
         repo: args.repoId,
         name: args.name,
+        // Absent means user-typed, which is what the host must assume — so send it only when true.
+        ...(args.nameWasGenerated ? { nameWasGenerated: true } : {}),
         baseBranch: args.baseBranch,
         compareBaseRef: args.compareBaseRef,
         branchNameOverride: args.branchNameOverride,
