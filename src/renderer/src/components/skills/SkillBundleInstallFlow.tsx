@@ -14,6 +14,10 @@ import type { SkillInstallDestination } from '../../../../shared/skill-install-c
 import { SkillBundleInstallOutcome } from './SkillBundleInstallOutcome'
 import { SkillBundleInstallReview } from './SkillBundleInstallReview'
 import { SkillInstallTargetFields } from './SkillInstallTargetFields'
+import { defaultSelectedSkillProviders } from './skill-install-provider-groups'
+import { installSkillsActionLabel, retrySkillsActionLabel } from './skill-display-labels'
+import { useSkillInstallDetectedAgents } from './use-skill-install-detected-agents'
+import type { SkillInstallProviderId } from '../../../../shared/skill-install-providers'
 import { skillInstallWorkspaceChoices } from './skill-install-workspace-choices'
 import { useSkillInstallProgress } from './skill-install-progress-state'
 import { translate } from '@/i18n/i18n'
@@ -56,6 +60,9 @@ export function SkillBundleInstallFlow(props: {
   const [result, setResult] = useState<SkillBundleInstallResult | null>(null)
   const [environmentId, setEnvironmentId] = useState('local')
   const [scope, setScope] = useState<'global' | 'workspace'>('global')
+  // Why: null means "follow detection"; storing the derived default instead
+  // would freeze the picker on whichever machine was selected first.
+  const [providerChoice, setProviderChoice] = useState<Set<SkillInstallProviderId> | null>(null)
   const [workspace, setWorkspace] = useState('')
   const [executionTarget, setExecutionTarget] = useState<{ kind: 'wsl'; distro: string } | null>(
     null
@@ -63,6 +70,11 @@ export function SkillBundleInstallFlow(props: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const installProgress = useSkillInstallProgress()
+  const detectedAgents = useSkillInstallDetectedAgents({
+    environmentId,
+    wslDistro: executionTarget?.distro ?? null
+  })
+  const providers = providerChoice ?? defaultSelectedSkillProviders(detectedAgents)
 
   const workspaceChoices = useMemo(
     () => skillInstallWorkspaceChoices({ environmentId, folderWorkspaces, repos, worktreesByRepo }),
@@ -155,6 +167,7 @@ export function SkillBundleInstallFlow(props: {
         ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId }),
         selectedSkillIds: [...requestedIds],
         destination: target,
+        providers: [...providers],
         conflictDecisions: checked.skills
           .filter((skill) => CONFLICT_STATES.has(skill.currentState))
           .map((skill) => ({
@@ -271,6 +284,10 @@ export function SkillBundleInstallFlow(props: {
               setExecutionTarget(value)
               resetPreview()
             }}
+            providers={providers}
+            detectedAgents={detectedAgents}
+            onProvidersChange={setProviderChoice}
+            busy={busy}
             runtimeEnvironments={runtimeEnvironments}
             runtimeStatus={runtimeStatus}
             sshConnections={sshConnections}
@@ -314,16 +331,8 @@ export function SkillBundleInstallFlow(props: {
             {busy
               ? translate('auto.components.skills.SkillBundleInstallFlow.01c5a13e03', 'Installing…')
               : result
-                ? translate(
-                    'auto.components.skills.SkillBundleInstallFlow.01c5a13e04',
-                    'Retry {{value0}} skills',
-                    { value0: retryIds.size }
-                  )
-                : translate(
-                    'auto.components.skills.SkillBundleInstallFlow.01c5a13e05',
-                    'Install {{value0}} skills',
-                    { value0: selectedSkillIds.size }
-                  )}
+                ? retrySkillsActionLabel(retryIds.size)
+                : installSkillsActionLabel(selectedSkillIds.size)}
           </Button>
         ) : null}
       </DialogFooter>

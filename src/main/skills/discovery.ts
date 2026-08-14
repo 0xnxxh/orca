@@ -18,6 +18,8 @@ import {
   type SkillScanRoot
 } from './skill-discovery-sources'
 import { discoverClaudePluginSkillSources } from './claude-plugin-skill-sources'
+import { runSkillCandidateTasks } from './skill-candidate-concurrency'
+import type { SkillProviderRootOverrides } from './skill-provider-destinations'
 
 export { buildSkillDiscoverySources } from './skill-discovery-sources'
 
@@ -187,8 +189,8 @@ type ScannedSkill = DiscoveredSkill & { canonicalSkillFilePath: string }
 async function scanRoot(root: SkillScanRoot): Promise<ScannedSkill[]> {
   const maxDepth = root.sourceKind === 'plugin' ? 9 : 4
   const skillFiles = await findSkillFiles(root.path, maxDepth)
-  const skills = await Promise.all(
-    skillFiles.map(async (skillFilePath): Promise<ScannedSkill | null> => {
+  const skills = await runSkillCandidateTasks(
+    skillFiles.map((skillFilePath) => async (): Promise<ScannedSkill | null> => {
       // Why: path identity belongs to the scanning host; canonicalizing before
       // returning prevents symlinked roots from becoming duplicate picker rows.
       const canonicalSkillFilePath = await realpath(skillFilePath).catch(() => skillFilePath)
@@ -225,6 +227,7 @@ export async function discoverSkills(args: {
   homeDir?: string
   cwd?: string
   includeCwd?: boolean
+  providerRootOverrides?: SkillProviderRootOverrides
 }): Promise<SkillDiscoveryResult> {
   const homeDir = args.homeDir ?? homedir()
   const roots = [
@@ -236,21 +239,22 @@ export async function discoverSkills(args: {
       : [])
   ]
   const sources: SkillDiscoverySource[] = []
-  const skillGroups = await Promise.all(
-    roots.map(async (root) => {
+  const rootResults = await runSkillCandidateTasks(
+    roots.map((root) => async () => {
       const exists = await pathExists(root.path)
-      sources.push({
-        ...root,
-        providers: [...root.providers],
-        exists,
-        skippedReason: exists ? undefined : 'missing'
-      })
-      if (!exists) {
-        return []
+      return {
+        source: {
+          ...root,
+          providers: [...root.providers],
+          exists,
+          skippedReason: exists ? undefined : 'missing'
+        } satisfies SkillDiscoverySource,
+        skills: exists ? await scanRoot(root) : []
       }
-      return scanRoot(root)
     })
   )
+  sources.push(...rootResults.map((result) => result.source))
+  const skillGroups = rootResults.map((result) => result.skills)
   const seen = new Map<string, DiscoveredSkill>()
   for (const skill of skillGroups.flat()) {
     // Why: overlapping repo/cwd roots and symlinked provider homes can reach

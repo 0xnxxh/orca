@@ -9,13 +9,30 @@ Implementation baselines captured by this checklist update:
 - Orca implementation: `skills-share` through `607e31dd04`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
-  kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
+  kill-switch discovery PR `#342` merged as `c2bef2ff20fb`.
   Windows device-name validation PR `#343` merged as `dbb14a658cbc`; explicit disabled production
   bootstrap PR `#352` merged as `2a23f6ace5`; publisher-identity omission PR `#355` merged as
-  `b3213bd34d1b224d8a3b11527eceaac883965400`; production remains untouched.
+  `b3213bd34d1b224d8a3b11527eceaac883965400`; production enablement PR `#357`, bounded OIDC smoke
+  PR `#358`, monitor IAM PR `#359`, and monitor release-ownership PRs `#360`/`#361` are merged
+  through `d8605edde72229c5d00d22c8bd6853a13c1a4aaa`.
 
 Validated so far:
 
+- Current release hardening cancels bundle extraction after partial bytes exist and removes the
+  extraction directory, durable journal, and managed-install state. Four repeated focused runs and
+  the real SIGKILL recovery test passed. Signed GCS uploads use the earlier of signed-policy expiry
+  and a 15-minute cap, including their archive read stream, so slow valid uploads can finish while
+  stalled uploads remain bounded.
+- Local and headless managed-skill operations now wait for the one startup transaction-recovery
+  promise before reading or changing install state. Codex uses its documented global
+  `~/.agents/skills` root, and provider removal derives allowed roots from the registry so aliases
+  remain removable after an agent is no longer detected. The combined focused suite passed 74
+  tests across 12 files, including fake-timer slow-upload and controlled-recovery regressions.
+- The reported desktop install failure was a strict main-process IPC schema rejecting the
+  renderer's additive `providers` selection before bundle verification. All four install schemas
+  now accept the bounded field, and focused schema/provider tests pass. The original production
+  link resolves as a valid one-skill bundle and returns a fresh same-version local download grant;
+  the signed URL and private metadata were not logged or printed during verification.
 - The final reliability hardening at `607e31dd04` adds a 60-second Cloud request deadline;
   cancellable, journaled bundle extraction; bounded package creation, verification, and preview
   fanout; atomic share-preparation admission and abandoned-archive cleanup; process-owned download
@@ -288,12 +305,14 @@ Validated so far:
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
 recovery, bounded finalization load, and guarded rollback-capable deployment passed. Production
-remains untouched. Native Windows, real Ubuntu 24.04 WSL filesystems, physical Ubuntu 20.04 and
+infrastructure and the unlisted-link API are live with all four controls enabled after successful
+authenticated candidate and canonical lifecycle smoke. Native Windows, real Ubuntu 24.04 WSL
+filesystems, physical Ubuntu 20.04 and
 macOS ARM64 SSH, and paired non-Windows staging passed. On 2026-08-12, the owner accepted the
 remaining live WSL-to-staging journey as duplicate evidence after the combined 449-test physical
 Windows/WSL run and native-Windows staging lifecycle; this does not treat WSL semantics as
-identical to macOS. Supported Windows SSH and the quarantine lifecycle deletion remain. The shared
-staging data plane is asleep.
+identical to macOS. The user-driven signed-in desktop and real-host production journey, supported
+Windows SSH, and the quarantine lifecycle deletion remain. The shared staging data plane is asleep.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -313,7 +332,8 @@ does not mean the surrounding phase is complete.
 - [x] The portable archive root conforms to Agent Plugins 1.0.0 for skills-only packages and keeps
       Orca integrity metadata in `dev.orca.skill-sharing/manifest.json`.
 - [x] One canonical `.agents/skills/<skill-name>` copy is installed for each selected skill;
-      provider-specific placements are reconciled only for detected agents.
+      provider-specific placements are reconciled for explicitly selected agents, defaulting to
+      detected agents when no selection is supplied.
 - [x] Install, update, rollback, and removal preserve modified or unowned local content unless the
       user explicitly approves replacement.
 - [x] Package ingestion rejects unsafe archives before any destination mutation.
@@ -1536,15 +1556,32 @@ disconnect boundaries remain separate gates below.
 
 ### Production infrastructure and launch
 
-- [ ] Apply the approved production Terraform plan and verify no unrelated replacement.
-- [ ] Run production database migrations before routing skill traffic.
-- [ ] Deploy the API with all skill flags disabled.
-- [ ] After every first-release gate passes, enable the feature for all accounts in one launch.
+- [x] Apply the approved production Terraform plan and verify no unrelated replacement. The saved
+      skill-only plan added 40 resources with zero updates, replacements, or deletions; the
+      storage-monitor follow-up added one narrow IAM binding with zero changes or deletions. The
+      final hardening used two reviewed targeted phases: 13 additions plus one WIF update, followed
+      by exactly five broad-IAM deletions. A separate targeted apply made nine in-place
+      observability updates. No full plan or unrelated Relay drift was applied.
+- [x] Run production database migrations before routing skill traffic. Disabled-route bootstrap
+      run `31648015091` completed the skill schema migration before any skill route was enabled.
+- [x] Deploy the API with all skill flags disabled. Bootstrap revision `orca-cloud-api-00016-yem`
+      received 100% traffic and returned `404` for the disabled skill route while Artifact and Auth
+      health remained green.
+- [x] After every first-release gate passes, enable the feature for all accounts in one launch.
+      Production run `31650178315` initially enabled upload, download, remote install, and sharing
+      together. Hardening run `31661421728` then passed candidate and canonical authenticated
+      artifact plus skill smoke and promoted `orca-cloud-api-00025-qup` at 100% traffic with digest
+      `sha256:e4f044105ff2345574bdceb36eec1629761428cc2edf9d743939390b857d61e0`.
 - [ ] Verify one complete share, local install, remote install, update, rollback, revoke, local
-      removal, Cloud deletion, upload expiry, and soft-delete recovery journey.
+      removal, Cloud deletion, upload expiry, and soft-delete recovery journey. Production CI has
+      verified the server-side share/version/grant/revoke/delete lifecycle; the signed-in desktop
+      and real-host production journey remains manual.
 - [ ] Verify upload, download, and remote-install kill switches independently.
 - [ ] Review error budgets, cost, authorization denials, saturation, orphan counts, and support
-      signals.
+      signals. The hardened production revision has zero post-deploy error logs. All eight skill
+      alerts route to the enabled dedicated `Orca skill sharing alerts` channel, and aggregate
+      monitor execution `orca-cloud-skill-storage-monitor-lfd26` passed on the serving API digest
+      with zero overdue objects. Sustained-usage review remains post-launch.
 
 ### Launch operations
 

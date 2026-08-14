@@ -765,6 +765,10 @@ export type UISlice = {
   pendingSkillShareId: string | null
   openSkillShare: (shareId: string) => void
   clearPendingSkillShare: () => void
+  /** Set when another surface links straight to the page's shared-links view. */
+  pendingSkillsSharedView: boolean
+  openSkillsSharedLinks: () => void
+  clearPendingSkillsSharedView: () => void
   openArtifactsPage: () => void
   closeArtifactsPage: () => void
   openMobilePage: () => void
@@ -1262,6 +1266,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   previousViewBeforeSpace: 'terminal',
   previousViewBeforeSkills: 'terminal',
   pendingSkillShareId: null,
+  pendingSkillsSharedView: false,
   previousViewBeforeMobile: 'terminal',
   previousViewBeforeArtifacts: 'terminal',
   setActiveView: (view) => set({ activeView: view }),
@@ -1519,6 +1524,14 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       pendingSkillShareId: shareId
     })),
   clearPendingSkillShare: () => set({ pendingSkillShareId: null }),
+  openSkillsSharedLinks: () =>
+    set((state) => ({
+      activeView: 'skills',
+      previousViewBeforeSkills:
+        state.activeView === 'skills' ? state.previousViewBeforeSkills : state.activeView,
+      pendingSkillsSharedView: true
+    })),
+  clearPendingSkillsSharedView: () => set({ pendingSkillsSharedView: false }),
   openArtifactsPage: () =>
     set((state) => ({
       activeView: 'artifacts',

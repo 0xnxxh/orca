@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type {
   SkillCloudDownloadGrant,
   SkillCloudInstallTarget,
@@ -18,6 +18,13 @@ import { skillCloudRequest } from './skill-cloud-request'
 import { startSkillPhaseOperation } from './skill-operation-observability'
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+
+function publishUploadIdempotencyKey(request: SkillCloudPublishRequest): string {
+  return (
+    request.idempotencyKey ??
+    createHash('sha256').update(`${request.packageId}\0${request.archiveSha256}`).digest('hex')
+  )
+}
 
 function id(value: string): string {
   if (!ID_PATTERN.test(value)) {
@@ -46,23 +53,42 @@ export class SkillCloudService {
     request: SkillCloudPublishRequest
   ): Promise<SkillCloudOperation<SkillCloudVersion>> {
     return this.withAuth(request, async (token, apiUrl) => {
-      const upload = await skillCloudRequest<{
+      let upload: {
         upload: {
           id: string
           policy: { url: string; fields: Record<string, string>; expiresAt: string }
         }
-      }>({
-        apiUrl,
-        authToken: token,
-        path: '/v1/skill-packages/uploads',
-        method: 'POST',
-        body: {
-          expectedArchiveSha256: request.archiveSha256,
-          expectedCompressedBytes: request.compressedBytes
-        },
-        idempotencyKey: randomUUID(),
-        signal: request.signal
-      })
+      }
+      try {
+        upload = await skillCloudRequest<typeof upload>({
+          apiUrl,
+          authToken: token,
+          path: '/v1/skill-packages/uploads',
+          method: 'POST',
+          body: {
+            expectedArchiveSha256: request.archiveSha256,
+            expectedCompressedBytes: request.compressedBytes
+          },
+          idempotencyKey: publishUploadIdempotencyKey(request),
+          signal: request.signal
+        })
+      } catch (error) {
+        const existing = await skillCloudRequest<{ package: SkillCloudPackageDetails }>({
+          apiUrl,
+          authToken: token,
+          path: `/v1/skill-packages/${id(request.packageId)}`,
+          signal: request.signal
+        }).catch(() => null)
+        const published = existing?.package.versions.find(
+          (version) =>
+            version.archiveSha256 === request.archiveSha256 &&
+            version.compressedBytes === request.compressedBytes
+        )
+        if (published) {
+          return published
+        }
+        throw error
+      }
       const uploadOperation = startSkillPhaseOperation({
         phase: 'upload',
         compressedBytes: request.compressedBytes

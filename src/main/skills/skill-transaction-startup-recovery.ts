@@ -18,6 +18,8 @@ import {
 } from './skill-remove-recovery'
 import { startSkillPhaseOperation } from './skill-operation-observability'
 import { WslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
+import { readSkillPlacementRecoveryJournal } from './skill-placement-recovery-journal'
+import { recoverSkillPlacementTransaction } from './skill-placement-transaction'
 
 const MAX_PENDING_TRANSACTION_JOURNALS = 64
 const MAX_TRANSACTION_JOURNAL_BYTES = 4 * 1024 * 1024
@@ -27,6 +29,7 @@ type PendingTransaction = {
   journalKey: string
   install: boolean
   removal: boolean
+  placement: boolean
 }
 
 export type SkillTransactionStartupRecoveryReport = {
@@ -46,7 +49,7 @@ function failureCode(error: unknown): string {
 
 async function scanJournalDirectory(
   stateDirectory: string,
-  directoryName: 'journals' | 'removal-journals'
+  directoryName: 'journals' | 'removal-journals' | 'placement-journals'
 ): Promise<{
   candidates: { canonicalPath: string; journalKey: string }[]
   failures: { journalKey: string; code: string }[]
@@ -106,13 +109,14 @@ function pendingTransactions(
   const pending = new Map<string, PendingTransaction>()
   const add = (
     candidate: { canonicalPath: string; journalKey: string },
-    kind: 'install' | 'removal'
+    kind: 'install' | 'removal' | 'placement'
   ): void => {
     const current = pending.get(candidate.canonicalPath) ?? {
       canonicalPath: candidate.canonicalPath,
       journalKey: candidate.journalKey,
       install: false,
-      removal: false
+      removal: false,
+      placement: false
     }
     current[kind] = true
     pending.set(candidate.canonicalPath, current)
@@ -125,36 +129,65 @@ function pendingTransactions(
 async function recoverPendingSkillTransactionsUnobserved(
   stateDirectory: string
 ): Promise<SkillTransactionStartupRecoveryReport> {
-  const [installs, removals, extractions, locks] = await Promise.all([
+  const [installs, removals, placements, extractions, locks] = await Promise.all([
     scanJournalDirectory(stateDirectory, 'journals'),
     scanJournalDirectory(stateDirectory, 'removal-journals'),
+    scanJournalDirectory(stateDirectory, 'placement-journals'),
     recoverPendingSkillExtractions(stateDirectory),
     reclaimDeadSkillInstallLocks(stateDirectory)
   ])
   const report: SkillTransactionStartupRecoveryReport = {
-    scanned: installs.candidates.length + removals.candidates.length + extractions.scanned,
+    scanned:
+      installs.candidates.length +
+      removals.candidates.length +
+      placements.candidates.length +
+      extractions.scanned,
     recovered: extractions.recovered,
     orphanedExtractionsRecovered: extractions.recovered,
     orphanedLocksReclaimed: locks.reclaimed,
-    failures: [...installs.failures, ...removals.failures, ...extractions.failures],
-    truncated: installs.truncated || removals.truncated || extractions.truncated || locks.truncated
+    failures: [
+      ...installs.failures,
+      ...removals.failures,
+      ...placements.failures,
+      ...extractions.failures
+    ],
+    truncated:
+      installs.truncated ||
+      removals.truncated ||
+      placements.truncated ||
+      extractions.truncated ||
+      locks.truncated
   }
-  for (const pending of pendingTransactions(installs.candidates, removals.candidates)) {
+  const pending = pendingTransactions(installs.candidates, removals.candidates)
+  for (const placement of placements.candidates) {
+    const current = pending.find((candidate) => candidate.canonicalPath === placement.canonicalPath)
+    if (current) {
+      current.placement = true
+    } else {
+      pending.push({ ...placement, install: false, removal: false, placement: true })
+    }
+  }
+  for (const pendingTransaction of pending) {
     let releaseLock: (() => Promise<void>) | null = null
     try {
       releaseLock = await acquireSkillInstallLock({
-        path: skillInstallLockPath(stateDirectory, pending.canonicalPath)
+        path: skillInstallLockPath(stateDirectory, pendingTransaction.canonicalPath)
       })
-      const installJournal = pending.install
-        ? await readSkillInstallRecoveryJournal(stateDirectory, pending.canonicalPath)
+      const installJournal = pendingTransaction.install
+        ? await readSkillInstallRecoveryJournal(stateDirectory, pendingTransaction.canonicalPath)
         : null
-      const removalJournal = pending.removal
-        ? await readSkillRemovalRecoveryJournal(stateDirectory, pending.canonicalPath)
+      const removalJournal = pendingTransaction.removal
+        ? await readSkillRemovalRecoveryJournal(stateDirectory, pendingTransaction.canonicalPath)
+        : null
+      const placementJournal = pendingTransaction.placement
+        ? await readSkillPlacementRecoveryJournal(stateDirectory, pendingTransaction.canonicalPath)
         : null
       const distros = new Set(
-        [installJournal?.receipt.wslDistro, removalJournal?.receipt.wslDistro].filter(
-          (distro): distro is string => Boolean(distro)
-        )
+        [
+          installJournal?.receipt.wslDistro,
+          removalJournal?.receipt.wslDistro,
+          placementJournal?.wslDistro
+        ].filter((distro): distro is string => Boolean(distro))
       )
       if (distros.size > 1 || (distros.size && process.platform !== 'win32')) {
         throw new Error('skill-transaction-wsl-recovery-unavailable')
@@ -162,23 +195,46 @@ async function recoverPendingSkillTransactionsUnobserved(
       const distro = [...distros][0]
       const filesystem = distro
         ? new WslSkillInstallFilesystem(distro, [
-            dirname(pending.canonicalPath),
-            ...(removalJournal?.allowedProviderRoots ?? [])
+            dirname(pendingTransaction.canonicalPath),
+            ...(removalJournal?.allowedProviderRoots ?? []),
+            ...(placementJournal?.actions.map((action) => action.rootPath) ?? [])
           ])
         : undefined
       if (removalJournal) {
-        await recoverSkillRemovalTransaction(stateDirectory, pending.canonicalPath, filesystem)
+        await recoverSkillRemovalTransaction(
+          stateDirectory,
+          pendingTransaction.canonicalPath,
+          filesystem
+        )
         report.recovered += 1
       }
       if (installJournal) {
-        await recoverSkillInstallTransaction(stateDirectory, pending.canonicalPath, filesystem)
+        await recoverSkillInstallTransaction(
+          stateDirectory,
+          pendingTransaction.canonicalPath,
+          filesystem
+        )
+        report.recovered += 1
+      }
+      if (placementJournal) {
+        await recoverSkillPlacementTransaction(
+          stateDirectory,
+          pendingTransaction.canonicalPath,
+          filesystem
+        )
         report.recovered += 1
       }
     } catch (error) {
-      report.failures.push({ journalKey: pending.journalKey, code: failureCode(error) })
+      report.failures.push({
+        journalKey: pendingTransaction.journalKey,
+        code: failureCode(error)
+      })
     } finally {
       await releaseLock?.().catch((error) => {
-        report.failures.push({ journalKey: pending.journalKey, code: failureCode(error) })
+        report.failures.push({
+          journalKey: pendingTransaction.journalKey,
+          code: failureCode(error)
+        })
       })
     }
   }

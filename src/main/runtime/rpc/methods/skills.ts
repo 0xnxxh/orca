@@ -35,7 +35,12 @@ export const SKILL_METHODS: RpcMethod[] = [
             ...params,
             projectRuntime: runtime.resolveProjectRuntimeForWorktree(params.worktreeId)
           }
-      return discoverSkillsOnTarget(resolveSkillDiscoveryTarget(target), runtime.listRepos())
+      const resolvedTarget = resolveSkillDiscoveryTarget(target)
+      return discoverSkillsOnTarget(
+        resolvedTarget,
+        runtime.listRepos(),
+        await runtime.resolveSkillDiscoveryProviderRoots(resolvedTarget)
+      )
     }
   }),
   defineMethod({

@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createSkillPackageArchive } from './skill-package-creation'
 import {
   readSkillInstallReceipt,
+  writeSkillInstallReceipt,
   writeSkillStateFile,
   type SkillInstallReceiptV1
 } from './skill-install-provenance'
@@ -152,6 +153,35 @@ describe('skill removal recovery', () => {
       recoverSkillRemovalTransaction(fixture.stateDirectory, fixture.canonicalPath)
     ).rejects.toThrow('skill-removal-recovery-conflict')
     expect(await readFile(join(backupPath, 'local.md'), 'utf8')).toBe('changed')
+  })
+
+  it('removes an owned placement after its provider config root changes', async () => {
+    const fixture = await installedFixture()
+    const oldProviderRoot = join(fixture.root, 'old-claude-config', 'skills')
+    const oldPlacementPath = join(oldProviderRoot, basename(fixture.canonicalPath))
+    await cp(fixture.canonicalPath, oldPlacementPath, { recursive: true })
+    await writeSkillInstallReceipt(fixture.stateDirectory, {
+      ...fixture.receipt,
+      placements: [
+        ...fixture.receipt.placements,
+        {
+          provider: 'claude',
+          path: oldPlacementPath,
+          topology: 'independent-copy',
+          status: 'installed'
+        }
+      ]
+    })
+
+    await expect(
+      removeLocalSharedSkill({
+        operationId: 'remove-custom-root',
+        canonicalPath: fixture.canonicalPath,
+        stateDirectory: fixture.stateDirectory,
+        allowedProviderRoots: [join(fixture.root, 'new-claude-config', 'skills')]
+      })
+    ).resolves.toMatchObject({ status: 'removed' })
+    await expect(lstat(oldPlacementPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it.each(

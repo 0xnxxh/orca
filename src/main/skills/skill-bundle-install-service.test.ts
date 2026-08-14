@@ -1,3 +1,4 @@
+import { readdirSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -64,6 +65,77 @@ describe('skill bundle installation', () => {
       })
     ).rejects.toMatchObject({ data: SKILL_INSTALL_CANCELLED_FAILURE })
     await expect(readdir(join(root, 'home', '.agents', 'skills'))).resolves.toEqual([])
+  })
+
+  it('cancels during bundle extraction and removes its journal and partial bytes', async () => {
+    const root = await temporaryDirectory()
+    const source = await createSkill(join(root, 'sources'), 'alpha-skill')
+    const payloadBytes = 256 * 1024
+    await writeFile(join(source, 'payload.bin'), Buffer.alloc(payloadBytes, 0x61))
+    const bundle = await createSkillBundleArchive({
+      sources: [{ sourceDirectory: source }],
+      archivePath: join(root, 'bundle.tar.gz'),
+      packageId: 'package_mid_extract_cancel',
+      versionId: 'version_mid_extract_cancel',
+      bundleName: 'team-skills'
+    })
+    const destinationRoot = join(root, 'home', '.agents', 'skills')
+    const controller = new AbortController()
+    let observedPartialBytes = false
+    const signal = new Proxy(controller.signal, {
+      get(target, property) {
+        if (property === 'aborted' && !target.aborted) {
+          const extraction = readdirSync(destinationRoot, { withFileTypes: true }).find(
+            (entry) => entry.isDirectory() && entry.name.startsWith('.orca-skill-extract-')
+          )
+          if (extraction) {
+            const size = (() => {
+              try {
+                return statSync(
+                  join(destinationRoot, extraction.name, 'skills', 'alpha-skill', 'payload.bin')
+                ).size
+              } catch {
+                return 0
+              }
+            })()
+            if (size > 0 && size < payloadBytes) {
+              observedPartialBytes = true
+              controller.abort()
+            }
+          }
+        }
+        const value = Reflect.get(target, property, target) as unknown
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+
+    await expect(
+      installSkillBundle({
+        operationId: 'operation_mid_extract_cancel',
+        archivePath: bundle.archivePath,
+        packageId: bundle.manifest.packageId,
+        versionId: bundle.manifest.versionId,
+        bundleDigest: bundle.manifest.bundleDigest,
+        selectedSkillIds: ['alpha-skill'],
+        expectedArchiveSha256: bundle.archiveSha256,
+        scope: 'global',
+        homeDirectory: join(root, 'home'),
+        orcaStateDirectory: join(root, 'state'),
+        detectedProviders: [],
+        destinationIdentity: 'local-global',
+        hostIdentity: 'host_1',
+        signal
+      })
+    ).rejects.toMatchObject({ data: SKILL_INSTALL_CANCELLED_FAILURE })
+
+    expect(observedPartialBytes).toBe(true)
+    await expect(readdir(destinationRoot)).resolves.toEqual([])
+    await expect(
+      readdir(join(root, 'state', 'skill-installs', 'extraction-journals'))
+    ).resolves.toEqual([])
+    await expect(listManagedSkillInstalls(join(root, 'state', 'skill-installs'))).resolves.toEqual(
+      []
+    )
   })
 
   it('installs a selected subset and keeps an unowned conflict local', async () => {
@@ -141,5 +213,50 @@ describe('skill bundle installation', () => {
         bundleDigest: bundle.manifest.bundleDigest
       })
     ])
+  })
+
+  it('reports partial when a selected provider placement is unowned', async () => {
+    const root = await temporaryDirectory()
+    const alpha = await createSkill(join(root, 'sources'), 'alpha-skill')
+    const homeDirectory = join(root, 'home')
+    const providerPath = join(homeDirectory, '.claude', 'skills', 'alpha-skill')
+    await mkdir(providerPath, { recursive: true })
+    await writeFile(join(providerPath, 'SKILL.md'), '# Unowned')
+    const bundle = await createSkillBundleArchive({
+      sources: [{ sourceDirectory: alpha }],
+      archivePath: join(root, 'bundle.tar.gz'),
+      packageId: 'package_provider_partial',
+      versionId: 'version_1',
+      bundleName: 'team-skills'
+    })
+
+    const result = await installSkillBundle({
+      operationId: 'operation_provider_partial',
+      archivePath: bundle.archivePath,
+      packageId: bundle.manifest.packageId,
+      versionId: bundle.manifest.versionId,
+      bundleDigest: bundle.manifest.bundleDigest,
+      selectedSkillIds: ['alpha-skill'],
+      expectedArchiveSha256: bundle.archiveSha256,
+      scope: 'global',
+      homeDirectory,
+      orcaStateDirectory: join(root, 'state'),
+      detectedProviders: ['claude'],
+      destinationIdentity: 'local-global',
+      hostIdentity: 'host_1'
+    })
+
+    expect(result).toMatchObject({
+      status: 'partial',
+      skills: [
+        {
+          name: 'alpha-skill',
+          status: 'installed',
+          placements: expect.arrayContaining([
+            expect.objectContaining({ provider: 'claude', status: 'skipped' })
+          ])
+        }
+      ]
+    })
   })
 })

@@ -55,6 +55,8 @@ export const SkillBundleInstallRequestSchema = z
     selectedSkillIds: z.array(ID_SCHEMA).min(1).max(512),
     ingress: SkillBundleInstallIngressSchema,
     destination: SkillInstallDestinationSchema,
+    /** Agents the user picked; absent means every detected agent. */
+    providers: z.array(z.string().min(1).max(64)).max(64).optional(),
     conflictDecisions: z.array(SkillBundleConflictDecisionSchema).max(512).default([])
   })
   .strict()

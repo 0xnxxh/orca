@@ -53,22 +53,27 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` through `607e31dd04`; no Orca pull request exists.
-Cloud bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
-the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
-recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
-hardening merged through `#332`-`#335` as `bb8bf8b9ac`. The encrypted physical-host credential
-handoff merged through `#336` as `8fce3298ef`. The isolated migration coexistence and database
-restore drill merged through `#350` as `c22007384a`.
-The explicit default-off production bootstrap merged through `#352` as `2a23f6ace5`; it performs
-no deployment unless deliberately selected, and all production skill controls remain disabled.
-The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
-follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
-anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
-untouched. Local, Windows, WSL, paired-runtime, Docker-backed SSH, browser-free staging desktop,
-physical Ubuntu 20.04 SSH, published-object recovery, and bounded finalization-load validation are
-substantially complete; the implementation checklist records the exact evidence and remaining
-physical-host and lifecycle gates.
+The Orca implementation is on `skills-share` through `2a0b7b2acf`; no Orca pull request exists.
+The local working tree also contains the install-IPC compatibility fix and the in-progress Skills
+UI overhaul. Cloud bundle ingestion, bearer links, recovery, load testing, production bootstrap,
+OIDC smoke, and monitor ownership merged through `stablyai/orca-cloud#361`. Final infrastructure
+hardening merged in `#364` as `57c4958979fc32ed4753959cea45edd3a7c8775c`.
+
+Production is live. Two reviewed targeted Terraform phases added the dedicated app deploy identity,
+restricted both GitHub WIF providers to exact workflows, added resource-scoped API/Auth/monitor and
+Relay bindings, then removed five broad legacy bindings. A separate exact plan updated only the
+bearer request-log exclusion and all eight skill alert policies; the alerts use the dedicated
+`Orca skill sharing alerts` email channel. No full production plan was applied because it contains
+unrelated Relay drift.
+
+Production deploy run `31661421728` promoted `orca-cloud-api-00025-qup` at 100% traffic from merged
+`main`, using immutable digest
+`sha256:e4f044105ff2345574bdceb36eec1629761428cc2edf9d743939390b857d61e0`. Candidate and canonical
+authenticated artifact and skill smoke passed, `/health` and `/ready` are green, and the direct
+unlisted landing route returns only generic install copy plus the Orca deep link with `no-store`,
+`no-referrer`, and restrictive CSP headers. Monitor execution
+`orca-cloud-skill-storage-monitor-lfd26` passed on the same digest and emitted only aggregate
+inventory. The implementation checklist records the remaining desktop and physical-host gates.
 
 The final reliability hardening gives every skill Cloud request a default deadline, makes bundle
 extraction cancellable and recoverable through the durable extraction journal, bounds package and
@@ -266,7 +271,29 @@ candidate/canonical smoke passed. Its unrelated post-promotion storage-monitor i
 MIGs stable and reached at target zero, and the API at minimum scale zero while revision
 `00060-qay` retained 100% traffic.
 
-Production remains untouched.
+Production deployment completed on 2026-08-12. The exact skill-only Terraform apply created the
+private bucket, database, secret, least-privilege identities, request-log exclusion, metrics,
+alerts, and dashboard with 40 additions and zero updates, replacements, or deletions. Disabled-route
+bootstrap run `31648015091` migrated the schema and promoted `orca-cloud-api-00016-yem` while all
+four controls remained false. Cloud PR `#357` enabled all four controls in one launch. Cloud PR
+`#358` replaced the missing long-lived production smoke secret with an exchange restricted to the
+exact production `main` workflow, GitHub environment, dispatch event, repository/owner IDs, and
+audience; issued principals expire in ten minutes and have no refresh credentials. Auth run
+`31649381596` passed candidate and canonical health. API run `31650178315` passed candidate and
+canonical authenticated artifact plus skill lifecycle smoke, promoted
+`orca-cloud-api-00022-maq` to 100% traffic, and completed the aggregate monitor image update. All
+four skill controls are true, the serving revision reported zero deployment-window errors, and
+both API and Auth health are green.
+
+Cloud PR `#359` codified the deploy identity's `roles/iam.serviceAccountUser` grant only on the
+read-only skill storage monitor identity. Its exact production apply added one resource with zero
+changes or deletions, and the repeat targeted plan was zero-diff. Manual execution
+`orca-cloud-skill-storage-monitor-bmm4q` completed successfully. Cloud PRs `#360` and `#361` keep
+Terraform ownership of the monitor shape while assigning its immutable image and Cloud Run client
+metadata to the release workflow; the exact production monitor plan is zero-diff after the live
+image advance. The development Orca instance
+`skill-sharing-manual` now points at `login.onorca.dev` and `cloud-api.onorca.dev`; sign-in and the
+desktop/real-host production lifecycle remain user-driven validation.
 
 A final renderer lifecycle review fenced managed-install inventory by request generation so a
 slower previous machine cannot overwrite the newly selected machine's list. It also moved bundle

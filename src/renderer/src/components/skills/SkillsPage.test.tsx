@@ -80,19 +80,42 @@ async function flushMicrotasks(): Promise<void> {
   })
 }
 
-/** Skill names currently rendered as cards. */
+/** Skill names currently rendered as rows. */
 function renderedSkillNames(): string[] {
-  return [...(container?.querySelectorAll('h3') ?? [])].map((node) => node.textContent ?? '')
+  return [...(container?.querySelectorAll('[data-skill-name]') ?? [])].map(
+    (node) => node.textContent ?? ''
+  )
 }
 
 function buttonNamed(name: string): HTMLButtonElement {
   const button = [...(container?.querySelectorAll('button') ?? [])].find(
-    (candidate) => candidate.textContent?.trim() === name
+    (candidate) =>
+      candidate.textContent?.trim() === name || candidate.getAttribute('aria-label') === name
   )
   if (!(button instanceof HTMLButtonElement)) {
     throw new Error(`Missing button: ${name}`)
   }
   return button
+}
+
+function buttonStartingWith(prefix: string): HTMLButtonElement {
+  const button = [...(container?.querySelectorAll('button') ?? [])].find((candidate) =>
+    candidate.textContent?.trim().startsWith(prefix)
+  )
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing button starting with: ${prefix}`)
+  }
+  return button
+}
+
+function skillRow(name: string): HTMLElement {
+  const row = [...(container?.querySelectorAll('[role="option"]') ?? [])].find(
+    (candidate) => candidate.querySelector('[data-skill-name]')?.textContent === name
+  )
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Missing skill row: ${name}`)
+  }
+  return row
 }
 
 function selectionCheckbox(name: string): HTMLButtonElement {
@@ -167,11 +190,15 @@ describe('SkillsPage', () => {
 
     await renderPage()
     await flushMicrotasks()
+    // Why: the path lives in the detail dialog, where it must wrap inside the
+    // column instead of pushing the dialog into horizontal scroll.
+    await act(async () => fireEvent.click(skillRow('long-path')))
 
-    const path = [...(container?.querySelectorAll('[title]') ?? [])].find(
-      (element) => element.getAttribute('title') === longPath
+    const dialog = document.querySelector('[role="dialog"]')
+    const path = [...(dialog?.querySelectorAll('*') ?? [])].find(
+      (element) => element.textContent === longPath && element.children.length === 0
     )
-    expect(path?.classList.contains('truncate')).toBe(true)
+    expect(path?.classList.contains('break-all')).toBe(true)
     expect(path?.textContent).toBe(longPath)
   })
 
@@ -267,7 +294,7 @@ describe('SkillsPage', () => {
     await act(async () => fireEvent.input(search, { target: { value: 'beta' } }))
     expect(container?.textContent).toContain('1 selected')
 
-    await act(async () => fireEvent.click(buttonNamed('Select all results')))
+    await act(async () => fireEvent.click(buttonStartingWith('Select all')))
     expect(container?.textContent).toContain('2 selected')
     await act(async () => fireEvent.input(search, { target: { value: '' } }))
     expect(selectionCheckbox('alpha').getAttribute('data-state')).toBe('checked')
@@ -294,11 +321,107 @@ describe('SkillsPage', () => {
     await act(async () => fireEvent.click(buttonNamed('Share skills')))
     expect(container?.textContent).toContain('Only home and workspace skills can be shared.')
 
-    await act(async () => fireEvent.click(buttonNamed('Select all results')))
+    await act(async () => fireEvent.click(buttonStartingWith('Select all')))
     expect(container?.textContent).toContain('1 selected')
     expect(container?.textContent).toContain(
       'A skill with this name is already selected from another source.'
     )
+  })
+
+  // Why: Escape used to leave the page outright, discarding a selection that can
+  // hold dozens of skills chosen one by one.
+  it('backs out of share selection on Escape before leaving the page', async () => {
+    const closeSkillsPage = vi.fn()
+    const discover = vi.fn().mockResolvedValue(discoveryResult(['alpha']))
+    useAppStore.setState({ closeSkillsPage })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+    await act(async () => fireEvent.click(buttonNamed('Share skills')))
+    expect(container?.querySelector('[aria-label="Select alpha"]')).not.toBeNull()
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(closeSkillsPage).not.toHaveBeenCalled()
+    expect(container?.querySelector('[aria-label="Select alpha"]')).toBeNull()
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(closeSkillsPage).toHaveBeenCalledOnce()
+  })
+
+  // Why: bundles run to ~30 skills; ticking each box one at a time is the flow
+  // this page exists for.
+  it('extends the share selection to a shift-clicked row', async () => {
+    const discover = vi.fn().mockResolvedValue(discoveryResult(['alpha', 'beta', 'gamma']))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+    await act(async () => fireEvent.click(buttonNamed('Share skills')))
+    await act(async () => fireEvent.click(skillRow('alpha')))
+    expect(container?.textContent).toContain('1 selected')
+
+    const gamma = skillRow('gamma')
+    await act(async () => {
+      fireEvent.pointerDown(gamma, { shiftKey: true })
+      fireEvent.click(gamma, { shiftKey: true })
+    })
+    expect(container?.textContent).toContain('3 selected')
+  })
+
+  it('filters by source from the count chips', async () => {
+    const discover = vi.fn().mockResolvedValue({
+      skills: [skill('home-skill'), skill('plugin-skill', { sourceKind: 'plugin' })],
+      sources: [],
+      scannedAt: 1
+    } satisfies SkillDiscoveryResult)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+    await act(async () => fireEvent.click(buttonStartingWith('Plugin')))
+
+    expect(renderedSkillNames()).toEqual(['plugin-skill'])
+    expect(container?.textContent).toContain('1 result')
+  })
+
+  // Why: the reason is per-row state, but on a remote runtime it applies to every
+  // row at once — 114 copies of the same sentence is not an explanation.
+  it('explains remote-only skills once instead of on every row', async () => {
+    const call = vi.fn(
+      async (args: { method: string; selector?: string }) =>
+        createCompatibleRuntimeStatusResponseIfNeeded(args) ?? {
+          id: 'skills',
+          ok: true,
+          result: discoveryResult(['remote-one', 'remote-two'])
+        }
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(vi.fn()), runtimeEnvironments: { call } }
+    })
+    setRuntimeOwner('env-1')
+
+    await renderPage()
+    await flushMicrotasks()
+    await act(async () => fireEvent.click(buttonNamed('Share skills')))
+
+    const notices = (container?.textContent ?? '').split('Open Skills on that machine').length - 1
+    expect(notices).toBe(1)
+    expect(container?.textContent).not.toContain('Open this skill on its owning machine')
   })
 
   it('drops stale selections when a refreshed scan no longer contains the skill', async () => {

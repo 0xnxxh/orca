@@ -9,6 +9,8 @@ import {
   type ObservedSkillPackage
 } from './skill-package-identity'
 import type { SkillInstallFilesystem, SkillInstalledFileMode } from './skill-install-filesystem'
+import { SKILL_INSTALL_PROVIDERS } from '../../shared/skill-install-providers'
+import type { SkillProviderRootOverrides } from './skill-provider-destinations'
 
 const execFileAsync = promisify(execFile)
 const BATCH_FILE_COUNT = 8
@@ -72,6 +74,15 @@ export class WslSkillInstallFilesystem implements SkillInstallFilesystem {
     allowedRoots: readonly string[]
   ) {
     this.guestAllowedRoots = allowedRoots.map((path) => this.toGuestPath(path))
+  }
+
+  authorizeRoots(paths: readonly string[]): void {
+    for (const path of paths) {
+      const guestRoot = this.toGuestPath(path)
+      if (!this.guestAllowedRoots.includes(guestRoot)) {
+        this.guestAllowedRoots.push(guestRoot)
+      }
+    }
   }
 
   async prepareExtractedSkill(path: string, manifest: SkillPackageManifestV1): Promise<void> {
@@ -223,10 +234,18 @@ export function createWslSkillInstallFilesystem(input: {
   distro: string
   homeDirectory: string
   workspaceDirectory?: string
+  providerRootOverrides?: SkillProviderRootOverrides
 }): WslSkillInstallFilesystem {
   const scopeRoot = input.workspaceDirectory ?? input.homeDirectory
+  const scope = input.workspaceDirectory ? 'workspace' : 'global'
+  const providerRoots = SKILL_INSTALL_PROVIDERS.flatMap((provider) => {
+    const segments = scope === 'global' ? provider.globalSegments : provider.workspaceSegments
+    const overriddenRoot =
+      scope === 'global' ? input.providerRootOverrides?.[provider.id] : undefined
+    return overriddenRoot ? [overriddenRoot] : segments ? [join(scopeRoot, ...segments)] : []
+  })
   return new WslSkillInstallFilesystem(input.distro, [
     join(scopeRoot, '.agents', 'skills'),
-    join(scopeRoot, '.claude', 'skills')
+    ...providerRoots
   ])
 }

@@ -133,6 +133,7 @@ export class SkillSharePreparationService {
           archiveSha256: preparation.created.archiveSha256,
           compressedBytes: preparation.created.compressedBytes,
           packageId: preparation.created.manifest.packageId,
+          idempotencyKey: input.preparationId,
           releaseNotes: input.releaseNotes,
           signal: controller.signal,
           onProgress: (progress) =>

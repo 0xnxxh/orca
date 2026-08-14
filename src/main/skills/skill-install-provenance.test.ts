@@ -26,6 +26,7 @@ describe('managed skill install receipts', () => {
       destinationIdentity: 'global:runtime-1',
       canonicalPath: join(root, 'missing', 'example'),
       placements: [],
+      providers: ['codex', 'claude'],
       installedAt: '2026-08-11T00:00:00.000Z',
       hostIdentity: 'runtime-1'
     })
@@ -35,6 +36,7 @@ describe('managed skill install receipts', () => {
         name: 'example',
         packageId: 'package-1',
         versionId: 'version-1',
+        providers: ['codex', 'claude'],
         state: 'missing'
       })
     ])

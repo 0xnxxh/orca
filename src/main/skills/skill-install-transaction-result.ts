@@ -68,6 +68,24 @@ export function skillInstallReplacementAllowed(
   )
 }
 
+export function skillInstallUnchangedResult(
+  input: LocalSkillInstallInput,
+  manifest: SkillPackageManifestV1,
+  canonicalPath: string,
+  receipt: SkillInstallReceiptV1
+): SkillInstallResult {
+  return {
+    operationId: input.operationId,
+    status: 'unchanged',
+    name: manifest.name,
+    packageDigest: manifest.packageDigest,
+    canonicalPath,
+    placements: receipt.placements.map((placement) =>
+      placement.status === 'installed' ? { ...placement, status: 'unchanged' } : placement
+    )
+  }
+}
+
 export function createSkillInstallReceipt(input: {
   request: LocalSkillInstallInput
   manifest: SkillPackageManifestV1

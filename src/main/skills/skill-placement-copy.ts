@@ -29,12 +29,20 @@ export async function replaceOwnedSkillPlacementCopy(
   canonicalPath: string,
   destinationPath: string,
   filesystem: SkillInstallFilesystem,
-  fileModes?: readonly SkillInstalledFileMode[]
+  fileModes?: readonly SkillInstalledFileMode[],
+  transaction?: { replacementPath: string; backupPath: string; retainBackup: boolean }
 ): Promise<void> {
-  const replacement = `${destinationPath}.orca-copy-${randomUUID()}`
-  const backup = `${destinationPath}.orca-backup-${randomUUID()}`
+  const replacement = transaction?.replacementPath ?? `${destinationPath}.orca-copy-${randomUUID()}`
+  const backup = transaction?.backupPath ?? `${destinationPath}.orca-backup-${randomUUID()}`
   try {
-    await createVerifiedSkillPlacementCopy(canonicalPath, replacement, filesystem, fileModes)
+    await (transaction
+      ? createSkillPlacementCopyAtMissingDestination(
+          canonicalPath,
+          replacement,
+          filesystem,
+          fileModes
+        )
+      : createVerifiedSkillPlacementCopy(canonicalPath, replacement, filesystem, fileModes))
     await filesystem.rename(destinationPath, backup)
     try {
       await filesystem.rename(replacement, destinationPath)
@@ -42,7 +50,9 @@ export async function replaceOwnedSkillPlacementCopy(
       await filesystem.rename(backup, destinationPath)
       throw error
     }
-    await filesystem.remove(backup)
+    if (!transaction?.retainBackup) {
+      await filesystem.remove(backup)
+    }
   } finally {
     await filesystem.remove(replacement)
   }
@@ -52,14 +62,17 @@ export async function createSkillPlacementCopyAtMissingDestination(
   canonicalPath: string,
   destinationPath: string,
   filesystem: SkillInstallFilesystem,
-  fileModes?: readonly SkillInstalledFileMode[]
+  fileModes?: readonly SkillInstalledFileMode[],
+  stagingPath?: string
 ): Promise<void> {
   await mkdir(dirname(destinationPath), { recursive: true })
-  await mkdir(destinationPath, { mode: 0o700 })
+  const copyPath = stagingPath ?? destinationPath
+  await mkdir(copyPath, { mode: 0o700 })
   let complete = false
+  let placed = false
   try {
     for (const entry of await readdir(canonicalPath)) {
-      await cp(join(canonicalPath, entry), join(destinationPath, entry), {
+      await cp(join(canonicalPath, entry), join(copyPath, entry), {
         recursive: true,
         verbatimSymlinks: true,
         force: false,
@@ -68,15 +81,23 @@ export async function createSkillPlacementCopyAtMissingDestination(
     }
     const [source, copied] = await Promise.all([
       filesystem.observeSkill(canonicalPath, fileModes),
-      filesystem.observeSkill(destinationPath, fileModes)
+      filesystem.observeSkill(copyPath, fileModes)
     ])
     if (source.observedDigest !== copied.observedDigest) {
       throw new Error('skill-placement-copy-digest-mismatch')
     }
+    if (stagingPath) {
+      await filesystem.rename(stagingPath, destinationPath)
+      placed = true
+      await filesystem.observeSkill(destinationPath, fileModes)
+    }
     complete = true
   } finally {
     if (!complete) {
-      await filesystem.remove(destinationPath)
+      await filesystem.remove(copyPath)
+      if (placed) {
+        await filesystem.remove(destinationPath)
+      }
     }
   }
 }

@@ -50,6 +50,14 @@ const secondSkill: DiscoveredSkill = {
   skillFilePath: '/home/skills/second-skill/SKILL.md'
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 function managedInstall(destinationIdentity: string): ManagedSkillInstall {
   return {
     name: 'private-skill',
@@ -67,12 +75,19 @@ function managedInstall(destinationIdentity: string): ManagedSkillInstall {
 function setup(
   installs: ManagedSkillInstall[],
   organization = false,
-  selectedSkills: DiscoveredSkill[] = [skill]
+  selectedSkills: DiscoveredSkill[] = [skill],
+  previewOverrides: Partial<SkillSharePreview> = {},
+  preparation?: Promise<SkillSharePreview>,
+  authStatus: Promise<unknown> = Promise.resolve({
+    cloud: { email: 'owner@example.com', ...(organization ? { activeOrgId: 'org_1' } : {}) }
+  })
 ) {
   let progressListener: ((progress: SkillShareProgress) => void) | null = null
   const skills = {
     listManagedInstalls: vi.fn().mockResolvedValue({ status: 'ok', value: installs }),
-    prepareShare: vi.fn().mockResolvedValue(preview),
+    prepareShare: vi
+      .fn()
+      .mockReturnValue(preparation ?? Promise.resolve({ ...preview, ...previewOverrides })),
     publishShare: vi.fn(),
     cancelShare: vi.fn().mockResolvedValue(undefined),
     releaseShare: vi.fn().mockResolvedValue(undefined),
@@ -86,12 +101,7 @@ function setup(
     value: {
       skills,
       orcaProfiles: {
-        authStatus: vi.fn().mockResolvedValue({
-          cloud: {
-            email: 'owner@example.com',
-            ...(organization ? { activeOrgId: 'org_1', activeOrgName: 'Orca' } : {})
-          }
-        }),
+        authStatus: vi.fn().mockReturnValue(authStatus),
         orgMembersList: vi.fn().mockResolvedValue({
           status: 'ok',
           roster: { members: [] }
@@ -99,10 +109,13 @@ function setup(
       }
     }
   })
-  render(<SkillShareDialog skills={selectedSkills} open onOpenChange={() => undefined} />)
+  const view = render(
+    <SkillShareDialog skills={selectedSkills} open onOpenChange={() => undefined} />
+  )
   return {
     skills,
-    emitProgress: (progress: SkillShareProgress) => progressListener?.(progress)
+    emitProgress: (progress: SkillShareProgress) => progressListener?.(progress),
+    unmount: view.unmount
   }
 }
 
@@ -113,15 +126,100 @@ afterEach(() => {
 })
 
 describe('SkillShareDialog', () => {
+  it('releases a preparation that resolves after the dialog unmounts', async () => {
+    const preparation = deferred<SkillSharePreview>()
+    const { skills, unmount } = setup([], false, [skill], {}, preparation.promise)
+    await waitFor(() => expect(skills.prepareShare).toHaveBeenCalledOnce())
+
+    unmount()
+    preparation.resolve(preview)
+
+    await waitFor(() => expect(skills.releaseShare).toHaveBeenCalledWith(preview.preparationId))
+  })
+
+  it('releases a prepared archive when account inspection fails', async () => {
+    const { skills } = setup(
+      [],
+      false,
+      [skill],
+      {},
+      undefined,
+      Promise.reject(new Error('auth unavailable'))
+    )
+
+    await waitFor(() => expect(skills.releaseShare).toHaveBeenCalledWith(preview.preparationId))
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Could not prepare this skill for sharing.'
+    )
+  })
+
+  it('releases a prepared archive when the dialog unmounts', async () => {
+    const { skills, unmount } = setup([])
+    await screen.findByRole('heading', { name: 'Share skill' })
+
+    unmount()
+
+    await waitFor(() => expect(skills.releaseShare).toHaveBeenCalledWith(preview.preparationId))
+  })
+
+  it('closes even when preparation cleanup fails', async () => {
+    const onOpenChange = vi.fn()
+    const { skills } = setup([])
+    skills.releaseShare.mockRejectedValue(new Error('busy'))
+    await screen.findByRole('heading', { name: 'Share skill' })
+
+    cleanup()
+    render(<SkillShareDialog skills={[skill]} open onOpenChange={onOpenChange} />)
+    await screen.findByRole('heading', { name: 'Share skill' })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it('accepts multiline release notes up to the published limit', async () => {
     setup([], false, [skill, secondSkill])
     await screen.findByRole('heading', { name: 'Share skill bundle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Add release notes (optional)' }))
     const notes = screen.getByRole('textbox', { name: 'Release notes' }) as HTMLTextAreaElement
     const value = `Release summary\n${'x'.repeat(9_984)}`
 
     expect(notes.maxLength).toBe(10_000)
     fireEvent.change(notes, { target: { value } })
     expect(notes.value).toBe(value)
+  })
+
+  // Why: "what changed in this version?" has no answer on a first publish, so
+  // the field only opens itself when there is a previous version to compare to.
+  it('opens release notes only when publishing a new version', async () => {
+    const { skills } = setup([managedInstall('global:local')])
+    await screen.findByRole('heading', { name: 'Publish new skill version' })
+    expect(screen.getByRole('textbox', { name: 'Release notes' })).toBeTruthy()
+    expect(skills.prepareShare).toHaveBeenCalled()
+
+    cleanup()
+    setup([])
+    await screen.findByRole('heading', { name: 'Share skill' })
+    expect(screen.queryByRole('textbox', { name: 'Release notes' })).toBeNull()
+  })
+
+  it('names the files that can run instead of counting zeros', async () => {
+    setup([], false, [skill], {
+      scriptPaths: ['scripts/setup.sh'],
+      executablePaths: ['bin/tool']
+    })
+    await screen.findByRole('heading', { name: 'Share skill' })
+    expect(screen.getByText('1 script, 1 executable')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review files that can run' }))
+    expect(screen.getByText('scripts/setup.sh')).toBeTruthy()
+    expect(screen.getByText('bin/tool')).toBeTruthy()
+  })
+
+  it('states that nothing in the package can run when no file can', async () => {
+    setup([])
+    await screen.findByRole('heading', { name: 'Share skill' })
+    expect(screen.getByText('No scripts or executables')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Review files that can run' })).toBeNull()
   })
 
   it('publishes a new immutable version for one exact managed-install match', async () => {
@@ -166,7 +264,7 @@ describe('SkillShareDialog', () => {
     expect(screen.getByRole('button', { name: 'Publish new version' })).toBeTruthy()
     expect(skills.prepareShare).toHaveBeenCalledWith({
       skillIds: [skill.id, secondSkill.id],
-      bundleName: 'shared-skills',
+      bundleName: 'private-skill-and-1-more',
       packageId: 'pkg_1'
     })
   })

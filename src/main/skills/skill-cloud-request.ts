@@ -1,6 +1,5 @@
 import { resolveArtifactCloudApiUrl } from '../artifacts/artifact-cloud-config'
-
-const DEFAULT_SKILL_CLOUD_REQUEST_TIMEOUT_MS = 60_000
+import { createSkillCloudDeadline } from './skill-cloud-deadline'
 
 export class SkillCloudRequestError extends Error {
   constructor(
@@ -9,37 +8,6 @@ export class SkillCloudRequestError extends Error {
     message: string
   ) {
     super(message)
-  }
-}
-
-function requestSignal(
-  input: AbortSignal | undefined,
-  timeoutMs: number
-): {
-  signal: AbortSignal
-  cleanup(): void
-} {
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
-    throw new Error('skill-cloud-request-timeout-invalid')
-  }
-  const controller = new AbortController()
-  const forwardAbort = (): void => controller.abort(input?.reason)
-  if (input?.aborted) {
-    forwardAbort()
-  } else {
-    input?.addEventListener('abort', forwardAbort, { once: true })
-  }
-  const timeout = setTimeout(
-    () => controller.abort(new Error('skill-cloud-request-timeout')),
-    timeoutMs
-  )
-  timeout.unref()
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timeout)
-      input?.removeEventListener('abort', forwardAbort)
-    }
   }
 }
 
@@ -59,10 +27,11 @@ export async function skillCloudRequest<T>(input: {
   if (url.origin !== apiUrl || !url.pathname.startsWith('/v1/')) {
     throw new Error('skill-cloud-request-path-invalid')
   }
-  const deadline = requestSignal(
-    input.signal,
-    input.timeoutMs ?? DEFAULT_SKILL_CLOUD_REQUEST_TIMEOUT_MS
-  )
+  const deadline = createSkillCloudDeadline({
+    signal: input.signal,
+    timeoutMs: input.timeoutMs,
+    timeoutMessage: 'skill-cloud-request-timeout'
+  })
   try {
     const response = await (input.fetcher ?? fetch)(url, {
       method: input.method ?? 'GET',

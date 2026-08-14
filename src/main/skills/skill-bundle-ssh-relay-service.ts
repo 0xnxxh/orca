@@ -7,6 +7,7 @@ import {
 } from '../../shared/skill-bundle-install-contract'
 import {
   SKILL_BUNDLE_INSTALL_CAPABILITY,
+  SKILL_INSTALL_PROVIDERS_CAPABILITY,
   SKILL_INSTALL_PROGRESS_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY
 } from '../../shared/skill-install-capability'
@@ -41,6 +42,10 @@ export async function installSkillBundleOnSshHost(input: {
 }): Promise<SkillBundleInstallResult> {
   const client = requireSkillSshRelayClient(input.provider)
   const supported = await skillSshRelayCapabilities(client)
+  const request = input.request
+  if (request.providers !== undefined && !supported.includes(SKILL_INSTALL_PROVIDERS_CAPABILITY)) {
+    throw new Error('skill-bundle-ssh-update-required')
+  }
   if (!supported.includes(SKILL_BUNDLE_INSTALL_CAPABILITY)) {
     recordSkillCapabilityAbsence({
       capability: SKILL_BUNDLE_INSTALL_CAPABILITY,
@@ -54,7 +59,7 @@ export async function installSkillBundleOnSshHost(input: {
           read: async () => {
             const value = await client(
               SKILL_SSH_RELAY_GET_INSTALL_PROGRESS_METHOD,
-              { operationId: input.request.operationId },
+              { operationId: request.operationId },
               { timeoutMs: 2_000, signal: input.signal }
             )
             if (value === null) {
@@ -75,14 +80,14 @@ export async function installSkillBundleOnSshHost(input: {
           call: () =>
             client(
               SKILL_SSH_RELAY_INSTALL_BUNDLE_METHOD,
-              { request: input.request, workspace: input.workspace },
+              { request: request, workspace: input.workspace },
               { timeoutMs: SKILL_SSH_REQUEST_TIMEOUT_MS, signal: input.signal }
             )
         })
       )
     } catch (error) {
       if (
-        input.request.ingress.kind !== 'download-grant' ||
+        request.ingress.kind !== 'download-grant' ||
         !shouldUseSkillSshClientTransfer(error, input.requireHttps)
       ) {
         throw error
@@ -106,7 +111,7 @@ export async function installSkillBundleOnSshHost(input: {
               SKILL_SSH_RELAY_INSTALL_BUNDLE_METHOD,
               {
                 request: {
-                  ...input.request,
+                  ...request,
                   ingress: { kind: 'staged-upload', uploadId }
                 },
                 workspace: input.workspace

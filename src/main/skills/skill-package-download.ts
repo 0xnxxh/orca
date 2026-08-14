@@ -5,8 +5,11 @@ import {
   SKILL_PACKAGE_CONTENT_TYPE,
   SKILL_PACKAGE_MAX_COMPRESSED_BYTES
 } from '../../shared/skill-package-manifest'
-import { SKILL_INSTALL_CANCELLED_FAILURE } from '../../shared/skill-install-failure'
-import { SkillInstallOperationError } from './skill-install-operation-error'
+import {
+  createSkillDownloadAvailabilitySignal,
+  isSkillDownloadGrantExpiredAbort,
+  throwIfSkillDownloadUnavailable
+} from './skill-package-download-availability'
 import { startSkillPhaseOperation } from './skill-operation-observability'
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
@@ -63,39 +66,36 @@ function validateUrl(
   return url
 }
 
-function throwIfUnavailable(input: SkillPackageDownloadInput, expiresAt: number): void {
-  if (input.signal?.aborted) {
-    throw new SkillInstallOperationError({
-      ...SKILL_INSTALL_CANCELLED_FAILURE,
-      code: 'skill-download-cancelled'
-    })
-  }
-  if (input.now!() >= expiresAt) {
-    throw new Error('skill-download-grant-expired')
-  }
-}
-
 async function fetchWithoutCredentialRedirect(
   input: SkillPackageDownloadInput,
   allowedOrigins: ReadonlySet<string>,
-  expiresAt: number
+  expiresAt: number,
+  signal: AbortSignal
 ): Promise<Response> {
   let url = validateUrl(input.url, allowedOrigins, input.requireHttps)
   for (let redirectCount = 0; ; redirectCount += 1) {
-    throwIfUnavailable(input, expiresAt)
+    throwIfSkillDownloadUnavailable({
+      signal: input.signal,
+      now: input.now!,
+      expiresAt
+    })
     let response: Response
     try {
       response = await input.fetcher!(url, {
         method: 'GET',
         redirect: 'manual',
-        signal: input.signal
+        signal
       })
     } catch {
       if (input.signal?.aborted) {
-        throw new SkillInstallOperationError({
-          ...SKILL_INSTALL_CANCELLED_FAILURE,
-          code: 'skill-download-cancelled'
+        throwIfSkillDownloadUnavailable({
+          signal: input.signal,
+          now: input.now!,
+          expiresAt
         })
+      }
+      if (isSkillDownloadGrantExpiredAbort(signal)) {
+        throw new Error('skill-download-grant-expired')
       }
       throw new Error('skill-download-transport-failed')
     }
@@ -181,80 +181,102 @@ async function downloadSkillPackageGrantUnobserved(
       (origin) => validateUrl(origin, new Set([new URL(origin).origin]), false).origin
     )
   )
-  throwIfUnavailable(input, expiresAt)
-  const response = await fetchWithoutCredentialRedirect(input, allowedOrigins, expiresAt)
-  if (!response.ok || !response.body) {
-    throw new Error('skill-download-transport-failed')
-  }
-  if (response.headers.get('content-type')?.split(';', 1)[0] !== SKILL_PACKAGE_CONTENT_TYPE) {
-    throw new Error('skill-download-content-type-invalid')
-  }
-  const contentLength = response.headers.get('content-length')
-  if (contentLength !== null && Number(contentLength) !== input.expectedCompressedBytes) {
-    throw new Error('skill-download-size-mismatch')
-  }
-
-  const processRoot = await prepareTemporaryRoot(input.temporaryRoot)
-  const temporaryDirectory = await mkdtemp(join(processRoot, '.orca-skill-download-'))
-  const archivePath = join(temporaryDirectory, 'package.tar.gz')
+  throwIfSkillDownloadUnavailable({ signal: input.signal, now: input.now!, expiresAt })
+  const availability = createSkillDownloadAvailabilitySignal({
+    signal: input.signal,
+    now: input.now!,
+    expiresAt
+  })
   try {
-    const handle = await open(archivePath, 'wx', 0o600)
-    const reader = response.body.getReader()
-    const hash = createHash('sha256')
-    let compressedBytes = 0
-    try {
-      for (;;) {
-        throwIfUnavailable(input, expiresAt)
-        const chunk = await reader.read()
-        if (chunk.done) {
-          break
-        }
-        compressedBytes += chunk.value.byteLength
-        if (
-          compressedBytes > input.expectedCompressedBytes ||
-          compressedBytes > SKILL_PACKAGE_MAX_COMPRESSED_BYTES
-        ) {
-          throw new Error('skill-download-size-limit')
-        }
-        hash.update(chunk.value)
-        let offset = 0
-        while (offset < chunk.value.byteLength) {
-          const written = await handle.write(chunk.value, offset, chunk.value.byteLength - offset)
-          if (written.bytesWritten === 0) {
-            throw new Error('skill-download-write-failed')
-          }
-          offset += written.bytesWritten
-        }
-      }
-      await handle.sync()
-    } catch (error) {
-      await reader.cancel().catch(() => undefined)
-      if (input.signal?.aborted) {
-        throw new SkillInstallOperationError({
-          ...SKILL_INSTALL_CANCELLED_FAILURE,
-          code: 'skill-download-cancelled'
-        })
-      }
-      throw error
-    } finally {
-      await handle.close()
+    const response = await fetchWithoutCredentialRedirect(
+      input,
+      allowedOrigins,
+      expiresAt,
+      availability.signal
+    )
+    if (!response.ok || !response.body) {
+      throw new Error('skill-download-transport-failed')
     }
-    if (compressedBytes !== input.expectedCompressedBytes) {
+    if (response.headers.get('content-type')?.split(';', 1)[0] !== SKILL_PACKAGE_CONTENT_TYPE) {
+      throw new Error('skill-download-content-type-invalid')
+    }
+    const contentLength = response.headers.get('content-length')
+    if (contentLength !== null && Number(contentLength) !== input.expectedCompressedBytes) {
       throw new Error('skill-download-size-mismatch')
     }
-    const archiveSha256 = hash.digest('hex')
-    if (!hashesEqual(archiveSha256, input.expectedArchiveSha256)) {
-      throw new Error('skill-download-archive-digest-mismatch')
+
+    const processRoot = await prepareTemporaryRoot(input.temporaryRoot)
+    const temporaryDirectory = await mkdtemp(join(processRoot, '.orca-skill-download-'))
+    const archivePath = join(temporaryDirectory, 'package.tar.gz')
+    try {
+      const handle = await open(archivePath, 'wx', 0o600)
+      const reader = response.body.getReader()
+      const hash = createHash('sha256')
+      let compressedBytes = 0
+      try {
+        for (;;) {
+          throwIfSkillDownloadUnavailable({
+            signal: input.signal,
+            now: input.now!,
+            expiresAt
+          })
+          const chunk = await reader.read()
+          if (chunk.done) {
+            break
+          }
+          compressedBytes += chunk.value.byteLength
+          if (
+            compressedBytes > input.expectedCompressedBytes ||
+            compressedBytes > SKILL_PACKAGE_MAX_COMPRESSED_BYTES
+          ) {
+            throw new Error('skill-download-size-limit')
+          }
+          hash.update(chunk.value)
+          let offset = 0
+          while (offset < chunk.value.byteLength) {
+            const written = await handle.write(chunk.value, offset, chunk.value.byteLength - offset)
+            if (written.bytesWritten === 0) {
+              throw new Error('skill-download-write-failed')
+            }
+            offset += written.bytesWritten
+          }
+        }
+        await handle.sync()
+      } catch (error) {
+        await reader.cancel().catch(() => undefined)
+        if (input.signal?.aborted) {
+          throwIfSkillDownloadUnavailable({
+            signal: input.signal,
+            now: input.now!,
+            expiresAt
+          })
+        }
+        if (isSkillDownloadGrantExpiredAbort(availability.signal)) {
+          throw new Error('skill-download-grant-expired')
+        }
+        throw error
+      } finally {
+        await handle.close()
+      }
+      if (compressedBytes !== input.expectedCompressedBytes) {
+        throw new Error('skill-download-size-mismatch')
+      }
+      const archiveSha256 = hash.digest('hex')
+      if (!hashesEqual(archiveSha256, input.expectedArchiveSha256)) {
+        throw new Error('skill-download-archive-digest-mismatch')
+      }
+      return {
+        archivePath,
+        archiveSha256,
+        compressedBytes,
+        cleanup: () => rm(temporaryDirectory, { recursive: true, force: true })
+      }
+    } catch (error) {
+      await rm(temporaryDirectory, { recursive: true, force: true })
+      throw error
     }
-    return {
-      archivePath,
-      archiveSha256,
-      compressedBytes,
-      cleanup: () => rm(temporaryDirectory, { recursive: true, force: true })
-    }
-  } catch (error) {
-    await rm(temporaryDirectory, { recursive: true, force: true })
-    throw error
+  } finally {
+    availability.cleanup()
   }
 }
 

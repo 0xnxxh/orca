@@ -132,7 +132,13 @@ function bundleStatus(
   if (skills.every((skill) => skill.status === 'failed')) {
     return 'failed'
   }
-  return skills.some((skill) => ['kept-local', 'failed', 'cancelled'].includes(skill.status))
+  return skills.some(
+    (skill) =>
+      ['kept-local', 'failed', 'cancelled'].includes(skill.status) ||
+      skill.placements.some(
+        (placement) => placement.status === 'failed' || placement.status === 'skipped'
+      )
+  )
     ? 'partial'
     : 'complete'
 }

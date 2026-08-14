@@ -38,14 +38,22 @@ describe('skills filtering', () => {
       })
     ]
 
+    // Why: the owning agent comes from the root a skill was found in, not from
+    // its provider list, which flattens ten agents into "agent-skills".
+    const agentByRootPath = new Map([
+      ['/home/dev/.codex/skills', 'codex'],
+      ['/repo/.claude/skills', 'claude']
+    ])
     expect(
-      filterSkills(skills, { query: 'docs', provider: 'claude', sourceKind: 'repo' }).map(
-        (item) => item.name
-      )
+      filterSkills(skills, { query: 'docs', agent: 'claude', sourceKind: 'repo' }, agentByRootPath)
+    ).toEqual([])
+    expect(
+      filterSkills(
+        skills,
+        { query: 'docs', agent: 'all', sourceKind: 'repo' },
+        agentByRootPath
+      ).map((item) => item.name)
     ).toEqual(['Docs Writer'])
-    expect(filterSkills(skills, { query: 'docs', provider: 'codex', sourceKind: 'all' })).toEqual(
-      []
-    )
   })
 
   it('rejects oversized pasted queries before reading skill metadata', () => {
@@ -68,7 +76,7 @@ describe('skills filtering', () => {
     expect(
       filterSkills(throwingSkills, {
         query: oversizedQuery,
-        provider: 'all',
+        agent: 'all',
         sourceKind: 'all'
       })
     ).toEqual([])

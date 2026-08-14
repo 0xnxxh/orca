@@ -49,6 +49,19 @@ function request(bytes: Buffer) {
 }
 
 describe('installSkillOnSshHost', () => {
+  it('requires a relay update before sending an explicit provider choice', async () => {
+    const requestHostRpc = vi.fn(async () => ({ capabilities: ['skills.install.v1'] }))
+    await expect(
+      installSkillOnSshHost({
+        provider: { requestHostRpc } as unknown as IPtyProvider,
+        userDataPath: await userDataPath(),
+        request: { ...request(Buffer.from('archive')), providers: ['claude'] },
+        requireHttps: true
+      })
+    ).rejects.toThrow('skill-install-ssh-update-required')
+    expect(requestHostRpc).toHaveBeenCalledOnce()
+  })
+
   it('uses client-mediated upload only after direct host download fails', async () => {
     const bytes = Buffer.from('private skill archive')
     let received = 0

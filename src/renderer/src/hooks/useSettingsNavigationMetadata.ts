@@ -33,7 +33,7 @@ import {
   SquareTerminal,
   TextCursorInput,
   Files,
-  Share2,
+  BookOpen,
   UserCog,
   Wrench
 } from 'lucide-react'
@@ -355,9 +355,11 @@ export function buildSettingsNavigationMetadata({
       title: translate('auto.hooks.useSettingsNavigationMetadata.shareSkillsTitle', 'Share Skills'),
       description: translate(
         'auto.hooks.useSettingsNavigationMetadata.shareSkillsDescription',
-        'Share one or many skills through unlisted links and manage access by revoking links.'
+        'Share your skills with an unlisted link. Anyone who has it can install them.'
       ),
-      icon: Share2,
+      // Why: the sidebar entry and the page header both use BookOpen for
+      // skills, so the settings row that opens them matches.
+      icon: BookOpen,
       searchEntries: getShareSkillsSettingsSearchEntries(),
       group: 'workflows',
       badge: translate('auto.hooks.useSettingsNavigationMetadata.40d80bad8a', 'Beta')

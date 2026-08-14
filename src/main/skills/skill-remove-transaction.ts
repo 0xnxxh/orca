@@ -21,6 +21,9 @@ import {
   type RemovalMove,
   type SkillRemovalJournalV1
 } from './skill-remove-recovery'
+import { recoverSkillPlacementTransaction } from './skill-placement-transaction'
+import { recoverSkillInstallTransaction } from './skill-install-recovery'
+import { historicalSuccessfulProviderRoots } from './skill-install-historical-provider-roots'
 
 export {
   recoverSkillRemovalTransaction,
@@ -105,7 +108,14 @@ export async function removeLocalSharedSkill(
     path: skillInstallLockPath(input.stateDirectory, input.canonicalPath)
   })
   try {
+    const historicalReceipt = await readSkillInstallReceipt(
+      input.stateDirectory,
+      input.canonicalPath
+    )
+    filesystem.authorizeRoots?.(historicalSuccessfulProviderRoots(historicalReceipt))
     await recoverSkillRemovalTransaction(input.stateDirectory, input.canonicalPath, filesystem)
+    await recoverSkillInstallTransaction(input.stateDirectory, input.canonicalPath, filesystem)
+    await recoverSkillPlacementTransaction(input.stateDirectory, input.canonicalPath, filesystem)
     const receipt = await readSkillInstallReceipt(input.stateDirectory, input.canonicalPath)
     const state = await inspectCanonicalRemoval(input, receipt)
     if (!receipt) {
@@ -118,6 +128,11 @@ export async function removeLocalSharedSkill(
       return conflictResult(input, receipt, 'modified')
     }
 
+    const allowedProviderRoots = [
+      ...input.allowedProviderRoots,
+      ...historicalSuccessfulProviderRoots(receipt)
+    ]
+
     const removedPlacements: SkillPlacementResult[] = []
     const skippedPlacements: SkillPlacementResult[] = []
     const moves: RemovalMove[] = []
@@ -129,7 +144,7 @@ export async function removeLocalSharedSkill(
         await isRemovableSkillPlacement({
           placement,
           receipt,
-          allowedProviderRoots: input.allowedProviderRoots,
+          allowedProviderRoots,
           filesystem
         })
       ) {
@@ -188,7 +203,7 @@ export async function removeLocalSharedSkill(
       movedCount: 0,
       moves,
       receipt,
-      allowedProviderRoots: [...input.allowedProviderRoots]
+      allowedProviderRoots: [...new Set(allowedProviderRoots)]
     }
     const statePath = skillRemovalJournalPath(input.stateDirectory, input.canonicalPath)
     await persistRemovalJournal(statePath, journal, dependencies)

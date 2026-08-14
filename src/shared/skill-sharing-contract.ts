@@ -80,6 +80,8 @@ export type SkillShareInstallInput = {
   versionId?: string
   environmentId?: string
   destination: SkillInstallDestination
+  /** Agents to place the skill for; omitted means every detected agent. */
+  providers?: string[]
   conflictResolution?: 'replace-unmodified' | 'replace-and-discard-local' | 'cancel'
 }
 
@@ -101,6 +103,8 @@ export type SkillBundleShareInstallInput = {
   environmentId?: string
   selectedSkillIds: string[]
   destination: SkillInstallDestination
+  /** Agents to place the skills for; omitted means every detected agent. */
+  providers?: string[]
   conflictDecisions?: {
     skillId: string
     resolution: 'keep-local' | 'replace-unmodified' | 'replace-and-discard-local'

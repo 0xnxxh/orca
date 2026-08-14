@@ -17,6 +17,7 @@ export type SkillInstallReceiptV1 = {
   destinationIdentity: string
   canonicalPath: string
   placements: SkillPlacementResult[]
+  providers?: string[]
   previousVersionId?: string
   installedAt: string
   hostIdentity: string
@@ -67,6 +68,9 @@ function isReceipt(value: unknown): value is SkillInstallReceiptV1 {
     typeof receipt.destinationIdentity === 'string' &&
     typeof receipt.canonicalPath === 'string' &&
     Array.isArray(receipt.placements) &&
+    (receipt.providers === undefined ||
+      (Array.isArray(receipt.providers) &&
+        receipt.providers.every((provider) => typeof provider === 'string'))) &&
     typeof receipt.installedAt === 'string' &&
     typeof receipt.hostIdentity === 'string' &&
     (receipt.fileModes === undefined ||
@@ -110,6 +114,7 @@ export async function listManagedSkillInstalls(
         scope: parsed.scope,
         destinationIdentity: parsed.destinationIdentity,
         installedAt: parsed.installedAt,
+        ...(parsed.providers ? { providers: parsed.providers } : {}),
         state: observed
           ? observed.observedDigest === parsed.packageDigest
             ? 'unchanged'

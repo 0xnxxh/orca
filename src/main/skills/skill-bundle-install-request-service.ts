@@ -11,8 +11,10 @@ import type { SkillInstallDestinationAuthority } from './skill-install-destinati
 import { installSkillBundle } from './skill-bundle-install-service'
 import { downloadSkillPackageGrant } from './skill-package-download'
 import { detectSkillProvidersInWsl } from './skill-wsl-provider-detection'
+import { selectedOrDetectedSkillProviders } from '../../shared/skill-install-providers'
 import { createWslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
 import { startSkillBundleInstallOperation } from './skill-operation-observability'
+import type { SkillProviderRootOverrides } from './skill-provider-destinations'
 
 type StagedSkillBundle = { archivePath: string; cleanup(): Promise<void> }
 
@@ -26,6 +28,12 @@ export type SkillBundleInstallRequestDependencies = {
   onProgress?: (progress: SkillBundleInstallProgress) => void
   fetcher?: typeof fetch
   detectProviders: () => Promise<readonly string[]>
+  resolveProviderRootOverrides?: (destination: {
+    scope: 'global' | 'workspace'
+    homeDirectory: string
+    workspaceDirectory?: string
+    wslDistro?: string
+  }) => Promise<SkillProviderRootOverrides> | SkillProviderRootOverrides
   resolveStagedUpload?: (
     uploadId: string,
     identity: SkillBundlePackageIdentity
@@ -72,14 +80,19 @@ async function executeParsedSkillBundleInstallRequest(
       dependencies.authority
     )
     ingress = await resolveIngress(request, dependencies)
-    const detectedProviders = destination.wslDistro
-      ? await detectSkillProvidersInWsl(destination.wslDistro)
-      : await dependencies.detectProviders()
+    const detectedProviders = selectedOrDetectedSkillProviders(
+      destination.wslDistro
+        ? await detectSkillProvidersInWsl(destination.wslDistro)
+        : await dependencies.detectProviders(),
+      request.providers
+    )
+    const providerRootOverrides = await dependencies.resolveProviderRootOverrides?.(destination)
     const filesystem = destination.wslDistro
       ? createWslSkillInstallFilesystem({
           distro: destination.wslDistro,
           homeDirectory: destination.homeDirectory,
-          workspaceDirectory: destination.workspaceDirectory
+          workspaceDirectory: destination.workspaceDirectory,
+          providerRootOverrides
         })
       : undefined
     return await installSkillBundle({
@@ -97,6 +110,7 @@ async function executeParsedSkillBundleInstallRequest(
       workspaceDirectory: destination.workspaceDirectory,
       orcaStateDirectory: dependencies.stateDirectory,
       detectedProviders,
+      providerRootOverrides,
       destinationIdentity: destination.destinationIdentity,
       hostIdentity: dependencies.authority.environmentId,
       expectedArchiveSha256: request.package.archiveSha256,

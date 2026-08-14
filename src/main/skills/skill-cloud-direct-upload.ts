@@ -2,10 +2,28 @@ import { randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
+import { createSkillCloudDeadline } from './skill-cloud-deadline'
 
 type SignedPostPolicy = {
   url: string
   fields: Record<string, string>
+  expiresAt?: string
+}
+
+const DEFAULT_UPLOAD_TIMEOUT_MS = 15 * 60_000
+
+function resolveUploadTimeoutMs(policy: SignedPostPolicy, timeoutMs?: number): number {
+  if (timeoutMs !== undefined) {
+    return timeoutMs
+  }
+  if (!policy.expiresAt) {
+    return DEFAULT_UPLOAD_TIMEOUT_MS
+  }
+  const expiresAt = Date.parse(policy.expiresAt)
+  if (!Number.isFinite(expiresAt)) {
+    throw new Error('skill-cloud-upload-policy-expiry-invalid')
+  }
+  return Math.max(1, Math.min(DEFAULT_UPLOAD_TIMEOUT_MS, expiresAt - Date.now()))
 }
 
 function quoted(value: string): string {
@@ -30,6 +48,7 @@ export async function uploadSkillPackageToSignedPolicy(input: {
   signal?: AbortSignal
   onProgress?: (bytesSent: number) => void
   fetcher?: typeof fetch
+  timeoutMs?: number
 }): Promise<void> {
   const policyUrl = new URL(input.policy.url)
   if (policyUrl.protocol !== 'https:' || policyUrl.username || policyUrl.password) {
@@ -53,13 +72,18 @@ export async function uploadSkillPackageToSignedPolicy(input: {
     fileHeader.length +
     archive.size +
     ending.length
+  const deadline = createSkillCloudDeadline({
+    signal: input.signal,
+    timeoutMs: resolveUploadTimeoutMs(input.policy, input.timeoutMs),
+    timeoutMessage: 'skill-cloud-upload-timeout'
+  })
   async function* body() {
     for (const field of fields) {
       yield field
     }
     yield fileHeader
     let bytesSent = 0
-    for await (const chunk of createReadStream(input.archivePath, { signal: input.signal })) {
+    for await (const chunk of createReadStream(input.archivePath, { signal: deadline.signal })) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       bytesSent += bytes.length
       if (bytesSent > input.expectedBytes) {
@@ -73,19 +97,22 @@ export async function uploadSkillPackageToSignedPolicy(input: {
     }
     yield ending
   }
-  const request: RequestInit & { duplex: 'half' } = {
-    method: 'POST',
-    headers: {
-      'content-type': `multipart/form-data; boundary=${boundary}`,
-      'content-length': String(contentLength)
-    },
-    body: Readable.from(body()) as unknown as BodyInit,
-    duplex: 'half',
-    redirect: 'error',
-    signal: input.signal
-  }
-  const response = await (input.fetcher ?? fetch)(policyUrl, request)
-  if (!response.ok && response.status !== 201 && response.status !== 204) {
-    throw new Error('skill-cloud-upload-failed')
+  try {
+    const response = await (input.fetcher ?? fetch)(policyUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+        'content-length': String(contentLength)
+      },
+      body: Readable.from(body()) as unknown as BodyInit,
+      duplex: 'half',
+      redirect: 'error',
+      signal: deadline.signal
+    } as RequestInit & { duplex: 'half' })
+    if (!response.ok && response.status !== 201 && response.status !== 204) {
+      throw new Error('skill-cloud-upload-failed')
+    }
+  } finally {
+    deadline.cleanup()
   }
 }

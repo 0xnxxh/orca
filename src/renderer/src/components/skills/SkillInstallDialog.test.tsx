@@ -80,6 +80,13 @@ function bundleVersion(): SkillCloudVersion {
   }
 }
 
+function detectionApi(agents: string[]) {
+  return {
+    detectAgents: vi.fn().mockResolvedValue(agents),
+    detectRemoteAgents: vi.fn().mockResolvedValue(agents)
+  }
+}
+
 function installApi(previewInstall: ReturnType<typeof vi.fn>) {
   let progressListener: ((progress: SkillInstallProgress) => void) | null = null
   return {
@@ -154,7 +161,7 @@ describe('SkillInstallDialog', () => {
     render(<SkillInstallDialog open onOpenChange={() => undefined} />)
 
     await inspectSkill(sharedVersion.description)
-    expect(screen.getByRole('heading', { name: longName })).toBeTruthy()
+    expect(screen.getByRole('button', { name: new RegExp(longName) })).toBeTruthy()
     expect(screen.queryByText(/Published by Orca user/)).toBeNull()
     expect(
       screen.getByText(
@@ -162,6 +169,131 @@ describe('SkillInstallDialog', () => {
           element?.tagName === 'P' && element.textContent === `Release notes: ${releaseNotes}`
       )
     ).toBeTruthy()
+  })
+
+  // Why: the picker is the only place a recipient can say "not Claude"; the
+  // request has to carry that choice or the host installs everywhere it can.
+  it('installs only for the agents left checked', async () => {
+    const skills = installApi(
+      vi.fn().mockResolvedValue({
+        status: 'ok',
+        value: {
+          name: 'private-skill',
+          packageDigest: DIGEST,
+          destinationIdentity: 'global:local',
+          currentState: 'missing',
+          providers: []
+        }
+      })
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['claude', 'codex', 'droid']) }
+    })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Installing for:/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Claude Code/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Install skill' }))
+
+    await waitFor(() => expect(skills.installShare).toHaveBeenCalled())
+    const [request] = skills.installShare.mock.calls[0] as [{ providers: string[] }]
+    expect(request.providers).not.toContain('claude')
+    expect(request.providers).toContain('codex')
+    expect(request.providers).toContain('droid')
+  })
+
+  // Why: checking agents the machine does not have would write placements no
+  // agent reads, and make the user opt out of tools they never installed.
+  it('starts from the agents the target machine has', async () => {
+    const skills = installApi(
+      vi.fn().mockResolvedValue({
+        status: 'ok',
+        value: {
+          name: 'private-skill',
+          packageDigest: DIGEST,
+          destinationIdentity: 'global:local',
+          currentState: 'missing',
+          providers: []
+        }
+      })
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill()
+    await screen.findByRole('button', { name: 'Installing for: Codex' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install skill' }))
+    await waitFor(() => expect(skills.installShare).toHaveBeenCalled())
+    const [request] = skills.installShare.mock.calls[0] as [{ providers: string[] }]
+    expect(request.providers).toEqual(['codex'])
+  })
+
+  // Why: a skill description doubles as its trigger documentation and can run
+  // for paragraphs; the row shows one line until the reader opens it.
+  it('unclamps a long description when the row is opened', async () => {
+    const sharedVersion = version()
+    sharedVersion.description = `Use the public CLI. ${'trigger words.'.repeat(20)}`
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockResolvedValue({
+      status: 'ok',
+      value: { id: 'share_1', version: sharedVersion }
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill(sharedVersion.description)
+
+    const description = screen.getByText(sharedVersion.description)
+    expect(description.className).toContain('line-clamp-1')
+    expect(description.className).toContain('group-data-[state=open]/row:line-clamp-none')
+  })
+
+  // Why: "view the full skill contents" is the point of the row — the file list
+  // is the only place a recipient sees what lands on their machine.
+  it('lists the files a skill would write when its row is expanded', async () => {
+    const skills = installApi(vi.fn())
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill()
+
+    expect(screen.queryByText('SKILL.md')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /private-skill/ }))
+    expect(screen.getByText('SKILL.md')).toBeTruthy()
+  })
+
+  // Why: a recipient cannot compare a digest against anything, and the badge
+  // language ("Immutable version") explained nothing. Both left the review.
+  it.each([
+    ['skill', () => version(), 'a'],
+    ['bundle', () => bundleVersion(), 'c']
+  ])('keeps package plumbing out of the %s review', async (_kind, build, char) => {
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockResolvedValue({
+      status: 'ok',
+      value: { id: 'share_1', version: build() }
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill('skills' in build().manifest ? 'alpha description' : build().description)
+
+    expect(screen.queryByText(/SHA-256/)).toBeNull()
+    expect(screen.queryByText(char.repeat(64))).toBeNull()
+    expect(screen.queryByText('Immutable version')).toBeNull()
+    expect(screen.queryByText('0 scripts')).toBeNull()
+    expect(screen.getAllByText(/No scripts or executables/).length).toBeGreaterThan(0)
   })
 
   it('focuses the link first and programmatically names destination controls', async () => {
@@ -179,16 +311,26 @@ describe('SkillInstallDialog', () => {
         }
       })
     )
-    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
     render(<SkillInstallDialog open onOpenChange={onOpenChange} />)
 
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Orca skill link' }))
+    // Why: the submit sits in the footer beside Close, so Enter in the field is
+    // the keyboard path rather than tabbing past the back-out action.
+    const footerButtons = screen
+      .getAllByRole('button')
+      .filter((button) => button.getAttribute('data-slot') !== 'dialog-close')
+    expect(footerButtons.map((button) => button.textContent?.trim())).toEqual([
+      'Close',
+      'Inspect skill'
+    ])
     await user.type(
       screen.getByRole('textbox', { name: 'Orca skill link' }),
       'https://app.orca.dev/skills/share/share_1'
     )
-    await user.tab()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Inspect skill' }))
     await user.keyboard('{Enter}')
     await screen.findByText('A private skill')
     expect(screen.getByRole('combobox', { name: 'Machine' })).toBeTruthy()
@@ -251,12 +393,15 @@ describe('SkillInstallDialog', () => {
         }
       })
     })
-    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
     render(<SkillInstallDialog open onOpenChange={() => undefined} />)
-    await inspectSkill('Two private skills')
+    await inspectSkill('alpha description')
 
     fireEvent.click(screen.getByRole('checkbox', { name: /alpha/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Install 1 skills' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Install 1 skill' }))
 
     await screen.findByText('Skills installed and verified.')
     expect(skills.installBundleShare).toHaveBeenCalledWith(
@@ -298,7 +443,7 @@ describe('SkillInstallDialog', () => {
     })
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallDialog open onOpenChange={() => undefined} />)
-    await inspectSkill('Two private skills')
+    await inspectSkill('alpha description')
 
     fireEvent.click(screen.getByRole('button', { name: 'Install 2 skills' }))
     await screen.findByText('Local copies need a decision')

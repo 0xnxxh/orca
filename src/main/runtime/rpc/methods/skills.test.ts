@@ -30,6 +30,7 @@ function makeContext(overrides: {
   return {
     runtime: {
       listRepos: () => [],
+      resolveSkillDiscoveryProviderRoots: async () => ({}),
       resolveProjectRuntimeForWorktree:
         overrides.resolveProjectRuntimeForWorktree ?? (() => undefined)
     }

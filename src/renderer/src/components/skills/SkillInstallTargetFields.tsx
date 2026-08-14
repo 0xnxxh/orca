@@ -8,6 +8,8 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { SKILL_INSTALL_CAPABILITY } from '../../../../shared/skill-install-capability'
+import type { SkillInstallProviderId } from '../../../../shared/skill-install-providers'
+import { SkillInstallAgentPicker } from './SkillInstallAgentPicker'
 import type { SkillInstallWorkspaceChoice } from './skill-install-workspace-choices'
 import { translate } from '@/i18n/i18n'
 
@@ -25,6 +27,10 @@ export function SkillInstallTargetFields(props: {
   sshConnections: { id: string; label: string; connected: boolean }[]
   workspaceChoices: SkillInstallWorkspaceChoice[]
   requiredCapability?: string
+  providers: ReadonlySet<SkillInstallProviderId>
+  detectedAgents: readonly string[] | null
+  onProvidersChange(next: Set<SkillInstallProviderId>): void
+  busy?: boolean
 }): React.JSX.Element {
   const [wslDistros, setWslDistros] = useState<string[]>([])
   const fieldId = useId()
@@ -227,6 +233,14 @@ export function SkillInstallTargetFields(props: {
           ) : null}
         </section>
       ) : null}
+
+      <SkillInstallAgentPicker
+        scope={props.scope}
+        selected={props.providers}
+        detectedAgents={props.detectedAgents}
+        busy={props.busy === true}
+        onChange={props.onProvidersChange}
+      />
     </>
   )
 }

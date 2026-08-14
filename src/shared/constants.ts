@@ -281,6 +281,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     artifactsEnabled: true,
     artifactSharingEnabled: false,
     showArtifactsButton: false,
+    showSkillsButton: false,
     showMobileButton: true,
     showPinnedWorktreesInGroups: false,
     ctrlTabOrderMode: 'mru',

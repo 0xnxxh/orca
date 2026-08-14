@@ -32,7 +32,11 @@ export async function isRemovableSkillPlacement(input: {
   allowedProviderRoots: readonly string[]
   filesystem: SkillInstallFilesystem
 }): Promise<boolean> {
-  if (input.placement.topology === 'canonical-copy') {
+  if (
+    input.placement.topology === 'canonical-copy' ||
+    input.placement.status === 'failed' ||
+    input.placement.status === 'skipped'
+  ) {
     return false
   }
   if (

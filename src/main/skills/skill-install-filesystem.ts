@@ -10,6 +10,7 @@ import {
 export type SkillInstalledFileMode = { path: string; executable: boolean }
 
 export type SkillInstallFilesystem = {
+  authorizeRoots?(paths: readonly string[]): void
   prepareExtractedSkill(path: string, manifest: SkillPackageManifestV1): Promise<void>
   observeSkill(
     path: string,

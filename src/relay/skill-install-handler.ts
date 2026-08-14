@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   SKILL_BUNDLE_INSTALL_CAPABILITY,
   SKILL_INSTALL_CAPABILITY,
+  SKILL_INSTALL_PROVIDERS_CAPABILITY,
   SKILL_INSTALL_PROGRESS_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY
@@ -54,11 +55,13 @@ import {
   skillInstallFailureFromError
 } from '../main/skills/skill-install-operation-error'
 import { recoverPendingSkillTransactions } from '../main/skills/skill-transaction-startup-recovery'
+import { resolveEnvironmentSkillProviderRoots } from '../main/skills/skill-provider-runtime-roots'
 
 const SSH_SKILL_ENVIRONMENT_ID = 'ssh-host'
 
 export const SKILL_RELAY_CAPABILITIES = [
   SKILL_INSTALL_CAPABILITY,
+  SKILL_INSTALL_PROVIDERS_CAPABILITY,
   SKILL_BUNDLE_INSTALL_CAPABILITY,
   SKILL_INSTALL_PROGRESS_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY,
@@ -102,6 +105,7 @@ export class SkillInstallHandler {
           requireHttps: true,
           resolveStagedUpload: (uploadId, identity) => this.uploads.take(uploadId, identity),
           detectProviders: this.detectProviders,
+          resolveProviderRootOverrides: () => resolveEnvironmentSkillProviderRoots(),
           signal: context.signal
         })
       )
@@ -117,6 +121,7 @@ export class SkillInstallHandler {
             requireHttps: true,
             resolveStagedUpload: (uploadId, identity) => this.uploads.take(uploadId, identity),
             detectProviders: this.detectProviders,
+            resolveProviderRootOverrides: () => resolveEnvironmentSkillProviderRoots(),
             signal: context.signal,
             onProgress: (progress) => this.installProgress.set(input.request.operationId, progress)
           })
@@ -135,7 +140,8 @@ export class SkillInstallHandler {
         previewSharedSkillInstall(input.request, {
           authority: this.authority(input.workspace),
           stateDirectory: this.stateDirectory,
-          detectProviders: this.detectProviders
+          detectProviders: this.detectProviders,
+          resolveProviderRootOverrides: () => resolveEnvironmentSkillProviderRoots()
         })
       )
     })
@@ -145,7 +151,8 @@ export class SkillInstallHandler {
         removeSharedSkillInstall(input.request, {
           authority: this.authority(input.workspace),
           stateDirectory: this.stateDirectory,
-          detectProviders: this.detectProviders
+          detectProviders: this.detectProviders,
+          resolveProviderRootOverrides: () => resolveEnvironmentSkillProviderRoots()
         })
       )
     })

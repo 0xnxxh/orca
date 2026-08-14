@@ -27,6 +27,7 @@ export type SkillCloudGrantInstallInput = {
   operationId: string
   environmentId?: string
   destination: SkillInstallDestination
+  providers?: string[]
   conflictResolution?: 'replace-unmodified' | 'replace-and-discard-local' | 'cancel'
 }
 
@@ -35,6 +36,7 @@ export type SkillBundleCloudGrantInstallInput = {
   environmentId?: string
   selectedSkillIds: string[]
   destination: SkillInstallDestination
+  providers?: string[]
   conflictDecisions?: SkillBundleInstallRequest['conflictDecisions']
 }
 
@@ -90,6 +92,7 @@ export async function installSkillBundleCloudGrant(
     selectedSkillIds: input.selectedSkillIds,
     ingress: { kind: 'download-grant', ...grant.grant },
     destination: input.destination,
+    ...(input.providers ? { providers: input.providers } : {}),
     conflictDecisions: input.conflictDecisions ?? []
   }
   try {
@@ -127,6 +130,9 @@ export async function installSkillBundleCloudGrant(
     }
   } catch (error) {
     const failure = skillInstallFailureFromError(error)
+    if (failure?.category === 'compatibility') {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
     if (!failure) {
       throw error
     }
@@ -155,6 +161,7 @@ export async function installSkillCloudGrant(
       expiresAt: grant.grant.expiresAt
     },
     destination: input.destination,
+    ...(input.providers ? { providers: input.providers } : {}),
     conflictResolution: input.conflictResolution
   }
   try {
@@ -188,6 +195,9 @@ export async function installSkillCloudGrant(
     }
   } catch (error) {
     const failure = skillInstallFailureFromError(error)
+    if (failure?.category === 'compatibility') {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
     if (!failure) {
       throw error
     }

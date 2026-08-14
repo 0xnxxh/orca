@@ -67,6 +67,7 @@ export type SkillCloudPublishRequest = SkillCloudOptions & {
   archiveSha256: string
   compressedBytes: number
   packageId: string
+  idempotencyKey?: string
   releaseNotes: string
   pinnedVersionId?: string
   onProgress?: (progress: {

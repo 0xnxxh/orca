@@ -24,7 +24,12 @@ import { registerSkillCloudIpcHandlers } from './skill-cloud-ipc-handlers'
 export function registerSkillsHandlers(store: Store, runtime?: OrcaRuntimeService): void {
   const discover = async (target?: SkillDiscoveryTarget): Promise<SkillDiscoveryResult> => {
     const parsedTarget = target ? SkillDiscoveryTargetSchema.parse(target) : undefined
-    return discoverSkillsOnTarget(resolveSkillDiscoveryTarget(parsedTarget), store.getRepos())
+    const resolvedTarget = resolveSkillDiscoveryTarget(parsedTarget)
+    return discoverSkillsOnTarget(
+      resolvedTarget,
+      store.getRepos(),
+      await runtime?.resolveSkillDiscoveryProviderRoots(resolvedTarget)
+    )
   }
   const scanInventory = (): Promise<SkillFreshnessInventory> =>
     // Why: the update command targets this machine's global homes. WSL and SSH

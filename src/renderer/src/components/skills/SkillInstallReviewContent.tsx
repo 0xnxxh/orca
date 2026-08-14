@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, Check, Loader2, ShieldCheck } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { AlertTriangle, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,63 +7,54 @@ import type {
   SkillInstallPreview,
   SkillInstallResult
 } from '../../../../shared/skill-install-contract'
+import { SkillPackageChecklist } from './SkillPackageChecklist'
+import { checklistItemsFromVersion } from './skill-package-checklist-items'
 import { skillInstallResultLabel } from './skill-install-result-label'
-import { summarizeSkillShareVersion, type ResolvedSkillShare } from './skill-share-version-summary'
+import type { ResolvedSkillShare } from './skill-share-version-summary'
 import { translate } from '@/i18n/i18n'
 
+/** Why: the submit lives in the dialog footer beside Close, so this is only the
+ *  field; Enter still submits through the form. */
 export function SkillShareLinkInputForm({
   link,
-  busy,
   onLinkChange,
   onSubmit
 }: {
   link: string
-  busy: boolean
   onLinkChange: (link: string) => void
   onSubmit: () => void
 }): React.JSX.Element {
   return (
     <form
-      className="space-y-3"
+      className="space-y-2"
       onSubmit={(event) => {
         event.preventDefault()
         onSubmit()
       }}
     >
-      <div className="space-y-2">
-        <Label htmlFor="skill-share-link">
-          {translate(
-            'auto.components.skills.SkillInstallReviewContent.93eb0fe8c7',
-            'Orca skill link'
-          )}
-        </Label>
-        <Input
-          id="skill-share-link"
-          value={link}
-          onChange={(event) => onLinkChange(event.target.value)}
-          placeholder={translate(
-            'auto.components.skills.SkillInstallReviewContent.66cff7a804',
-            'https://app.orca.dev/skills/share/…'
-          )}
-          className="font-mono text-xs"
-          autoFocus
-        />
-        <p className="text-xs text-muted-foreground">
-          {translate(
-            'auto.components.skills.SkillInstallReviewContent.27672470d9',
-            'Opening the link does not install anything. Review the immutable version first.'
-          )}
-        </p>
-      </div>
-      <Button type="submit" disabled={busy || !link.trim()} className="w-32">
-        {busy ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
-        {busy
-          ? translate('auto.components.skills.SkillInstallReviewContent.69236de8d6', 'Checking…')
-          : translate(
-              'auto.components.skills.SkillInstallReviewContent.157de228b4',
-              'Inspect skill'
-            )}
-      </Button>
+      <Label htmlFor="skill-share-link">
+        {translate(
+          'auto.components.skills.SkillInstallReviewContent.93eb0fe8c7',
+          'Orca skill link'
+        )}
+      </Label>
+      <Input
+        id="skill-share-link"
+        value={link}
+        onChange={(event) => onLinkChange(event.target.value)}
+        placeholder={translate(
+          'auto.components.skills.SkillInstallReviewContent.66cff7a804',
+          'https://app.orca.dev/skills/share/…'
+        )}
+        className="font-mono text-xs"
+        autoFocus
+      />
+      <p className="text-xs text-muted-foreground">
+        {translate(
+          'auto.components.skills.install.linkHint',
+          'Opening a link never installs anything — you review it first.'
+        )}
+      </p>
     </form>
   )
 }
@@ -136,7 +126,6 @@ export function SkillInstallReview({
   children: ReactNode
 }): React.JSX.Element {
   const version = preview.version
-  const versionSummary = summarizeSkillShareVersion(version)
   const hasConflict =
     result?.status === 'conflict' ||
     (destinationPreview &&
@@ -146,38 +135,11 @@ export function SkillInstallReview({
   return (
     <div className="space-y-5">
       <section className="space-y-2">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="break-words text-sm font-semibold">{version.name}</h3>
-            <p className="break-words text-xs leading-5 text-muted-foreground">
-              {version.description}
-            </p>
-          </div>
-          <Badge variant="outline">
-            {translate(
-              'auto.components.skills.SkillInstallReviewContent.8f9833d509',
-              'Immutable version'
-            )}
-          </Badge>
-        </div>
-        <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-          <Badge variant="outline">
-            {versionSummary.fileCount}{' '}
-            {translate('auto.components.skills.SkillInstallReviewContent.fab8fce842', 'files')}
-          </Badge>
-          <Badge variant="outline">
-            {versionSummary.scriptCount}{' '}
-            {translate('auto.components.skills.SkillInstallReviewContent.87137bcb8d', 'scripts')}
-          </Badge>
-          <Badge variant="outline">
-            {versionSummary.executableCount}{' '}
-            {translate('auto.components.skills.SkillInstallReviewContent.3d8421ca2f', 'executable')}
-          </Badge>
-        </div>
-        <p className="truncate font-mono text-[11px] text-muted-foreground">
-          {translate('auto.components.skills.SkillInstallReviewContent.f72ee4022a', 'SHA-256')}{' '}
-          {version.packageDigest}
-        </p>
+        <SkillPackageChecklist
+          items={checklistItemsFromVersion(version)}
+          selectedIds={null}
+          busy={busy}
+        />
         {version.releaseNotes.trim() ? (
           <p className="break-words whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
             {translate(
@@ -189,8 +151,8 @@ export function SkillInstallReview({
         ) : null}
         <p className="text-xs leading-5 text-muted-foreground">
           {translate(
-            'auto.components.skills.SkillInstallReviewContent.98ed90e523',
-            'A skill contains instructions and may include scripts. Treat it as code from its author.'
+            'auto.components.skills.install.trustNote',
+            'Skills are instructions and code from their author. Install what you trust.'
           )}
         </p>
       </section>

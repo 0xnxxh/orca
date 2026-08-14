@@ -9,7 +9,10 @@ vi.mock('node:child_process', () => ({
   })
 }))
 
-import { WslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
+import {
+  createWslSkillInstallFilesystem,
+  WslSkillInstallFilesystem
+} from './skill-wsl-install-filesystem'
 
 const WSL_ROOT = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\jin\\.agents\\skills'
 
@@ -18,6 +21,32 @@ beforeEach(() => {
 })
 
 describe('WslSkillInstallFilesystem', () => {
+  it('allows every global provider destination inside the selected distro', async () => {
+    const home = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\jin'
+    const filesystem = createWslSkillInstallFilesystem({
+      distro: 'Ubuntu-24.04',
+      homeDirectory: home
+    })
+
+    for (const directory of [
+      '.claude',
+      '.cursor',
+      '.gemini',
+      '.factory',
+      '.continue',
+      '.trae-cn',
+      '.grok',
+      '.augment'
+    ]) {
+      await filesystem.createAlias(
+        `${home}\\.agents\\skills\\private-skill`,
+        `${home}\\${directory}\\skills\\private-skill`
+      )
+    }
+
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(8)
+  })
+
   it('applies and verifies manifest modes through bounded guest argv batches', async () => {
     const filesystem = new WslSkillInstallFilesystem('Ubuntu-24.04', [WSL_ROOT])
     const manifest = {
@@ -93,5 +122,21 @@ describe('WslSkillInstallFilesystem', () => {
       filesystem.remove('\\\\wsl.localhost\\Debian\\home\\jin\\.agents\\skills\\skill')
     ).rejects.toThrow('skill-install-wsl-path-invalid')
     expect(execFileAsyncMock).not.toHaveBeenCalled()
+  })
+
+  it('authorizes a historical provider root before update or removal', async () => {
+    const filesystem = new WslSkillInstallFilesystem('Ubuntu-24.04', [WSL_ROOT])
+    const historicalRoot =
+      '\\\\wsl.localhost\\Ubuntu-24.04\\home\\jin\\.local\\share\\orca\\claude-accounts\\old\\auth\\skills'
+    filesystem.authorizeRoots([historicalRoot])
+
+    await filesystem.remove(`${historicalRoot}\\private-skill`)
+
+    expect(execFileAsyncMock).toHaveBeenCalledOnce()
+    expect(execFileAsyncMock.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining([
+        '/home/jin/.local/share/orca/claude-accounts/old/auth/skills/private-skill'
+      ])
+    )
   })
 })

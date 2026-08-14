@@ -9,13 +9,6 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
 import { useAppStore } from '@/store'
 import type {
   ManagedSkillInstall,
@@ -27,14 +20,14 @@ import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkil
 import { skillInstallResultLabel } from './skill-install-result-label'
 import { skillInstallManagementCopy } from './skill-install-management-copy'
 import { useSkillInstallProgress } from './skill-install-progress-state'
-import { SkillManagedInstallList } from './SkillManagedInstallList'
-import { SkillManagedInstallDetails } from './SkillManagedInstallDetails'
+import { SkillManagedInstallRow } from './SkillManagedInstallRow'
 import { summarizeManagedSkillRemoval } from './skill-managed-removal-summary'
-import { retainManagedSkillVersion } from './skill-managed-version-selection'
 import {
   groupManagedSkillInstalls,
   type SkillManagedInstallGroup
 } from './skill-managed-install-groups'
+import { SkillInstallMachineSelect } from './SkillInstallMachineSelect'
+import { SkillInstallManagementStatus } from './SkillInstallManagementStatus'
 
 export function SkillInstallManagementDialog({
   open,
@@ -60,6 +53,7 @@ export function SkillInstallManagementDialog({
   const [notice, setNotice] = useState<string | null>(null)
   const installProgress = useSkillInstallProgress()
   const loadGeneration = useRef(0)
+  const detailGeneration = useRef(0)
 
   const groups = useMemo(() => groupManagedSkillInstalls(installs), [installs])
   const selected = useMemo(
@@ -70,6 +64,7 @@ export function SkillInstallManagementDialog({
 
   const load = useCallback(async (): Promise<void> => {
     const generation = ++loadGeneration.current
+    detailGeneration.current += 1
     if (!open) {
       return
     }
@@ -108,7 +103,9 @@ export function SkillInstallManagementDialog({
   }, [load])
 
   const selectInstall = async (group: SkillManagedInstallGroup): Promise<void> => {
+    const generation = ++detailGeneration.current
     setSelectedKey(group.key)
+    setDetails(null)
     setBusy(true)
     setError(null)
     setNotice(null)
@@ -117,6 +114,9 @@ export function SkillInstallManagementDialog({
     setConfirmRemove(false)
     try {
       const operation = await window.api.skills.getPackage(group.packageId)
+      if (generation !== detailGeneration.current) {
+        return
+      }
       if (operation.status !== 'ok') {
         setError(
           operation.status === 'reconnect-required'
@@ -128,29 +128,25 @@ export function SkillInstallManagementDialog({
       setDetails(operation.value)
       setVersionId(operation.value.versions[0]?.versionId ?? group.versionId)
     } catch (cause) {
+      if (generation !== detailGeneration.current) {
+        return
+      }
       console.warn('[skills] package history failed:', cause)
       setError('Version history is unavailable for this skill.')
     } finally {
-      setBusy(false)
+      if (generation === detailGeneration.current) {
+        setBusy(false)
+      }
     }
   }
 
-  const refreshPackageDetails = async (): Promise<void> => {
-    if (!selected) {
-      return
-    }
-    const operation = await window.api.skills.getPackage(selected.packageId)
-    if (operation.status !== 'ok') {
-      throw new Error(operation.status)
-    }
-    setDetails(operation.value)
-    setVersionId((current) => retainManagedSkillVersion(operation.value.versions, current))
-  }
-
-  const packageDeleted = (): void => {
+  const collapse = (): void => {
+    detailGeneration.current += 1
+    setSelectedKey('')
     setDetails(null)
-    setVersionId('')
-    setNotice('Cloud package deleted. The installed copy remains on this machine.')
+    setResult(null)
+    setBundleResult(null)
+    setConfirmRemove(false)
   }
 
   const installVersion = async (discardLocal = false): Promise<void> => {
@@ -183,6 +179,7 @@ export function SkillInstallManagementDialog({
             ? {}
             : { environmentId }),
           selectedSkillIds: selectedSkills.map((skill) => skill.id),
+          ...(selectedInstall.providers ? { providers: selectedInstall.providers } : {}),
           destination: selected.destination,
           ...(discardLocal
             ? {
@@ -216,6 +213,7 @@ export function SkillInstallManagementDialog({
         operationId,
         ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId }),
         destination: selected.destination,
+        ...(selectedInstall.providers ? { providers: selectedInstall.providers } : {}),
         ...(discardLocal ? { conflictResolution: 'replace-and-discard-local' } : {})
       })
       if (operation.status !== 'ok') {
@@ -267,9 +265,7 @@ export function SkillInstallManagementDialog({
     setError(null)
     setNotice(null)
     try {
-      const targets = discardLocal
-        ? selected.installs.filter((install) => install.state === 'modified')
-        : selected.installs
+      const targets = selected.installs
       const operations = await Promise.all(
         targets.map((install) =>
           window.api.skills.removeInstall({
@@ -305,6 +301,8 @@ export function SkillInstallManagementDialog({
   }
 
   const close = (): void => {
+    loadGeneration.current += 1
+    detailGeneration.current += 1
     setSelectedKey('')
     setDetails(null)
     setError(null)
@@ -319,34 +317,24 @@ export function SkillInstallManagementDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && close()}>
-      <DialogContent className="max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-sleek sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100vh-3rem)] overflow-x-hidden overflow-y-auto scrollbar-sleek sm:max-w-2xl [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>{copy.title}</DialogTitle>
           <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
-        <Select value={environmentId} onValueChange={setEnvironmentId}>
-          <SelectTrigger className="w-full sm:w-64">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="local">{copy.localMachine}</SelectItem>
-            {runtimeEnvironments.map((environment) => (
-              <SelectItem key={environment.id} value={environment.id}>
-                {environment.name}
-              </SelectItem>
-            ))}
-            {[...sshTargetLabels.entries()].map(([id, label]) => (
-              <SelectItem
-                key={`ssh:${id}`}
-                value={`ssh:${id}`}
-                disabled={sshConnectionStates.get(id)?.status !== 'connected'}
-              >
-                {label}{' '}
-                {sshConnectionStates.get(id)?.status === 'connected' ? copy.ssh : copy.disconnected}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SkillInstallMachineSelect
+          value={environmentId}
+          onChange={setEnvironmentId}
+          localLabel={copy.localMachine}
+          sshLabel={copy.ssh}
+          disconnectedLabel={copy.disconnected}
+          environments={runtimeEnvironments}
+          sshTargets={[...sshTargetLabels.entries()].map(([id, label]) => ({
+            id: `ssh:${id}`,
+            label,
+            connected: sshConnectionStates.get(id)?.status === 'connected'
+          }))}
+        />
 
         {busy && installs.length === 0 ? <Loader2 className="mx-auto size-5 animate-spin" /> : null}
         {!busy && installs.length === 0 ? (
@@ -354,56 +342,40 @@ export function SkillInstallManagementDialog({
             {copy.noInstalls}
           </p>
         ) : null}
-        <SkillManagedInstallList
-          groups={groups}
-          selectedKey={selectedKey}
-          onSelect={(group) => void selectInstall(group)}
+        {groups.length > 0 ? (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {groups.map((group) => (
+              <SkillManagedInstallRow
+                key={group.key}
+                group={group}
+                open={selectedKey === group.key}
+                details={selectedKey === group.key ? details : null}
+                versionId={selectedKey === group.key ? versionId : ''}
+                busy={busy}
+                confirmRemove={selectedKey === group.key && confirmRemove}
+                installActive={Boolean(installProgress.activeOperationId)}
+                editedWarning={selectedKey === group.key && destructiveConflict}
+                bundleResult={selectedKey === group.key ? bundleResult : null}
+                result={selectedKey === group.key ? result : null}
+                onOpenChange={(next) => (next ? void selectInstall(group) : collapse())}
+                onVersionChange={setVersionId}
+                onInstall={(discardLocal) => void installVersion(discardLocal)}
+                onCancelInstall={() => void cancelInstall()}
+                onSendToMachine={(shareId) => {
+                  close()
+                  useAppStore.getState().openSkillShare(shareId)
+                }}
+                onRemove={(discardLocal) => void remove(discardLocal)}
+              />
+            ))}
+          </ul>
+        ) : null}
+        <SkillInstallManagementStatus
+          resultLabel={result ? skillInstallResultLabel(result) : null}
+          progressLabel={installProgress.phaseLabel}
+          error={error}
+          notice={notice}
         />
-
-        {selected && details ? (
-          <SkillManagedInstallDetails
-            selected={selected}
-            details={details}
-            versionId={versionId}
-            busy={busy}
-            confirmRemove={confirmRemove}
-            result={result}
-            bundleResult={bundleResult}
-            installActive={Boolean(installProgress.activeOperationId)}
-            destructiveConflict={destructiveConflict}
-            copy={copy}
-            onVersionChange={setVersionId}
-            onInstall={(discardLocal) => void installVersion(discardLocal)}
-            onCancelInstall={() => void cancelInstall()}
-            onInstallAnotherMachine={(shareId) => {
-              close()
-              useAppStore.getState().openSkillShare(shareId)
-            }}
-            onRemove={(discardLocal) => void remove(discardLocal)}
-            onCloudChanged={refreshPackageDetails}
-            onPackageDeleted={packageDeleted}
-          />
-        ) : null}
-        {result ? (
-          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-            {skillInstallResultLabel(result)}
-          </p>
-        ) : null}
-        {installProgress.phaseLabel ? (
-          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-            {installProgress.phaseLabel}
-          </p>
-        ) : null}
-        {error ? (
-          <p className="text-xs text-destructive" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {notice ? (
-          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-            {notice}
-          </p>
-        ) : null}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={close} disabled={busy}>
             {copy.close}

@@ -235,7 +235,11 @@ export async function extractSkillBundleArchive(input: {
     throwIfCancelled(input.signal)
     return { pluginManifest, manifest, skillsDirectory, ...archiveIdentity }
   } catch (error) {
-    const failure = error instanceof Error ? error : new Error(String(error))
+    const failure = input.signal?.aborted
+      ? new SkillInstallOperationError(SKILL_INSTALL_CANCELLED_FAILURE, { cause: error })
+      : error instanceof Error
+        ? error
+        : new Error(String(error))
     archive.abort(failure)
     await archive.archiveIdentity.catch(() => undefined)
     if (destinationCreated) {

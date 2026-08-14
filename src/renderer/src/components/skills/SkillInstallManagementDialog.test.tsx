@@ -155,10 +155,19 @@ function bundleInstall(name: string, state: ManagedSkillInstall['state'] = 'unch
   return { ...install('ver_1'), name, bundleDigest: DIGEST, state }
 }
 
-async function selectInstall(versionId: string): Promise<void> {
-  await screen.findByText(`global · ${versionId}`)
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(`private-skill.*${versionId}`) }))
-  await screen.findByText(`Installed version ${versionId}`)
+const ROW_ACTION = /Reinstall|Use this version/
+
+function dateLabel(iso: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  }).format(new Date(iso))
+}
+
+async function openInstall(name = 'private-skill'): Promise<void> {
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(name) }))
+  await screen.findByRole('button', { name: ROW_ACTION })
 }
 
 beforeEach(() => {
@@ -205,17 +214,89 @@ describe('SkillInstallManagementDialog', () => {
     let resolveLocal: ((value: unknown) => void) | undefined
     skills.listManagedInstalls
       .mockImplementationOnce(() => new Promise((resolve) => (resolveLocal = resolve)) as never)
-      .mockResolvedValueOnce({ status: 'ok', value: [install('remote_version')] })
+      .mockResolvedValueOnce({
+        status: 'ok',
+        value: [{ ...install('remote_version'), name: 'remote-skill' }]
+      })
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
 
     fireEvent.click(screen.getByRole('combobox'))
     fireEvent.click(screen.getByRole('option', { name: 'Remote' }))
-    await screen.findByText('global · remote_version')
+    await screen.findByText('remote-skill · Everywhere')
     resolveLocal?.({ status: 'ok', value: [install('local_version')] })
 
-    await waitFor(() => expect(screen.queryByText('global · local_version')).toBeNull())
-    expect(screen.getByText('global · remote_version')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('private-skill · Everywhere')).toBeNull())
+    expect(screen.getByText('remote-skill · Everywhere')).toBeTruthy()
+  })
+
+  it('ignores stale package details after switching machines', async () => {
+    useAppStore.setState({
+      runtimeEnvironments: [
+        {
+          id: 'remote_1',
+          name: 'Remote',
+          createdAt: 1,
+          updatedAt: 1,
+          lastUsedAt: null,
+          runtimeId: null,
+          endpoints: [
+            {
+              id: 'remote_ws',
+              kind: 'websocket',
+              label: 'WebSocket',
+              endpoint: 'ws://remote.invalid'
+            }
+          ],
+          preferredEndpointId: 'remote_ws'
+        }
+      ]
+    })
+    const remoteInstall = {
+      ...install('remote_version'),
+      name: 'remote-skill',
+      packageId: 'pkg_remote'
+    }
+    const skills = skillsApi(install('local_version'), [
+      version('local_version', '2026-08-12T00:00:00.000Z')
+    ])
+    let resolveLocalDetails: ((value: unknown) => void) | undefined
+    skills.listManagedInstalls
+      .mockResolvedValueOnce({ status: 'ok', value: [install('local_version')] })
+      .mockResolvedValueOnce({ status: 'ok', value: [remoteInstall] })
+    skills.getPackage
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (resolveLocalDetails = resolve)) as never
+      )
+      .mockResolvedValueOnce({
+        status: 'ok',
+        value: {
+          ...packageDetails([version('remote_version', '2026-08-13T00:00:00.000Z')]),
+          id: 'pkg_remote',
+          name: 'remote-skill'
+        }
+      })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+
+    await screen.findByText('private-skill · Everywhere')
+    fireEvent.click(screen.getByRole('button', { name: /private-skill/ }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('option', { name: 'Remote' }))
+    fireEvent.click(await screen.findByRole('button', { name: /remote-skill/ }))
+    const remoteLabel = `${dateLabel('2026-08-13T00:00:00.000Z')} (installed)`
+    await screen.findByText(remoteLabel)
+
+    resolveLocalDetails?.({
+      status: 'ok',
+      value: packageDetails([version('local_version', '2026-08-12T00:00:00.000Z')])
+    })
+    // Why: the stale local details would repaint the version picker with the
+    // local build's date.
+    await waitFor(() =>
+      expect(screen.queryByText(dateLabel('2026-08-12T00:00:00.000Z'))).toBeNull()
+    )
+    expect(screen.getByText(remoteLabel)).toBeTruthy()
   })
 
   it('updates an installed skill to the newest immutable version', async () => {
@@ -227,9 +308,9 @@ describe('SkillInstallManagementDialog', () => {
     window.addEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, changed)
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
-    await selectInstall('ver_1')
+    await openInstall()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Install selected version' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use this version' }))
 
     await waitFor(() => expect(skills.installPackageVersion).toHaveBeenCalledOnce())
     expect(skills.installPackageVersion).toHaveBeenCalledWith(
@@ -258,9 +339,9 @@ describe('SkillInstallManagementDialog', () => {
     window.addEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, changed)
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
-    await selectInstall('ver_1')
+    await openInstall()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Install selected version' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use this version' }))
 
     await waitFor(() => expect(skills.installPackageVersion).toHaveBeenCalledOnce())
     expect(changed).not.toHaveBeenCalled()
@@ -274,9 +355,9 @@ describe('SkillInstallManagementDialog', () => {
     ])
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
-    await selectInstall('ver_2')
+    await openInstall()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Install selected version' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use this version' }))
 
     await waitFor(() => expect(skills.installPackageVersion).toHaveBeenCalledOnce())
     expect(skills.installPackageVersion).toHaveBeenCalledWith(
@@ -288,7 +369,7 @@ describe('SkillInstallManagementDialog', () => {
     const skills = skillsApi(install('ver_2'), [version('ver_2', '2026-08-12T00:00:00.000Z')])
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
-    await selectInstall('ver_2')
+    await openInstall()
 
     const remove = screen.getByRole('button', { name: 'Remove' })
     remove.focus()
@@ -304,31 +385,20 @@ describe('SkillInstallManagementDialog', () => {
     )
   })
 
-  it('keeps the local install visible after deleting its Cloud package', async () => {
-    const versions = [version('ver_2', '2026-08-12T00:00:00.000Z')]
-    const details: SkillCloudPackageDetails = {
-      ...packageDetails(versions),
-      management: {
-        shares: []
-      }
-    }
-    const skills = skillsApi(install('ver_2'), versions, details)
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: {
-        skills,
-        orcaProfiles: { authStatus: vi.fn().mockResolvedValue({ cloud: undefined }) }
-      }
+  it('allows removal when Cloud package history is unavailable', async () => {
+    const skills = skillsApi(install('ver_2'), [version('ver_2', '2026-08-12T00:00:00.000Z')])
+    skills.getPackage.mockResolvedValue({
+      status: 'unsupported',
+      message: 'Package history is unavailable.'
     })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
-    await selectInstall('ver_2')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Cloud package' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm package deletion' }))
+    fireEvent.click(await screen.findByRole('button', { name: /private-skill/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }))
 
-    await screen.findByText('Cloud package deleted. The installed copy remains on this machine.')
-    expect(skills.deletePackage).toHaveBeenCalledWith('pkg_1')
-    expect(screen.getByText('global · ver_2')).toBeTruthy()
+    await waitFor(() => expect(skills.removeInstall).toHaveBeenCalledOnce())
   })
 
   it('retries incomplete coverage for the currently installed version', async () => {
@@ -356,11 +426,11 @@ describe('SkillInstallManagementDialog', () => {
     })
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
-    await selectInstall('ver_1')
+    await openInstall()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Install selected version' }))
-    await screen.findByRole('button', { name: 'Retry incomplete coverage' })
-    fireEvent.click(screen.getByRole('button', { name: 'Retry incomplete coverage' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use this version' }))
+    await screen.findByRole('button', { name: 'Finish installing' })
+    fireEvent.click(screen.getByRole('button', { name: 'Finish installing' }))
 
     await waitFor(() => expect(skills.installPackageVersion).toHaveBeenCalledTimes(2))
     expect(skills.installPackageVersion.mock.calls[1]?.[0]).toEqual(
@@ -375,9 +445,8 @@ describe('SkillInstallManagementDialog', () => {
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /2 skill bundle.*ver_1/ }))
-    await screen.findByText('team-skills')
-    fireEvent.click(screen.getByRole('button', { name: 'Install 2 skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: /alpha-skill \+1/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Use this version' }))
 
     await waitFor(() => expect(skills.installBundlePackageVersion).toHaveBeenCalledOnce())
     expect(skills.installBundlePackageVersion).toHaveBeenCalledWith(
@@ -410,8 +479,8 @@ describe('SkillInstallManagementDialog', () => {
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={onOpenChange} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /2 skill bundle.*ver_1/ }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Install on another machine' }))
+    fireEvent.click(await screen.findByRole('button', { name: /alpha-skill \+1/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Install elsewhere/ }))
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(useAppStore.getState().pendingSkillShareId).toBe('share_bundle')
@@ -444,10 +513,9 @@ describe('SkillInstallManagementDialog', () => {
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /2 skill bundle.*ver_1/ }))
-    await screen.findByText('team-skills')
-    fireEvent.click(screen.getByRole('button', { name: 'Remove 2 skills' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove 2 skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: /alpha-skill \+1/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }))
 
     await screen.findByText('1 removed · 1 modified skill preserved.')
     expect(skills.removeInstall).toHaveBeenCalledTimes(2)
@@ -458,5 +526,33 @@ describe('SkillInstallManagementDialog', () => {
       ])
     )
     expect(skills.removeInstall.mock.calls[1]?.[0]).not.toHaveProperty('conflictResolution')
+  })
+
+  it('discards changes and removes every skill in a mixed-state bundle', async () => {
+    const installed = [bundleInstall('alpha-skill'), bundleInstall('beta-skill', 'modified')]
+    const skills = skillsApi(installed, [bundleVersion('ver_1', ['alpha-skill', 'beta-skill'])])
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /alpha-skill \+1/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard my edits and remove' }))
+
+    await waitFor(() => expect(skills.removeInstall).toHaveBeenCalledTimes(2))
+    expect(skills.removeInstall.mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            name: 'alpha-skill',
+            conflictResolution: 'replace-and-discard-local'
+          })
+        ],
+        [
+          expect.objectContaining({
+            name: 'beta-skill',
+            conflictResolution: 'replace-and-discard-local'
+          })
+        ]
+      ])
+    )
   })
 })

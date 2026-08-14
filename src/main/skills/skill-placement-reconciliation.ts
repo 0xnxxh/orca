@@ -40,7 +40,10 @@ function previousPlacement(
   return (
     receipt?.placements.find(
       (placement) =>
-        placement.provider === provider && normalizedPath(placement.path) === normalizedPath(path)
+        placement.provider === provider &&
+        placement.status !== 'failed' &&
+        placement.status !== 'skipped' &&
+        normalizedPath(placement.path) === normalizedPath(path)
     ) ?? null
   )
 }
@@ -74,12 +77,54 @@ async function reconcileExistingPlacement(input: {
   filesystem: SkillInstallFilesystem
   fileModes?: readonly SkillInstalledFileMode[]
   observation: PlacementObservation
+  transaction?: { stagingPath: string; backupPath: string }
 }): Promise<SkillPlacementResult> {
   const previous = previousPlacement(
     input.previousReceipt,
     input.destination.provider,
     input.destinationPath
   )
+  if (previous?.topology === 'independent-copy') {
+    const observed = await input.filesystem
+      .observeSkill(input.destinationPath, input.previousReceipt?.fileModes)
+      .catch(() => null)
+    if (!observed || observed.observedDigest !== input.previousReceipt?.packageDigest) {
+      return {
+        provider: input.destination.provider,
+        path: input.destinationPath,
+        topology: 'independent-copy',
+        status: 'skipped',
+        ...placementFailure('skill-placement-modified-copy')
+      }
+    }
+    if (observed.observedDigest === input.packageDigest) {
+      return {
+        provider: input.destination.provider,
+        path: input.destinationPath,
+        topology: 'independent-copy',
+        status: 'unchanged'
+      }
+    }
+    await replaceOwnedSkillPlacementCopy(
+      input.canonicalPath,
+      input.destinationPath,
+      input.filesystem,
+      input.fileModes,
+      input.transaction
+        ? {
+            replacementPath: input.transaction.stagingPath,
+            backupPath: input.transaction.backupPath,
+            retainBackup: true
+          }
+        : undefined
+    )
+    return {
+      provider: input.destination.provider,
+      path: input.destinationPath,
+      topology: 'independent-copy',
+      status: 'installed'
+    }
+  }
   if (input.filesystem.aliasTargets) {
     return (await input.filesystem.aliasTargets(input.canonicalPath, input.destinationPath))
       ? {
@@ -130,40 +175,6 @@ async function reconcileExistingPlacement(input: {
       ...placementFailure('skill-placement-unowned-link')
     }
   }
-  if (stat.isDirectory() && previous?.topology === 'independent-copy') {
-    const observed = await input.filesystem
-      .observeSkill(input.destinationPath, input.previousReceipt?.fileModes)
-      .catch(() => null)
-    if (!observed || observed.observedDigest !== input.previousReceipt?.packageDigest) {
-      return {
-        provider: input.destination.provider,
-        path: input.destinationPath,
-        topology: 'independent-copy',
-        status: 'skipped',
-        ...placementFailure('skill-placement-modified-copy')
-      }
-    }
-    if (observed.observedDigest === input.packageDigest) {
-      return {
-        provider: input.destination.provider,
-        path: input.destinationPath,
-        topology: 'independent-copy',
-        status: 'unchanged'
-      }
-    }
-    await replaceOwnedSkillPlacementCopy(
-      input.canonicalPath,
-      input.destinationPath,
-      input.filesystem,
-      input.fileModes
-    )
-    return {
-      provider: input.destination.provider,
-      path: input.destinationPath,
-      topology: 'independent-copy',
-      status: 'installed'
-    }
-  }
   return {
     provider: input.destination.provider,
     path: input.destinationPath,
@@ -180,6 +191,7 @@ async function createMissingPlacement(input: {
   filesystem: SkillInstallFilesystem
   fileModes?: readonly SkillInstalledFileMode[]
   observation: PlacementObservation
+  transaction?: { stagingPath: string; backupPath: string }
 }): Promise<SkillPlacementResult> {
   try {
     await createProviderAlias(input.canonicalPath, input.destinationPath, input.filesystem)
@@ -196,7 +208,8 @@ async function createMissingPlacement(input: {
         input.canonicalPath,
         input.destinationPath,
         input.filesystem,
-        input.fileModes
+        input.fileModes,
+        input.transaction?.stagingPath
       )
       return {
         provider: input.destination.provider,
@@ -225,6 +238,7 @@ export async function reconcileSkillProviderPlacement(input: {
   filesystem?: SkillInstallFilesystem
   fileModes?: readonly SkillInstalledFileMode[]
   targetPlatform?: 'darwin' | 'linux' | 'win32' | 'other'
+  transaction?: { stagingPath: string; backupPath: string }
 }): Promise<SkillPlacementResult | null> {
   if (input.destination.readsCanonicalRoot) {
     return null

@@ -183,6 +183,54 @@ describe('downloadSkillPackageGrant', () => {
     expect(expired.fetcher).not.toHaveBeenCalled()
   })
 
+  it('physically aborts a fetch stalled past grant expiry', async () => {
+    vi.useFakeTimers()
+    const stalled = await input({
+      expiresAt: new Date(Date.now() + 100).toISOString(),
+      fetcher: vi.fn(
+        async (_input: URL | RequestInfo, init?: RequestInit) =>
+          await new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true
+            })
+          })
+      ) as typeof fetch
+    })
+
+    const download = downloadSkillPackageGrant(stalled)
+    const expectation = expect(download).rejects.toThrow('skill-download-grant-expired')
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(100)
+    await expectation
+    vi.useRealTimers()
+  })
+
+  it('does not expire a far-future stalled fetch immediately when the timer delay overflows Node limits', async () => {
+    vi.useFakeTimers()
+    const caller = new AbortController()
+    const stalled = await input({
+      signal: caller.signal,
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000 * 50).toISOString(),
+      fetcher: vi.fn(
+        async (_input: URL | RequestInfo, init?: RequestInit) =>
+          await new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true
+            })
+          })
+      ) as typeof fetch
+    })
+
+    const download = downloadSkillPackageGrant(stalled)
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(10)
+    await expect(Promise.race([download, Promise.resolve('pending')])).resolves.toBe('pending')
+
+    caller.abort()
+    await expect(download).rejects.toThrow('skill-download-cancelled')
+    vi.useRealTimers()
+  })
+
   it('deletes partial bytes when a streaming download is cancelled', async () => {
     const controller = new AbortController()
     let sent = false
@@ -206,5 +254,36 @@ describe('downloadSkillPackageGrant', () => {
 
     await expect(downloadSkillPackageGrant(cancelled)).rejects.toThrow('skill-download-cancelled')
     expect(await remainingDownloadFiles(cancelled.temporaryRoot)).toEqual([])
+  })
+
+  it('physically aborts a body read stalled past grant expiry and deletes partial bytes', async () => {
+    vi.useFakeTimers()
+    const stalled = await input({
+      expiresAt: new Date(Date.now() + 100).toISOString(),
+      fetcher: vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+        let controller!: ReadableStreamDefaultController<Uint8Array>
+        init?.signal?.addEventListener(
+          'abort',
+          () => controller.error(init.signal?.reason ?? new Error('aborted')),
+          { once: true }
+        )
+        return response(
+          new ReadableStream({
+            start(streamController) {
+              controller = streamController
+              controller.enqueue(bytes.subarray(0, 4))
+            }
+          })
+        )
+      }) as typeof fetch
+    })
+
+    const download = downloadSkillPackageGrant(stalled)
+    const expectation = expect(download).rejects.toThrow('skill-download-grant-expired')
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(100)
+    await expectation
+    expect(await remainingDownloadFiles(stalled.temporaryRoot)).toEqual([])
+    vi.useRealTimers()
   })
 })

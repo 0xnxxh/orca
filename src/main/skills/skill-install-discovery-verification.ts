@@ -4,6 +4,7 @@ import type { SkillDiscoveryResult } from '../../shared/skills'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import { discoverSkills } from './discovery'
 import { discoverSkillsInWsl } from './skill-discovery-wsl'
+import type { SkillProviderRootOverrides } from './skill-provider-destinations'
 
 function toWslDiscoveryPath(path: string, distro: string): string {
   if (path.includes('\0')) {
@@ -65,12 +66,23 @@ async function discoverInstalledSkill(input: {
   homeDirectory: string
   workspaceDirectory?: string
   wslDistro?: string
+  providerRootOverrides?: SkillProviderRootOverrides
 }): Promise<SkillDiscoveryResult> {
   if (input.wslDistro) {
+    const wslDistro = input.wslDistro
+    const providerRootOverrides = input.providerRootOverrides
+      ? Object.fromEntries(
+          Object.entries(input.providerRootOverrides).map(([provider, root]) => [
+            provider,
+            toWslDiscoveryPath(root, wslDistro)
+          ])
+        )
+      : undefined
     return discoverSkillsInWsl({
-      distro: input.wslDistro,
-      homeDir: toWslDiscoveryPath(input.homeDirectory, input.wslDistro),
-      cwd: toWslDiscoveryPath(input.workspaceDirectory ?? input.homeDirectory, input.wslDistro)
+      distro: wslDistro,
+      homeDir: toWslDiscoveryPath(input.homeDirectory, wslDistro),
+      cwd: toWslDiscoveryPath(input.workspaceDirectory ?? input.homeDirectory, wslDistro),
+      ...(providerRootOverrides ? { providerRootOverrides } : {})
     })
   }
   return discoverSkills({
@@ -78,7 +90,8 @@ async function discoverInstalledSkill(input: {
     repos: [],
     ...(input.scope === 'workspace' && input.workspaceDirectory
       ? { cwd: input.workspaceDirectory }
-      : { includeCwd: false })
+      : { includeCwd: false }),
+    ...(input.providerRootOverrides ? { providerRootOverrides: input.providerRootOverrides } : {})
   })
 }
 
@@ -88,6 +101,7 @@ export async function verifySkillInstallDiscovery(input: {
   homeDirectory: string
   workspaceDirectory?: string
   wslDistro?: string
+  providerRootOverrides?: SkillProviderRootOverrides
   discover?: () => Promise<SkillDiscoveryResult>
 }): Promise<SkillInstallResult> {
   const discovery = await (input.discover?.() ?? discoverInstalledSkill(input)).catch(() => null)

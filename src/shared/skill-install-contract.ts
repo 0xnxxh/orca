@@ -53,12 +53,16 @@ export const SkillInstallDestinationSchema = z.discriminatedUnion('scope', [
     .refine((value) => Boolean(value.worktreeId) !== Boolean(value.folderWorkspaceId))
 ])
 
+/** Agents the user picked. Absent means every detected agent. */
+const SkillInstallProvidersSchema = z.array(z.string().min(1).max(64)).max(64)
+
 export const SkillInstallRequestSchema = z
   .object({
     operationId: z.string().min(1).max(128),
     package: SkillPackageIdentitySchema,
     ingress: SkillInstallIngressSchema,
     destination: SkillInstallDestinationSchema,
+    providers: SkillInstallProvidersSchema.optional(),
     conflictResolution: z
       .enum(['replace-unmodified', 'replace-and-discard-local', 'cancel'])
       .optional()
@@ -116,6 +120,7 @@ export type ManagedSkillInstall = {
   scope: 'global' | 'workspace'
   destinationIdentity: string
   destination: SkillInstallDestination
+  providers?: string[]
   installedAt: string
   state: 'unchanged' | 'modified' | 'missing'
 }
@@ -132,6 +137,7 @@ export const ManagedSkillInstallSchema: z.ZodType<ManagedSkillInstall> = z.objec
   scope: z.enum(['global', 'workspace']),
   destinationIdentity: z.string(),
   destination: SkillInstallDestinationSchema,
+  providers: SkillInstallProvidersSchema.optional(),
   installedAt: z.string(),
   state: z.enum(['unchanged', 'modified', 'missing'])
 })

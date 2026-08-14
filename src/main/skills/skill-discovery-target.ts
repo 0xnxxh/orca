@@ -3,6 +3,7 @@ import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../../shared/sk
 import { getDefaultWslDistro, getWslHome, parseWslPath, toLinuxPath } from '../wsl'
 import { discoverSkills } from './discovery'
 import { discoverSkillsInWsl } from './skill-discovery-wsl'
+import type { SkillProviderRootOverrides } from './skill-provider-destinations'
 
 export type ResolvedSkillDiscoveryTarget =
   | { kind: 'native-host'; cwd: string | undefined }
@@ -55,16 +56,18 @@ export function resolveSkillDiscoveryTarget(
 
 export async function discoverSkillsOnTarget(
   target: ResolvedSkillDiscoveryTarget,
-  repos: readonly Repo[]
+  repos: readonly Repo[],
+  providerRootOverrides?: SkillProviderRootOverrides
 ): Promise<SkillDiscoveryResult> {
   if (target.kind === 'wsl') {
     return discoverSkillsInWsl({
       distro: target.distro,
       homeDir: target.homeDir,
-      cwd: target.cwd
+      cwd: target.cwd,
+      providerRootOverrides
     })
   }
   return target.cwd
-    ? discoverSkills({ repos: [], cwd: target.cwd })
-    : discoverSkills({ repos: [...repos] })
+    ? discoverSkills({ repos: [], cwd: target.cwd, providerRootOverrides })
+    : discoverSkills({ repos: [...repos], providerRootOverrides })
 }

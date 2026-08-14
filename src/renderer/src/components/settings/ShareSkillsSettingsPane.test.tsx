@@ -3,6 +3,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -65,7 +66,11 @@ describe('ShareSkillsSettingsPane', () => {
 
   it('explains unlisted multi-skill links and opens Skills', async () => {
     const user = userEvent.setup()
-    render(<ShareSkillsSettingsPane />)
+    render(
+      <TooltipProvider>
+        <ShareSkillsSettingsPane />
+      </TooltipProvider>
+    )
 
     expect(screen.getByText('Unlisted skill links')).toBeInTheDocument()
     expect(screen.getByText('Select one or more skills')).toBeInTheDocument()
@@ -82,7 +87,11 @@ describe('ShareSkillsSettingsPane', () => {
   it('offers owner sign-in while explaining recipients stay signed out', async () => {
     const user = userEvent.setup()
     mocks.state.orcaProfileAuthStatus = { configured: true, state: 'local' }
-    render(<ShareSkillsSettingsPane />)
+    render(
+      <TooltipProvider>
+        <ShareSkillsSettingsPane />
+      </TooltipProvider>
+    )
 
     expect(screen.getByText('Sign in to share skills')).toBeInTheDocument()
     expect(screen.getByText(/Recipients do not need an account/)).toBeInTheDocument()
@@ -93,7 +102,11 @@ describe('ShareSkillsSettingsPane', () => {
   it('does not offer desktop publishing from the web client', () => {
     mocks.state.isWebClient = true
     mocks.state.orcaProfileAuthStatus = { configured: true, state: 'local' }
-    render(<ShareSkillsSettingsPane />)
+    render(
+      <TooltipProvider>
+        <ShareSkillsSettingsPane />
+      </TooltipProvider>
+    )
 
     expect(screen.getByText(/available in the Orca desktop app/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Open Skills/ })).not.toBeInTheDocument()

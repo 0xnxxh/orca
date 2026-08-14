@@ -1,15 +1,18 @@
 import { useEffect } from 'react'
-import { ArrowRight, Share2 } from 'lucide-react'
+import { ArrowRight, BookOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { isWebClientLocation } from '@/lib/web-client-location'
 import { useAppStore } from '@/store'
-import { OwnedSkillShareLinks } from './OwnedSkillShareLinks'
+import { SettingsSwitchRow } from './SettingsFormControls'
 
 type HowToStep = { key: string; title: string; description: string }
 
 export function ShareSkillsSettingsPane(): React.JSX.Element {
   const openSkillsPage = useAppStore((state) => state.openSkillsPage)
+  const openSkillsSharedLinks = useAppStore((state) => state.openSkillsSharedLinks)
+  const settings = useAppStore((state) => state.settings)
+  const updateSettings = useAppStore((state) => state.updateSettings)
   const authStatus = useAppStore((state) => state.orcaProfileAuthStatus)
   const connecting = useAppStore((state) => state.orcaProfileConnecting)
   const connect = useAppStore((state) => state.connectCurrentOrcaProfile)
@@ -78,6 +81,18 @@ export function ShareSkillsSettingsPane(): React.JSX.Element {
         </p>
       </section>
 
+      {!isWebClient ? (
+        <SettingsSwitchRow
+          label={translate('auto.components.settings.shareSkills.showButton', 'Show Skills Button')}
+          description={translate(
+            'auto.components.settings.shareSkills.showButtonDescription',
+            'Show the Skills shortcut in the sidebar.'
+          )}
+          checked={settings?.showSkillsButton === true}
+          onChange={() => void updateSettings({ showSkillsButton: !settings?.showSkillsButton })}
+        />
+      ) : null}
+
       {!signedIn ? (
         <section className="flex flex-wrap items-center gap-4 py-5">
           <div className="min-w-0 flex-1 space-y-1">
@@ -116,7 +131,27 @@ export function ShareSkillsSettingsPane(): React.JSX.Element {
         </section>
       ) : null}
 
-      {signedIn && !isWebClient ? <OwnedSkillShareLinks /> : null}
+      {/* Why: the link inventory grows without bound and belongs with the page
+          that publishes it; settings keeps the preference and the way over. */}
+      {signedIn && !isWebClient ? (
+        <section className="flex flex-wrap items-center gap-4 py-5">
+          <div className="min-w-0 flex-1 space-y-1">
+            <h3 className="text-sm font-medium">
+              {translate('auto.components.settings.shareSkills.activeLinks', 'Active shared links')}
+            </h3>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {translate(
+                'auto.components.settings.shareSkills.activeLinksDescription',
+                'Only people with a link can open it. Unshare a link to block future inspection and installs.'
+              )}
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={openSkillsSharedLinks}>
+            {translate('auto.components.settings.shareSkills.manageInSkills', 'Manage in Skills')}
+            <ArrowRight className="size-3.5" />
+          </Button>
+        </section>
+      ) : null}
 
       <section className="space-y-4 py-5">
         <div className="space-y-1">
@@ -153,7 +188,7 @@ export function ShareSkillsSettingsPane(): React.JSX.Element {
             onClick={openSkillsPage}
           >
             <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
-              <Share2 className="size-4" />
+              <BookOpen className="size-4" />
             </span>
             <span className="min-w-0 flex-1 space-y-0.5">
               <span className="block text-sm font-medium text-foreground">

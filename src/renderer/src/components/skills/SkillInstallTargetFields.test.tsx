@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SkillInstallTargetFields } from './SkillInstallTargetFields'
+import { defaultSelectedSkillProviders } from './skill-install-provider-groups'
 
 const callbacks = {
   onEnvironmentChange: vi.fn(),
@@ -34,7 +35,10 @@ describe('SkillInstallTargetFields', () => {
       runtimeEnvironments: [],
       runtimeStatus: new Map(),
       sshConnections: [],
-      workspaceChoices: [{ id: 'folder_1', label: longWorkspace, kind: 'folder' as const }]
+      workspaceChoices: [{ id: 'folder_1', label: longWorkspace, kind: 'folder' as const }],
+      providers: defaultSelectedSkillProviders(null),
+      detectedAgents: null,
+      onProvidersChange: vi.fn()
     }
     const view = render(<SkillInstallTargetFields {...props} />)
 

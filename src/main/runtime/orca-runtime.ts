@@ -169,9 +169,15 @@ import {
   removeSharedSkillInstall
 } from '../skills/skill-install-management-service'
 import { listManagedSkillInstalls } from '../skills/skill-install-provenance'
-import { getWslHome } from '../wsl'
+import { getWslHome, toLinuxPath } from '../wsl'
 import { WslSkillInstallFilesystem } from '../skills/skill-wsl-install-filesystem'
 import { nativeSkillInstallFilesystem } from '../skills/skill-install-filesystem'
+import type { SkillProviderRootOverrides } from '../skills/skill-provider-destinations'
+import {
+  resolveEnvironmentSkillProviderRoots,
+  resolveWslGrokSkillProviderRoot,
+  withClaudeSkillProviderRoot
+} from '../skills/skill-provider-runtime-roots'
 import type {
   SkillUploadBeginRequest,
   SkillUploadChunkRequest
@@ -3302,6 +3308,7 @@ export class OrcaRuntimeService {
   private artifactService: ArtifactCloudService | null = null
   private skillCloudService: SkillCloudService | null = null
   private skillUploadSessions: SkillUploadSessionService | null = null
+  private readonly skillTransactionRecovery: Promise<unknown>
   private readonly skillInstallOperations = new Map<string, AbortController>()
   private readonly skillInstallProgress = new Map<string, SkillBundleInstallProgress>()
   private readonly claudeAgentTeams = new ClaudeAgentTeamsService()
@@ -3355,6 +3362,7 @@ export class OrcaRuntimeService {
       getDesktopWindowStatus?: () => RuntimeDesktopWindowStatus
       agentSessionClaimSigner?: AgentSessionClaimSigner
       orchestrationEnvironmentTransport?: OrchestrationEnvironmentTransport
+      skillTransactionRecovery?: Promise<unknown>
     }
   ) {
     this.store = store
@@ -3367,6 +3375,7 @@ export class OrcaRuntimeService {
       this.store?.setMobileClientTabSelections?.(state)
     })
     this.orchestrationEnvironmentTransport = deps?.orchestrationEnvironmentTransport ?? null
+    this.skillTransactionRecovery = deps?.skillTransactionRecovery ?? Promise.resolve()
     if (stats) {
       this.stats = stats
       this.agentDetector = new AgentDetector(stats)
@@ -4740,6 +4749,7 @@ export class OrcaRuntimeService {
           onProgress: reportProgress
         })
       }
+      await this.skillTransactionRecovery
       const allowedDownloadOrigins = ['https://storage.googleapis.com']
       if (!app.isPackaged && process.env.ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS) {
         allowedDownloadOrigins.push(
@@ -4756,6 +4766,8 @@ export class OrcaRuntimeService {
         resolveStagedUpload: (uploadId, identity) =>
           this.requireSkillUploadSessions().take(uploadId, identity),
         detectProviders: detectInstalledAgentsWithShellPathHydration,
+        resolveProviderRootOverrides: (destination) =>
+          this.resolveSkillProviderRootOverrides(destination),
         signal: controller.signal,
         onProgress: reportProgress
       })
@@ -4800,6 +4812,7 @@ export class OrcaRuntimeService {
         signal
       })
     }
+    await this.skillTransactionRecovery
     const allowedDownloadOrigins = ['https://storage.googleapis.com']
     if (!app.isPackaged && process.env.ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS) {
       allowedDownloadOrigins.push(
@@ -4816,6 +4829,8 @@ export class OrcaRuntimeService {
       resolveStagedUpload: (uploadId, identity) =>
         this.requireSkillUploadSessions().take(uploadId, identity),
       detectProviders: detectInstalledAgentsWithShellPathHydration,
+      resolveProviderRootOverrides: (destination) =>
+        this.resolveSkillProviderRootOverrides(destination),
       signal
     })
   }
@@ -4838,10 +4853,13 @@ export class OrcaRuntimeService {
         workspace: sshTarget.workspace
       })
     }
+    await this.skillTransactionRecovery
     return previewSharedSkillInstall(request, {
       authority: this.skillInstallDestinationAuthority(runtimeId),
       stateDirectory: app.getPath('userData'),
-      detectProviders: detectInstalledAgentsWithShellPathHydration
+      detectProviders: detectInstalledAgentsWithShellPathHydration,
+      resolveProviderRootOverrides: (destination) =>
+        this.resolveSkillProviderRootOverrides(destination)
     })
   }
 
@@ -4881,11 +4899,14 @@ export class OrcaRuntimeService {
         }))
       })
     }
+    await this.skillTransactionRecovery
     const runtimeId = this.getStatus().runtimeId
     return previewSharedSkillBundleInstall(request, {
       authority: this.skillInstallDestinationAuthority(runtimeId),
       stateDirectory: app.getPath('userData'),
-      detectProviders: detectInstalledAgentsWithShellPathHydration
+      detectProviders: detectInstalledAgentsWithShellPathHydration,
+      resolveProviderRootOverrides: (destination) =>
+        this.resolveSkillProviderRootOverrides(destination)
     })
   }
 
@@ -4905,10 +4926,13 @@ export class OrcaRuntimeService {
         workspace: sshTarget.workspace
       })
     }
+    await this.skillTransactionRecovery
     return removeSharedSkillInstall(request, {
       authority: this.skillInstallDestinationAuthority(runtimeId),
       stateDirectory: app.getPath('userData'),
-      detectProviders: detectInstalledAgentsWithShellPathHydration
+      detectProviders: detectInstalledAgentsWithShellPathHydration,
+      resolveProviderRootOverrides: (destination) =>
+        this.resolveSkillProviderRootOverrides(destination)
     })
   }
 
@@ -4921,6 +4945,7 @@ export class OrcaRuntimeService {
         workspaces: await this.listSkillSshWorkspaces(connectionId)
       })
     }
+    await this.skillTransactionRecovery
     const runtimeId = this.getStatus().runtimeId
     const [installs, worktrees] = await Promise.all([
       listManagedSkillInstalls(join(app.getPath('userData'), 'skill-installs'), {
@@ -4977,6 +5002,48 @@ export class OrcaRuntimeService {
     destination: SkillInstallRequest['destination']
   ): Promise<boolean> {
     return Boolean(await this.resolveSkillSshTarget(destination))
+  }
+
+  async resolveSkillDiscoveryProviderRoots(target: {
+    kind: 'native-host' | 'wsl'
+    distro?: string
+  }): Promise<SkillProviderRootOverrides> {
+    const roots = await this.resolveSkillProviderRootOverrides({
+      scope: 'global',
+      homeDirectory: homedir(),
+      ...(target.kind === 'wsl' && target.distro ? { wslDistro: target.distro } : {})
+    })
+    if (target.kind !== 'wsl') {
+      return roots
+    }
+    return Object.fromEntries(
+      Object.entries(roots).map(([provider, root]) => [provider, toLinuxPath(root)])
+    )
+  }
+
+  private async resolveSkillProviderRootOverrides(destination: {
+    scope: 'global' | 'workspace'
+    homeDirectory: string
+    workspaceDirectory?: string
+    wslDistro?: string
+  }): Promise<SkillProviderRootOverrides> {
+    if (destination.scope !== 'global') {
+      return {}
+    }
+    const wslGrokRoot = destination.wslDistro
+      ? await resolveWslGrokSkillProviderRoot(destination.wslDistro)
+      : null
+    const roots: SkillProviderRootOverrides = destination.wslDistro
+      ? wslGrokRoot
+        ? { grok: wslGrokRoot }
+        : {}
+      : resolveEnvironmentSkillProviderRoots()
+    const claudeConfigDirectory = this.accountServices?.claudeAccounts.getRuntimeConfigDir(
+      destination.wslDistro
+        ? { runtime: 'wsl', wslDistro: destination.wslDistro }
+        : { runtime: 'host' }
+    )
+    return withClaudeSkillProviderRoot(roots, claudeConfigDirectory)
   }
 
   private skillInstallDestinationAuthority(runtimeId: string): SkillInstallDestinationAuthority {

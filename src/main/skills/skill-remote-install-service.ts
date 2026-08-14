@@ -15,6 +15,7 @@ import {
 import {
   SKILL_BUNDLE_INSTALL_CAPABILITY,
   SKILL_INSTALL_PROGRESS_CAPABILITY,
+  SKILL_INSTALL_PROVIDERS_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY
 } from '../../shared/skill-install-capability'
 import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-routing'
@@ -120,14 +121,21 @@ export async function installSkillOnRemoteRuntime(input: {
   requireHttps: boolean
   signal?: AbortSignal
 }): Promise<SkillInstallResult> {
-  if (input.request.ingress.kind !== 'download-grant') {
+  const request = input.request
+  if (
+    request.providers !== undefined &&
+    !input.capabilities.includes(SKILL_INSTALL_PROVIDERS_CAPABILITY)
+  ) {
+    throw new Error('skill-install-remote-update-required')
+  }
+  if (request.ingress.kind !== 'download-grant') {
     throw new Error('skill-install-remote-ingress-invalid')
   }
-  const grant = input.request.ingress
+  const grant = request.ingress
   const direct = await retrySkillTransferRpc({
     signal: input.signal,
     retryable: retryableRemoteInstallTransportError,
-    call: () => install(input.userDataPath, input.environmentId, input.request, input.signal)
+    call: () => install(input.userDataPath, input.environmentId, request, input.signal)
   })
   if (!isDirectDownloadUnavailable(direct, input.requireHttps)) {
     if (direct.ok !== true) {
@@ -150,8 +158,8 @@ export async function installSkillOnRemoteRuntime(input: {
       const transfer = await transferSkillPackageToRuntime({
         userDataPath: input.userDataPath,
         environmentId: input.environmentId,
-        transferId: input.request.operationId,
-        package: input.request.package,
+        transferId: request.operationId,
+        package: request.package,
         grant,
         requireHttps: input.requireHttps,
         signal: input.signal
@@ -161,7 +169,7 @@ export async function installSkillOnRemoteRuntime(input: {
           input.userDataPath,
           input.environmentId,
           {
-            ...input.request,
+            ...request,
             ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
           },
           input.signal
@@ -186,7 +194,14 @@ export async function installSkillBundleOnRemoteRuntime(input: {
   signal?: AbortSignal
   onProgress?: (progress: SkillBundleInstallProgress) => void
 }): Promise<SkillBundleInstallResult> {
-  if (input.request.ingress.kind !== 'download-grant') {
+  const request = input.request
+  if (
+    request.providers !== undefined &&
+    !input.capabilities.includes(SKILL_INSTALL_PROVIDERS_CAPABILITY)
+  ) {
+    throw new Error('skill-bundle-remote-update-required')
+  }
+  if (request.ingress.kind !== 'download-grant') {
     throw new Error('skill-bundle-remote-ingress-invalid')
   }
   if (!input.capabilities.includes(SKILL_BUNDLE_INSTALL_CAPABILITY)) {
@@ -200,21 +215,16 @@ export async function installSkillBundleOnRemoteRuntime(input: {
     input.onProgress && input.capabilities.includes(SKILL_INSTALL_PROGRESS_CAPABILITY)
       ? startSkillInstallProgressPolling({
           read: () =>
-            readBundleInstallProgress(
-              input.userDataPath,
-              input.environmentId,
-              input.request.operationId
-            ),
+            readBundleInstallProgress(input.userDataPath, input.environmentId, request.operationId),
           onProgress: input.onProgress
         })
       : null
   try {
-    const grant = input.request.ingress
+    const grant = request.ingress
     const direct = await retrySkillTransferRpc({
       signal: input.signal,
       retryable: retryableRemoteInstallTransportError,
-      call: () =>
-        installBundle(input.userDataPath, input.environmentId, input.request, input.signal)
+      call: () => installBundle(input.userDataPath, input.environmentId, request, input.signal)
     })
     if (!isDirectDownloadUnavailable(direct, input.requireHttps)) {
       if (direct.ok !== true) {
@@ -236,8 +246,8 @@ export async function installSkillBundleOnRemoteRuntime(input: {
         const transfer = await transferSkillPackageToRuntime({
           userDataPath: input.userDataPath,
           environmentId: input.environmentId,
-          transferId: input.request.operationId,
-          package: input.request.package,
+          transferId: request.operationId,
+          package: request.package,
           grant,
           requireHttps: input.requireHttps,
           signal: input.signal
@@ -247,7 +257,7 @@ export async function installSkillBundleOnRemoteRuntime(input: {
             input.userDataPath,
             input.environmentId,
             {
-              ...input.request,
+              ...request,
               ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
             },
             input.signal

@@ -1463,7 +1463,7 @@ function Settings(): React.JSX.Element {
                   badge="Beta"
                   description={translate(
                     'auto.components.settings.shareSkills.description',
-                    'Share one or many skills through unlisted, revocable links.'
+                    'Share your skills with an unlisted link. Anyone who has it can install them.'
                   )}
                   searchEntries={getSectionSearchEntries('share-skills')}
                 >

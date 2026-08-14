@@ -15,15 +15,22 @@ import type { SkillInstallDestinationAuthority } from './skill-install-destinati
 import { resolveSkillInstallDestination } from './skill-install-destinations'
 import { inspectSkillCanonicalState } from './skill-install-planner'
 import { readSkillInstallReceipt } from './skill-install-provenance'
-import { resolveSkillProviderDestinations } from './skill-provider-destinations'
+import {
+  resolveSkillProviderDestinations,
+  type SkillProviderRootOverrides
+} from './skill-provider-destinations'
 import { removeLocalSharedSkill } from './skill-remove-transaction'
 import { detectSkillProvidersInWsl } from './skill-wsl-provider-detection'
 import { createWslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
+import { SKILL_INSTALL_PROVIDERS } from '../../shared/skill-install-providers'
 
 type ManagementDependencies = {
   authority: SkillInstallDestinationAuthority
   stateDirectory: string
   detectProviders(): Promise<readonly string[]>
+  resolveProviderRootOverrides?: (
+    destination: PreviewContext['destination']
+  ) => Promise<SkillProviderRootOverrides> | SkillProviderRootOverrides
 }
 
 type PreviewContext = {
@@ -31,6 +38,7 @@ type PreviewContext = {
   filesystem: ReturnType<typeof createWslSkillInstallFilesystem> | undefined
   installStateDirectory: string
   detectedProviders: readonly string[]
+  providerRootOverrides?: SkillProviderRootOverrides
 }
 
 const BUNDLE_PREVIEW_CONCURRENCY = 8
@@ -55,19 +63,22 @@ async function preparePreviewContext(
     destinationRequest,
     dependencies.authority
   )
+  const providerRootOverrides = await dependencies.resolveProviderRootOverrides?.(destination)
   return {
     destination,
     filesystem: destination.wslDistro
       ? createWslSkillInstallFilesystem({
           distro: destination.wslDistro,
           homeDirectory: destination.homeDirectory,
-          workspaceDirectory: destination.workspaceDirectory
+          workspaceDirectory: destination.workspaceDirectory,
+          providerRootOverrides
         })
       : undefined,
     installStateDirectory: join(dependencies.stateDirectory, 'skill-installs'),
     detectedProviders: destination.wslDistro
       ? await detectSkillProvidersInWsl(destination.wslDistro)
-      : await dependencies.detectProviders()
+      : await dependencies.detectProviders(),
+    providerRootOverrides
   }
 }
 
@@ -96,7 +107,8 @@ async function previewWithContext(
     scope: context.destination.scope,
     homeDirectory: context.destination.homeDirectory,
     workspaceDirectory: context.destination.workspaceDirectory,
-    detectedProviders: context.detectedProviders
+    detectedProviders: context.detectedProviders,
+    providerRootOverrides: context.providerRootOverrides
   })
   return {
     name: request.name,
@@ -179,21 +191,21 @@ export async function removeSharedSkillInstall(
     request.destination,
     dependencies.authority
   )
-  const detectedProviders = destination.wslDistro
-    ? await detectSkillProvidersInWsl(destination.wslDistro)
-    : await dependencies.detectProviders()
+  const providerRootOverrides = await dependencies.resolveProviderRootOverrides?.(destination)
   const filesystem = destination.wslDistro
     ? createWslSkillInstallFilesystem({
         distro: destination.wslDistro,
         homeDirectory: destination.homeDirectory,
-        workspaceDirectory: destination.workspaceDirectory
+        workspaceDirectory: destination.workspaceDirectory,
+        providerRootOverrides
       })
     : undefined
   const providerRoots = resolveSkillProviderDestinations({
     scope: destination.scope,
     homeDirectory: destination.homeDirectory,
     workspaceDirectory: destination.workspaceDirectory,
-    detectedProviders
+    detectedProviders: SKILL_INSTALL_PROVIDERS.map((provider) => provider.id),
+    providerRootOverrides
   }).map((provider) => provider.rootPath)
   return removeLocalSharedSkill({
     operationId: request.operationId,

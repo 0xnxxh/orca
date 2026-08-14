@@ -7,7 +7,7 @@ export const getShareSkillsSettingsSearchEntries = createLocalizedCatalog(() => 
     title: translate('auto.components.settings.shareSkills.linkTitle', 'Unlisted skill links'),
     description: translate(
       'auto.components.settings.shareSkills.searchDescription',
-      'Share one or more skills behind an unlisted, revocable link.'
+      'Share your skills with an unlisted link. Anyone who has it can install them.'
     ),
     keywords: [
       ...translateSearchKeyword('auto.components.settings.shareSkills.keywordSkills', 'skills'),

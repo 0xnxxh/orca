@@ -218,7 +218,16 @@ describe('skill discovery', () => {
         '/home/test/.omp/agent/skills',
         '/home/test/.gemini/skills',
         '/home/test/.gemini/antigravity/skills',
-        '/home/test/.cursor/skills'
+        '/home/test/.cursor/skills',
+        '/home/test/.factory/skills',
+        '/home/test/.continue/skills',
+        '/home/test/.trae-cn/skills',
+        '/home/test/.augment/skills',
+        '/workspace/current/.factory/skills',
+        '/workspace/current/.continue/skills',
+        '/workspace/current/.trae/skills',
+        '/workspace/current/.grok/skills',
+        '/workspace/current/.augment/skills'
       ])
     )
     // Why: these live outside ~/.agents/skills, so they must carry the shared

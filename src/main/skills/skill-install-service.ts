@@ -1,6 +1,5 @@
 import { join } from 'node:path'
-import type { SkillInstallResult, SkillPlacementResult } from '../../shared/skill-install-contract'
-import { readSkillInstallReceipt, writeSkillInstallReceipt } from './skill-install-provenance'
+import type { SkillInstallResult } from '../../shared/skill-install-contract'
 import {
   installLocalExtractedSkillPackage,
   installLocalSkillPackage,
@@ -8,13 +7,16 @@ import {
   type LocalSkillInstallInput,
   previewLocalSkillPackage
 } from './skill-install-transaction'
-import { reconcileSkillProviderPlacement } from './skill-placement-reconciliation'
-import { resolveSkillProviderDestinations } from './skill-provider-destinations'
+import {
+  resolveSkillProviderDestinations,
+  type SkillProviderRootOverrides
+} from './skill-provider-destinations'
 import { removeLocalSharedSkill } from './skill-remove-transaction'
 import type { SkillInstallFilesystem } from './skill-install-filesystem'
 import { verifySkillInstallDiscovery } from './skill-install-discovery-verification'
 import type { SkillDiscoveryResult } from '../../shared/skills'
-import type { SkillPackageManifestV1 } from '../../shared/skill-package-manifest'
+import { SKILL_INSTALL_PROVIDERS } from '../../shared/skill-install-providers'
+import { createSkillPlacementTransaction } from './skill-placement-transaction-controller'
 
 export type SkillInstallServiceInput = Omit<
   LocalSkillInstallInput,
@@ -25,6 +27,7 @@ export type SkillInstallServiceInput = Omit<
   workspaceDirectory?: string
   orcaStateDirectory: string
   detectedProviders: readonly string[]
+  providerRootOverrides?: SkillProviderRootOverrides
   filesystem?: SkillInstallFilesystem
   wslDistro?: string
   discover?: () => Promise<SkillDiscoveryResult>
@@ -39,6 +42,7 @@ export type SkillRemoveServiceInput = {
   workspaceDirectory?: string
   orcaStateDirectory: string
   detectedProviders: readonly string[]
+  providerRootOverrides?: SkillProviderRootOverrides
   conflictResolution?: 'replace-and-discard-local' | 'cancel'
   filesystem?: SkillInstallFilesystem
 }
@@ -76,32 +80,29 @@ export function skillInstallLocalInput(input: SkillInstallServiceInput): LocalSk
   }
 }
 
-function canonicalPlacement(result: SkillInstallResult): SkillPlacementResult {
-  return {
-    provider: 'agent-skills',
-    path: result.canonicalPath!,
-    topology: 'canonical-copy',
-    status: result.status === 'unchanged' ? 'unchanged' : 'installed'
-  }
+function placementTransaction(input: SkillInstallServiceInput, request: LocalSkillInstallInput) {
+  return createSkillPlacementTransaction({
+    stateDirectory: request.stateDirectory,
+    scope: input.scope,
+    homeDirectory: input.homeDirectory,
+    workspaceDirectory: input.workspaceDirectory,
+    detectedProviders: input.detectedProviders,
+    providerRootOverrides: input.providerRootOverrides,
+    filesystem: input.filesystem,
+    wslDistro: input.wslDistro,
+    signal: input.signal
+  })
 }
 
 export async function installSharedSkill(
   input: SkillInstallServiceInput
 ): Promise<SkillInstallResult> {
   const request = skillInstallLocalInput(input)
-  const preview = await previewLocalSkillPackage(request)
-  const previousReceipt = await readSkillInstallReceipt(
-    request.stateDirectory,
-    preview.canonicalPath
-  )
-  const result = await installLocalSkillPackage(request)
-  return completeSharedSkillInstall({
-    input,
-    request,
-    manifest: preview.manifest,
-    previousReceipt,
-    result
+  await previewLocalSkillPackage(request)
+  const result = await installLocalSkillPackage(request, {
+    placementTransaction: placementTransaction(input, request)
   })
+  return completeSharedSkillInstall(input, result)
 }
 
 export async function installSharedExtractedSkill(
@@ -109,26 +110,16 @@ export async function installSharedExtractedSkill(
   extracted: LocalExtractedSkillPackage
 ): Promise<SkillInstallResult> {
   const request = skillInstallLocalInput(input)
-  const canonicalPath = join(request.destinationRoot, extracted.manifest.name)
-  const previousReceipt = await readSkillInstallReceipt(request.stateDirectory, canonicalPath)
-  const result = await installLocalExtractedSkillPackage(request, extracted)
-  return completeSharedSkillInstall({
-    input,
-    request,
-    manifest: extracted.manifest,
-    previousReceipt,
-    result
+  const result = await installLocalExtractedSkillPackage(request, extracted, {
+    placementTransaction: placementTransaction(input, request)
   })
+  return completeSharedSkillInstall(input, result)
 }
 
-async function completeSharedSkillInstall(input: {
-  input: SkillInstallServiceInput
-  request: LocalSkillInstallInput
-  manifest: SkillPackageManifestV1
-  previousReceipt: Awaited<ReturnType<typeof readSkillInstallReceipt>>
+async function completeSharedSkillInstall(
+  input: SkillInstallServiceInput,
   result: SkillInstallResult
-}): Promise<SkillInstallResult> {
-  const { result } = input
+): Promise<SkillInstallResult> {
   if (
     !result.canonicalPath ||
     result.status === 'conflict' ||
@@ -137,61 +128,17 @@ async function completeSharedSkillInstall(input: {
   ) {
     return result
   }
-  const placements: SkillPlacementResult[] = [canonicalPlacement(result)]
-  const destinations = resolveSkillProviderDestinations({
-    scope: input.input.scope,
-    homeDirectory: input.input.homeDirectory,
-    workspaceDirectory: input.input.workspaceDirectory,
-    detectedProviders: input.input.detectedProviders
-  })
-  for (const destination of destinations) {
-    if (destination.readsCanonicalRoot) {
-      continue
-    }
-    if (input.input.signal?.aborted) {
-      placements.push({
-        provider: destination.provider,
-        path: join(destination.rootPath, result.name),
-        topology: 'independent-copy',
-        status: 'skipped',
-        errorCategory: 'skill-placement-cancelled',
-        failure: {
-          category: 'cancelled',
-          code: 'skill-placement-cancelled',
-          retryable: true
-        }
-      })
-      continue
-    }
-    const placement = await reconcileSkillProviderPlacement({
-      canonicalPath: result.canonicalPath,
-      skillName: result.name,
-      destination,
-      previousReceipt: input.previousReceipt,
-      packageDigest: result.packageDigest,
-      fileModes: input.manifest.files,
-      filesystem: input.input.filesystem,
-      ...(input.input.wslDistro ? { targetPlatform: 'linux' as const } : {})
-    })
-    if (placement) {
-      placements.push(placement)
-    }
-  }
-  const receipt = await readSkillInstallReceipt(input.request.stateDirectory, result.canonicalPath)
-  if (!receipt) {
-    throw new Error('skill-install-receipt-missing')
-  }
-  await writeSkillInstallReceipt(input.request.stateDirectory, { ...receipt, placements })
-  const incomplete = placements.some(
+  const incomplete = result.placements.some(
     (placement) => placement.status === 'failed' || placement.status === 'skipped'
   )
   return verifySkillInstallDiscovery({
-    result: { ...result, status: incomplete ? 'partial' : result.status, placements },
-    scope: input.input.scope,
-    homeDirectory: input.input.homeDirectory,
-    workspaceDirectory: input.input.workspaceDirectory,
-    wslDistro: input.input.wslDistro,
-    discover: input.input.discover
+    result: { ...result, status: incomplete ? 'partial' : result.status },
+    scope: input.scope,
+    homeDirectory: input.homeDirectory,
+    workspaceDirectory: input.workspaceDirectory,
+    wslDistro: input.wslDistro,
+    providerRootOverrides: input.providerRootOverrides,
+    discover: input.discover
   })
 }
 
@@ -205,7 +152,8 @@ export async function removeSharedSkill(
     scope: input.scope,
     homeDirectory: input.homeDirectory,
     workspaceDirectory: input.workspaceDirectory,
-    detectedProviders: input.detectedProviders
+    detectedProviders: SKILL_INSTALL_PROVIDERS.map((provider) => provider.id),
+    providerRootOverrides: input.providerRootOverrides
   })
   return removeLocalSharedSkill({
     operationId: input.operationId,

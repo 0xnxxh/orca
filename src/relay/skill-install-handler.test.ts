@@ -113,6 +113,7 @@ describe('SkillInstallHandler', () => {
   it('advertises separately gateable install, upload, and management capabilities', () => {
     expect(SKILL_RELAY_CAPABILITIES).toEqual([
       'skills.install.v1',
+      'skills.install-providers.v1',
       'skills.install.bundle.v1',
       'skills.install-progress.v1',
       'skills.upload.v1',

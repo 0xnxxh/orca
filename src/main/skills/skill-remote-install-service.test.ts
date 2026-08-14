@@ -81,6 +81,19 @@ describe('installSkillOnRemoteRuntime', () => {
     mocks.transferSkillPackageToRuntime.mockReset()
   })
 
+  it('requires a host update before sending an explicit provider choice', async () => {
+    await expect(
+      installSkillOnRemoteRuntime({
+        userDataPath: '/state',
+        environmentId: 'environment-1',
+        request: { ...request, providers: ['claude'] },
+        capabilities: ['skills.install.v1'],
+        requireHttps: true
+      })
+    ).rejects.toThrow('skill-install-remote-update-required')
+    expect(mocks.callRuntimeEnvironment).not.toHaveBeenCalled()
+  })
+
   it('uses direct remote download when the runtime can reach storage', async () => {
     mocks.callRuntimeEnvironment.mockResolvedValue(success(result))
 

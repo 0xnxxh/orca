@@ -4,6 +4,7 @@ import type {
   SkillInstallResult,
   SkillPlacementResult
 } from '../../shared/skill-install-contract'
+import type { SkillInstallProviderId } from '../../shared/skill-install-providers'
 import type {
   SkillBundleInstallRequest,
   SkillBundleInstallResult
@@ -33,7 +34,7 @@ type SkillPhaseStart = {
   destination?: 'startup' | 'transaction' | 'provider-placement' | 'remote-runtime' | 'global-ssh'
   compressedBytes?: number
   skillCount?: number
-  provider?: 'codex' | 'claude'
+  provider?: SkillInstallProviderId
 }
 
 type SkillPhaseOutcome = {

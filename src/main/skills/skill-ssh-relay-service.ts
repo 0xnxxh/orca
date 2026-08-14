@@ -1,5 +1,6 @@
 import {
   SKILL_INSTALL_CAPABILITY,
+  SKILL_INSTALL_PROVIDERS_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY
 } from '../../shared/skill-install-capability'
@@ -51,6 +52,10 @@ export async function installSkillOnSshHost(input: {
 }): Promise<SkillInstallResult> {
   const client = requireSkillSshRelayClient(input.provider)
   const supported = await skillSshRelayCapabilities(client)
+  const request = input.request
+  if (request.providers !== undefined && !supported.includes(SKILL_INSTALL_PROVIDERS_CAPABILITY)) {
+    throw new Error('skill-install-ssh-update-required')
+  }
   if (!supported.includes(SKILL_INSTALL_CAPABILITY)) {
     recordSkillCapabilityAbsence({
       capability: SKILL_INSTALL_CAPABILITY,
@@ -66,14 +71,14 @@ export async function installSkillOnSshHost(input: {
         call: () =>
           client(
             SKILL_SSH_RELAY_INSTALL_METHOD,
-            { request: input.request, workspace: input.workspace },
+            { request: request, workspace: input.workspace },
             { timeoutMs: SKILL_SSH_REQUEST_TIMEOUT_MS, signal: input.signal }
           )
       })
     )
   } catch (error) {
     if (
-      input.request.ingress.kind !== 'download-grant' ||
+      request.ingress.kind !== 'download-grant' ||
       !shouldUseSkillSshClientTransfer(error, input.requireHttps)
     ) {
       throw error
@@ -97,7 +102,7 @@ export async function installSkillOnSshHost(input: {
             SKILL_SSH_RELAY_INSTALL_METHOD,
             {
               request: {
-                ...input.request,
+                ...request,
                 ingress: { kind: 'staged-upload', uploadId }
               },
               workspace: input.workspace

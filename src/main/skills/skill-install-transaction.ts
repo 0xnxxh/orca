@@ -34,15 +34,12 @@ import {
   createSkillInstallReceipt,
   skillInstallConflictResult,
   skillInstallFailureResult,
-  skillInstallReplacementAllowed
+  skillInstallReplacementAllowed,
+  skillInstallUnchangedResult
 } from './skill-install-transaction-result'
 import { settleObservedSkillTransactionRecovery } from './skill-transaction-recovery-observability'
-
-export { recoverSkillInstallTransaction } from './skill-install-recovery'
-export type {
-  SkillInstallJournalBoundary,
-  SkillInstallTransactionDependencies
-} from './skill-install-journal-transition'
+import { recoverSkillPlacementTransaction } from './skill-placement-transaction'
+import { historicalSuccessfulProviderRoots } from './skill-install-historical-provider-roots'
 
 export type LocalSkillInstallInput = {
   operationId: string
@@ -168,8 +165,11 @@ export async function installLocalExtractedSkillPackage(
       path: skillInstallLockPath(input.stateDirectory, canonicalPath),
       timeoutMs: input.lockTimeoutMs
     })
+    const historicalReceipt = await readSkillInstallReceipt(input.stateDirectory, canonicalPath)
+    filesystem.authorizeRoots?.(historicalSuccessfulProviderRoots(historicalReceipt))
     await recoverSkillRemovalTransaction(input.stateDirectory, canonicalPath, filesystem)
     await recoverSkillInstallTransaction(input.stateDirectory, canonicalPath, filesystem)
+    await recoverSkillPlacementTransaction(input.stateDirectory, canonicalPath, filesystem)
     throwIfCancelled(input.signal)
     const previous = await readSkillInstallReceipt(input.stateDirectory, canonicalPath)
     const state = await inspectSkillCanonicalState({
@@ -178,7 +178,7 @@ export async function installLocalExtractedSkillPackage(
       receipt: previous,
       filesystem
     })
-    const receipt = createSkillInstallReceipt({
+    let receipt = createSkillInstallReceipt({
       request: input,
       manifest: extracted.manifest,
       archiveSha256: extracted.archiveSha256,
@@ -186,23 +186,17 @@ export async function installLocalExtractedSkillPackage(
       previous
     })
     if (state.kind === 'unchanged') {
+      await dependencies.placementTransaction?.prepare(previous, receipt)
       throwIfCancelled(input.signal)
+      receipt = (await dependencies.placementTransaction?.commit(receipt)) ?? receipt
       await writeSkillInstallReceipt(input.stateDirectory, receipt)
-      return {
-        operationId: input.operationId,
-        status: 'unchanged',
-        name: extracted.manifest.name,
-        packageDigest: extracted.manifest.packageDigest,
-        canonicalPath,
-        placements: receipt.placements.map((placement) => ({
-          ...placement,
-          status: 'unchanged'
-        }))
-      }
+      await dependencies.placementTransaction?.finish(receipt)
+      return skillInstallUnchangedResult(input, extracted.manifest, canonicalPath, receipt)
     }
     if (!skillInstallReplacementAllowed(state, input)) {
       return skillInstallConflictResult(input.operationId, extracted.manifest, state)
     }
+    await dependencies.placementTransaction?.prepare(previous, receipt)
     throwIfCancelled(input.signal)
     const transactionId = randomUUID()
     const stagingPath = join(
@@ -271,8 +265,12 @@ export async function installLocalExtractedSkillPackage(
       throw new Error('skill-install-committed-digest-mismatch')
     }
     await writeSkillInstallReceipt(input.stateDirectory, receipt)
+    receipt = (await dependencies.placementTransaction?.commit(receipt)) ?? receipt
+    await writeSkillInstallReceipt(input.stateDirectory, receipt)
+    journal.receipt = receipt
     journal.phase = 'receipt-published'
     await persistSkillInstallJournalTransition(statePath, journal, dependencies)
+    await dependencies.placementTransaction?.finish(receipt)
     await cleanSkillInstallJournalFiles(journal, filesystem)
     journal.phase = 'complete'
     await persistSkillInstallJournalTransition(statePath, journal, dependencies)
