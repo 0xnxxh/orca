@@ -1276,7 +1276,16 @@ export class AgentHookServer {
       this.maybeTrackAgentPromptSent(effectivePayload, previous)
     }
     const cachedPayload = resolveCachedClaudeCompactOwnership(previous, effectivePayload)
-    const enriched = this.attachStatusTiming(cachedPayload, now)
+    // Why: a reconnect replay re-delivers evidence we already hold, so stamping it
+    // `now` re-arms the 30-minute staleness clock while attachStatusTiming keeps the
+    // old stateStartedAt — a finished pane then spins forever showing an hours-old
+    // age, re-armed by every reconnect (STA-4144). A replay carrying a NEW state is
+    // real news (it may be the completion this client missed) and keeps live timing.
+    const replayPreservedReceivedAt =
+      cachedPayload.isReplay === true && previous?.payload.state === cachedPayload.payload.state
+        ? previous?.receivedAt
+        : undefined
+    const enriched = this.attachStatusTiming(cachedPayload, replayPreservedReceivedAt ?? now)
     // Why: an identity-matched event can still leave the aggregate backed only by another restored child; keep liveness reconciliation eligible.
     if (enriched.restoredUnconfirmed) {
       this.runtimeObservedStatusPaneKeys.delete(enriched.paneKey)
