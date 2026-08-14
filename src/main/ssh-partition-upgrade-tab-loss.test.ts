@@ -329,28 +329,74 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       const store = await createStore()
       store.setWorkspaceSession(paneSession() as never)
 
-      // A membership refusal whose reason is deliberately NOT consumed.
-      store.persistPtyBinding({
-        worktreeId: WORKTREE,
-        tabId: TAB,
-        leafId: LEAF_TWO,
-        ptyId: PTY,
-        mayCreate: false
-      })
+      // A membership refusal whose reason is deliberately NOT consumed. Asserted, because if
+      // fixture drift ever let this SUCCEED there would be no reason to leak and the test would
+      // pass for the wrong reason.
+      expect(
+        store.persistPtyBinding({
+          worktreeId: WORKTREE,
+          tabId: TAB,
+          leafId: LEAF_TWO,
+          ptyId: PTY,
+          mayCreate: false
+        }),
+        'the setup call bound instead of being refused, so nothing was left to leak'
+      ).toBe(false)
 
       // A compare-and-set refusal, which must record nothing of its own.
-      store.persistPtyBinding({
-        worktreeId: WORKTREE,
-        tabId: TAB,
-        leafId: LEAF,
-        ptyId: PTY,
-        mayCreate: false,
-        expectedBinding: { ptyId: 'a-pty-that-does-not-own-this-pane' }
-      })
+      expect(
+        store.persistPtyBinding({
+          worktreeId: WORKTREE,
+          tabId: TAB,
+          leafId: LEAF,
+          ptyId: PTY,
+          mayCreate: false,
+          expectedBinding: { ptyId: 'a-pty-that-does-not-own-this-pane' }
+        })
+      ).toBe(false)
 
       expect(
         store.consumePtyBindingRefusalReason(),
         'a stale reason from an earlier call was attributed to a lost ownership race'
+      ).toBeUndefined()
+    })
+
+    // The expectedSourceBinding family returns even earlier than expectedBinding, and was the
+    // uncovered half: a reset that only cleared on the expectedBinding path stayed green.
+    it('records no reason when a source-binding compare-and-set refuses', async () => {
+      const store = await createStore()
+      store.setWorkspaceSession(paneSession() as never)
+
+      expect(
+        store.persistPtyBinding({
+          worktreeId: WORKTREE,
+          tabId: TAB,
+          leafId: LEAF_TWO,
+          ptyId: PTY,
+          mayCreate: false
+        }),
+        'the setup call bound instead of being refused, so nothing was left to leak'
+      ).toBe(false)
+
+      expect(
+        store.persistPtyBinding({
+          worktreeId: WORKTREE,
+          tabId: TAB,
+          leafId: LEAF,
+          ptyId: PTY,
+          mayCreate: false,
+          expectedSourceBinding: {
+            worktreeId: WORKTREE,
+            tabId: 'a-tab-that-is-not-this-one',
+            leafId: LEAF,
+            ptyId: PTY
+          }
+        })
+      ).toBe(false)
+
+      expect(
+        store.consumePtyBindingRefusalReason(),
+        'a stale reason survived a source-binding refusal'
       ).toBeUndefined()
     })
 
