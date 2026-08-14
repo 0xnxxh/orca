@@ -1794,6 +1794,33 @@ function extractOpenCodeToolFields(
       interactivePrompt: deriveInteractivePrompt('AskUserQuestion', toolInputSource)
     }
   }
+  if (eventName === 'PermissionRequest') {
+    // Why: the payload is permission.asked's event.properties — `permission` names what is
+    // being requested and `metadata`/`patterns` say which command or path it covers. Without
+    // them the row is a bare 'waiting' that cannot tell the user what to approve.
+    const metadata = hookPayload.metadata
+    const metadataInput =
+      metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? readFirstString(metadata as Record<string, unknown>, [
+            'command',
+            'file_path',
+            'path',
+            'url'
+          ])
+        : undefined
+    const patterns = Array.isArray(hookPayload.patterns)
+      ? hookPayload.patterns.filter(
+          (pattern): pattern is string => typeof pattern === 'string' && pattern.length > 0
+        )
+      : []
+    return toolUpdate(
+      {
+        toolName: readString(hookPayload, 'permission'),
+        toolInput: metadataInput ?? (patterns.length > 0 ? patterns.join(', ') : undefined)
+      },
+      { hasToolInputField: hasAnyOwnField(hookPayload, ['metadata', 'patterns']) }
+    )
+  }
   return {}
 }
 
