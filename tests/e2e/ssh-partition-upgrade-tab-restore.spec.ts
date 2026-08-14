@@ -65,26 +65,11 @@ test.describe('an upgrading profile keeps the tabs its old build left in the ssh
   test.skip(!RUN_DOCKER_SSH, 'Set ORCA_E2E_SSH_DOCKER=1 to run Docker-backed SSH tests.')
   test.skip(process.platform === 'win32', 'Docker SSH E2E uses POSIX ssh tooling.')
 
-  // FIXME: RED ON THE CURRENT FIX, and correctly so — this is the reproduction, not a flake.
-  // Result: 1 tab restored out of 3, the reporter's exact symptom.
-  //
-  // Narrowed so far. The hoist now folds `tabsByWorktree`, `terminalLayoutsByTabId`,
-  // `terminalPtyIncarnationsByPaneKey`, `activeTabIdByWorktree`, and — added while chasing this —
-  // `tabGroups`, `tabGroupLayouts`, `unifiedTabs` and `activeGroupIdByWorktree`. The tab bar
-  // renders from the active group's `tabOrder`, so groups were a necessary part; they were not
-  // sufficient. The staging helper moves all of them (asserted before launch 2, so the fixture is
-  // not the problem), and the result is unchanged at 1 tab.
-  //
-  // Leading remaining hypothesis, UNVERIFIED: the hoist is local-wins per worktree, and launch 2
-  // appears to reach the hoist with a group already present for the SSH worktree — so the
-  // `if (local.tabGroups?.[worktreeId]) continue` guard skips the partition's real group and the
-  // freshly-minted one-tab group wins. If that holds, local-wins is the wrong arbitration for a
-  // worktree whose panes came entirely from the partition. Verify before changing it: making the
-  // hoist partition-wins would be a data-loss risk in the other direction.
-  //
-  // The Store-level oracle cannot see any of this — `persistPtyBinding` only consults
-  // `tabsByWorktree`. This spec is the only thing that can.
-  test.fixme('restores every tab on the first launch after the upgrade, with panes attached', async (// oxlint-disable-next-line no-empty-pattern -- this test owns both Electron launches
+  // This is the reproduction of the reported bug, and it is load-bearing: disabling the
+  // load-time hoist turns it red at 1 tab of 3 — the reporter's exact symptom — while the
+  // Store-level oracle stays green, because `persistPtyBinding` only consults `tabsByWorktree`
+  // and never sees the tab bar.
+  test('restores every tab on the first launch after the upgrade, with panes attached', async (// oxlint-disable-next-line no-empty-pattern -- this test owns both Electron launches
   {}, testInfo: TestInfo) => {
     test.setTimeout(600_000)
     const restart = createRestartSession(testInfo)

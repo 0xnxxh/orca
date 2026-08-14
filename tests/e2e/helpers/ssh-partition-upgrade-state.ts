@@ -63,6 +63,13 @@ export function movePanesIntoSshPartition(
   state.workspaceSessionsByHostId ??= {}
   state.workspaceSessionsByHostId[partitionId] = {
     ...((state.workspaceSessionsByHostId[partitionId] as Record<string, unknown>) ?? {}),
+    // A WHOLE session, not the moved keys alone. An old build wrote the entire blob via
+    // setWorkspaceSession(session, hostId), and `parseWorkspaceSessionsByHostId` validates each
+    // partition independently and drops it ENTIRELY when a required field is absent — absence is
+    // deliberately fatal for foreign payloads. A partial fixture is therefore discarded at load,
+    // the hoist sees no partitions at all, and the spec fails for a reason that has nothing to do
+    // with the code under test.
+    ...structuredClone(local),
     tabsByWorktree: { [worktreeId]: tabs },
     terminalLayoutsByTabId: layouts,
     terminalPtyIncarnationsByPaneKey: incarnations,
@@ -99,10 +106,17 @@ export function movePanesIntoSshPartition(
   delete state.settings?.sshHoistedTabIds
 
   writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`, 'utf-8')
+  // Re-read what actually landed: the checks below otherwise measure what we wrote rather than
+  // what survives the load, which is exactly how this fixture silently staged nothing.
+  const reread = JSON.parse(readFileSync(stateFile, 'utf-8')) as MutableState
+  const staged = reread.workspaceSessionsByHostId?.[partitionId] as
+    | { tabsByWorktree?: Record<string, unknown[]> }
+    | undefined
+  const stagedTabs = staged?.tabsByWorktree?.[worktreeId]?.length ?? 0
   return {
     movedTabIds: [...tabIds],
     movedLayouts: Object.keys(layouts).length,
     movedGroups: Boolean(movedGroups),
-    diagnostics: `partition=${partitionId} tabs=${tabIds.size} layouts=${Object.keys(layouts).length} incarnations=${Object.keys(incarnations).length} groups=${Boolean(movedGroups)}`
+    diagnostics: `partition=${partitionId} stagedTabsOnDisk=${stagedTabs} tabs=${tabIds.size} layouts=${Object.keys(layouts).length} incarnations=${Object.keys(incarnations).length} groups=${Boolean(movedGroups)}`
   }
 }
