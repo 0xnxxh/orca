@@ -47,6 +47,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { isRemoteWorkspaceSnapshotApplyInProgress, useIpcEvents } from './hooks/useIpcEvents'
 import { useAutomationDispatchEvents } from './hooks/useAutomationDispatchEvents'
 import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
+import { TerminalWorkbenchContainer } from './components/TerminalWorkbenchContainer'
 import { AgentHibernationGate } from './components/AgentHibernationGate'
 import { AiVaultTabTitleSyncGate } from './components/AiVaultTabTitleSyncGate'
 import { ActivityTitlebarControls } from './components/activity/ActivityTitlebarControls'
@@ -2383,13 +2384,7 @@ function App(): React.JSX.Element {
                         )}
                         <div className="flex flex-1 min-w-0 min-h-0 flex-col">
                           {shouldMountTerminalWorkbench ? (
-                            <div
-                              className={
-                                !terminalWorkbenchVisible
-                                  ? 'hidden flex-1 min-w-0 min-h-0'
-                                  : 'flex flex-1 min-w-0 min-h-0'
-                              }
-                            >
+                            <TerminalWorkbenchContainer isVisible={terminalWorkbenchVisible}>
                               <Suspense fallback={null}>
                                 <RecoverableRenderErrorBoundary
                                   boundaryId="terminal.workbench"
@@ -2407,7 +2402,7 @@ function App(): React.JSX.Element {
                                   <Terminal />
                                 </RecoverableRenderErrorBoundary>
                               </Suspense>
-                            </div>
+                            </TerminalWorkbenchContainer>
                           ) : null}
                           <Suspense fallback={null}>
                             <RecoverableRenderErrorBoundary
