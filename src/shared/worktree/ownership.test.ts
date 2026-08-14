@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { GlobalSettings, Repo, Worktree, WorktreeMeta } from '../types'
+import type { GlobalSettings } from '../global-settings-types'
+import type { Repo } from '../repo-types'
+import type { WorktreeMeta } from './meta-types'
+import type { Worktree } from './types'
 import { createAgentScratchWorktreePathMatcher } from '../agent-scratch-worktrees'
 import {
   applyMetadataFallbackVisibility,

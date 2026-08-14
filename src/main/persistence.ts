@@ -40,10 +40,22 @@ import { getAutomationLegacyRepoId } from '../shared/automation-run-identity'
 import { normalizeAutomationPrecheck } from '../shared/automation-precheck'
 import { normalizeProxyUrl } from '../shared/network-proxy'
 import { normalizeKagiSessionLink } from '../shared/browser-url'
+import type { FolderWorkspace, WorkspaceKey } from '../shared/folder-workspace-types'
+import type { GlobalSettings, OrcaWorkspaceLayout } from '../shared/global-settings-types'
+import type { NotificationSettings } from '../shared/notification-settings-types'
 import type {
-  PersistedState,
+  OnboardingChecklistState,
+  OnboardingOutcome,
+  OnboardingState
+} from '../shared/onboarding-state-types'
+import type {
+  LegacyPaneKeyAliasEntry,
+  PersistedMobileClientTabSelections,
+  PersistedState
+} from '../shared/persisted-state-types'
+import type { ProjectGroup } from '../shared/project-group-types'
+import type {
   Project,
-  ProjectUpdateArgs,
   ProjectHostSetup,
   ProjectHostSetupCreateArgs,
   ProjectHostSetupCreateResult,
@@ -51,29 +63,22 @@ import type {
   ProjectHostSetupDeleteResult,
   ProjectHostSetupUpdateArgs,
   ProjectHostSetupUpdateResult,
-  RepoProjectHostSetupMethod,
-  Repo,
-  ProjectGroup,
-  FolderWorkspace,
-  SparsePreset,
-  PersistedMobileClientTabSelections,
-  WorktreeMeta,
-  WorktreeLineage,
-  WorkspaceLineage,
-  WorkspaceKey,
-  GlobalSettings,
-  OrcaWorkspaceLayout,
-  NotificationSettings,
-  OnboardingChecklistState,
-  OnboardingOutcome,
-  OnboardingState,
-  LegacyPaneKeyAliasEntry,
-  TerminalPaneLayoutNode,
+  ProjectUpdateArgs,
+  RepoProjectHostSetupMethod
+} from '../shared/project-types'
+import type { Repo } from '../shared/repo-types'
+import type {
   TerminalLayoutSnapshot,
-  TerminalTab,
+  TerminalPaneLayoutNode,
+  TerminalTab
+} from '../shared/terminal-tab-types'
+import type {
   WorkspaceSessionPatch,
   WorkspaceSessionState
-} from '../shared/types'
+} from '../shared/workspace-session-state-types'
+import type { SparsePreset } from '../shared/worktree/create-types'
+import type { WorkspaceLineage, WorktreeLineage } from '../shared/worktree/lineage-types'
+import type { WorktreeMeta } from '../shared/worktree/meta-types'
 import {
   deriveGlobalWindowsRuntimeDefaultFromLegacySettings,
   normalizeProjectRuntimePreference
@@ -181,6 +186,7 @@ import {
 } from '../shared/cross-platform-path'
 import { normalizeTerminalQuickCommands } from '../shared/terminal-quick-commands'
 import { normalizeTaskProviderSettings } from '../shared/task-providers'
+import { mergeWorkspaceCleanupUIState } from '../shared/workspace-cleanup-ui-state'
 import { normalizeAutoRenameBranchFromWorkDefaultOn } from '../shared/auto-rename-branch-from-work-settings'
 import {
   addMobilePairingCustomAddress,
@@ -4308,6 +4314,10 @@ export class Store {
 
   // ── Repos ──────────────────────────────────────────────────────────
 
+  getProfileStorageDirectory(): string {
+    return dirname(this.dataFile)
+  }
+
   getRepos(): Repo[] {
     return this.state.repos.map((repo) => this.hydrateRepo(repo))
   }
@@ -6214,6 +6224,10 @@ export class Store {
     const nextUI = {
       ...currentUI,
       ...durableUpdates,
+      workspaceCleanup: mergeWorkspaceCleanupUIState(
+        currentUI.workspaceCleanup,
+        durableUpdates.workspaceCleanup
+      ),
       groupBy: durableUpdates.groupBy
         ? normalizeGroupBy(durableUpdates.groupBy)
         : normalizeGroupBy(this.state.ui?.groupBy),
