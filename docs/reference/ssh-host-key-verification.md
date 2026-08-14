@@ -86,6 +86,18 @@ Collapsing them into one set would give a spurious first-contact prompt to anyon
 line and connects on a non-default port; treating the fallback as authoritative would raise a false
 change-of-key alarm.
 
+**The entry condition to that second pass is the part that bites.** ssh runs it only when the
+port-qualified lookup matched no plain entry of ANY key type — not "no match". Gating it on
+"no match and no same-type mismatch" reaches the bare line when an off-port entry of another type
+exists, and returns `match` where ssh prints `IDENTIFICATION HAS CHANGED`: an accept-a-changed-key
+path, reproduced live. And the observations from each pass must not leak into the other, or an entry
+found only on the fallback refuses a host ssh accepts as first contact.
+
+**`HostKeyAlias` suppresses the port entirely.** ssh looks the alias up bare and never brackets it,
+so an alias gets ONE pass regardless of port. Combined with the rule above, a stale `[alias]:port`
+line would otherwise block the bare lookup ssh actually performs — turning the bastion case this
+feature cites `HostKeyAlias` for into a hard failure.
+
 **Hashed entries hash the candidate form, not the bare host** — `[example.com]:2222` is what gets
 HMAC'd for a bracketed entry, so each candidate must be hashed separately.
 
@@ -93,7 +105,8 @@ HMAC'd for a bracketed entry, so each candidate must be hashed separately.
 not make it a mismatch. Confirmed live in both orderings.
 
 **A `@cert-authority` line whose key equals the presented plain host key is not a match** — a CA line
-only validates certificates. A normal line alongside it still decides.
+only validates certificates. A normal line alongside it still decides. But ssh's verdict for a
+CA-covered host presenting a plain key is `HOST_NEW`, not a failure: it connects. See D4.
 
 ### D3. Six outcomes, and type scoping is only safe with algorithm ordering
 
@@ -102,6 +115,15 @@ only validates certificates. A normal line alongside it still decides.
 Mismatch is scoped to the same key type: a host with only an RSA entry that presents ed25519 is not
 "changed". Without scoping we would false-alarm nearly every RSA-era user on their first upgraded
 connect, training them to dismiss the one warning that matters.
+
+> **Corrected against a live client.** The premise above is wrong about OpenSSH, though the
+> conclusion survives. `check_key_in_hostkeys` is not type-scoped at all: ANY non-marker entry for
+> the host that is not byte-equal produces `HOST_CHANGED`. Verified on 127.0.0.1:2223 — known_hosts
+> holding only `ssh-rsa` against an ed25519-only server prints `IDENTIFICATION HAS CHANGED` and
+> refuses. So ssh does not avoid the false alarm by scoping; it avoids the *situation* via
+> `order_hostkeyalgs`, and hard-fails when the situation arises anyway. Our split into `mismatch`
+> and `unknown-type-known-host` therefore only chooses the wording — both refuse, which is ssh's
+> action. What the ordering below buys us is what it buys ssh: the situation mostly never arises.
 
 **But scoping alone is a downgrade vector, and this is the correction that most changes the design.**
 OpenSSH is safe here only because `order_hostkeyalgs()` reorders the client's proposed host-key
@@ -123,17 +145,39 @@ for this host.
 - **unknown** → trust-on-first-use (see the phasing below for whether that is silent or prompted).
 - **mismatch** → hard fail, no override in the failure surface.
 - **revoked** → hard fail, always.
-- **ca-only** → hard fail with a message naming certificate-authority hosts as unsupported on this
-  transport, plus the documented escape (below). These hosts connect today, so this is a live
-  functional regression, and without an escape it will generate exactly the support pressure that
-  produces the override D4 refuses.
+- **ca-only** → ~~hard fail~~ **REVERSED: treated as first contact.** See below.
 - **unknown-type-known-host** → treat as suspicious, not first contact.
 
 `StrictHostKeyChecking` is honoured: `no`/`off` accepts unknown but **never persists** and still
 hard-fails changed and revoked; `accept-new` persists silently; `yes` denies unknown.
 
-**Documented escape for ca-only and any host we cannot verify:** `ORCA_SSH_FORCE_SYSTEM_TRANSPORT=1`
-routes through OpenSSH, which handles CA hosts correctly. That is a real answer, not a bypass.
+> **`ssh -G` does not report the spelling the user wrote.** StrictHostKeyChecking is rendered through
+> `fmt_multistate_int`, which prints the first entry of `multistate_strict_hostkey`, and that table
+> lists true/false before yes/no. So `yes` arrives as `true`, `no` and `off` both as `false`; only
+> `ask` and `accept-new` pass through unchanged. Matching on `yes`/`no`/`off` matches nothing a real
+> config can produce. `UpdateHostKeys` has the same shape (`true`, not `yes`).
+
+**ca-only, reversed after review.** The rejection was stricter than ssh, and the blast radius was
+mispriced. An SSH CA user holds ONE line — very often `@cert-authority *` — which matches every
+candidate, so EVERY target failed, not just CA-signed ones, including on-demand runtime VMs, and
+`StrictHostKeyChecking=no` did not help. `ORCA_SSH_FORCE_SYSTEM_TRANSPORT=1` is read from the
+process environment, which an Electron app launched from the Dock or Start Menu does not have, so
+the documented escape was unreachable for exactly the people who needed it. And OpenSSH's own
+verdict for a CA-covered host presenting a plain key is `HOST_NEW`: it connects. ssh2 cannot
+validate certificates at all, so refusing conceded nothing ssh was not already conceding.
+
+The residual risk is accepted, not resolved: for a CA-protected host we take a plain key we cannot
+tie to the CA. Certificate support is Phase 2 work. The `ca-only` outcome is still produced and
+carried through the decision so the log shows a CA line was involved.
+
+**An unreadable known_hosts connects but records nothing.** A file that EXISTS and will not open is
+the absence of evidence, and the common trigger is not exotic — a Windows OneDrive Known Folder Move
+placeholder while offline fails with a cloud-file error, not ENOENT. Refusing there broke an
+ordinary corporate laptop while blaming a config file that was fine, and was asymmetric with our own
+store, which degrades to "nothing trusted" and connects. ssh warns and treats the host as unknown;
+so do we — but we write no record, so a first contact we could not check never becomes durable
+trust. An ABSENT file is not this case: that is the normal state for a fresh profile and genuinely
+means nothing is known.
 
 ### D5. Recovery must not live in the failure dialog
 
@@ -314,6 +358,13 @@ Fixed after review:
 5. **Ephemeral runtimes were refused for a policy they cannot satisfy.** The carve-out sat below the
    incomplete-sources check, so a HOME-divergent environment turned on-demand runtimes off entirely.
 
+A second review round, run against a live OpenSSH client and sshd rather than against the source,
+found five more — and the pattern held: the two that mattered most were both cases where we refused
+a host `ssh` connects to, and the worst single defect was that **`StrictHostKeyChecking` had never
+been read correctly at all**, so a config saying `yes` was silently accepted AND persisted. See the
+D2/D3/D4 corrections above. The lesson worth keeping: every one of these was invisible to unit tests
+that fed the code the value a human writes, rather than the value the tool emits.
+
 ## Action items (STA-4319)
 
 **Where the message actually lands.** Traced end to end, because a rejection the user cannot read is
@@ -349,8 +400,8 @@ tooltip, and the terminal reconnect overlay never asked for it at all. Still ope
 - **WSL** — a distro's `known_hosts` is unreachable, so WSL users get first-contact treatment for
   hosts they already verified through `ssh` inside the distro.
 - **`CheckHostIP`** — candidates are formed from the hostname only.
-- **`ca-only`** hosts cannot connect on this transport at all; the message points at
-  `ORCA_SSH_FORCE_SYSTEM_TRANSPORT=1`. Anyone on an SSH CA is affected on day one.
+- **Certificate validation** is still absent — a CA-covered host is now accepted on first contact
+  rather than refused (D4), so those users connect, but the CA itself verifies nothing for us.
 - **`DEFAULT_SERVER_HOST_KEY_ALGORITHMS`** is a hand-copy of an ssh2 internal. A test pins it, so an
   ssh2 upgrade that changes it fails CI rather than shipping — but the pin has to be honoured, not
   deleted, because ssh2 throws `Unsupported algorithm` and every target stops connecting.
