@@ -177,20 +177,25 @@ export async function loadTrustedHostKeys(file?: string): Promise<TrustedHostKey
 }
 
 /**
- * Whether we have previously accepted this key for this endpoint.
+ * Whether these records hold this key for this endpoint.
  *
  * Scoped to host + port + key type (D8), and exactly — unlike `known_hosts` there is no bare-host
  * fallback pass, because we only ever record the endpoint we actually connected to.
+ *
+ * Pure and separate from the load so the connect path can reuse it against records it preloaded:
+ * ssh2's verifier decides synchronously and cannot await the file. Duplicating the comparison there
+ * instead is what produced the type downgrade this outcome set exists to prevent — one copy answered
+ * only match/mismatch/unknown, so a record of another type read as first contact.
  */
-export async function isTrusted(
-  query: KnownHostsQuery,
-  file?: string
-): Promise<HostKeyStoreOutcome> {
+export function matchTrustedHostKeys(
+  records: readonly TrustedHostKeyRecord[],
+  query: KnownHostsQuery
+): HostKeyStoreOutcome {
   const host = normalizeHost(query.host)
   let sawSameType = false
   let sawOtherType = false
 
-  for (const record of await loadTrustedHostKeys(file)) {
+  for (const record of records) {
     if (record.host !== host || record.port !== query.port) {
       continue
     }
@@ -210,6 +215,26 @@ export async function isTrusted(
   // We hold a key for this endpoint, just not of the presented type. Never a first-contact result:
   // an attacker who cannot forge the type on file would otherwise present another for a soft outcome.
   return sawOtherType ? 'unknown-type-known-host' : 'unknown'
+}
+
+/** The key types we already hold for one endpoint, for the algorithm ordering that makes D3 safe. */
+export function storedKeyTypesForEndpoint(
+  records: readonly TrustedHostKeyRecord[],
+  host: string,
+  port: number
+): string[] {
+  const normalized = normalizeHost(host)
+  return records
+    .filter((record) => record.host === normalized && record.port === port)
+    .map((record) => record.keyType)
+}
+
+/** Whether we have previously accepted this key for this endpoint. */
+export async function isTrusted(
+  query: KnownHostsQuery,
+  file?: string
+): Promise<HostKeyStoreOutcome> {
+  return matchTrustedHostKeys(await loadTrustedHostKeys(file), query)
 }
 
 /**

@@ -45,7 +45,12 @@ import {
 } from './ssh-host-key-verifier'
 import { HostKeyVerificationError, isHostKeyVerificationError } from './ssh-host-key-decision'
 import { sshGArgsForHost } from './ssh-g-config-resolution'
-import { loadTrustedHostKeys, trustHostKey } from './ssh-host-key-store'
+import {
+  loadTrustedHostKeys,
+  matchTrustedHostKeys,
+  storedKeyTypesForEndpoint,
+  trustHostKey
+} from './ssh-host-key-store'
 import {
   loadKnownHostsEvidence,
   resolveKnownHostsFiles,
@@ -1212,8 +1217,9 @@ export class SshConnection {
   private async doSsh2Connect(config: ConnectConfig, connectGeneration: number): Promise<void> {
     const hostKeyResolved = this.hostKeyResolvedConfig
     const hostKeyLookupHost = resolveKnownHostsLookupHost(hostKeyResolved, config.host ?? '')
-    // `-F` suppresses /etc/ssh/ssh_config, so a site-wide policy is invisible to us on that path.
-    const verificationSourcesIncomplete = sshGArgsForHost(
+    // `-F` suppresses /etc/ssh/ssh_config, so a site-wide StrictHostKeyChecking is invisible to us
+    // on that path. Joined below with the other way a source can go silent: an unreadable file.
+    const siteConfigSuppressed = sshGArgsForHost(
       this.target.configHost || this.target.label
     ).includes('-F')
     const knownHostsEvidence = await loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved))
@@ -1227,18 +1233,12 @@ export class SshConnection {
       console.warn('[ssh] host key store unavailable; falling back to known_hosts only:', err)
       return []
     })
-    const storedKeyTypesForEndpoint = trustedHostKeys
-      .filter(
-        (record) =>
-          record.host === hostKeyLookupHost.toLowerCase() && record.port === (config.port ?? 22)
-      )
-      .map((record) => record.keyType)
     const serverHostKeyOrder = orderServerHostKeyAlgorithms(
       knownHostsEntries,
       hostKeyLookupHost,
       config.port ?? 22,
       DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
-      storedKeyTypesForEndpoint
+      storedKeyTypesForEndpoint(trustedHostKeys, hostKeyLookupHost, config.port ?? 22)
     )
     return new Promise<void>((resolve, reject) => {
       const client = new SshClient()
@@ -1265,24 +1265,12 @@ export class SshConnection {
         // Reuses the strict path rather than adding a fifth outcome. An ABSENT file is not this —
         // that is the normal state for a fresh profile and genuinely means nothing is known.
         verificationSourcesIncomplete:
-          verificationSourcesIncomplete || knownHostsEvidence.unreadableFileCount > 0,
+          siteConfigSuppressed || knownHostsEvidence.unreadableFileCount > 0,
         entries: knownHostsEntries,
-        isTrusted: ({ host, port, keyType, key }) => {
-          const forHost = trustedHostKeys.filter(
-            (record) => record.host === host.toLowerCase() && record.port === port
-          )
-          const sameType = forHost.filter((record) => record.keyType === keyType)
-          if (sameType.length > 0) {
-            return sameType.some((record) => Buffer.from(record.key, 'base64').equals(key))
-              ? 'match'
-              : 'mismatch'
-          }
-          // We hold a key for this endpoint, just not of the presented type. Reporting plain
-          // `unknown` here would let an attacker who cannot forge the type we recorded on first
-          // contact present another and be trusted-and-recorded silently — the same downgrade the
-          // known_hosts path already refuses.
-          return forHost.length > 0 ? 'unknown-type-known-host' : 'unknown'
-        },
+        // The store's own matcher, against records preloaded above because ssh2's verifier decides
+        // synchronously. Reimplementing the comparison here is exactly how the type downgrade got
+        // in, and how the host normalisation drifted from the one used to write the records.
+        isTrusted: (query) => matchTrustedHostKeys(trustedHostKeys, query),
         rememberHostKey: (record) => {
           void trustHostKey({
             host: record.host,

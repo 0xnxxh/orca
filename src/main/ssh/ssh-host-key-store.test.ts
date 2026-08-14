@@ -7,6 +7,8 @@ import {
   getSshHostKeyStoreFile,
   isTrusted,
   loadTrustedHostKeys,
+  matchTrustedHostKeys,
+  storedKeyTypesForEndpoint,
   trustHostKey
 } from './ssh-host-key-store'
 
@@ -239,5 +241,69 @@ describe('ssh host key store', () => {
 
   it('refuses to answer before the store is bound to a profile', async () => {
     await expect(isTrusted(query())).rejects.toThrow(/initSshHostKeyStoreFile/)
+  })
+
+  // The connect path cannot await the file — ssh2's verifier decides synchronously — so it matches
+  // against preloaded records with this. It must reach the same verdict as isTrusted, because a
+  // second copy of the comparison is exactly how the type downgrade got in.
+  describe('matching preloaded records', () => {
+    it('agrees with isTrusted on every outcome', async () => {
+      await trustHostKey(query(), storeFile)
+      await trustHostKey(query({ host: 'other-host', keyType: 'ssh-rsa', key: RSA_A }), storeFile)
+      const records = await loadTrustedHostKeys(storeFile)
+
+      for (const candidate of [
+        query(),
+        query({ key: ED25519_B }),
+        query({ keyType: 'ssh-rsa', key: RSA_A }),
+        query({ host: 'unheard-of' }),
+        query({ port: 2222 }),
+        query({ host: 'other-host', keyType: 'ssh-rsa', key: RSA_A })
+      ]) {
+        expect(matchTrustedHostKeys(records, candidate)).toBe(await isTrusted(candidate, storeFile))
+      }
+    })
+
+    // trustHostKey normalises the host it writes, so the read has to normalise identically or it
+    // never finds its own record: every connection is first contact and the store grows a row each
+    // time while protecting nothing.
+    it('normalises the query host the same way the write did', async () => {
+      await trustHostKey(query({ host: '  Build-01  ' }), storeFile)
+      const records = await loadTrustedHostKeys(storeFile)
+
+      expect(records[0]?.host).toBe('build-01')
+      expect(matchTrustedHostKeys(records, query({ host: '  BUILD-01 ' }))).toBe('match')
+      expect(matchTrustedHostKeys(records, query({ host: 'build-01' }))).toBe('match')
+    })
+  })
+
+  // Feeds the algorithm ordering: without the types we hold, a host known only to us is proposed
+  // ed25519-first and an attacker can present another type to turn a hard failure into first contact.
+  describe('the key types held for one endpoint', () => {
+    it('reports every type recorded for that host and port', async () => {
+      await trustHostKey(query(), storeFile)
+      await trustHostKey(query({ keyType: 'ssh-rsa', key: RSA_A }), storeFile)
+      const records = await loadTrustedHostKeys(storeFile)
+
+      expect(storedKeyTypesForEndpoint(records, 'build-01', 22).sort()).toEqual([
+        'ssh-ed25519',
+        'ssh-rsa'
+      ])
+    })
+
+    it('does not leak types from another port or host', async () => {
+      await trustHostKey(query(), storeFile)
+      const records = await loadTrustedHostKeys(storeFile)
+
+      expect(storedKeyTypesForEndpoint(records, 'build-01', 2222)).toEqual([])
+      expect(storedKeyTypesForEndpoint(records, 'build-02', 22)).toEqual([])
+    })
+
+    it('normalises the host it is asked about', async () => {
+      await trustHostKey(query(), storeFile)
+      const records = await loadTrustedHostKeys(storeFile)
+
+      expect(storedKeyTypesForEndpoint(records, ' BUILD-01 ', 22)).toEqual(['ssh-ed25519'])
+    })
   })
 })
