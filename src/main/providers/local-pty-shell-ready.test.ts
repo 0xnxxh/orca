@@ -1195,6 +1195,8 @@ export MY_VAR=foo
 
     it('still skips the OMP extension for every documented literal', async () => {
       // Why: quoting the case patterns must not change which tokens match.
+      writeFileSync(join(testHome, '.zshrc'), "alias -g config='not-config'\n")
+
       const { getShellReadyLaunchConfig } = await importFreshLocalPtyShellReady()
       const config = getShellReadyLaunchConfig('/bin/zsh')
 
