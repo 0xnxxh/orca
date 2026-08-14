@@ -1,12 +1,17 @@
 import { isImageRefBlock, type NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
+  countImagePromptMarkers,
   hasImagePromptMarker,
   isImageSourceUserTurn,
+  nativeChatUserMessageMatchText,
   normalizeImageTranscriptMessages,
   normalizeNativeChatUserText,
   normalizedNativeChatUserMessageText
 } from './mobile-native-chat-image-transcript-markers'
-export { normalizeNativeChatUserText as normalizeReconcileText } from './mobile-native-chat-image-transcript-markers'
+export {
+  normalizeNativeChatUserText as normalizeReconcileText,
+  normalizeNativeChatUserTextWithLiteralFallback as normalizeReconcileTextWithLiteralFallback
+} from './mobile-native-chat-image-transcript-markers'
 
 /** An ack-lost ('unknown' outcome) send held until its transcript echo lands or
  *  the deadline surfaces the uncertainty. */
@@ -29,11 +34,24 @@ export function countUserTextOccurrences(
 ): number {
   let count = 0
   for (const message of messages) {
-    if (normalizedUserText(message) === text) {
+    if (nativeChatUserMessageMatchText(message) === text) {
       count++
     }
   }
   return count
+}
+
+export function userTextOccurrenceCounts(
+  messages: readonly NativeChatMessage[]
+): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const message of messages) {
+    const text = nativeChatUserMessageMatchText(message)
+    if (text) {
+      counts.set(text, (counts.get(text) ?? 0) + 1)
+    }
+  }
+  return counts
 }
 
 /** Number of `[Image: source: …]` echo turns strictly after `tailId` (or the
@@ -169,10 +187,13 @@ export function findLandedImagePreviewEchoes(
         return normalizedUserText(message) === targetText
       }
       const imageCount = message.blocks.filter(isImageRefBlock).length
+      // Why: a marker-only echo proves delivery per marker, so a partially
+      // rendered turn must not claim (and rebind) previews it cannot account for.
       return (
         message.blocks.length === 0 ||
         imageCount >= entry.images!.length ||
-        (hasImagePromptMarker(message) && normalizedUserText(message) === null)
+        (countImagePromptMarkers(message) >= entry.images!.length &&
+          normalizedUserText(message) === null)
       )
     })
     const tailIndex = entry.baselineTailMessageId
@@ -213,10 +234,16 @@ export function findLandedUnconfirmedSends(
     if (message.role !== 'user') {
       continue
     }
-    const key = isImageSourceUserTurn(message) ? '' : (normalizedUserText(message) ?? '')
-    const current = userMessagesByText.get(key) ?? []
-    current.push({ id: message.id, index })
-    userMessagesByText.set(key, current)
+    const isImageSource = isImageSourceUserTurn(message)
+    const key = isImageSource ? '' : (normalizedUserText(message) ?? '')
+    // A marker-only turn keys both ways: '' claims it for a caption-less image
+    // send, and its literal text claims it for a send of that same text.
+    const literalKey = isImageSource ? key : (nativeChatUserMessageMatchText(message) ?? key)
+    for (const candidateKey of literalKey === key ? [key] : [key, literalKey]) {
+      const current = userMessagesByText.get(candidateKey) ?? []
+      current.push({ id: message.id, index })
+      userMessagesByText.set(candidateKey, current)
+    }
   }
 
   const claimedMessageIds = new Set<string>()

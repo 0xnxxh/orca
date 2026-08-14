@@ -1,6 +1,7 @@
 import {
+  nativeChatUserMessageMatchText,
   normalizeNativeChatUserText,
-  normalizedNativeChatUserMessageText
+  normalizeNativeChatUserTextWithLiteralFallback
 } from '../../../../shared/native-chat-image-transcript-markers'
 import { isImageRefBlock, type NativeChatMessage } from '../../../../shared/native-chat-types'
 
@@ -18,10 +19,21 @@ export function normalizeNativeChatPendingText(text: string): string {
   return normalizeNativeChatUserText(text)
 }
 
+/** Message-side rule (`nativeChatUserMessageMatchText`) applied to a send: only
+ *  a send that actually carried images can own an `[Image #n]` marker, so on
+ *  every other send the marker is literal text and has to key verbatim. */
+function nativeChatPendingMatchText(
+  pending: Pick<NativeChatPendingOccurrence, 'text' | 'imagePaths'>
+): string {
+  return pending.imagePaths?.some(Boolean)
+    ? normalizeNativeChatPendingText(pending.text)
+    : normalizeNativeChatUserTextWithLiteralFallback(pending.text)
+}
+
 export function nativeChatPendingContentKey(
   pending: Pick<NativeChatPendingOccurrence, 'text' | 'imagePaths'>
 ): string {
-  const text = normalizeNativeChatPendingText(pending.text)
+  const text = nativeChatPendingMatchText(pending)
   if (text) {
     return `text:${text}`
   }
@@ -33,7 +45,7 @@ function nativeChatUserMessageContentKey(message: NativeChatMessage): string | n
   if (message.role !== 'user') {
     return null
   }
-  const text = normalizedNativeChatUserMessageText(message) ?? ''
+  const text = nativeChatUserMessageMatchText(message) ?? ''
   if (text) {
     return `text:${text}`
   }
@@ -87,7 +99,7 @@ export function advancedNativeChatUserTexts(
   const waiting: string[] = []
   for (const message of messages) {
     if (message.role === 'user') {
-      const text = normalizedNativeChatUserMessageText(message)
+      const text = nativeChatUserMessageMatchText(message)
       if (text) {
         waiting.push(text)
       }
@@ -105,7 +117,7 @@ export function matchingNativeChatUserTexts(
 ): readonly string[] {
   const texts: string[] = []
   for (const message of messages) {
-    const text = normalizedNativeChatUserMessageText(message)
+    const text = nativeChatUserMessageMatchText(message)
     if (text) {
       texts.push(text)
     }
@@ -158,7 +170,7 @@ export function selectPendingIndicesRepresentedByUserTexts(
   }
   const remaining = pending.map((entry, index) => ({
     index,
-    text: normalizeNativeChatPendingText(entry.text)
+    text: nativeChatPendingMatchText(entry)
   }))
   for (const userText of userTexts) {
     const open = remaining.filter((entry) => !represented.has(entry.index) && entry.text.length > 0)
