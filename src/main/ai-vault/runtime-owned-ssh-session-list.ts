@@ -40,13 +40,25 @@ type CachedRuntimeOwnedSshHost = {
 
 // Missing-title refreshes run every 20s; cache by pairing identity so they do not fan out to every runtime.
 const cachedOwners = new Map<string, CachedRuntimeOwnedSshHost>()
-const inFlightOwnerLookups = new Map<string, Promise<RuntimeOwnedSshAiVaultHost | null>>()
+type RuntimeOwnedSshHostLookup = {
+  owner: RuntimeOwnedSshAiVaultHost | null
+  cacheable: boolean
+}
+const inFlightOwnerLookups = new Map<string, Promise<RuntimeOwnedSshHostLookup>>()
 
 export async function listRuntimeOwnedSshAiVaultTargets(
   userDataPath: string,
   environmentId: string,
   options: RuntimeOwnedSshAiVaultScanOptions = {}
 ): Promise<readonly RuntimeOwnedSshAiVaultHost[]> {
+  return (await loadRuntimeOwnedSshAiVaultTargets(userDataPath, environmentId, options)).hosts
+}
+
+async function loadRuntimeOwnedSshAiVaultTargets(
+  userDataPath: string,
+  environmentId: string,
+  options: RuntimeOwnedSshAiVaultScanOptions
+): Promise<{ hosts: readonly RuntimeOwnedSshAiVaultHost[]; authoritative: boolean }> {
   let response: Awaited<ReturnType<typeof callRuntimeEnvironment>>
   try {
     response = await callRuntimeEnvironment(
@@ -57,12 +69,12 @@ export async function listRuntimeOwnedSshAiVaultTargets(
       options.timeoutMs
     )
   } catch {
-    return []
+    return { hosts: [], authoritative: false }
   }
   if (response.ok !== true || !isTargetSummaryList(response.result)) {
-    return []
+    return { hosts: [], authoritative: false }
   }
-  return response.result.targets.flatMap((target) => {
+  const hosts = response.result.targets.flatMap((target) => {
     if (typeof target.id !== 'string' || target.id.length === 0) {
       return []
     }
@@ -78,6 +90,7 @@ export async function listRuntimeOwnedSshAiVaultTargets(
       }
     ]
   })
+  return { hosts, authoritative: true }
 }
 
 export async function findRuntimeOwningSshAiVaultHost(
@@ -106,7 +119,7 @@ export async function findRuntimeOwningSshAiVaultHost(
   }
   const inFlight = inFlightOwnerLookups.get(cacheKey)
   if (inFlight) {
-    return inFlight
+    return (await inFlight).owner
   }
   const lookup = findRuntimeOwnedSshHostInInventories(
     userDataPath,
@@ -116,9 +129,11 @@ export async function findRuntimeOwningSshAiVaultHost(
   )
   inFlightOwnerLookups.set(cacheKey, lookup)
   try {
-    const owner = await lookup
-    cacheRuntimeOwnedSshHost(cacheKey, owner)
-    return owner
+    const result = await lookup
+    if (result.cacheable) {
+      cacheRuntimeOwnedSshHost(cacheKey, result.owner)
+    }
+    return result.owner
   } finally {
     if (inFlightOwnerLookups.get(cacheKey) === lookup) {
       inFlightOwnerLookups.delete(cacheKey)
@@ -131,13 +146,19 @@ async function findRuntimeOwnedSshHostInInventories(
   targetId: string,
   environmentIds: readonly string[],
   options: RuntimeOwnedSshAiVaultScanOptions
-): Promise<RuntimeOwnedSshAiVaultHost | null> {
+): Promise<RuntimeOwnedSshHostLookup> {
   const inventories = await Promise.all(
     environmentIds.map((environmentId) =>
-      listRuntimeOwnedSshAiVaultTargets(userDataPath, environmentId, options)
+      loadRuntimeOwnedSshAiVaultTargets(userDataPath, environmentId, options)
     )
   )
-  return inventories.flat().find((host) => host.targetId === targetId) ?? null
+  const owner = inventories
+    .flatMap((inventory) => inventory.hosts)
+    .find((host) => host.targetId === targetId)
+  return {
+    owner: owner ?? null,
+    cacheable: owner !== undefined || inventories.every((inventory) => inventory.authoritative)
+  }
 }
 
 function cacheRuntimeOwnedSshHost(

@@ -95,6 +95,40 @@ describe('AI Vault host-leg cache', () => {
     expect(scan).toHaveBeenCalledTimes(3)
   })
 
+  it('does not let an older forced failure evict a newer healthy result', async () => {
+    let resolveOlder!: (result: AiVaultListResult) => void
+    let resolveNewer!: (result: AiVaultListResult) => void
+    const scan = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise<AiVaultListResult>((resolve) => (resolveOlder = resolve))
+      )
+      .mockImplementationOnce(
+        () => new Promise<AiVaultListResult>((resolve) => (resolveNewer = resolve))
+      )
+    const args = { cacheKey: 'host-a', depth: 500 as const, scan }
+    const older = scanHostLegWithCache({ ...args, force: true })
+    const newer = scanHostLegWithCache({ ...args, force: true })
+    resolveNewer(RESULT)
+    await newer
+    resolveOlder({
+      ...RESULT,
+      issues: [
+        {
+          executionHostId: 'ssh:host-a',
+          agent: 'codex',
+          kind: 'host',
+          path: 'host-a',
+          message: 'offline'
+        }
+      ]
+    })
+    await older
+
+    await scanHostLegWithCache({ ...args, force: false })
+    expect(scan).toHaveBeenCalledTimes(2)
+  })
+
   it('caps retained host legs', async () => {
     const scan = vi.fn().mockResolvedValue(RESULT)
     for (let index = 0; index <= AI_VAULT_HOST_LEG_CACHE_MAX_ENTRIES; index++) {

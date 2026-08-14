@@ -24,6 +24,8 @@ const inFlightHostLegs = new Map<
   string,
   { depth: AiVaultSessionDepth; promise: Promise<AiVaultListResult> }
 >()
+const activeHostLegScans = new Map<string, { latestId: number; count: number }>()
+let nextHostLegScanId = 0
 // Bumped on every invalidation. A leg scan that started before an invalidation
 // carries the old generation and must not write its (now stale) result back —
 // otherwise a delete's invalidation is silently undone by a scan that resolves
@@ -81,41 +83,53 @@ async function scanAndCacheHostLeg(
   now: number,
   startGeneration: number
 ): Promise<AiVaultListResult> {
-  const result = await args.scan()
-  // A delete's invalidation landed while this leg was scanning; caching a
-  // pre-delete result would resurrect the deleted session for the TTL.
-  if (startGeneration !== cacheGeneration) {
+  const scanId = ++nextHostLegScanId
+  const active = activeHostLegScans.get(args.cacheKey) ?? { latestId: scanId, count: 0 }
+  active.latestId = scanId
+  active.count++
+  activeHostLegScans.set(args.cacheKey, active)
+  try {
+    const result = await args.scan()
+    // A delete or newer forced refresh landed while this leg was scanning;
+    // caching its older result would undo the newer observation.
+    if (startGeneration !== cacheGeneration || active.latestId !== scanId) {
+      return result
+    }
+    if (result.issues.some((issue) => issue.kind === 'host')) {
+      cachedHostLegs.delete(args.cacheKey)
+      return result
+    }
+    pruneExpiredHostLegs(now)
+    const current = cachedHostLegs.get(args.cacheKey)
+    if (
+      !args.force &&
+      current &&
+      current.expiresAt > Date.now() &&
+      aiVaultSessionDepthCovers(current.depth, args.depth)
+    ) {
+      return result
+    }
+    if (
+      !cachedHostLegs.has(args.cacheKey) &&
+      cachedHostLegs.size >= AI_VAULT_HOST_LEG_CACHE_MAX_ENTRIES
+    ) {
+      const oldestKey = cachedHostLegs.keys().next().value
+      if (oldestKey) {
+        cachedHostLegs.delete(oldestKey)
+      }
+    }
+    cachedHostLegs.set(args.cacheKey, {
+      depth: args.depth,
+      result,
+      expiresAt: Date.now() + AI_VAULT_CACHE_TTL_MS
+    })
     return result
-  }
-  if (result.issues.some((issue) => issue.kind === 'host')) {
-    cachedHostLegs.delete(args.cacheKey)
-    return result
-  }
-  pruneExpiredHostLegs(now)
-  const current = cachedHostLegs.get(args.cacheKey)
-  if (
-    !args.force &&
-    current &&
-    current.expiresAt > Date.now() &&
-    aiVaultSessionDepthCovers(current.depth, args.depth)
-  ) {
-    return result
-  }
-  if (
-    !cachedHostLegs.has(args.cacheKey) &&
-    cachedHostLegs.size >= AI_VAULT_HOST_LEG_CACHE_MAX_ENTRIES
-  ) {
-    const oldestKey = cachedHostLegs.keys().next().value
-    if (oldestKey) {
-      cachedHostLegs.delete(oldestKey)
+  } finally {
+    active.count--
+    if (active.count === 0 && activeHostLegScans.get(args.cacheKey) === active) {
+      activeHostLegScans.delete(args.cacheKey)
     }
   }
-  cachedHostLegs.set(args.cacheKey, {
-    depth: args.depth,
-    result,
-    expiresAt: Date.now() + AI_VAULT_CACHE_TTL_MS
-  })
-  return result
 }
 
 function pruneExpiredHostLegs(now: number): void {
@@ -138,4 +152,6 @@ export function invalidateAiVaultHostLegCache(): void {
 export function resetAiVaultHostLegCacheForTests(): void {
   invalidateAiVaultHostLegCache()
   inFlightHostLegs.clear()
+  activeHostLegScans.clear()
+  nextHostLegScanId = 0
 }
