@@ -40,8 +40,17 @@ const lastCompletionIdentityByPaneKey = new Map<string, LastCompletionIdentity>(
 // Why: a late-pair stamped tail must suppress its replayed all-clear even though no banner was eligible.
 const handledTurnCompletedAtByPaneKey = new Map<string, number>()
 // Why: title fallback stays blocked only until the stamped background tail reaches its all-clear.
-const pendingStampedTailByPaneKey = new Map<string, number>()
+const pendingStampedTailByPaneKey = new Map<
+  string,
+  {
+    turnCompletedAt: number
+    eligibleWorkingBoundaryByCoordinator: Map<number, number>
+  }
+>()
+// Why: a sibling all-clear belongs to the stamped tail only while its exact working interval is still current.
+const workingBoundaryByPaneKey = new Map<string, Map<number, number>>()
 const coordinatorCountByPaneKey = new Map<string, number>()
+let nextCoordinatorId = 1
 
 const IDLE_POLL_INTERVAL_MS = 2_000
 const ACTIVE_POLL_INTERVAL_MS = 750
@@ -83,6 +92,7 @@ function isAttentionHookState(state: ParsedAgentStatusPayload['state']): boolean
 export function createAgentCompletionCoordinator(
   options: AgentCompletionCoordinatorOptions
 ): AgentCompletionCoordinator {
+  const coordinatorId = nextCoordinatorId++
   coordinatorCountByPaneKey.set(
     options.paneKey,
     (coordinatorCountByPaneKey.get(options.paneKey) ?? 0) + 1
@@ -211,14 +221,42 @@ export function createAgentCompletionCoordinator(
     )
   }
 
+  function recordWorkingBoundary(stateStartedAt: number | undefined): void {
+    let boundaries = workingBoundaryByPaneKey.get(options.paneKey)
+    if (!isFiniteTurnCompletedAt(stateStartedAt)) {
+      boundaries?.delete(coordinatorId)
+      if (boundaries?.size === 0) {
+        workingBoundaryByPaneKey.delete(options.paneKey)
+      }
+      return
+    }
+    if (!boundaries) {
+      boundaries = new Map()
+      workingBoundaryByPaneKey.set(options.paneKey, boundaries)
+    }
+    boundaries.set(coordinatorId, stateStartedAt)
+  }
+
+  function clearWorkingBoundary(): void {
+    const boundaries = workingBoundaryByPaneKey.get(options.paneKey)
+    boundaries?.delete(coordinatorId)
+    if (boundaries?.size === 0) {
+      workingBoundaryByPaneKey.delete(options.paneKey)
+    }
+  }
+
   function consumePendingStampedTailForAgent(agentIdentity: string | null): boolean {
     const pendingStampedTail = pendingStampedTailByPaneKey.get(options.paneKey)
     const stampedCompletion = lastCompletionIdentityByPaneKey.get(options.paneKey)
+    const currentWorkingBoundary = workingBoundaryByPaneKey.get(options.paneKey)?.get(coordinatorId)
     if (
       pendingStampedTail === undefined ||
-      stampedCompletion?.lastTurnCompletedAtNotified !== pendingStampedTail ||
+      stampedCompletion?.lastTurnCompletedAtNotified !== pendingStampedTail.turnCompletedAt ||
       agentIdentity === null ||
-      stampedCompletion.agentIdentity !== agentIdentity
+      stampedCompletion.agentIdentity !== agentIdentity ||
+      currentWorkingBoundary === undefined ||
+      pendingStampedTail.eligibleWorkingBoundaryByCoordinator.get(coordinatorId) !==
+        currentWorkingBoundary
     ) {
       return false
     }
@@ -893,7 +931,12 @@ export function createAgentCompletionCoordinator(
       if (turnCompletedAt !== undefined) {
         const alreadyHandled = turnCompletedAtAlreadyHandled(turnCompletedAt)
         if (!alreadyHandled) {
-          pendingStampedTailByPaneKey.set(options.paneKey, turnCompletedAt)
+          pendingStampedTailByPaneKey.set(options.paneKey, {
+            turnCompletedAt,
+            eligibleWorkingBoundaryByCoordinator: new Map(
+              workingBoundaryByPaneKey.get(options.paneKey)
+            )
+          })
         }
         // Why: Claude's lead Stop already ended the turn; the pane stays `working` only for background inventory. Announce now, keep lifecycle on the reported working row.
         if (
@@ -927,6 +970,7 @@ export function createAgentCompletionCoordinator(
         options.dispatchHookLifecycle?.(payload)
         return
       }
+      recordWorkingBoundary(payload.stateStartedAt)
       clearPendingHookDone()
       // Why: resumed work cancels the debounced attention so a self-resolving pause never notifies.
       clearPendingCodexAttention()
@@ -977,7 +1021,7 @@ export function createAgentCompletionCoordinator(
           lastCompletedTurn === currentTurn)
       ) {
         // Why: this `done` is the background all-clear of a turn already announced (or completed from another source). Keep pane lifecycle; do not raise a second banner.
-        if (pendingStampedTailByPaneKey.get(options.paneKey) === turnCompletedAt) {
+        if (pendingStampedTailByPaneKey.get(options.paneKey)?.turnCompletedAt === turnCompletedAt) {
           pendingStampedTailByPaneKey.delete(options.paneKey)
         }
         options.dispatchHookLifecycle?.(payload)
@@ -1062,6 +1106,7 @@ export function createAgentCompletionCoordinator(
     lastForegroundAgent = null
     requiresFreshWorking = options.requireFreshWorking ?? false
     inspectionGeneration += 1
+    clearWorkingBoundary()
   }
 
   function dispose(): void {
@@ -1073,6 +1118,7 @@ export function createAgentCompletionCoordinator(
     clearPendingHookDone()
     clearPendingCodexAttention()
     dropPendingTitle()
+    clearWorkingBoundary()
     const remainingCoordinators = (coordinatorCountByPaneKey.get(options.paneKey) ?? 1) - 1
     if (remainingCoordinators > 0) {
       coordinatorCountByPaneKey.set(options.paneKey, remainingCoordinators)
@@ -1084,6 +1130,7 @@ export function createAgentCompletionCoordinator(
       lastCompletionIdentityByPaneKey.delete(options.paneKey)
       handledTurnCompletedAtByPaneKey.delete(options.paneKey)
       pendingStampedTailByPaneKey.delete(options.paneKey)
+      workingBoundaryByPaneKey.delete(options.paneKey)
     }
   }
 
@@ -1104,13 +1151,16 @@ export function resetAgentCompletionCoordinatorIdentitiesForTest(): void {
   lastCompletionIdentityByPaneKey.clear()
   handledTurnCompletedAtByPaneKey.clear()
   pendingStampedTailByPaneKey.clear()
+  workingBoundaryByPaneKey.clear()
   coordinatorCountByPaneKey.clear()
+  nextCoordinatorId = 1
 }
 
 export function getAgentCompletionCoordinatorIdentityCountForTest(): number {
   return new Set([
     ...lastCompletionIdentityByPaneKey.keys(),
     ...handledTurnCompletedAtByPaneKey.keys(),
-    ...pendingStampedTailByPaneKey.keys()
+    ...pendingStampedTailByPaneKey.keys(),
+    ...workingBoundaryByPaneKey.keys()
   ]).size
 }

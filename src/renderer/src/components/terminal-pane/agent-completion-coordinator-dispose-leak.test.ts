@@ -102,6 +102,29 @@ describe('agent completion coordinator identity map stays bounded (leak regressi
     expect(getAgentCompletionCoordinatorIdentityCountForTest()).toBe(1)
   })
 
+  it('clears per-coordinator working boundaries on reset and dispose', () => {
+    const live = { value: true }
+    const coordinator = createAgentCompletionCoordinator(
+      makeOptions('tab-1:leaf-working-boundary', live)
+    )
+    const working = {
+      state: 'working' as const,
+      prompt: '',
+      agentType: 'claude' as const,
+      stateStartedAt: 1_000
+    }
+
+    coordinator.observeHookStatus(working)
+    expect(getAgentCompletionCoordinatorIdentityCountForTest()).toBe(1)
+    coordinator.resetCompletionState()
+    expect(getAgentCompletionCoordinatorIdentityCountForTest()).toBe(0)
+
+    coordinator.observeHookStatus(working)
+    expect(getAgentCompletionCoordinatorIdentityCountForTest()).toBe(1)
+    coordinator.dispose()
+    expect(getAgentCompletionCoordinatorIdentityCountForTest()).toBe(0)
+  })
+
   it('retains stamped replay state when a mounted sibling disposes before remount', () => {
     const paneKey = 'tab-1:leaf-production-remount'
     const dispatchCompletion = vi.fn()

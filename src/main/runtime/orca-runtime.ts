@@ -10928,7 +10928,9 @@ export class OrcaRuntimeService {
       (previous.payload.agentType ?? null) !== (payload.agentType ?? null) ||
       (previous.payload.toolName ?? null) !== (payload.toolName ?? null) ||
       (previous.payload.interactivePrompt ?? null) !== (payload.interactivePrompt ?? null) ||
-      (previous.payload.interrupted ?? false) !== (payload.interrupted ?? false)
+      (previous.payload.interrupted ?? false) !== (payload.interrupted ?? false) ||
+      (previous.payload.turnCompletedAt ?? null) !== (payload.turnCompletedAt ?? null) ||
+      (previous.payload.lastAssistantMessage ?? null) !== (payload.lastAssistantMessage ?? null)
     )
   }
 

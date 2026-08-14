@@ -1392,6 +1392,63 @@ describe('agent completion coordinator', () => {
     }
   )
 
+  it('does not consume a fresh turn as the all-clear for an earlier stamped tail', () => {
+    const dispatchCompletion = vi.fn()
+    const localCoordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    const hostCoordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    localCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'first turn',
+      agentType: 'claude',
+      stateStartedAt: 5_000
+    })
+    hostCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'first turn',
+      agentType: 'claude',
+      stateStartedAt: 2_000
+    })
+    hostCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'first turn',
+      agentType: 'claude',
+      stateStartedAt: 2_000,
+      turnCompletedAt: 2_500
+    })
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    localCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'second turn',
+      agentType: 'claude',
+      stateStartedAt: 6_000
+    })
+    localCoordinator.observeHookStatus({
+      state: 'done',
+      prompt: 'second turn',
+      agentType: 'claude',
+      stateStartedAt: 6_500
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
+  })
+
   it('does not replay a stamped turn or its all-clear after a working title blip', () => {
     const dispatchCompletion = vi.fn()
     const dispatchHookLifecycle = vi.fn()
