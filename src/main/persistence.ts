@@ -2881,6 +2881,10 @@ export function hoistSshPartitionsIntoLocalSession(
   // afterwards. Recording tabs instead keeps the hoist repeatable while never re-adding a tab the
   // user has closed, which is the resurrection this guard exists to prevent.
   const alreadyHoisted = new Set(state.settings?.sshHoistedTabIds ?? [])
+  // Snapshot: the tabsByWorktree loop stamps ids into `alreadyHoisted` before the unifiedTabs loop
+  // runs for the same partition, so that set cannot be used there to mean "hoisted on a PREVIOUS
+  // pass".
+  const hoistedBeforeThisPass = new Set(alreadyHoisted)
   const partitions = sourcePartitions ?? state.workspaceSessionsByHostId
   if (!partitions) {
     return false
@@ -2980,14 +2984,15 @@ export function hoistSshPartitionsIntoLocalSession(
     // green — stamped as hoisted, and never reach unifiedTabs. Permanently invisible, for exactly
     // the cohort this migration exists to serve.
     for (const [worktreeId, tabs] of Object.entries(partition.unifiedTabs ?? {})) {
-      const localTabs = local.unifiedTabs?.[worktreeId]
-      if (!localTabs) {
-        local.unifiedTabs = { ...local.unifiedTabs, [worktreeId]: structuredClone(tabs) }
-        changed = true
-        continue
-      }
+      // `?? []` rather than an early return on absence: closing the last tab EMPTIES this array
+      // without deleting the key, so a bare id-diff re-adds every closed tab — and hydration builds
+      // the tab bar from this plane, so they come back on screen. The previous whole-record guard
+      // blocked that only by accident, because `[]` is truthy.
+      const localTabs = local.unifiedTabs?.[worktreeId] ?? []
       const known = new Set(localTabs.map((tab) => tab.id))
-      const additions = (tabs ?? []).filter((tab) => !known.has(tab.id))
+      const additions = (tabs ?? []).filter(
+        (tab) => !known.has(tab.id) && !hoistedBeforeThisPass.has(tab.id)
+      )
       if (additions.length === 0) {
         continue
       }

@@ -66,12 +66,33 @@ async function reopenStore() {
 }
 
 /** One SSH pane, exactly as the partitioned build persisted it. */
+const GROUP = 'group-1'
+
+/** The shape `tabSchema` requires. The tab bar hydrates from `unifiedTabs`, NOT `tabsByWorktree`,
+ *  and `salvagingArray` silently DROPS a record missing any non-optional field — leaving an empty
+ *  array rather than a parse failure. A fixture without this measures nothing about visibility. */
+function unifiedTab(id: string) {
+  return {
+    id,
+    entityId: id,
+    groupId: GROUP,
+    worktreeId: WORKTREE,
+    contentType: 'terminal' as const,
+    label: 'shell',
+    customLabel: null,
+    color: null,
+    sortOrder: 0,
+    createdAt: 1_700_000_000_000
+  }
+}
+
 function paneSession() {
   return {
     ...getDefaultWorkspaceSession(),
     activeWorktreeId: WORKTREE,
     activeTabId: TAB,
     activeTabIdByWorktree: { [WORKTREE]: TAB },
+    unifiedTabs: { [WORKTREE]: [unifiedTab(TAB)] },
     tabsByWorktree: {
       [WORKTREE]: [
         {
@@ -484,5 +505,63 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       ],
       'a local-only layout edit reached through into the ssh partition'
     ).toBe(PTY)
+  })
+
+  // The E2E covers only the FIRST upgrade, where local has no unified record. This is the second
+  // hoist: the plane is live, so the CLI adds a tab afterwards. Folding it into tabsByWorktree
+  // alone satisfies persistPtyBinding — so a Store-level oracle stays green — while the tab bar,
+  // which hydrates from unifiedTabs, can never render it.
+  it('still hoists the unified record of a tab the partition gains after an earlier hoist', async () => {
+    const before = await createStore()
+    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const upgraded = await reopenStore()
+    expect(upgraded.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? []).toHaveLength(1)
+
+    const second = paneSession()
+    second.tabsByWorktree[WORKTREE] = [
+      ...second.tabsByWorktree[WORKTREE]!,
+      { ...second.tabsByWorktree[WORKTREE]![0]!, id: 'tab-2' }
+    ]
+    second.unifiedTabs = {
+      [WORKTREE]: [...second.unifiedTabs[WORKTREE]!, unifiedTab('tab-2')]
+    } as typeof second.unifiedTabs
+    upgraded.setWorkspaceSession(second as never, SSH_PARTITION)
+    upgraded.flushOrThrow()
+
+    const relaunched = await reopenStore()
+
+    expect(
+      (relaunched.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? []).map((tab) => tab.id).sort(),
+      'the later tab never reached unifiedTabs, so the tab bar cannot render it'
+    ).toEqual(['tab-1', 'tab-2'])
+  })
+
+  // Closing the last tab EMPTIES unifiedTabs without deleting the key, so a bare id-diff re-adds
+  // every closed tab — and this is the plane the tab bar hydrates from, so they return on screen.
+  it('does not resurrect a closed tab into the plane the tab bar renders', async () => {
+    const before = await createStore()
+    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const upgraded = await reopenStore()
+    expect(upgraded.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? []).toHaveLength(1)
+
+    upgraded.setWorkspaceSession({
+      ...upgraded.getWorkspaceSession(),
+      tabsByWorktree: { [WORKTREE]: [] },
+      unifiedTabs: { [WORKTREE]: [] }
+    } as never)
+    upgraded.flushOrThrow()
+
+    const relaunched = await reopenStore()
+
+    expect(
+      relaunched.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? [],
+      'a tab the user closed came back in the tab bar'
+    ).toHaveLength(0)
   })
 })
