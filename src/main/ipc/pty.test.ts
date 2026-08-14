@@ -11,7 +11,7 @@ import {
 import { CLIPBOARD_TEXT_MEASURE_YIELD_CODE_UNITS } from '../../shared/clipboard-text'
 import { redactPtyIdForDiagnostics } from '../../shared/pty-delivery-diagnostics'
 import { FLOATING_TERMINAL_WORKTREE_ID, getDefaultWorkspaceSession } from '../../shared/constants'
-import type { TuiAgent } from '../../shared/types'
+import type { TuiAgent } from '../../shared/tui-agent'
 import type { AgentSessionOwnerBinding } from '../../shared/agent-session-host-authority'
 import { AGENT_SESSION_CLAIM_DIGEST_VERSION } from '../../shared/agent-session-host-authority'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
@@ -248,6 +248,7 @@ import {
   type PrepareCodexSessionResume
 } from './pty'
 import { __resetPersistedWindowsPathCacheForTests } from '../pty/windows-environment-path'
+import { LEGACY_TERMINAL_SHIM_REMOTE_ENV_KEYS } from '../pty/legacy-terminal-shim-dir'
 import { __setWindowsPathRegistryLoaderForTests } from '../pty/windows-path-registry-reader'
 import { resetMacosLoginShellPreflightForTests } from '../providers/macos-tcc-login-shell'
 import {
@@ -1866,6 +1867,7 @@ describe('registerPtyHandlers', () => {
     ) => string | null,
     getSettings?: () => {
       agentStatusHooksEnabled?: boolean
+      disabledTuiAgents?: TuiAgent[]
       httpProxyUrl?: string
       httpProxyBypassRules?: string
     },
@@ -2134,6 +2136,19 @@ describe('registerPtyHandlers', () => {
       const env = await spawnAndGetEnv(undefined, undefined, () => TEST_CODEX_HOME)
       expect(env.CODEX_HOME).toBe(TEST_CODEX_HOME)
       expect(env.ORCA_CODEX_HOME).toBe(TEST_CODEX_HOME)
+      expect(env.ORCA_CODEX_LAUNCH_PREFLIGHT).toBe('orca')
+    })
+
+    it('does not install the Codex launch preflight when Codex hooks are disabled', async () => {
+      const env = await spawnAndGetEnv(
+        undefined,
+        undefined,
+        () => TEST_CODEX_HOME,
+        () => ({ agentStatusHooksEnabled: true, disabledTuiAgents: ['codex'] })
+      )
+
+      expect(env.CODEX_HOME).toBe(TEST_CODEX_HOME)
+      expect(env.ORCA_CODEX_LAUNCH_PREFLIGHT).toBeUndefined()
     })
 
     it('resumes an automatic Codex session from its prepared originating home', async () => {
@@ -4399,6 +4414,16 @@ describe('registerPtyHandlers', () => {
         expect(spawnOptions.env.ORCA_AGENT_HOOK_TOKEN).toBe('agent-token')
       })
 
+      it('asks surviving pre-upgrade daemons to delete legacy attribution env', async () => {
+        const spawnOptions = await daemonSpawnAndGetOptions({})
+
+        expect(spawnOptions.envToDelete).toEqual(
+          expect.arrayContaining([...LEGACY_TERMINAL_SHIM_REMOTE_ENV_KEYS])
+        )
+        expect(spawnOptions.envToDelete).not.toContain('ORCA_REAL_GIT')
+        expect(spawnOptions.envToDelete).not.toContain('ORCA_REAL_GH')
+      })
+
       it('deletes stale Claude scoped settings env from runtime-created daemon PTYs', async () => {
         type RuntimeSpawnController = {
           spawn(args: {
@@ -4434,6 +4459,38 @@ describe('registerPtyHandlers', () => {
         )
         expect(spawnOptions.env.ORCA_AGENT_HOOK_PORT).toBe('5678')
         expect(spawnOptions.env.ORCA_AGENT_HOOK_TOKEN).toBe('agent-token')
+      })
+
+      it('asks surviving pre-upgrade daemons to delete legacy attribution env for runtime PTYs', async () => {
+        type RuntimeSpawnController = {
+          spawn(args: {
+            cols: number
+            rows: number
+            worktreeId?: string
+            env?: Record<string, string>
+          }): Promise<{ id: string }>
+        }
+        const daemonSpawn = setupDaemonAdapter()
+        const runtime = {
+          setPtyController: vi.fn(),
+          registerPty: vi.fn(),
+          noteTerminalSpawnCommand: vi.fn(),
+          onPtySpawned: vi.fn(),
+          onPtyExit: vi.fn(),
+          onPtyData: vi.fn()
+        }
+        handlers.clear()
+        registerPtyHandlers(mainWindow as never, runtime as never)
+        const controller = runtime.setPtyController.mock.calls[0]?.[0] as RuntimeSpawnController
+
+        await controller.spawn({ cols: 80, rows: 24, worktreeId: 'wt-runtime', env: {} })
+
+        const spawnOptions = daemonSpawn.mock.calls.at(-1)?.[0] as DaemonSpawnCall
+        expect(spawnOptions.envToDelete).toEqual(
+          expect.arrayContaining([...LEGACY_TERMINAL_SHIM_REMOTE_ENV_KEYS])
+        )
+        expect(spawnOptions.envToDelete).not.toContain('ORCA_REAL_GIT')
+        expect(spawnOptions.envToDelete).not.toContain('ORCA_REAL_GH')
       })
 
       it('strips inherited Claude child-session stamps from runtime-created PTYs', async () => {
@@ -6253,7 +6310,7 @@ describe('registerPtyHandlers', () => {
         expect(runtime.onPtyExit).toHaveBeenCalledWith('remote-pty', -1, undefined)
       })
 
-      it('preserves an SSH lease when runtime controller kill shutdown fails transiently', async () => {
+      it('retires a rejected SSH PTY after generic kill shutdown fails transiently', async () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
         const store = {
           markSshRemotePtyLease: vi.fn()
@@ -6296,22 +6353,30 @@ describe('registerPtyHandlers', () => {
         )
         const controller = runtime.setPtyController.mock.calls[0]?.[0] as {
           kill: (ptyId: string) => boolean
+          retireRejectedPty: (ptyId: string) => void
         }
 
         try {
           expect(controller.kill('remote-pty')).toBe(true)
           await new Promise((resolve) => setImmediate(resolve))
+          expect(store.markSshRemotePtyLease).not.toHaveBeenCalledWith(
+            'ssh-1',
+            'remote-pty',
+            'terminated'
+          )
+          controller.retireRejectedPty('remote-pty')
         } finally {
           warnSpy.mockRestore()
           deletePtyOwnership('remote-pty')
         }
 
-        expect(store.markSshRemotePtyLease).not.toHaveBeenCalledWith(
+        expect(store.markSshRemotePtyLease).toHaveBeenCalledWith(
           'ssh-1',
           'remote-pty',
           'terminated'
         )
         expect(runtime.onPtyExit).toHaveBeenCalledWith('remote-pty', -1, undefined)
+        expect(runtime.onPtyExit).toHaveBeenCalledWith('remote-pty', 0, undefined)
       })
 
       it('strips ORCA_PANE_KEY/TAB_ID/WORKTREE_ID from SSH spawn env when remote agent hooks are disabled', async () => {

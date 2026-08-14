@@ -22,13 +22,10 @@ import type {
 import type {
   BrowserCertificateFailure,
   BrowserPage,
-  BrowserWorkspace,
-  Tab,
-  TabGroup,
-  TabGroupLayoutNode,
-  TerminalLayoutSnapshot,
-  TerminalTab
-} from '../../../shared/types'
+  BrowserWorkspace
+} from '../../../shared/browser-workspace-types'
+import type { Tab, TabGroup, TabGroupLayoutNode } from '../../../shared/tab-types'
+import type { TerminalLayoutSnapshot, TerminalTab } from '../../../shared/terminal-tab-types'
 import type { OpenFile } from '../store/slices/editor'
 import { isTerminalLeafId, makePaneKey, parsePaneKey } from '../../../shared/stable-pane-id'
 import { getRemoteRuntimePtyEnvironmentId, toRemoteRuntimePtyId } from './runtime-terminal-stream'
@@ -95,9 +92,10 @@ import {
   clearWebSessionBrowserPlacementsForEnvironment,
   clearWebSessionBrowserPlacementsForWorktree,
   isWebSessionBrowserPlacementGroupReserved,
-  resetWebSessionBrowserPlacementsForTests,
-  takeWebSessionBrowserPlacementGroup
+  peekWebSessionBrowserPlacementGroup,
+  resetWebSessionBrowserPlacementsForTests
 } from './web-session-browser-placement'
+import { suppressE2eWebRuntimeBrowserSnapshot } from './web-runtime-browser-creation-e2e-fault'
 
 const WEB_SESSION_GROUP_PREFIX = 'web-session-tabs:'
 export const WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS = 100
@@ -1520,7 +1518,7 @@ function buildMirroredBrowserTabs(
     const workspaceId = existing?.workspace.id ?? tab.browserWorkspaceId
     const pageId = existing?.page.id ?? tab.browserPageId
     const createdAt = existing?.page.createdAt ?? now + sortOffset + index
-    const recordedClientGroupId = takeWebSessionBrowserPlacementGroup({
+    const recordedClientGroupId = peekWebSessionBrowserPlacementGroup({
       environmentId,
       worktreeId: snapshot.worktree,
       remotePageId: tab.browserPageId
@@ -1896,7 +1894,7 @@ function buildMirroredHostGroups({
     if (
       !seen.has(group.id) &&
       (group.tabOrder.length > 0 ||
-        isWebSessionBrowserPlacementGroupReserved({ environmentId, worktreeId, groupId: group.id }))
+        isWebSessionBrowserPlacementGroupReserved({ worktreeId, groupId: group.id }))
     ) {
       orderedGroups.push(group)
     }
@@ -2318,6 +2316,9 @@ function applyWebSessionTabsSnapshotWithContext(
   now = Date.now(),
   batchContext?: WebSessionTabsBatchContext
 ): WebSessionTabsSyncState | Partial<WebSessionTabsSyncState> {
+  if (suppressE2eWebRuntimeBrowserSnapshot(rawSnapshot)) {
+    return state
+  }
   const worktreeId = rawSnapshot.worktree
   if (worktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
     return state
@@ -2810,7 +2811,6 @@ function applyWebSessionTabsSnapshotWithContext(
         group.id === targetGroupId ||
         group.tabOrder.length > 0 ||
         isWebSessionBrowserPlacementGroupReserved({
-          environmentId,
           worktreeId,
           groupId: group.id
         })

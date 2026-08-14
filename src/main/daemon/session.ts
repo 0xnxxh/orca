@@ -8,24 +8,18 @@ import {
 import { isValidPtySize, normalizePtySize } from './daemon-pty-size'
 import { PostReadyFlushGate } from './post-ready-flush-gate'
 import {
-  createShellReadyScanState,
-  drainShellReadyHeldBytes,
-  scanForShellReady,
-  type ShellReadyScanState
-} from '../shell-ready-marker-scanner'
-import {
-  createShellStartupIdentityScanState,
-  drainShellStartupIdentityHeldBytes,
-  scanForShellStartupIdentity,
-  type ShellStartupIdentityScanState
-} from '../shell-startup-identity-scanner'
+  createShellStartupOutputScanState,
+  drainShellStartupOutputScanState,
+  scanShellStartupOutput,
+  type ShellStartupOutputScanState
+} from '../shell-startup-output-scanner'
 import {
   createShellPromptReadinessProbe,
   type ShellPromptReadinessProbe
 } from '../shell-prompt-readiness-probe'
 import { isPowerShellProcess } from '../../shared/shell-process-detection'
 import { killWithDescendantSweep } from '../pty-descendant-termination'
-import type { TuiAgent } from '../../shared/types'
+import type { TuiAgent } from '../../shared/tui-agent'
 import { randomUUID } from 'node:crypto'
 import { PhysicalExitTracker } from '../../shared/physical-exit-tracker'
 import {
@@ -136,8 +130,7 @@ export class Session {
   private preReadyStdinQueue: string[] = []
   private releaseStartupDeviceAttributesResponder: (() => void) | null = null
   private startupDeviceAttributesQueryFilter: StartupDeviceAttributesQueryFilter | null = null
-  private shellReadyScanState: ShellReadyScanState | null = null
-  private shellStartupIdentityScanState: ShellStartupIdentityScanState | null = null
+  private shellStartupOutputScanState: ShellStartupOutputScanState | null = null
   private shellStartupPid: number | null = null
   private shellPromptReadinessProbe: ShellPromptReadinessProbe | null = null
   private shellReadyTimer: ReturnType<typeof setTimeout> | null = null
@@ -184,8 +177,7 @@ export class Session {
 
     if (opts.shellReadySupported) {
       this._shellState = 'pending'
-      this.shellReadyScanState = createShellReadyScanState()
-      this.shellStartupIdentityScanState = createShellStartupIdentityScanState()
+      this.shellStartupOutputScanState = createShellStartupOutputScanState()
       // Why: `write` queues everything until the ready marker, including the renderer's DA1
       // reply — and a shell that withholds its first prompt until DA1 is answered (fish) then
       // never emits the marker that would release it. Answer from the daemon, past the queue.
@@ -502,13 +494,17 @@ export class Session {
     this.pendingOutputRecords = []
     this.pendingOutputBytes = 0
     this.pendingOutputOverflowed = false
-    this.pendingOutputSeq += 1
+    // Empty incremental takes are not persisted; advancing them would create a false reattach gap.
+    if (includeSnapshot || records.length > 0 || overflowed) {
+      this.pendingOutputSeq += 1
+    }
     return {
       records: includeSnapshot
         ? releasedHeldBytes
           ? [{ kind: 'output', data: releasedHeldBytes }]
           : []
         : records,
+      ...(includeSnapshot ? { drainedRecords: records } : {}),
       seq: this.pendingOutputSeq,
       overflowed,
       snapshot: includeSnapshot ? this.getSnapshot() : null
@@ -636,7 +632,7 @@ export class Session {
     }
     this.shellPromptReadinessProbe?.dispose()
     this.shellPromptReadinessProbe = null
-    this.shellReadyScanState = null
+    this.shellStartupOutputScanState = null
     this.preReadyStdinQueue = []
     this.postReadyFlushGate.clear()
     this.disposeSubprocessHandle()
@@ -682,18 +678,13 @@ export class Session {
     }
 
     let releaseStartupDeviceAttributes = false
-    if (this._shellState === 'pending' && this.shellStartupIdentityScanState) {
-      const scanned = scanForShellStartupIdentity(this.shellStartupIdentityScanState, data)
+    if (this._shellState === 'pending' && this.shellStartupOutputScanState) {
+      const scanned = scanShellStartupOutput(this.shellStartupOutputScanState, data)
       data = scanned.output
       if (scanned.shellPid) {
         this.shellStartupPid = scanned.shellPid
-        this.shellStartupIdentityScanState = null
       }
-    }
-    if (this._shellState === 'pending' && this.shellReadyScanState) {
-      const scanned = scanForShellReady(this.shellReadyScanState, data)
-      data = scanned.output
-      if (scanned.matched) {
+      if (scanned.ready) {
         this.transitionToReady(scanned.postMarkerBytesObserved)
         releaseStartupDeviceAttributes = true
       }
@@ -773,20 +764,11 @@ export class Session {
   }
 
   private releaseHeldShellReadyBytes(): string {
-    if (!this.shellReadyScanState && !this.shellStartupIdentityScanState) {
+    if (!this.shellStartupOutputScanState) {
       return ''
     }
-    let heldBytes = this.shellStartupIdentityScanState
-      ? drainShellStartupIdentityHeldBytes(this.shellStartupIdentityScanState)
-      : ''
-    this.shellStartupIdentityScanState = null
-    if (this.shellReadyScanState && heldBytes) {
-      heldBytes = scanForShellReady(this.shellReadyScanState, heldBytes).output
-    }
-    if (this.shellReadyScanState) {
-      heldBytes += drainShellReadyHeldBytes(this.shellReadyScanState)
-    }
-    this.shellReadyScanState = null
+    const heldBytes = drainShellStartupOutputScanState(this.shellStartupOutputScanState)
+    this.shellStartupOutputScanState = null
     // Why: scanning strips marker bytes before fan-out; if readiness never completes, release any held prefix before timeout/exit discards it.
     this.startupIngress.accept(heldBytes)
     return heldBytes
@@ -813,8 +795,7 @@ export class Session {
 
   private transitionToReady(postMarkerBytesObserved = false): void {
     this._shellState = 'ready'
-    this.shellReadyScanState = null
-    this.shellStartupIdentityScanState = null
+    this.shellStartupOutputScanState = null
     this.shellPromptReadinessProbe?.dispose()
     this.shellPromptReadinessProbe = null
     if (this.shellReadyTimer) {
