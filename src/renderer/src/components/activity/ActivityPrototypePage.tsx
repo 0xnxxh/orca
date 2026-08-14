@@ -11,7 +11,7 @@ import {
   TerminalSquare
 } from 'lucide-react'
 
-import { AgentStateDot, agentStateLabel } from '@/components/AgentStateDot'
+import { AgentStateDot, agentStateLabel, type AgentDotState } from '@/components/AgentStateDot'
 import { AgentIcon } from '@/lib/agent-catalog'
 import {
   agentTypeToIconAgent,
@@ -84,6 +84,7 @@ import {
   resolveActivityThreadStatusPreview
 } from '@/lib/activity-thread-display'
 import { getAgentRowPrimaryText } from '@/lib/agent-row-primary-text'
+import { isBackgroundOnlyAgentActivity } from '../../../../shared/agent-background-only-activity'
 
 type ThreadReadFilter = 'all' | 'unread'
 type ActivityGroupBy = 'status' | 'project' | 'worktree' | 'agent'
@@ -964,12 +965,19 @@ function threadAgentState(thread: AgentPaneThread): AgentStatusState {
   return thread.currentAgentState ?? thread.latestEvent?.state ?? 'done'
 }
 
-function threadAgentStateLabel(thread: AgentPaneThread): string {
+export function getActivityThreadDotState(thread: AgentPaneThread): AgentDotState {
   const state = threadAgentState(thread)
   if (!thread.currentAgentState && state === 'done' && thread.latestEvent?.entry.interrupted) {
-    return 'Interrupted'
+    return 'interrupted'
   }
-  return agentStateLabel(state)
+  if (state === 'working' && isBackgroundOnlyAgentActivity(thread.currentAgentEntry ?? undefined)) {
+    return 'background'
+  }
+  return state
+}
+
+function threadAgentStateLabel(thread: AgentPaneThread): string {
+  return agentStateLabel(getActivityThreadDotState(thread))
 }
 
 export function getActivityThreadGroup(
@@ -981,7 +989,8 @@ export function getActivityThreadGroup(
     if (!thread.currentAgentState && state === 'done' && thread.latestEvent?.entry.interrupted) {
       return { key: 'done:interrupted', label: threadAgentStateLabel(thread) }
     }
-    return { key: state, label: threadAgentStateLabel(thread) }
+    // Background-only rows keep the working group; only their own foreground presentation settles.
+    return { key: state, label: agentStateLabel(state) }
   }
   if (groupBy === 'project') {
     return thread.repo
@@ -1164,7 +1173,7 @@ export function handleActivityFilterFocusShortcut({
 }
 
 function ThreadAgentStateIndicator({ thread }: { thread: AgentPaneThread }): React.JSX.Element {
-  const state = threadAgentState(thread)
+  const state = getActivityThreadDotState(thread)
   const label = threadAgentStateLabel(thread)
   return (
     <Tooltip>

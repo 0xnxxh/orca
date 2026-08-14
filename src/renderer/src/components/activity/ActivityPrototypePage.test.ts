@@ -21,6 +21,7 @@ import {
   buildActivityThreadGroups,
   buildActivityEvents,
   buildAgentPaneThreads,
+  getActivityThreadDotState,
   getActivityThreadGroup,
   groupActivityThreadsByStatus,
   isActivitySearchQueryTooLarge
@@ -586,6 +587,21 @@ describe('buildActivityEvents', () => {
       [PANE_KEY_2],
       [PANE_KEY_3]
     ])
+  })
+
+  it('settles a background-only row without changing its working group', () => {
+    const result = makeActivityResult({
+      entries: {
+        [PANE_KEY]: { ...makeWorkingEntryWithoutHistory(), backgroundOnly: true }
+      }
+    })
+    const thread = makeThreads(result)[0]
+
+    expect(getActivityThreadDotState(thread)).toBe('background')
+    expect(getActivityThreadGroup(thread, 'status')).toEqual({
+      key: 'working',
+      label: 'Working'
+    })
   })
 })
 
