@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -209,8 +209,22 @@ describe('ssh host key store', () => {
     expect(JSON.parse(await readFile(storeFile, 'utf-8'))).toMatchObject({
       version: 1
     })
-    const { readdir } = await import('node:fs/promises')
     expect((await readdir(directory)).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('publishes every update by replacing the file, never by rewriting it in place', async () => {
+    await trustHostKey(query(), storeFile)
+    const before = await stat(storeFile)
+
+    await trustHostKey(query({ keyType: 'ssh-rsa', key: RSA_A }), storeFile)
+
+    // A temp-file + rename swaps the inode; an in-place write truncates and keeps it, which is the
+    // shape that can leave a half-written trust list readable after a crash.
+    const after = await stat(storeFile)
+    if (before.ino !== 0 && after.ino !== 0) {
+      expect(after.ino).not.toBe(before.ino)
+    }
+    expect(await isTrusted(query(), storeFile)).toBe('match')
   })
 
   it('keeps both accepts when two hosts are trusted concurrently', async () => {

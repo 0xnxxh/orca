@@ -1,6 +1,5 @@
 /* eslint-disable max-lines -- Why: SSH connection lifecycle, credential retries, reconnect policy, and transport fallback are intentionally co-located so state transitions stay auditable in one file. */
 import * as net from 'node:net'
-import { createHash } from 'node:crypto'
 import { Client as SshClient } from 'ssh2'
 import type { ChildProcess } from 'node:child_process'
 import type { ClientChannel, ConnectConfig, SFTPWrapper } from 'ssh2'
@@ -39,6 +38,24 @@ import {
   type SshConnectionCallbacks
 } from './ssh-connection-utils'
 import { resolveEffectiveProxy, spawnProxyCommand } from './ssh-proxy-command'
+import { createHostKeyVerifier, orderServerHostKeyAlgorithms } from './ssh-host-key-verifier'
+import { sshGArgsForHost } from './ssh-g-config-resolution'
+// ssh2's own default order, which leads with ed25519 and places RSA fifth through seventh.
+const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = [
+  'ssh-ed25519',
+  'ecdsa-sha2-nistp256',
+  'ecdsa-sha2-nistp384',
+  'ecdsa-sha2-nistp521',
+  'rsa-sha2-512',
+  'rsa-sha2-256',
+  'ssh-rsa'
+]
+import { loadTrustedHostKeys, trustHostKey } from './ssh-host-key-store'
+import {
+  loadKnownHostsEntries,
+  resolveKnownHostsFiles,
+  resolveKnownHostsLookupHost
+} from './ssh-known-hosts-source'
 import {
   createCancelledConnectAttemptError,
   isCancelledConnectAttemptError
@@ -83,7 +100,14 @@ function cloneResolvedConfig(config: SshResolvedConfig | null): SshResolvedConfi
   if (!config) {
     return null
   }
-  return { ...config, identityFile: [...config.identityFile] }
+  // Every array field needs its own copy — a shared reference lets one connection's clone mutate
+  // another's view of which files were consulted.
+  return {
+    ...config,
+    identityFile: [...config.identityFile],
+    userKnownHostsFiles: [...config.userKnownHostsFiles],
+    globalKnownHostsFiles: [...config.globalKnownHostsFiles]
+  }
 }
 
 function isGitHubRestrictedShellProbeSuccess(
@@ -127,6 +151,11 @@ export class SshConnection {
   private systemCommandChannels = new Set<ClientChannel>()
   private systemOperationAbortController = new AbortController()
   private systemSshResolvedConfig: SshResolvedConfig | null = null
+  /** Set by attemptConnect so doSsh2Connect can build a verifier without threading it through. */
+  private hostKeyResolvedConfig: SshResolvedConfig | null = null
+  /** Set when the verifier denies, so the connect rejects with the reason rather than a generic
+   *  handshake failure the reconnect ladder would retry forever. */
+  private hostKeyRejection: string | null = null
   private systemSshControlMasterDisabledForSession = false
   private systemSshGssapiOnlyForSession = false
   private useSystemSshTransport = false
@@ -660,6 +689,8 @@ export class SshConnection {
     const resolved = await resolveWithSshG(this.target.configHost || this.target.label).catch(
       () => null
     )
+    this.hostKeyResolvedConfig = resolved
+    this.hostKeyRejection = null
     const usesConfiguredSystemTransport = shouldUseSystemSshTransport(this.target, resolved)
     const requiresSecurityKeyTransport = usesConfiguredSystemTransport
       ? false
@@ -1174,19 +1205,87 @@ export class SshConnection {
     config.sock = p.sock
   }
 
-  private doSsh2Connect(config: ConnectConfig, connectGeneration: number): Promise<void> {
+  private async doSsh2Connect(config: ConnectConfig, connectGeneration: number): Promise<void> {
+    const hostKeyResolved = this.hostKeyResolvedConfig
+    const hostKeyLookupHost = resolveKnownHostsLookupHost(hostKeyResolved, config.host ?? '')
+    // `-F` suppresses /etc/ssh/ssh_config, so a site-wide policy is invisible to us on that path.
+    const siteConfigSuppressed = sshGArgsForHost(
+      this.target.configHost || this.target.label
+    ).includes('-F')
+    const knownHostsEntries = await loadKnownHostsEntries(resolveKnownHostsFiles(hostKeyResolved))
+    // Preloaded because ssh2's verifier decides synchronously; the same reason known_hosts is read
+    // here rather than inside the callback.
+    const trustedHostKeys = await loadTrustedHostKeys().catch((err) => {
+      // Losing our own records is not a security regression: known_hosts is still consulted, so a
+      // changed key is still refused. A host trusted only by us degrades to first contact and is
+      // re-recorded, which reaches the same decision. Loud because it means the store is unwired.
+      console.warn('[ssh] host key store unavailable; falling back to known_hosts only:', err)
+      return []
+    })
+    const serverHostKeyOrder = orderServerHostKeyAlgorithms(
+      knownHostsEntries,
+      hostKeyLookupHost,
+      config.port ?? 22,
+      DEFAULT_SERVER_HOST_KEY_ALGORITHMS
+    )
     return new Promise<void>((resolve, reject) => {
       const client = new SshClient()
       let settled = false
 
-      // Why: the relay uses the negotiated server key to isolate shared-home
-      // install locks without comparing PIDs from an unrelated SSH host.
-      config.hostVerifier = (key: Buffer): boolean => {
-        if (!this.disposed && connectGeneration === this.connectGeneration) {
-          const digest = createHash('sha256').update(key).digest('base64').replace(/=+$/, '')
-          this.hostKeyFingerprint = `SHA256:${digest}`
+      // Why the fingerprint is still recorded: the relay uses the negotiated server key to isolate
+      // shared-home install locks without comparing PIDs from an unrelated SSH host. Its format is
+      // load-bearing across versions, which is a second reason never to set ssh2's `hostHash`.
+      config.hostVerifier = createHostKeyVerifier({
+        host: hostKeyLookupHost,
+        port: config.port ?? 22,
+        displayHost: this.target.label || hostKeyLookupHost,
+        strictHostKeyChecking: hostKeyResolved?.strictHostKeyChecking ?? 'ask',
+        isEphemeralRuntimeTarget: this.target.owner?.type === 'on-demand-runtime',
+        siteConfigSuppressed,
+        entries: knownHostsEntries,
+        isTrusted: ({ host, port, keyType, key }) => {
+          const forEndpoint = trustedHostKeys.filter(
+            (record) =>
+              record.host === host.toLowerCase() &&
+              record.port === port &&
+              record.keyType === keyType
+          )
+          if (forEndpoint.length === 0) {
+            return 'unknown'
+          }
+          return forEndpoint.some((record) => Buffer.from(record.key, 'base64').equals(key))
+            ? 'match'
+            : 'mismatch'
+        },
+        rememberHostKey: (record) => {
+          void trustHostKey({
+            host: record.host,
+            port: record.port,
+            keyType: record.keyType,
+            key: record.key
+          }).catch((err) => {
+            // A failed write must not fail the connection: we verified the key, we just could not
+            // record it, so the next connect re-derives the same answer from known_hosts.
+            console.warn('[ssh] failed to record accepted host key:', err)
+          })
+        },
+        onDecision: (decision) => {
+          if (!this.disposed && connectGeneration === this.connectGeneration) {
+            this.hostKeyFingerprint = decision.fingerprint
+          }
+          if (decision.action === 'reject') {
+            this.hostKeyRejection = decision.reason ?? 'Host key verification failed.'
+          }
         }
-        return true
+      })
+
+      if (serverHostKeyOrder) {
+        config.algorithms = {
+          ...config.algorithms,
+          serverHostKey: serverHostKeyOrder as NonNullable<
+            NonNullable<ConnectConfig['algorithms']>['serverHostKey']
+          >
+        }
       }
 
       const cleanupStartupListeners = (): void => {
@@ -1239,7 +1338,10 @@ export class SshConnection {
         cleanupStartupListeners()
         settled = true
         client.destroy()
-        reject(err)
+        // Why replace the message: ssh2 reports a denied host key as a generic handshake failure,
+        // which the reconnect ladder cannot distinguish from a transient fault and would retry
+        // forever against a decision that will never change.
+        reject(this.hostKeyRejection ? new Error(this.hostKeyRejection) : err)
       }
 
       client.on('ready', onReady)

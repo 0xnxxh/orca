@@ -13,6 +13,14 @@ let connectErrorCode = ''
 let destroyErrorMessage = ''
 let connectSequence: ('ready' | Error)[] = []
 let connectAttempts = 0
+/** Lets a test present a real key blob instead of the placeholder. */
+const VALID_ED25519_HOST_KEY = Buffer.from(
+  'AAAAC3NzaC1lZDI1NTE5AAAAIKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+  'base64'
+)
+let mockPresentedHostKey: Buffer | undefined
+/** What the verifier decided about the presented key on the most recent connect. */
+let lastHostKeyAccepted: boolean | undefined
 let execBehavior: 'callback' | 'pending' = 'callback'
 let pendingExecCallback: ((err: Error | undefined, channel: unknown) => void) | null = null
 let sftpBehavior: 'callback' | 'pending' = 'callback'
@@ -86,9 +94,29 @@ vi.mock('ssh2', () => {
     connect(config?: unknown) {
       connectAttempts += 1
       this.lastConnectConfig = config
-      const hostVerifier = (config as { hostVerifier?: (key: Buffer) => boolean } | undefined)
-        ?.hostVerifier
-      hostVerifier?.(Buffer.from('mock-ssh-host-key'))
+      // Why the callback form: ssh2 calls hostVerifier(key, verify) and only accepts synchronously
+      // when the return is not undefined. A mock that passed one argument and ignored the result
+      // would pass against a verifier that never decides — which is the regression this whole
+      // module exists to prevent.
+      const hostVerifier = (
+        config as
+          | { hostVerifier?: (key: Buffer, verify: (ok: boolean) => void) => undefined }
+          | undefined
+      )?.hostVerifier
+      const presentedHostKey = mockPresentedHostKey ?? VALID_ED25519_HOST_KEY
+      lastHostKeyAccepted = undefined
+      hostVerifier?.(presentedHostKey, (ok) => {
+        lastHostKeyAccepted = ok
+      })
+      if (lastHostKeyAccepted === false) {
+        // ssh2 aborts the handshake when the verifier denies; a mock that carried on to 'ready'
+        // would let a rejected host key look like a successful connect.
+        setTimeout(
+          () => emitSshEvent('error', new Error('All configured authentication methods failed')),
+          0
+        )
+        return
+      }
       setTimeout(() => {
         const next = connectSequence.shift()
         if (next instanceof Error) {
@@ -326,6 +354,8 @@ describe('SshConnection', () => {
     destroyErrorMessage = ''
     connectSequence = []
     connectAttempts = 0
+    mockPresentedHostKey = undefined
+    lastHostKeyAccepted = undefined
     execBehavior = 'callback'
     pendingExecCallback = null
     sftpBehavior = 'callback'
@@ -378,6 +408,23 @@ describe('SshConnection', () => {
     expect(clientInstances[0].setNoDelay).toHaveBeenCalledWith(true)
   })
 
+  // Proves the WIRING, not just the module: a verifier that decides correctly is worthless if the
+  // handshake never consults it, and until this change ssh-connection accepted every key.
+  it('refuses a host key whose own blob cannot be identified', async () => {
+    mockPresentedHostKey = Buffer.from('not-a-real-host-key-blob')
+    const conn = new SshConnection(createTarget(), createCallbacks())
+
+    await expect(conn.connect()).rejects.toThrow()
+    expect(lastHostKeyAccepted, 'the handshake accepted an unidentifiable key').toBe(false)
+  })
+
+  it('accepts a well-formed host key on first contact', async () => {
+    const conn = new SshConnection(createTarget(), createCallbacks())
+    await conn.connect()
+
+    expect(lastHostKeyAccepted).toBe(true)
+  })
+
   it('captures the negotiated SSH server key fingerprint', async () => {
     const conn = new SshConnection(createTarget(), createCallbacks())
     await conn.connect()
@@ -389,20 +436,28 @@ describe('SshConnection', () => {
     const conn = new SshConnection(createTarget(), createCallbacks())
     await conn.connect()
     const firstVerifier = (
-      clientInstances[0].lastConnectConfig as { hostVerifier?: (key: Buffer) => boolean }
+      clientInstances[0].lastConnectConfig as {
+        hostVerifier?: (key: Buffer, verify: (ok: boolean) => void) => undefined
+      }
     ).hostVerifier
 
     const privateConn = conn as unknown as { attemptConnect: () => Promise<void> }
     await privateConn.attemptConnect()
     const secondVerifier = (
-      clientInstances[1].lastConnectConfig as { hostVerifier?: (key: Buffer) => boolean }
+      clientInstances[1].lastConnectConfig as {
+        hostVerifier?: (key: Buffer, verify: (ok: boolean) => void) => undefined
+      }
     ).hostVerifier
     expect(firstVerifier).toBeTypeOf('function')
     expect(secondVerifier).toBeTypeOf('function')
 
-    secondVerifier?.(Buffer.from('newer-ssh-host-key'))
+    const newerKey = Buffer.from(
+      'AAAAC3NzaC1lZDI1NTE5AAAAILu7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7',
+      'base64'
+    )
+    secondVerifier?.(newerKey, () => {})
     const currentFingerprint = conn.getHostKeyFingerprint()
-    firstVerifier?.(Buffer.from('obsolete-ssh-host-key'))
+    firstVerifier?.(VALID_ED25519_HOST_KEY, () => {})
 
     expect(conn.getHostKeyFingerprint()).toBe(currentFingerprint)
   })
