@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DaemonPtyAdapter } from './daemon-pty-adapter'
+import { DaemonPtyAdapter, FinalCheckpointWaitExpiredError } from './daemon-pty-adapter'
 import { DaemonServer } from './daemon-server'
 import { getDaemonSocketPath } from './daemon-spawner'
 import type { DaemonFileLog } from './daemon-file-log'
@@ -54,12 +54,13 @@ async function withinBudget<T>(work: Promise<T>, budgetMs: number): Promise<T | 
   }
 }
 
-/** Settles to a tag either way, so a rejecting stop still counts as "the caller stopped waiting". */
-function settlementOf(work: Promise<unknown>): Promise<'settled'> {
-  return work.then(
-    () => 'settled' as const,
-    () => 'settled' as const
-  )
+async function rejectionOf(work: Promise<unknown>): Promise<unknown> {
+  try {
+    await work
+  } catch (error) {
+    return error
+  }
+  throw new Error('Expected work to reject')
 }
 
 describe('STA-4228 keep-history stop bounds only the caller wait on the final checkpoint', () => {
@@ -96,18 +97,11 @@ describe('STA-4228 keep-history stop bounds only the caller wait on the final ch
     rmSync(dir, { recursive: true, force: true })
   })
 
-  /**
-   * Wedges one session's checkpoint at the history-write layer and reports how many times that
-   * stall was actually entered, so a swallowed TypeError cannot masquerade as a stall.
-   */
-  function stallCheckpointFor(stalledSessionId: string): {
-    entered: () => number
-    release: () => void
-  } {
+  /** Wedges one session's checkpoint at the history-write layer until explicitly released. */
+  function stallCheckpointFor(stalledSessionId: string): { release: () => void } {
     const manager = adapter.getHistoryManager()
     expect(manager).not.toBeNull()
     const original = manager!.checkpoint.bind(manager!)
-    let entered = 0
     let release = (): void => {}
     const stalled = new Promise<void>((resolve) => {
       release = resolve
@@ -121,12 +115,11 @@ describe('STA-4228 keep-history stop bounds only the caller wait on the final ch
         if (sessionId !== stalledSessionId) {
           return await original(sessionId, snapshot, opts)
         }
-        entered += 1
         await stalled
         return await original(sessionId, snapshot, opts)
       }
     )
-    return { entered: () => entered, release }
+    return { release }
   }
 
   async function spawnWithOutput(sessionId: string, output: string): Promise<string> {
@@ -155,17 +148,14 @@ describe('STA-4228 keep-history stop bounds only the caller wait on the final ch
     const laterId = await spawnWithOutput('later-session', 'LATER_OUTPUT\r\n')
     const stall = stallCheckpointFor(wedgedId)
 
-    const wedgedStop = settlementOf(stopKeepingHistory(wedgedId))
-    await vi.waitFor(() => expect(stall.entered()).toBeGreaterThan(0))
-
-    expect(await withinBudget(wedgedStop, STOP_BUDGET_MS)).toBe('settled')
+    expect(
+      await withinBudget(rejectionOf(stopKeepingHistory(wedgedId)), STOP_BUDGET_MS)
+    ).toBeInstanceOf(FinalCheckpointWaitExpiredError)
     // Why issued only now: this is the sleep-stranding case — a stop that starts while the wedged
     // checkpoint still owns the exclusive tail, which before this fix waited on it forever.
-    expect(await withinBudget(settlementOf(stopKeepingHistory(laterId)), STOP_BUDGET_MS)).toBe(
-      'settled'
-    )
-    // The wedge must still be parked, or neither stop proved anything.
-    expect(stall.entered()).toBe(1)
+    expect(
+      await withinBudget(rejectionOf(stopKeepingHistory(laterId)), STOP_BUDGET_MS)
+    ).toBeInstanceOf(FinalCheckpointWaitExpiredError)
     stall.release()
   }, 30_000)
 
@@ -173,9 +163,9 @@ describe('STA-4228 keep-history stop bounds only the caller wait on the final ch
     const wedgedId = await spawnWithOutput('alive-session', 'ALIVE_OUTPUT\r\n')
     const stall = stallCheckpointFor(wedgedId)
 
-    const wedgedStop = settlementOf(stopKeepingHistory(wedgedId))
-    await vi.waitFor(() => expect(stall.entered()).toBeGreaterThan(0))
-    expect(await withinBudget(wedgedStop, STOP_BUDGET_MS)).toBe('settled')
+    expect(
+      await withinBudget(rejectionOf(stopKeepingHistory(wedgedId)), STOP_BUDGET_MS)
+    ).toBeInstanceOf(FinalCheckpointWaitExpiredError)
 
     // Why liveness and not just bookkeeping: the whole point is that an unproven snapshot must not
     // authorize the kill, so the daemon must still answer for this session.
@@ -189,13 +179,12 @@ describe('STA-4228 keep-history stop bounds only the caller wait on the final ch
     const laterId = await spawnWithOutput('queued-session', 'QUEUED_OUTPUT\r\n')
     const stall = stallCheckpointFor(wedgedId)
 
-    const wedgedStop = settlementOf(stopKeepingHistory(wedgedId))
-    await vi.waitFor(() => expect(stall.entered()).toBeGreaterThan(0))
-    expect(await withinBudget(wedgedStop, STOP_BUDGET_MS)).toBe('settled')
-    expect(await withinBudget(settlementOf(stopKeepingHistory(laterId)), STOP_BUDGET_MS)).toBe(
-      'settled'
-    )
-    expect(stall.entered()).toBe(1)
+    expect(
+      await withinBudget(rejectionOf(stopKeepingHistory(wedgedId)), STOP_BUDGET_MS)
+    ).toBeInstanceOf(FinalCheckpointWaitExpiredError)
+    expect(
+      await withinBudget(rejectionOf(stopKeepingHistory(laterId)), STOP_BUDGET_MS)
+    ).toBeInstanceOf(FinalCheckpointWaitExpiredError)
 
     stall.release()
     // Why this is the whole point of bounding the wait and not the work: both callers walked away,
@@ -205,4 +194,29 @@ describe('STA-4228 keep-history stop bounds only the caller wait on the final ch
       expect(await onDisk(laterId)).toContain('QUEUED_OUTPUT')
     })
   }, 30_000)
+
+  it('resumes periodic durable writes after a rejected exclusive checkpoint', async () => {
+    const adapterClass = DaemonPtyAdapter as unknown as { CHECKPOINT_INTERVAL_MS: number }
+    const internals = adapter as unknown as {
+      runExclusiveCheckpoint(operation: () => Promise<void>): Promise<boolean>
+    }
+    const previousInterval = adapterClass.CHECKPOINT_INTERVAL_MS
+    const rejection = new Error('injected checkpoint rejection')
+
+    try {
+      await expect(
+        internals.runExclusiveCheckpoint(async () => {
+          throw rejection
+        })
+      ).rejects.toBe(rejection)
+
+      adapterClass.CHECKPOINT_INTERVAL_MS = 10
+      const id = await spawnWithOutput('post-rejection-session', 'POST_REJECTION_OUTPUT\r\n')
+      await vi.waitFor(async () => {
+        expect(await onDisk(id)).toContain('POST_REJECTION_OUTPUT')
+      })
+    } finally {
+      adapterClass.CHECKPOINT_INTERVAL_MS = previousInterval
+    }
+  })
 })
