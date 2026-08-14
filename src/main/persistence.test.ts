@@ -13092,14 +13092,15 @@ describe('Store host-partitioned workspace sessions', () => {
 
     expect(
       store.getWorkspaceSession('runtime:env-a').terminalTopologyRevisionByRepoId?.['repo-split']
-    ).toBe(1)
+    ).toBeUndefined()
     expect(
       store.getWorkspaceSession('local').terminalTopologyRevisionByRepoId?.['repo-split']
     ).toBeUndefined()
     expect(store.getWorkspaceSession('local').tabsByWorktree[otherWorktreeId]).toHaveLength(1)
+    expect(store.getWorktreeMeta(worktreeId)?.hostId).toBe('runtime:env-a')
   })
 
-  it('trusts persisted ownership over a stale caller hostId', async () => {
+  it('preserves a same-id persisted owner when another qualified host is removed', async () => {
     const store = await createStore()
     const worktreeId = 'repo-split::/workspace/stale'
     const session = {
@@ -13108,16 +13109,17 @@ describe('Store host-partitioned workspace sessions', () => {
         [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
       }
     }
-    store.setWorkspaceSession(session, 'runtime:env-a')
+    store.setWorkspaceSession(session, 'local')
     store.setWorkspaceSession(session, 'runtime:env-b')
-    store.setWorktreeMeta(worktreeId, { hostId: 'runtime:env-a' })
+    store.setWorktreeMeta(worktreeId, { hostId: 'local' })
 
-    // A caller's hostId comes from live routing and can go stale mid-removal; the same
-    // repoId::path can name a live worktree on env-b, whose tabs must survive.
+    // The confirmed removal target is env-b. Bare metadata belongs to the same-id
+    // local owner and must not redirect the post-delete purge back to local.
     store.removeWorktreeMeta(worktreeId, 'runtime:env-b')
 
-    expect(store.getWorkspaceSession('runtime:env-a').tabsByWorktree[worktreeId]).toBeUndefined()
-    expect(store.getWorkspaceSession('runtime:env-b').tabsByWorktree[worktreeId]).toHaveLength(1)
+    expect(store.getWorktreeMeta(worktreeId)?.hostId).toBe('local')
+    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toHaveLength(1)
+    expect(store.getWorkspaceSession('runtime:env-b').tabsByWorktree[worktreeId]).toBeUndefined()
   })
 
   it('falls back to the caller hostId only when no ownership was recorded', async () => {

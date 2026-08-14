@@ -11,14 +11,12 @@ import {
   canQueueWorkspaceCleanupCandidate,
   type WorkspaceCleanupCandidate
 } from '../../../../shared/workspace-cleanup'
-import {
-  getWorkspaceCleanupCandidateIdentity,
-  getWorkspaceCleanupIdentityWorktreeId
-} from '../../../../shared/workspace-cleanup-host-identity'
+import { getWorkspaceCleanupCandidateIdentity } from '../../../../shared/workspace-cleanup-host-identity'
 import type { WorkspaceCleanupDeletionPhase } from './workspace-cleanup-candidate-row'
 import { WorkspaceCleanupBrowseToolbar } from './workspace-cleanup-browse-toolbar'
 import { WorkspaceCleanupConfirmRemove } from './workspace-cleanup-confirm-remove'
 import { WorkspaceCleanupDialogHeader } from './workspace-cleanup-dialog-header'
+import { getWorkspaceCleanupDeletionPhaseByIdentity } from './workspace-cleanup-deletion-phases'
 import {
   WorkspaceCleanupInitialScanBanner,
   WorkspaceCleanupNotice,
@@ -72,7 +70,7 @@ function WorkspaceCleanupDialogContent({
   const refreshWorkspaceSpace = useAppStore((s) => s.refreshWorkspaceSpace)
   const workspaceSpaceScanning = useAppStore((s) => s.workspaceSpaceScanning)
   const workspaceSpaceProgress = useAppStore((s) => s.workspaceSpaceScanProgress)
-  const deletionPhaseByWorktreeId = useAppStore(
+  const genericDeletionPhaseByWorktreeId = useAppStore(
     useShallow((s) => {
       const phases: Record<string, WorkspaceCleanupDeletionPhase> = {}
       for (const [worktreeId, state] of Object.entries(s.deleteStateByWorktreeId)) {
@@ -83,11 +81,6 @@ function WorkspaceCleanupDialogContent({
       return phases
     })
   )
-  const deletingWorktreeIds = useMemo(
-    () => new Set(Object.keys(deletionPhaseByWorktreeId)),
-    [deletionPhaseByWorktreeId]
-  )
-
   const browse = useWorkspaceCleanupBrowseState()
   // Why: facet counts/options are only rendered inside the filter popover;
   // tracking its open state lets their O(N) passes skip while it is closed.
@@ -117,6 +110,19 @@ function WorkspaceCleanupDialogContent({
   }, [open])
 
   const { removalInFlightRef } = removal
+  const deletionPhaseByIdentity = useMemo(
+    () =>
+      getWorkspaceCleanupDeletionPhaseByIdentity(
+        scan?.candidates ?? [],
+        removal.deletionPhaseByIdentity,
+        genericDeletionPhaseByWorktreeId
+      ),
+    [genericDeletionPhaseByWorktreeId, removal.deletionPhaseByIdentity, scan?.candidates]
+  )
+  const deletingIdentities = useMemo(
+    () => new Set(Object.keys(deletionPhaseByIdentity)),
+    [deletionPhaseByIdentity]
+  )
 
   const candidates = useMemo(() => scan?.candidates ?? [], [scan?.candidates])
   const gitEvidenceNeeded = open && needsWorkspaceCleanupGitEvidence(browse.filters, browse.sort)
@@ -185,9 +191,9 @@ function WorkspaceCleanupDialogContent({
         (candidate): candidate is WorkspaceCleanupCandidate =>
           candidate != null &&
           canQueueWorkspaceCleanupCandidate(candidate) &&
-          !deletingWorktreeIds.has(candidate.worktreeId)
+          !deletingIdentities.has(getWorkspaceCleanupCandidateIdentity(candidate))
       )
-  }, [deletingWorktreeIds, rows, selectedIds])
+  }, [deletingIdentities, rows, selectedIds])
   const selectedCount = selectedCandidates.length
 
   useEffect(() => {
@@ -203,17 +209,16 @@ function WorkspaceCleanupDialogContent({
     }
     defaultsAppliedForOpenRef.current = true
     setSelectedIds(
-      getDefaultSelectedWorkspaceCleanupIdentities(scan.candidates, deletingWorktreeIds)
+      getDefaultSelectedWorkspaceCleanupIdentities(scan.candidates, deletingIdentities)
     )
-  }, [deletingWorktreeIds, loading, removalInFlightRef, scan, setSelectedIds])
+  }, [deletingIdentities, loading, removalInFlightRef, scan, setSelectedIds])
 
   const pruneSelectionToVisibleRows = useEffectEvent(() => {
     setSelectedIds((current) => {
       const next = new Set(
         [...current].filter(
           (identity) =>
-            facetRows.facetMatchedIdentities.has(identity) &&
-            !deletingWorktreeIds.has(getWorkspaceCleanupIdentityWorktreeId(identity))
+            facetRows.facetMatchedIdentities.has(identity) && !deletingIdentities.has(identity)
         )
       )
       return next.size === current.size ? current : next
@@ -232,8 +237,7 @@ function WorkspaceCleanupDialogContent({
   }, [browse.filters, open, removal.confirming])
 
   const pruneVanishedSelections = useEffectEvent(() => {
-    const isDeleting = (identity: string): boolean =>
-      deletingWorktreeIds.has(getWorkspaceCleanupIdentityWorktreeId(identity))
+    const isDeleting = (identity: string): boolean => deletingIdentities.has(identity)
     const kept = [...selectedIds].filter(
       (identity) => candidateIdentities.has(identity) && !isDeleting(identity)
     )
@@ -256,7 +260,7 @@ function WorkspaceCleanupDialogContent({
     // Why: a settled refresh reconciles by host-qualified identity — selections survive it,
     // and only rows that truly no longer exist drop (with a visible reason).
     pruneVanishedSelections()
-  }, [candidateIdentities, deletingWorktreeIds, loading])
+  }, [candidateIdentities, deletingIdentities, loading])
 
   const ignoreCandidate = useCallback(
     (candidate: WorkspaceCleanupCandidate) => {
@@ -301,10 +305,8 @@ function WorkspaceCleanupDialogContent({
     () =>
       removal.removalInFlight
         ? []
-        : facetRows.selectableIdentities.filter(
-            (identity) => !deletingWorktreeIds.has(getWorkspaceCleanupIdentityWorktreeId(identity))
-          ),
-    [deletingWorktreeIds, facetRows.selectableIdentities, removal.removalInFlight]
+        : facetRows.selectableIdentities.filter((identity) => !deletingIdentities.has(identity)),
+    [deletingIdentities, facetRows.selectableIdentities, removal.removalInFlight]
   )
   const toggleSelectAll = useCallback(
     (selectAll: boolean) => {
@@ -406,13 +408,12 @@ function WorkspaceCleanupDialogContent({
                   scannedCount={candidates.length}
                   hasScanned={scan != null}
                   loading={loading}
-                  deletionPhaseByWorktreeId={deletionPhaseByWorktreeId}
-                  deletingWorktreeIds={deletingWorktreeIds}
+                  deletionPhaseByIdentity={deletionPhaseByIdentity}
+                  deletingIdentities={deletingIdentities}
                   expandedRowIds={expandedRowIds}
                   selectedIds={selectedIds}
                   gitPendingWorktreeIds={gitEvidence.pendingWorktreeIds}
                   rowFailures={removal.rowFailures}
-                  removalInFlight={removal.removalInFlight}
                   scrollElement={rowsScrollElement}
                   onClearFilters={browse.clearFilters}
                   onToggleExpanded={toggleExpandedRow}

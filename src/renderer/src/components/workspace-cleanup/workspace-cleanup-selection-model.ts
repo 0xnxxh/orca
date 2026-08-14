@@ -18,12 +18,14 @@ export function formatVanishedSelectionNotice(count: number): string {
 /** Host-qualified identities, so a default selection cannot span two hosts' rows. */
 export function getDefaultSelectedWorkspaceCleanupIdentities(
   candidates: readonly WorkspaceCleanupCandidate[],
-  deletingWorktreeIds: ReadonlySet<string> = new Set()
+  deletingIdentities: ReadonlySet<string> = new Set()
 ): Set<string> {
   return new Set(
     candidates
       .filter(
-        (candidate) => candidate.selectedByDefault && !deletingWorktreeIds.has(candidate.worktreeId)
+        (candidate) =>
+          candidate.selectedByDefault &&
+          !deletingIdentities.has(getWorkspaceCleanupCandidateIdentity(candidate))
       )
       .map((candidate) => getWorkspaceCleanupCandidateIdentity(candidate))
   )

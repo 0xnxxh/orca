@@ -5640,12 +5640,19 @@ export class Store {
   }
 
   removeWorktreeMeta(worktreeId: string, hostId?: ExecutionHostId | null): void {
-    // Persisted ownership beats stale live routing; hostId is only an ownerless fallback.
-    const owner = this.state.worktreeMeta[worktreeId]?.hostId ?? hostId
+    const persistedOwner = this.state.worktreeMeta[worktreeId]?.hostId
+    const owner = hostId ?? persistedOwner
+    const preservesDifferentPersistedOwner = Boolean(
+      hostId && persistedOwner && persistedOwner !== hostId
+    )
     // Skip partitions main never wrote: materializing one fences every sibling worktree of the repo.
     const partitions = new Set<ExecutionHostId>(
-      workspaceSessionPartitionIdsForHost(owner).filter((partition) =>
-        this.hasPersistedWorkspaceSession(partition)
+      workspaceSessionPartitionIdsForHost(owner).filter(
+        (partition) =>
+          this.hasPersistedWorkspaceSession(partition) &&
+          // The local partition can be a remote spill surface or a real local
+          // same-id owner. Preserve it when metadata proves the latter.
+          (!preservesDifferentPersistedOwner || partition === owner)
       )
     )
     // A repo-wide fence must not rebase a sibling's unpersisted tabs onto main's copy, and a spill
@@ -5659,9 +5666,11 @@ export class Store {
             !this.partitionHasOtherRepoWorktreeTabs(worktreeId, partition))
       )
     )
-    delete this.state.worktreeMeta[worktreeId]
-    delete this.state.worktreeLineageById[worktreeId]
-    delete this.state.workspaceLineageByChildKey[worktreeWorkspaceKey(worktreeId)]
+    if (!preservesDifferentPersistedOwner) {
+      delete this.state.worktreeMeta[worktreeId]
+      delete this.state.worktreeLineageById[worktreeId]
+      delete this.state.workspaceLineageByChildKey[worktreeWorkspaceKey(worktreeId)]
+    }
     for (const partition of partitions) {
       this.removeWorkspaceSessionOwnerInPartition(worktreeId, partition, {
         advanceTerminalTopologyRevision: fencedPartitions.has(partition)

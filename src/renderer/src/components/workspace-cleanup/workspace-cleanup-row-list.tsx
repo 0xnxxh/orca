@@ -16,15 +16,14 @@ export type WorkspaceCleanupRowListState = {
   scannedCount: number
   hasScanned: boolean
   loading: boolean
-  deletionPhaseByWorktreeId: Record<string, WorkspaceCleanupDeletionPhase>
-  deletingWorktreeIds: ReadonlySet<string>
+  deletionPhaseByIdentity: Record<string, WorkspaceCleanupDeletionPhase>
+  deletingIdentities: ReadonlySet<string>
   /** Host-qualified identities (see WorkspaceCleanupFacets.identity). */
   expandedRowIds: ReadonlySet<string>
   selectedIds: ReadonlySet<string>
   gitPendingWorktreeIds: ReadonlySet<string>
   /** Keyed by host-qualified identity so a failure marks only its own host's row. */
   rowFailures: Record<string, string>
-  removalInFlight: boolean
   scrollElement: HTMLDivElement | null
   onClearFilters: () => void
   onToggleExpanded: (identity: string) => void
@@ -79,12 +78,12 @@ export function WorkspaceCleanupRowList(props: WorkspaceCleanupRowListState): Re
             sizeLabel={row.sizeBytes === null ? null : formatBytes(row.sizeBytes)}
             workspaceStatusLabel={row.workspaceStatusLabel}
             gitEvidencePending={props.gitPendingWorktreeIds.has(row.worktreeId)}
-            deletionPhase={props.deletionPhaseByWorktreeId[row.worktreeId]}
+            deletionPhase={props.deletionPhaseByIdentity[row.identity]}
             // Why: a background rescan must not lock rows; only an actual
             // removal batch or this row's own deletion disables it.
-            removing={props.removalInFlight || props.deletingWorktreeIds.has(row.worktreeId)}
+            removing={props.deletingIdentities.has(row.identity)}
             selected={
-              props.selectedIds.has(row.identity) && !props.deletingWorktreeIds.has(row.worktreeId)
+              props.selectedIds.has(row.identity) && !props.deletingIdentities.has(row.identity)
             }
             failure={props.rowFailures[row.identity]}
             onToggleExpanded={props.onToggleExpanded}

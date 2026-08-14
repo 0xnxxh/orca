@@ -1,8 +1,7 @@
 /**
- * STA-4343 (host side): a client that cannot send a host qualifier must not be
- * able to trigger a wrong-host delete. A repo id registered on two hosts has no
- * single owner, so an unqualified removal resolves to `ambiguous` and the
- * caller refuses; a qualified one picks the named host's repo.
+ * STA-4343 (host side): a repo id registered on two hosts has no single owner,
+ * so unqualified legacy resolution is ambiguous and a qualified call picks the
+ * named host. The destructive RPC boundary rejects missing qualifiers earlier.
  */
 import { describe, expect, it } from 'vitest'
 import { resolveWorktreeRemovalRepoOwner } from './worktree-removal-repo-owner'
@@ -45,13 +44,6 @@ describe('resolveWorktreeRemovalRepoOwner', () => {
       'ssh:ssh-1'
     )
     expect(owner).toEqual({ kind: 'resolved', repo: sshRepo })
-  })
-
-  it('keeps working unqualified while the id has one owner', () => {
-    expect(resolveWorktreeRemovalRepoOwner(makeStore([localRepo]), 'repo1')).toEqual({
-      kind: 'resolved',
-      repo: localRepo
-    })
   })
 
   it('reports missing when the named host owns no such repo', () => {

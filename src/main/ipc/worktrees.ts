@@ -318,8 +318,8 @@ function resolveWorktreeRemovalOwnerHostId(
   fallbackHostId?: ExecutionHostId
 ): ExecutionHostId | undefined {
   return (
-    store.getWorktreeMeta(worktreeId)?.hostId ??
-    (repo ? getRepoExecutionHostId(repo) : fallbackHostId)
+    fallbackHostId ??
+    (repo ? getRepoExecutionHostId(repo) : store.getWorktreeMeta(worktreeId)?.hostId)
   )
 }
 
@@ -329,19 +329,23 @@ function removeWorktreeMetadataAndTransientState(
   hostId?: ExecutionHostId,
   snapshotPruneBatchId?: string
 ): void {
+  const persistedHostId = store.getWorktreeMeta(worktreeId)?.hostId
+  const preservesSameIdOwner = Boolean(hostId && persistedHostId && persistedHostId !== hostId)
   // Why: worktree IDs are path-derived and reusable; drop process-local caches before the same ID can map to a new workspace.
   if (hostId) {
     store.removeWorktreeMeta(worktreeId, hostId)
   } else {
     store.removeWorktreeMeta(worktreeId)
   }
-  advertisedUrlWatcher.forgetWorktree(worktreeId)
-  // Why: drop this worktree's localhost label routes so they don't accumulate in the proxy's route maps all session.
-  localhostWorktreeLabelProxy.unregisterWorktree(worktreeId)
-  // Why: schedule async history tree removal — never recursive-rmSync on the delete critical path.
-  deleteWorktreeHistoryDir(worktreeId)
-  // Why: release the removed worktree's PR-refresh aliases so coalesced queue entries don't retain it all session (memory creep).
-  pruneWorktreePRRefreshAliases(worktreeId)
+  if (!preservesSameIdOwner) {
+    advertisedUrlWatcher.forgetWorktree(worktreeId)
+    // Why: drop this worktree's localhost label routes so they don't accumulate in the proxy's route maps all session.
+    localhostWorktreeLabelProxy.unregisterWorktree(worktreeId)
+    // Why: schedule async history tree removal — never recursive-rmSync on the delete critical path.
+    deleteWorktreeHistoryDir(worktreeId)
+    // Why: release the removed worktree's PR-refresh aliases so coalesced queue entries don't retain it all session (memory creep).
+    pruneWorktreePRRefreshAliases(worktreeId)
+  }
   // Why: removed workspaces must never resurrect from the persisted cleanup/space scan snapshots.
   const snapshotDirectory = store.getProfileStorageDirectory()
   if (snapshotPruneBatchId) {

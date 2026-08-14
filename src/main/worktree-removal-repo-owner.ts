@@ -14,10 +14,9 @@ export type WorktreeRemovalRepoOwner =
 /**
  * Which repo a destructive worktree removal belongs to.
  *
- * A repo id can be registered once per execution host, so an unqualified call —
- * an older client that cannot send `hostId` — is only safe while exactly one
- * host owns it. Two owners resolve to `ambiguous` so the caller fails closed
- * instead of deleting a same-id workspace on the wrong host (STA-4343).
+ * A repo id can be registered once per execution host. Destructive RPC callers
+ * reject a missing host before reaching this resolver; the unqualified branch
+ * remains only for direct legacy callers and still refuses multiple owners.
  */
 export function resolveWorktreeRemovalRepoOwner(
   store: WorktreeRemovalRepoSource,
