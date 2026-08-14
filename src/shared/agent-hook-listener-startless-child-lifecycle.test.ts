@@ -102,6 +102,50 @@ describe('Claude child lifecycle events with no cached lead state', () => {
     expect(state.claudeSubagentRosterByPaneKey.size).toBe(0)
   })
 
+  it('resolves an exact-name teammate idle to done with no cached lead', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('startless-known-idle', LEAF_ID)
+
+    claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStart',
+      agent_id: 'areviewer-6d3cb5b5',
+      agent_type: 'reviewer'
+    })
+    state.claudeLeadStateByPaneKey.delete(paneKey)
+
+    const idled = claudeEvent(state, paneKey, {
+      hook_event_name: 'TeammateIdle',
+      teammate_name: 'reviewer'
+    })
+
+    expect(idled?.payload.state).toBe('done')
+    expect(idled?.payload.subagents).toEqual([
+      expect.objectContaining({ id: 'areviewer-6d3cb5b5', state: 'idle' })
+    ])
+  })
+
+  it('resolves a known teammate-shaped stop to done with no cached lead', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('startless-known-teammate-stop', LEAF_ID)
+
+    claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStart',
+      agent_id: 'areviewer-7e4cb6c6',
+      agent_type: 'reviewer'
+    })
+    state.claudeLeadStateByPaneKey.delete(paneKey)
+
+    const stopped = claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStop',
+      agent_id: 'areviewer-7e4cb6c6'
+    })
+
+    expect(stopped?.payload.state).toBe('done')
+    expect(stopped?.payload.subagents).toEqual([
+      expect.objectContaining({ id: 'areviewer-7e4cb6c6', state: 'idle' })
+    ])
+  })
+
   it('resolves a first-event child wait when that child stops', () => {
     const state = createHookListenerState()
     const paneKey = makePaneKey('startless-wait-stop', LEAF_ID)

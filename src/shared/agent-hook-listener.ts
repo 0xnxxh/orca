@@ -2600,12 +2600,20 @@ function normalizeClaudeSubagentLifecycleEvent(
     return null
   }
   let roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
-  let removedChild = false
+  let endedChildWork = false
   if (eventName === 'TeammateIdle') {
     const teammateName = lifecycleId
     // Why: on claude 2.1.21x teammates are turn-based — TeammateIdle means "turn over, awaiting mail", not finished. The row parks as idle (confirmed teammate) instead of leaving, so the sidebar keeps showing resumable children.
     if (roster) {
+      let wasWorking = false
+      for (const [id, tracked] of roster) {
+        if (tracked.state === 'working' && claudeTeammateIdMatchesName(id, teammateName)) {
+          wasWorking = true
+          break
+        }
+      }
       idleClaudeTeammateByName(roster, teammateName)
+      endedChildWork = wasWorking
     }
     clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) =>
       claudeTeammateIdMatchesName(waitingAgentId, teammateName)
@@ -2622,10 +2630,10 @@ function normalizeClaudeSubagentLifecycleEvent(
       )
     } else {
       if (roster) {
-        const hadChild = roster.has(agentId)
+        const wasWorking = roster.get(agentId)?.state === 'working'
         // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
         stopClaudeSubagent(roster, agentId)
-        removedChild = hadChild && !roster.has(agentId)
+        endedChildWork = wasWorking && roster.get(agentId)?.state !== 'working'
       }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
       clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
@@ -2635,7 +2643,8 @@ function normalizeClaudeSubagentLifecycleEvent(
     state.claudeSubagentRosterByPaneKey.delete(paneKey)
   }
   return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
-    removedChild
+    childActivity: eventName === 'SubagentStart',
+    endedChildWork
   })
 }
 
@@ -2734,15 +2743,14 @@ function buildClaudeCachedLeadStatusPayload(
   eventName: unknown,
   paneKey: string,
   hookPayload: Record<string, unknown>,
-  evidence: { removedChild?: boolean } = {}
+  evidence: { childActivity?: boolean; endedChildWork?: boolean } = {}
 ): ParsedAgentStatusPayload | null {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
-  const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
-  if (!lead && !claudeRosterHasWorkingSubagent(roster) && !evidence.removedChild) {
+  if (!lead && !evidence.childActivity && !evidence.endedChildWork) {
     return null
   }
-  // Why: no-lead completion requires an identity-matched removal; delayed unknown stops cannot retire newer work.
-  const leadState = lead?.state ?? (evidence.removedChild ? 'done' : 'working')
+  // Why: no-lead completion requires an identity-matched work ending; delayed unknown stops cannot retire newer work.
+  const leadState = lead?.state ?? (evidence.endedChildWork ? 'done' : 'working')
   return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
     stateName: resolveClaudePaneState(state, paneKey, {
       state: leadState,
@@ -2895,7 +2903,9 @@ function normalizeClaudeEvent(
   if (subagentOriginId) {
     const lead = state.claudeLeadStateByPaneKey.get(paneKey)
     if (lead?.state !== 'waiting' || lead.waitingAgentId !== subagentOriginId) {
-      return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload)
+      return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
+        childActivity: true
+      })
     }
     const isParallelSiblingCompletionDuringChildQuestion =
       (eventName === 'PostToolUse' || eventName === 'PostToolUseFailure') &&
@@ -2903,7 +2913,9 @@ function normalizeClaudeEvent(
       eventToolUseId !== undefined &&
       eventToolUseId !== lead.waitingToolUseId
     if (isParallelSiblingCompletionDuringChildQuestion) {
-      return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload)
+      return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
+        childActivity: true
+      })
     }
     // Why: approval granted — update the tool snapshot (drop the pending card) as the lead's own next tool event would.
     // Restore the stashed lead state, not this child's 'working': the lead may already be done, and the done-gate never upgrades working back to done once the roster drains.

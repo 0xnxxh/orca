@@ -7178,6 +7178,75 @@ describe('Last-status persistence', () => {
     }
   })
 
+  it('does not confirm restored child work from an unrelated stop', async () => {
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    await postHookEvent(
+      firstServer,
+      buildBody({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a0000000000000003',
+        agent_type: 'reviewer'
+      })
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      const restored = server.getStatusSnapshot()[0]
+      expect(restored).toMatchObject({ state: 'working', restoredUnconfirmed: true })
+
+      await postHookEvent(
+        server,
+        buildBody({ hook_event_name: 'SubagentStop', agent_id: 'a0000000000000004' })
+      )
+
+      expect(server.getStatusSnapshot()[0]).toEqual(restored)
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('confirms done when a post-restart idle matches a restored teammate', async () => {
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    await postHookEvent(
+      firstServer,
+      buildBody({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'areviewer-6d3cb5b5',
+        agent_type: 'reviewer'
+      })
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        restoredUnconfirmed: true,
+        subagents: [expect.objectContaining({ id: 'areviewer-6d3cb5b5' })]
+      })
+
+      await postHookEvent(
+        server,
+        buildBody({ hook_event_name: 'TeammateIdle', teammate_name: 'reviewer' })
+      )
+
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'done',
+        subagents: [expect.objectContaining({ id: 'areviewer-6d3cb5b5', state: 'idle' })]
+      })
+      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
   it('lets an identical live OSC observation confirm a hydrated row', async () => {
     const payload = {
       state: 'working' as const,
