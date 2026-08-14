@@ -2003,6 +2003,19 @@ describe('AgentHookServer listener replay', () => {
       },
       'conn-1'
     )
+    server.clearStatusEntriesForConnection('conn-1')
+    server.clearPaneState(PANE)
+    expect(listener).not.toHaveBeenCalled()
+
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        tabId: 'tab-1',
+        worktreeId: 'wt-1',
+        payload: { state: 'working', agentType: 'claude' }
+      },
+      'conn-1'
+    )
     server.dropStatusEntry(PANE)
 
     expect(listener).toHaveBeenCalledExactlyOnceWith(PANE)
