@@ -44,6 +44,7 @@ const pendingStampedTailByPaneKey = new Map<
   string,
   {
     turnCompletedAt: number
+    originCoordinatorId: number
     eligibleWorkingBoundaryByCoordinator: Map<number, number>
   }
 >()
@@ -260,8 +261,22 @@ export function createAgentCompletionCoordinator(
     ) {
       return false
     }
-    pendingStampedTailByPaneKey.delete(options.paneKey)
+    pendingStampedTail.eligibleWorkingBoundaryByCoordinator.delete(coordinatorId)
+    if (pendingStampedTail.eligibleWorkingBoundaryByCoordinator.size === 0) {
+      pendingStampedTailByPaneKey.delete(options.paneKey)
+    }
     return true
+  }
+
+  function consumeStampedTailForCurrentCoordinator(turnCompletedAt: number): void {
+    const pendingStampedTail = pendingStampedTailByPaneKey.get(options.paneKey)
+    if (pendingStampedTail?.turnCompletedAt !== turnCompletedAt) {
+      return
+    }
+    pendingStampedTail.eligibleWorkingBoundaryByCoordinator.delete(coordinatorId)
+    if (pendingStampedTail.eligibleWorkingBoundaryByCoordinator.size === 0) {
+      pendingStampedTailByPaneKey.delete(options.paneKey)
+    }
   }
 
   function hookCompletionAgentIdentity(payload: AgentCompletionStatusSnapshot): string | null {
@@ -933,6 +948,7 @@ export function createAgentCompletionCoordinator(
         if (!alreadyHandled) {
           pendingStampedTailByPaneKey.set(options.paneKey, {
             turnCompletedAt,
+            originCoordinatorId: coordinatorId,
             eligibleWorkingBoundaryByCoordinator: new Map(
               workingBoundaryByPaneKey.get(options.paneKey)
             )
@@ -969,6 +985,10 @@ export function createAgentCompletionCoordinator(
         }
         options.dispatchHookLifecycle?.(payload)
         return
+      }
+      const pendingStampedTail = pendingStampedTailByPaneKey.get(options.paneKey)
+      if (pendingStampedTail?.originCoordinatorId === coordinatorId) {
+        pendingStampedTailByPaneKey.delete(options.paneKey)
       }
       recordWorkingBoundary(payload.stateStartedAt)
       clearPendingHookDone()
@@ -1011,6 +1031,13 @@ export function createAgentCompletionCoordinator(
         consumePendingStampedTailForAgent(hookCompletionAgentIdentity(payload))
       ) {
         // Why: paired host hooks carry the stamp while the sibling OSC coordinator sees only the matching all-clear.
+        lastCompletionIdentity = hookIdentity
+          ? {
+              source: 'hook',
+              identity: hookIdentity,
+              agentIdentity: hookCompletionAgentIdentity(payload)
+            }
+          : null
         options.dispatchHookLifecycle?.(payload)
         return
       }
@@ -1021,9 +1048,7 @@ export function createAgentCompletionCoordinator(
           lastCompletedTurn === currentTurn)
       ) {
         // Why: this `done` is the background all-clear of a turn already announced (or completed from another source). Keep pane lifecycle; do not raise a second banner.
-        if (pendingStampedTailByPaneKey.get(options.paneKey)?.turnCompletedAt === turnCompletedAt) {
-          pendingStampedTailByPaneKey.delete(options.paneKey)
-        }
+        consumeStampedTailForCurrentCoordinator(turnCompletedAt)
         options.dispatchHookLifecycle?.(payload)
         return
       }
