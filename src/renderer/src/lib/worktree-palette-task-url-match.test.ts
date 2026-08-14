@@ -50,6 +50,19 @@ function gitLabRepo(canonicalKey: string): Repo {
   }
 }
 
+/** Basename displayName: the common non-fork case, where only the remote identifies the repo. */
+function gitHubRepo(canonicalKey: string): Repo {
+  return {
+    ...orcaRepo,
+    displayName: 'orca',
+    gitRemoteIdentity: {
+      canonicalKey,
+      remoteName: 'origin',
+      remoteUrl: `git@${canonicalKey.replace('/', ':')}.git`
+    }
+  }
+}
+
 describe('parseCmdJTaskSourceUrl', () => {
   it('parses GitHub issue and pull URLs', () => {
     expect(parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/issues/14198')).toEqual({
@@ -163,6 +176,181 @@ describe('matchWorktreePaletteTaskUrl', () => {
         repo: { ...orcaRepo, displayName: 'Repo 1' }
       })
     ).toMatchObject({ matchedField: 'pr', supportingText: { text: 'PR #12789' } })
+  })
+
+  it('gates a stored GitHub number on the repo remote identity', () => {
+    const intent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/pull/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: gitHubRepo('github.com/other/project')
+      })
+    ).toBeNull()
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: gitHubRepo('github.com/stablyai/orca')
+      })
+    ).toMatchObject({ matchedField: 'pr', supportingText: { text: 'PR #12789' } })
+  })
+
+  it('gates a stored GitHub work item with no URL on the repo remote identity', () => {
+    const intent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/issues/14198')
+    const worktree = makeWorktree({
+      linkedWorkItem: { provider: 'github', type: 'issue', number: 14198, title: 'Bug', url: '' }
+    })
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree,
+        intent: intent!,
+        repo: gitHubRepo('github.com/other/project')
+      })
+    ).toBeNull()
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree,
+        intent: intent!,
+        repo: gitHubRepo('github.com/stablyai/orca')
+      })
+    ).toMatchObject({ matchedField: 'issue' })
+  })
+
+  it('does not match a GitHub URL on a different host for the same owner/repo', () => {
+    const intent = parseCmdJTaskSourceUrl('https://ghe.example.com/stablyai/orca/pull/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: gitHubRepo('github.com/stablyai/orca')
+      })
+    ).toBeNull()
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: gitHubRepo('ghe.example.com/stablyai/orca')
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+  })
+
+  it('normalizes host case, port, and owner case before comparing GitHub identities', () => {
+    const intent = parseCmdJTaskSourceUrl('https://GHE.Example.com:8443/StablyAI/Orca/pull/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: gitHubRepo('ghe.example.com/stablyai/orca')
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+  })
+
+  it('stays permissive for GitHub numbers when the repo remote identity is unknown', () => {
+    const intent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/pull/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: { ...orcaRepo, displayName: 'orca' }
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+    expect(
+      matchWorktreePaletteTaskUrl({ worktree: makeWorktree({ linkedPR: 12789 }), intent: intent! })
+    ).toMatchObject({ matchedField: 'pr' })
+  })
+
+  it('stays permissive for a GitHub fork whose identity resolved to the upstream remote', () => {
+    // `deriveGitRemoteIdentity` prefers `upstream`, so the fork's own `origin` is not visible here.
+    const forkRepo: Repo = {
+      ...gitHubRepo('github.com/stablyai/orca'),
+      gitRemoteIdentity: {
+        canonicalKey: 'github.com/stablyai/orca',
+        remoteName: 'upstream',
+        remoteUrl: 'git@github.com:stablyai/orca.git'
+      }
+    }
+    const intent = parseCmdJTaskSourceUrl('https://github.com/me/orca/pull/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: forkRepo
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+    // An `origin`-derived identity is authoritative, so a different repo still loses.
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: gitHubRepo('github.com/stablyai/orca')
+      })
+    ).toBeNull()
+  })
+
+  it('keeps the GitHub number gate type-aware across repos', () => {
+    const prIntent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/pull/12789')
+    const issueIntent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/issues/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedIssue: 12789 }),
+        intent: prIntent!,
+        repo: gitHubRepo('github.com/stablyai/orca')
+      })
+    ).toBeNull()
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedIssue: 12789 }),
+        intent: issueIntent!,
+        repo: gitHubRepo('github.com/other/project')
+      })
+    ).toBeNull()
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedIssue: 12789 }),
+        intent: issueIntent!,
+        repo: gitHubRepo('github.com/stablyai/orca')
+      })
+    ).toMatchObject({ matchedField: 'issue', supportingText: { text: 'Issue #12789' } })
+  })
+
+  it('keeps an owner/repo displayName authoritative over a host-alias remote', () => {
+    const intent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/pull/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: {
+          ...orcaRepo,
+          gitRemoteIdentity: {
+            canonicalKey: 'git-mirror.example.com/stablyai/orca',
+            remoteName: 'origin',
+            remoteUrl: 'git@git-mirror.example.com:stablyai/orca.git'
+          }
+        }
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+  })
+
+  it('matches a GitHub PR URL via the linked review URL regardless of remote identity', () => {
+    const intent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/pull/12789')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree(),
+        intent: intent!,
+        repo: gitHubRepo('github.com/other/project'),
+        review: {
+          provider: 'github',
+          number: 12789,
+          title: 'Fork PR',
+          state: 'open',
+          url: 'https://github.com/stablyai/orca/pull/12789',
+          status: 'pending',
+          updatedAt: '2026-01-01T00:00:00Z',
+          mergeable: 'UNKNOWN'
+        }
+      })
+    ).toMatchObject({ matchedField: 'pr' })
   })
 
   it('rejects a GitLab MR URL from a different project than the stored URL', () => {

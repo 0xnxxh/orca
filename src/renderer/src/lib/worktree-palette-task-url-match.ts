@@ -75,10 +75,36 @@ function parseOwnerRepoDisplayName(value: string | null | undefined): RepoSlug |
   return { owner: match[1], repo: match[2] }
 }
 
+/** Same shape as `GitRemoteIdentity.canonicalKey`: lowercased host (no port) + `owner/repo`. */
+function githubRemoteKey(slug: RepoSlug): string {
+  const host = (slug.host || 'github.com')
+    .replace(/:\d+$/, '')
+    .replace(/^www\./i, '')
+    .toLowerCase()
+  return `${host}/${slug.owner.toLowerCase()}/${slug.repo.replace(/\.git$/i, '').toLowerCase()}`
+}
+
+function remoteIdentityMatchesGitHubSlug(repo: Repo, slug: RepoSlug): boolean | 'unknown' {
+  const identity = repo.gitRemoteIdentity
+  if (!identity?.canonicalKey) {
+    return 'unknown'
+  }
+  if (identity.canonicalKey.replace(/\/+$/, '').toLowerCase() === githubRemoteKey(slug)) {
+    return true
+  }
+  // Why not false: identity keeps one remote, chosen when the repo was added and never re-probed.
+  // An `upstream` pick means a fork's `origin` existed and is invisible here, so rejecting would
+  // drop URLs from the fork itself. A stale snapshot can still misjudge a renamed repo.
+  return identity.remoteName === 'upstream' ? 'unknown' : false
+}
+
+/** Tri-state: `'unknown'` stays permissive for forks and host aliases. */
 function repoMatchesGitHubSlug(repo: Repo | undefined, slug: RepoSlug): boolean | 'unknown' {
   if (!repo) {
     return 'unknown'
   }
+  // Why displayName first: it is compared host-agnostically, so mirrors and host aliases of the
+  // same owner/repo keep matching; the probed remote only fills in where no name evidence exists.
   const fromName = parseOwnerRepoDisplayName(repo.displayName)
   if (fromName) {
     return githubIdentityKey({ ...fromName, host: slug.host }) === githubIdentityKey(slug)
@@ -86,7 +112,9 @@ function repoMatchesGitHubSlug(repo: Repo | undefined, slug: RepoSlug): boolean 
   if (repo.upstream?.owner && repo.upstream.repo) {
     return githubIdentityKey(repo.upstream) === githubIdentityKey(slug)
   }
-  return 'unknown'
+  // Why: a basename-only displayName is the common non-fork case, and issue/PR numbers are
+  // per-repo, so a bare number must still clear the remote the repo actually points at.
+  return remoteIdentityMatchesGitHubSlug(repo, slug)
 }
 
 export function parseCmdJTaskSourceUrl(query: string): CmdJTaskSourceUrl | null {
