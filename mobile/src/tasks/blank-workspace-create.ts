@@ -16,6 +16,9 @@ export async function createBlankWorkspace(args: {
   createdWithAgentId: TuiAgent | undefined
   comment: string | undefined
   setupDecision: WorkspaceCreateSetupDecision
+  /** True when `baseName` is a generated creature name rather than one the user typed; only then
+   *  may the host retire it. */
+  nameWasGenerated: boolean
   supportsIdempotentCutoverRetry: boolean | Promise<boolean>
 }): Promise<WorktreeCreateResult> {
   return createWorktreeWithNameRetry({
@@ -27,6 +30,7 @@ export async function createBlankWorkspace(args: {
         repo: `id:${args.repoId}`,
         setupDecision: args.setupDecision,
         name,
+        ...(args.nameWasGenerated ? { nameWasGenerated: true } : {}),
         ...agentLaunchCreateFields(args.createdWithAgentId)
       }
       if (args.comment) {

@@ -4867,6 +4867,51 @@ describe('createWorktree base status merge', () => {
     expect(mockApi.worktrees.prefetchCreateBase).not.toHaveBeenCalled()
   })
 
+  it('marks the create payload as a generated name only when the caller says so', async () => {
+    // Why: the host retires generated names permanently, and the creature pool contains ordinary
+    // words ("orca", "runner", "molly"). A name the user typed must stay reusable.
+    const store = createTestStore()
+    mockApi.worktrees.create.mockResolvedValue({
+      worktree: makeWorktree({ id: 'repo1::/path/wt1', repoId: 'repo1', path: '/path/wt1' })
+    })
+
+    await store.getState().createWorktree('repo1', 'nautilus', 'origin/main')
+    expect(mockApi.worktrees.create.mock.calls[0][0]).not.toHaveProperty('nameWasGenerated')
+
+    mockApi.worktrees.create.mockClear()
+    await store
+      .getState()
+      .createWorktree(
+        'repo1',
+        'nautilus',
+        'origin/main',
+        'inherit',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { nameWasGenerated: true }
+      )
+    expect(mockApi.worktrees.create.mock.calls[0][0]).toMatchObject({ nameWasGenerated: true })
+  })
+
   it('passes linked work item and creation agent metadata through the create IPC payload', async () => {
     const store = createTestStore()
     const wt = makeWorktree({

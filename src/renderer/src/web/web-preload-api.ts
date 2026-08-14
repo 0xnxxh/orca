@@ -1772,10 +1772,20 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         withRuntimeWorktreeOwner(worktree, owned.hostId)
       )
     },
-    // Why: retirement is host-owned state with no wire call, and paired hosts update independently
-    // of clients. Returning empty degrades a web-client suggestion to the pre-existing behavior
-    // (a spent name can be offered) rather than inventing an RPC an older host cannot answer.
-    listRetiredNames: async () => [],
+    // Why the catch: a host predating this method answers `method_not_found`, and an empty list
+    // degrades the suggestion to the pre-existing behavior rather than blocking workspace create.
+    listRetiredNames: async ({ repoId }) => {
+      try {
+        const result = await callRuntimeResult<{ retiredNamesByRepo?: Record<string, string[]> }>(
+          'worktree.listRetiredNames',
+          { repo: repoId }
+        )
+        const names = result.retiredNamesByRepo?.[repoId]
+        return Array.isArray(names) ? names.filter((name) => typeof name === 'string') : []
+      } catch {
+        return []
+      }
+    },
     listDetected: async ({ repoId }) => callRuntimeDetectedWorktrees(repoId),
     listAll: () => listAllRuntimeWorktrees(),
     create: async (args) => {

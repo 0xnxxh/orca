@@ -3945,6 +3945,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           const createArgs = {
             repoId,
             name: candidateName,
+            ...(options?.nameWasGenerated ? { nameWasGenerated: true } : {}),
             baseBranch,
             ...(compareBaseRef ? { compareBaseRef } : {}),
             ...(candidateBranchNameOverride

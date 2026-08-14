@@ -34,7 +34,11 @@ export function useRetiredWorktreeNames(
           | { retiredNamesByRepo?: Record<string, string[]> }
           | undefined
         const names = result?.retiredNamesByRepo?.[repoId]
-        setLoaded({ repoId, names: Array.isArray(names) ? names : [] })
+        setLoaded({
+          repoId,
+          // A host can answer with a malformed row; a non-string would throw when normalized.
+          names: Array.isArray(names) ? names.filter((name) => typeof name === 'string') : []
+        })
       })
       .catch(() => {
         if (!cancelled) {

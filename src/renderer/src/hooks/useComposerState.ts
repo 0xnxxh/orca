@@ -1601,8 +1601,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         .join('\0'),
     [repoId, worktreesByRepo]
   )
-  const { names: retiredWorktreeNames, loading: retiredWorktreeNamesLoading } =
-    useRetiredWorktreeNames(repoId, retiredNamesRefreshKey)
+  // Create is never gated on this load: the host skips retired candidates before any git work, so
+  // a pending fetch can only cost a suggestion, never correctness.
+  const { names: retiredWorktreeNames } = useRetiredWorktreeNames(repoId, retiredNamesRefreshKey)
   const fallbackCreatureName = useMemo(
     () => getSuggestedCreatureName(worktreesByRepo, undefined, retiredWorktreeNames),
     [worktreesByRepo, retiredWorktreeNames]
@@ -3580,7 +3581,6 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     }
     if (
       !workspaceSeedName ||
-      retiredWorktreeNamesLoading ||
       selectedRepoRequiresConnection ||
       shouldWaitForSetupCheck ||
       shouldWaitForIssueAutomationCheck ||
@@ -3648,6 +3648,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       if (!workspaceName) {
         return
       }
+      // Why: only a name Orca generated may be retired — the creature pool contains ordinary words
+      // ("orca", "runner", "molly") a user can type deliberately and expect to reuse.
+      const nameWasGenerated = !name.trim() && workspaceName === fallbackCreatureName
       const submitBaseBranch =
         smartGitHubResolution.kind === 'pr-start-point'
           ? smartGitHubResolution.baseBranch
@@ -3898,6 +3901,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         {
           linkedWorkItem: toFolderWorkspaceLinkedTask(submitLinkedWorkItem),
           linkedTaskSourceContext: taskSourceContext,
+          nameWasGenerated,
           ...(!backendStartup && startupPlan?.draftPrompt
             ? { startupDraft: startupPlan.draftPrompt }
             : {})
@@ -4044,9 +4048,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     shouldWaitForIssueAutomationCheck,
     shouldWaitForSetupCheck,
     sourceIntentBlocksCreate,
-    retiredWorktreeNamesLoading,
     taskSourceContext,
     workspaceSeedName,
+    fallbackCreatureName,
     isProjectGroupTarget,
     submitFolderTarget
   ])
@@ -4095,7 +4099,6 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       }
       if (
         !workspaceNameSeed ||
-        retiredWorktreeNamesLoading ||
         sourceIntentBlocksCreate ||
         selectedRepoRequiresConnection ||
         (requiresExplicitSetupChoice && !setupDecision) ||
@@ -4184,6 +4187,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         if (!workspaceName) {
           return
         }
+        // Why: only a name Orca generated may be retired — see the full-composer submit path.
+        const nameWasGenerated = !name.trim() && workspaceName === fallbackCreatureName
         const smartSubmitBaseBranch =
           smartGitHubResolution.kind === 'pr-start-point'
             ? smartGitHubResolution.baseBranch
@@ -4512,6 +4517,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           linkedTaskSourceContext: taskSourceContext,
           ...(workspaceRunContext ? { workspaceRunContext } : {}),
           name: workspaceName,
+          ...(nameWasGenerated ? { nameWasGenerated: true } : {}),
           ...(createDisplayName ? { displayName: createDisplayName } : {}),
           ...(selectedRepoIsGit && submitBaseBranch ? { baseBranch: submitBaseBranch } : {}),
           ...(selectedRepoIsGit && submitCompareBaseRef
@@ -4632,7 +4638,6 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       settings?.openAgentTabsInChatByDefault,
       smartNameMode,
       sourceIntentBlocksCreate,
-      retiredWorktreeNamesLoading,
       disabledTuiAgents,
       setupDecision,
       sparseEnabled,
@@ -4666,10 +4671,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     sparseError
   }
   const repoCreateDisabled =
-    retiredWorktreeNamesLoading ||
-    (createGateMode === 'quick'
+    createGateMode === 'quick'
       ? getQuickComposerCreateDisabled(createGateInput)
-      : getFullComposerCreateDisabled(createGateInput))
+      : getFullComposerCreateDisabled(createGateInput)
   const createDisabled = isProjectGroupTarget ? folderCreateDisabled : repoCreateDisabled
   const cardProps: ComposerCardProps = {
     eligibleRepos: isProjectGroupTarget ? folderSourceRepos : eligibleRepos,
