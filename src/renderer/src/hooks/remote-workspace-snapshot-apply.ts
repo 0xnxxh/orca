@@ -130,6 +130,22 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
       replaceWorkspaceKeys
     })
     currentStore.hydrateTabsSession(merged, { replaceWorkspaceKeys })
+    // KNOWN DEFECT, deliberately not repaired here (STA-3077 follow-up).
+    //
+    // A remote snapshot is terminal-only: `RemoteWorkspaceSession` has no `unifiedTabs` or
+    // `tabGroups` field to carry, so replacing `tabsByWorktree` leaves the tab model inconsistent
+    // in BOTH directions — remote tabs that no group's `tabOrder` names, and group entries naming
+    // a local tab whose record the replace removed. The tab bar renders from `tabOrder`, so those
+    // tabs exist and are invisible. Same user-visible symptom as the partition-upgrade bug, but
+    // reachable with no partition at all: a fresh client, a reset profile, or tabs created from
+    // another client. The load-time partition hoist does NOT cover it.
+    //
+    // `reconcileWorktreeTabModel` already adopts reconnectable records and prunes unrenderable
+    // ones, and calling it here is the obvious fix — but doing so breaks
+    // "converges the active-terminal repair instead of re-running it forever", i.e. it reopens a
+    // repair loop. Any fix has to converge; the durable answer is probably to teach the snapshot
+    // to carry the group model, which is a capability-negotiated wire change.
+    //
     // Why: direct SSH snapshots project terminal state only; global editor/browser hydration would reset unrelated hosts.
     currentStore.markRemoteWorkspaceHydrated(authority.targetId)
     currentStore.setRemoteWorkspaceSyncStatus(authority.targetId, {
