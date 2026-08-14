@@ -44,6 +44,15 @@ async function createStore(state: Record<string, unknown> = {}) {
   return new Store()
 }
 
+/** Reopen the SAME profile — the upgrade launch. The hoist migration runs at load, so a test that
+ *  writes the partition into an already-loaded store would never exercise it. */
+async function reopenStore() {
+  vi.resetModules()
+  const { Store, initDataPath } = await import('./persistence')
+  initDataPath()
+  return new Store()
+}
+
 /** One SSH pane, exactly as the partitioned build persisted it. */
 function paneSession() {
   return {
@@ -71,14 +80,18 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
   })
 
   it('is still bound on reattach after upgrading to a build that reads local', async () => {
-    // Only the ssh partition holds the pane — the shape an upgrading user actually carries.
-    // Written through the store, the way the partitioned build wrote it.
-    const store = await createStore()
-    store.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    // The old build: pane membership written into the ssh partition, nothing in local.
+    const before = await createStore()
+    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    expect(
+      before.getWorkspaceSession(SSH_PARTITION).tabsByWorktree?.[WORKTREE],
+      'the ssh partition never received the pane, so this proves nothing'
+    ).toHaveLength(1)
+    expect(before.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(0)
+    before.flushOrThrow()
 
-    // Anti-vacuity: the pane really is in the ssh partition and really is absent from local.
-    expect(store.getWorkspaceSession(SSH_PARTITION).tabsByWorktree?.[WORKTREE]).toHaveLength(1)
-    expect(store.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(0)
+    // The upgrade launch.
+    const store = await reopenStore()
 
     // The reattach bind: no hostId, refuses to create.
     const bound = store.persistPtyBinding({
@@ -99,8 +112,10 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
   // `mayCreate` existed, the same state re-created the tab instead of discarding it. That is what
   // "before, many of the tabs were retained" described — they were being recreated.
   it('was recreated rather than discarded before the refusal was introduced', async () => {
-    const store = await createStore()
-    store.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    const before = await createStore()
+    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    before.flushOrThrow()
+    const store = await reopenStore()
 
     const bound = store.persistPtyBinding({
       worktreeId: WORKTREE,

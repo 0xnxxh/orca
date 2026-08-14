@@ -2849,6 +2849,70 @@ export type PtyBindingSourceExpectation = {
   incarnationId?: string
 }
 
+
+/**
+ * Fold SSH pane membership left in `workspaceSessionsByHostId["ssh:<target>"]` into the local
+ * session, which is the only plane the binding writer maintains.
+ *
+ * Why this has to exist: consolidating the two planes removed the writer but not the data. A pane
+ * the local session has never heard of looks new to `persistPtyBinding`, and reattach passes
+ * `mayCreate: false`, so the binding is refused and rolled back — for every pane the upgrading
+ * user had open. Local always wins; the partition only supplies panes local does not already know.
+ */
+export function hoistSshPartitionsIntoLocalSession(state: PersistedState): boolean {
+  const partitions = state.workspaceSessionsByHostId
+  if (!partitions) {
+    return false
+  }
+  const local = state.workspaceSession
+  if (!local) {
+    return false
+  }
+  let changed = false
+  for (const [hostId, partition] of Object.entries(partitions)) {
+    if (!hostId.startsWith('ssh:') || !partition) {
+      continue
+    }
+    for (const [worktreeId, tabs] of Object.entries(partition.tabsByWorktree ?? {})) {
+      const existing = local.tabsByWorktree?.[worktreeId] ?? []
+      const known = new Set(existing.map((tab) => tab.id))
+      const missing = (tabs ?? []).filter((tab) => !known.has(tab.id))
+      if (missing.length === 0) {
+        continue
+      }
+      local.tabsByWorktree = { ...local.tabsByWorktree, [worktreeId]: [...existing, ...missing] }
+      changed = true
+    }
+    for (const [tabId, layout] of Object.entries(partition.terminalLayoutsByTabId ?? {})) {
+      if (!layout || local.terminalLayoutsByTabId?.[tabId]) {
+        continue
+      }
+      local.terminalLayoutsByTabId = { ...local.terminalLayoutsByTabId, [tabId]: layout }
+      changed = true
+    }
+    for (const [paneKey, incarnationId] of Object.entries(
+      partition.terminalPtyIncarnationsByPaneKey ?? {}
+    )) {
+      if (local.terminalPtyIncarnationsByPaneKey?.[paneKey] !== undefined) {
+        continue
+      }
+      local.terminalPtyIncarnationsByPaneKey = {
+        ...local.terminalPtyIncarnationsByPaneKey,
+        [paneKey]: incarnationId
+      }
+      changed = true
+    }
+    for (const [worktreeId, tabId] of Object.entries(partition.activeTabIdByWorktree ?? {})) {
+      if (local.activeTabIdByWorktree?.[worktreeId] !== undefined) {
+        continue
+      }
+      local.activeTabIdByWorktree = { ...local.activeTabIdByWorktree, [worktreeId]: tabId }
+      changed = true
+    }
+  }
+  return changed
+}
+
 export class Store {
   private state: PersistedState
   private readonly dataFile: string
@@ -3936,6 +4000,14 @@ export class Store {
       this.githubCacheDirty = true
     } else {
       migrated.githubCache = readGithubCacheSnapshot(this.dataFile) ?? migrated.githubCache
+    }
+
+    // Why: earlier builds wrote SSH pane membership into `ssh:<target>` partitions; this build's
+    // binding writer is local-only and its reattach refuses to create, so an unhoisted partition
+    // means every pane is refused and the user's tabs are discarded. Runs on the final state so a
+    // later migration cannot replace the session object out from under it.
+    if (hoistSshPartitionsIntoLocalSession(migrated)) {
+      this.loadNeedsSave = true
     }
 
     logPersistenceStartupMilestone('persistence-load-done', {
