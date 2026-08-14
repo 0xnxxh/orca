@@ -190,20 +190,18 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
       // reachable: the reconnect races a 30s timeout that aborts, and its rejection path is
       // swallowed, so both fall through to here.
       //
-      // The safety net does not save it, and NOT for the reason it first appears. The deferred-id
-      // seeding lives in `reconnectPersistedTerminals` (terminals.ts:4283-4318) — inside the very
-      // call the timeout aborts — not in `hydrateWorkspaceSession`. It early-returns on
-      // `signal?.aborted` (:4321-4326) BEFORE committing the map at :4349, so on this race no
-      // deferred id is written at all, whatever the connection state. Worse, when `options` is
-      // present — and the snapshot path always passes `directSshAuthority` — it first STRIPS
-      // existing deferred entries for the scoped tabs (:4283-4289), removing an already-seeded net
-      // before deciding whether to re-seed. So `terminalTabHasReconnectablePty` sees nothing and
-      // the orphan sweep wipes every worktree in `replaceWorkspaceKeys`, including background ones
-      // the user never opened. Losing tabs on a slow reconnect is worse than tabs that need a
-      // click to reappear.
+      // The safety net does not save it. The deferred-id seeding lives in
+      // `reconnectPersistedTerminals` (terminals.ts:4172-4350), not in `hydrateWorkspaceSession`.
+      // On the reachable case — a snapshot arriving over a CONNECTED target — the `sshConnected`
+      // check at terminals.ts:4308 skips seeding, and the commit at :4341-4350 strips
+      // `pendingReconnectPtyIdByTabId` for the scoped tabs. `terminalTabHasReconnectablePty` then
+      // sees nothing and the orphan sweep wipes every worktree in `replaceWorkspaceKeys`,
+      // including background ones the user never opened. Losing tabs on a snapshot is worse than
+      // tabs that need a click to reappear.
       //
-      // Gating on the `sshConnected` check at terminals.ts:4308 alone does NOT cover this — the
-      // abort early-return at :4321 fires first.
+      // Note the abort/timeout race is NOT the dangerous path: its early return at :4321-4326
+      // skips that same commit, so the pending ids survive and the predicate stays true.
+      // `sshConnected` is the gate a fix has to address.
       //
       // A fix must gate on reconnect having actually bound something, and needs a test for the
       // failed-reconnect path, which nothing covers today.
