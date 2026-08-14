@@ -45,6 +45,52 @@ function testDeps(args: { sessions?: PtyListedSession[]; structured?: boolean })
 }
 
 describe('worktree agent activation gate', () => {
+  it('uses immediately ready development restore inventory', async () => {
+    const ptyId = `${WORKTREE_ID}@@live-pty`
+    const { deps, createTab, resume } = testDeps({ sessions: [listed(ptyId)] })
+    const awaitReady = vi.fn(async () => true)
+
+    await expect(
+      runWorktreeAgentActivationGate(WORKTREE_ID, { ...deps, awaitReady })
+    ).resolves.toBe('adopted')
+
+    expect(awaitReady).toHaveBeenCalledOnce()
+    expect(createTab).toHaveBeenCalledOnce()
+    expect(resume).not.toHaveBeenCalled()
+  })
+
+  it('waits for packaged restore hydration before reading daemon inventory', async () => {
+    const ptyId = `${WORKTREE_ID}@@live-pty`
+    const { deps, createTab, resume } = testDeps({ sessions: [listed(ptyId)] })
+    let releaseReady!: (ready: boolean) => void
+    const awaitReady = vi.fn(() => new Promise<boolean>((resolve) => (releaseReady = resolve)))
+
+    const activation = runWorktreeAgentActivationGate(WORKTREE_ID, { ...deps, awaitReady })
+    await vi.waitFor(() => expect(awaitReady).toHaveBeenCalledOnce())
+    expect(deps.listSessions).not.toHaveBeenCalled()
+
+    releaseReady(true)
+    await expect(activation).resolves.toBe('adopted')
+    expect(deps.listSessions).toHaveBeenCalledOnce()
+    expect(createTab).toHaveBeenCalledOnce()
+    expect(resume).not.toHaveBeenCalled()
+  })
+
+  it('blocks automatic resume when packaged restore never becomes ready', async () => {
+    const { deps, createTab, resume } = testDeps({})
+
+    await expect(
+      runWorktreeAgentActivationGate(WORKTREE_ID, {
+        ...deps,
+        awaitReady: async () => false
+      })
+    ).resolves.toBe('blocked')
+
+    expect(deps.listSessions).not.toHaveBeenCalled()
+    expect(createTab).not.toHaveBeenCalled()
+    expect(resume).not.toHaveBeenCalled()
+  })
+
   it('adopts a live daemon PTY before activation can resume another agent', async () => {
     const ptyId = `${WORKTREE_ID}@@live-pty`
     const { deps, createTab, resume } = testDeps({ sessions: [listed(ptyId)] })

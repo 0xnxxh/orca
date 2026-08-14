@@ -30,6 +30,7 @@ function baseState(worktree: ReturnType<typeof makeWorktree>): Partial<AppState>
     worktreesByRepo: { 'repo-1': [worktree] },
     activeRepoId: 'repo-1',
     activeView: 'terminal',
+    workspaceSessionReady: true,
     tabsByWorktree: {},
     unifiedTabsByWorktree: {},
     groupsByWorktree: {},

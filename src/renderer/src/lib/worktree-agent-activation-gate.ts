@@ -12,6 +12,7 @@ type ActivationStore = Pick<
 
 type ActivationGateDeps = {
   getState: () => ActivationStore
+  awaitReady?: () => Promise<boolean>
   listSessions: () => Promise<PtyListedSession[]>
   hasStructuredSession?: (worktreeId: string) => Promise<boolean>
   resume: (worktreeId: string) => number
@@ -20,6 +21,33 @@ type ActivationGateDeps = {
 export type WorktreeAgentActivationOutcome = 'adopted' | 'structured' | 'resumed' | 'blocked'
 
 const inFlightByWorktreeId = new Map<string, Promise<WorktreeAgentActivationOutcome>>()
+const WORKSPACE_SESSION_READY_TIMEOUT_MS = 30_000
+
+function waitForWorkspaceSessionReady(): Promise<boolean> {
+  if (useAppStore.getState().workspaceSessionReady) {
+    return Promise.resolve(true)
+  }
+  return new Promise((resolve) => {
+    let unsubscribe: (() => void) | null = null
+    const settle = (ready: boolean) => {
+      clearTimeout(timeout)
+      unsubscribe?.()
+      resolve(ready)
+    }
+    const timeout = setTimeout(
+      () => settle(useAppStore.getState().workspaceSessionReady),
+      WORKSPACE_SESSION_READY_TIMEOUT_MS
+    )
+    unsubscribe = useAppStore.subscribe((state) => {
+      if (state.workspaceSessionReady) {
+        settle(true)
+      }
+    })
+    if (useAppStore.getState().workspaceSessionReady) {
+      settle(true)
+    }
+  })
+}
 
 export function workspaceHasSleepingAgentSessions(
   state: Pick<ReturnType<typeof useAppStore.getState>, 'sleepingAgentSessionsByPaneKey'>,
@@ -56,6 +84,13 @@ export async function runWorktreeAgentActivationGate(
   worktreeId: string,
   deps: ActivationGateDeps
 ): Promise<WorktreeAgentActivationOutcome> {
+  try {
+    if (deps.awaitReady && !(await deps.awaitReady())) {
+      return 'blocked'
+    }
+  } catch {
+    return 'blocked'
+  }
   let sessions: PtyListedSession[]
   try {
     sessions = await deps.listSessions()
@@ -105,6 +140,7 @@ export function gateWorktreeAgentActivation(
   }
   const gate = runWorktreeAgentActivationGate(worktreeId, {
     getState: () => useAppStore.getState(),
+    awaitReady: waitForWorkspaceSessionReady,
     listSessions: () =>
       typeof window === 'undefined' ? Promise.resolve([]) : window.api.pty.listSessions(),
     hasStructuredSession: async (candidate) => {
