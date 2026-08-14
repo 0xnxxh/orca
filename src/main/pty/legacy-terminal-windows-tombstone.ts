@@ -82,6 +82,14 @@ if not defined orca_real (
 exit /b %ERRORLEVEL%
 
 :orca_normalize_legacy_dir
+rem Why the rooted test first: full-path expansion resolves a relative value against the current
+rem directory, so a
+rem relative ORCA_ATTRIBUTION_SHIM_DIR would let the cwd decide which PATH entry counts as the
+rem legacy directory and get a legitimate one skipped. Leaving the normalized value unset makes
+rem the reject subroutine below a no-op, which is the safe outcome.
+set "orca_probe=%orca_legacy_wrapper_dir%"
+call :orca_check_rooted
+if not defined orca_rooted exit /b
 for %%G in ("%orca_legacy_wrapper_dir%") do set "orca_legacy_norm=%%~fG"
 rem Why: full-path expansion preserves a trailing separator; normalize before comparing.
 if "%orca_legacy_norm:~-1%."=="%orca_sep%." set "orca_legacy_norm=%orca_legacy_norm:~0,-1%"
@@ -138,6 +146,9 @@ if defined orca_clean_path (set "orca_clean_path=%orca_clean_path%;%orca_entry%"
 exit /b
 
 :orca_reject_legacy_dir
+rem Why: an unrooted legacy dir leaves this unset, and comparing against a bare separator could
+rem only ever misfire.
+if not defined orca_legacy_norm exit /b
 if /I "%orca_path_entry_dir%"=="%orca_legacy_norm%\" set "orca_skip_entry=1"
 exit /b
 `

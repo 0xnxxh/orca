@@ -146,11 +146,16 @@ filter_path() {
       # Why: an empty or relative PATH element resolves against the current directory, so keeping
       # it would let a repository-local git/gh win the lookup below.
       :
-    elif [[ -n "$legacy_target" && ( "$normalized" == "$legacy_target" || "$entry" -ef "$legacy_target" ) ]]; then
-      # Why both tests: -ef compares filesystem identity, so it catches the same directory reached
-      # through a symlink or a /legacy/../legacy spelling that the lexical compare misses. It is
-      # false when either path no longer exists, which is exactly when the lexical compare still
-      # holds, so neither alone is enough.
+    elif [[ -n "$legacy_target" && "$normalized" == "$legacy_target" ]]; then
+      :
+    elif [[ "$legacy_target" == /* && "$entry" -ef "$legacy_target" ]]; then
+      # Why -ef as well as the lexical test above: it compares filesystem identity, so it catches
+      # the same directory reached through a symlink or a /legacy/../legacy spelling. It is false
+      # when either path is gone, which is when the lexical test still holds, so neither alone is
+      # enough.
+      # Why only for an absolute target: bash resolves a relative -ef operand against the current
+      # directory, so a relative ORCA_ATTRIBUTION_SHIM_DIR let the cwd decide which PATH entry
+      # counted as the legacy directory and got a legitimate one skipped.
       :
     elif [[ "$entry" -ef "$wrapper_dir" ]]; then
       :

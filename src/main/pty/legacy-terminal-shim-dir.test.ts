@@ -364,6 +364,62 @@ describe('legacy terminal shim neutralization', () => {
     expect(windowsEnv.Path).toBe('C:\\Windows')
   })
 
+  itOnPosix(
+    'ignores a relative legacy shim directory instead of resolving it against the cwd',
+    () => {
+      // Why: bash resolves a relative -ef operand against the wrapper's current directory, so a
+      // relative ORCA_ATTRIBUTION_SHIM_DIR let the cwd decide which PATH entry counted as the legacy
+      // directory. Reproduced as SAFE vs LATER purely by changing the cwd.
+      const userData = makeUserDataDir()
+      const posixDir = join(userData, 'orca-terminal-attribution', 'posix')
+      const safeBin = join(userData, 'safe-bin')
+      const laterBin = join(userData, 'later-bin')
+      for (const dir of [posixDir, safeBin, laterBin]) {
+        mkdirSync(dir, { recursive: true })
+      }
+      writeFileSync(join(posixDir, 'git'), 'legacy attribution wrapper')
+
+      neutralizeLegacyTerminalShimDir(userData)
+
+      writeFileSync(join(safeBin, 'git'), "#!/bin/bash\nprintf 'SAFE\\n'\n", { mode: 0o755 })
+      writeFileSync(join(laterBin, 'git'), "#!/bin/bash\nprintf 'LATER\\n'\n", { mode: 0o755 })
+
+      const outputs = [userData, join(userData, 'orca-terminal-attribution')].map((cwd) => {
+        const run = spawnSync(join(posixDir, 'git'), ['--version'], {
+          cwd,
+          env: {
+            ...process.env,
+            ORCA_ATTRIBUTION_SHIM_DIR: 'safe-bin',
+            PATH: `${safeBin}:${laterBin}:/usr/bin:/bin`
+          },
+          encoding: 'utf8',
+          timeout: 20_000
+        })
+        return run.stdout.trim()
+      })
+
+      // Why identical: which binary runs must not depend on where the wrapper was invoked from.
+      expect(outputs[0]).toBe(outputs[1])
+      expect(outputs[0]).toBe('SAFE')
+    }
+  )
+
+  it('keeps a POSIX directory whose name ends in a backslash', () => {
+    // Why: a backslash is a legal filename character on POSIX. Treating it as a separator made
+    // `/tmp/captured\` and `/tmp/captured` compare equal and deleted a real directory from PATH.
+    const env = {
+      PATH: '/tmp/captured\\',
+      ORCA_ATTRIBUTION_SHIM_DIR: '/tmp/captured'
+    }
+    stripLegacyTerminalShimEnv(env, 'linux')
+    expect(env.PATH).toBe('/tmp/captured\\')
+
+    // Why the Windows half: there a backslash really is a separator, so it must still be stripped.
+    const windowsEnv = { Path: 'C:\\captured\\', ORCA_ATTRIBUTION_SHIM_DIR: 'C:\\captured' }
+    stripLegacyTerminalShimEnv(windowsEnv, 'win32')
+    expect(windowsEnv.Path).toBeUndefined()
+  })
+
   itOnPosix('does not fall back to the cwd when every PATH entry is filtered out', () => {
     // Why: with the shim dir as the only entry the cleaned PATH is empty; without the
     // path_entry_kept guard the lookup runs against that empty PATH and finds a cwd-local git.

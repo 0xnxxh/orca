@@ -146,7 +146,7 @@ function writeFileAtomically(filePath: string, contents: string, mode: number): 
 // literal compare itself has to stay: a shim path may contain the PATH delimiter, which splitting
 // would fragment.
 function pathEntrySpellings(dir: string, windows: boolean): string[] {
-  const base = stripTrailingSeparators(dir)
+  const base = stripTrailingSeparators(dir, windows)
   if (!base) {
     return [dir]
   }
@@ -166,7 +166,10 @@ function pathEntrySpellings(dir: string, windows: boolean): string[] {
 // pass-through tombstone, and the tombstone excludes its own directory by -ef, so the lookup still
 // reaches the real git.
 export function isLegacyTerminalShimPathEntry(entry: string): boolean {
-  const normalized = stripTrailingSeparators(entry.replaceAll('\\', '/')).toLowerCase()
+  // Why `windows` unconditionally here: this classifier only ever matches Orca's own
+  // `orca-terminal-attribution/{posix,win32}` layout, and a Windows PATH can reach it through the
+  // remote env, so both slash styles must be understood regardless of the local platform.
+  const normalized = stripTrailingSeparators(entry.replaceAll('\\', '/'), true).toLowerCase()
   return (
     normalized.endsWith(`/${LEGACY_SHIM_ROOT_DIR}/posix`) ||
     normalized.endsWith(`/${LEGACY_SHIM_ROOT_DIR}/win32`)
@@ -175,14 +178,17 @@ export function isLegacyTerminalShimPathEntry(entry: string): boolean {
 
 // Why: `pathEntrySpellings` can only enumerate one added separator, so an entry repeating it
 // survived the literal removal. Comparing separator-stripped forms covers any number of them.
-function stripTrailingSeparators(value: string): string {
-  return value.replace(/[\\/]+$/, '')
+// Why platform-specific: a backslash is a legal filename character on POSIX, so treating it as a
+// separator there made `/tmp/captured\` and `/tmp/captured` compare equal and deleted a real
+// directory from PATH.
+function stripTrailingSeparators(value: string, windows: boolean): string {
+  return value.replace(windows ? /[\\/]+$/ : /\/+$/, '')
 }
 
 function namesCapturedShimDir(entry: string, shimDirs: string[], windows: boolean): boolean {
-  const candidate = stripTrailingSeparators(entry)
+  const candidate = stripTrailingSeparators(entry, windows)
   return shimDirs.some((shimDir) => {
-    const target = stripTrailingSeparators(shimDir)
+    const target = stripTrailingSeparators(shimDir, windows)
     return target
       ? windows
         ? candidate.toLowerCase() === target.toLowerCase()
