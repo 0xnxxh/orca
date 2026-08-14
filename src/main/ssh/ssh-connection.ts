@@ -1265,14 +1265,12 @@ export class SshConnection {
         displayHost: hostKeyLookupHost,
         strictHostKeyChecking: hostKeyResolved?.strictHostKeyChecking ?? 'ask',
         isEphemeralRuntimeTarget: this.target.owner?.type === 'on-demand-runtime',
-        // No readable source at all is not evidence of a new host — it is the absence of evidence,
-        // and recording trust from it would let a changed key be accepted the one time we could not
-        // check. Reuses the strict path rather than adding a fifth outcome.
-        siteConfigSuppressed:
-          siteConfigSuppressed ||
-          (knownHostsEvidence.configuredFileCount > 0 &&
-            knownHostsEvidence.readableFileCount === 0 &&
-            trustedHostKeys.length === 0),
+        // A source that exists but will not open is the absence of evidence, not evidence of a new
+        // host: the entry that would have said "this key changed" may be in the file we could not
+        // read, so recording trust would accept a changed key the one time we could not check.
+        // Reuses the strict path rather than adding a fifth outcome. An ABSENT file is not this —
+        // that is the normal state for a fresh profile and genuinely means nothing is known.
+        siteConfigSuppressed: siteConfigSuppressed || knownHostsEvidence.unreadableFileCount > 0,
         entries: knownHostsEntries,
         isTrusted: ({ host, port, keyType, key }) => {
           const forHost = trustedHostKeys.filter(

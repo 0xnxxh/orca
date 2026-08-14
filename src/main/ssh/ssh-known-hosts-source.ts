@@ -43,12 +43,15 @@ export async function loadKnownHostsEntries(files: readonly string[]): Promise<K
 export type KnownHostsEvidence = {
   entries: KnownHostsEntry[]
   /**
-   * How many configured files we could actually read. Zero is NOT the same as "this host is
-   * unknown": if every source is unreadable we have no evidence at all, and treating that as first
-   * contact would silently accept a changed key. The caller must refuse to record trust then.
+   * Files that EXIST but could not be read — a permissions problem, a directory, an I/O error.
+   *
+   * Deliberately not "files that produced no entries": a file that is simply absent is the normal
+   * state (ssh creates known_hosts on its own first connect, and most Orca profiles start without
+   * one), and it is real evidence that no host is known. A file that exists and refuses to open is
+   * the opposite — evidence withheld, so an entry that would have said "this key changed" may be
+   * sitting in it. The caller must not record trust while any source is silent that way.
    */
-  readableFileCount: number
-  configuredFileCount: number
+  unreadableFileCount: number
 }
 
 export async function loadKnownHostsEvidence(
@@ -57,18 +60,16 @@ export async function loadKnownHostsEvidence(
   const perFile = await Promise.all(
     files.map(async (path) => {
       try {
-        return { entries: parseKnownHosts(await readFile(path, 'utf8')), readable: true }
-      } catch {
-        // Missing, unreadable or a directory. A file we cannot read contributes no trust; the
-        // remaining files still decide, and the count tells the caller whether any spoke at all.
-        return { entries: [] as KnownHostsEntry[], readable: false }
+        return { entries: parseKnownHosts(await readFile(path, 'utf8')), unreadable: false }
+      } catch (err) {
+        const absent = (err as NodeJS.ErrnoException).code === 'ENOENT'
+        return { entries: [] as KnownHostsEntry[], unreadable: !absent }
       }
     })
   )
   return {
     entries: perFile.flatMap((file) => file.entries),
-    readableFileCount: perFile.filter((file) => file.readable).length,
-    configuredFileCount: files.length
+    unreadableFileCount: perFile.filter((file) => file.unreadable).length
   }
 }
 

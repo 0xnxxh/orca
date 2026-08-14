@@ -7,6 +7,7 @@ import { matchKnownHosts, readHostKeyType, type KnownHostsEntry } from './ssh-kn
 import {
   defaultKnownHostsFiles,
   loadKnownHostsEntries,
+  loadKnownHostsEvidence,
   resolveKnownHostsFiles,
   resolveKnownHostsLookupHost
 } from './ssh-known-hosts-source'
@@ -212,6 +213,71 @@ describe('loadKnownHostsEntries', () => {
     const root = await createRoot()
 
     await expect(loadKnownHostsEntries([join(root, 'absent')])).resolves.toEqual([])
+  })
+})
+
+// The caller turns this count into a refusal, so the line between the two cases is the line between
+// "every connection works" and "no connection works".
+describe('loadKnownHostsEvidence', () => {
+  // A profile that has never connected has no known_hosts — ssh writes one on its own first
+  // connect. Counting that as a source we failed to read would refuse every first connection every
+  // new user ever makes.
+  it('does not count an absent file as unreadable', async () => {
+    const root = await createRoot()
+
+    const evidence = await loadKnownHostsEvidence([
+      join(root, 'known_hosts'),
+      join(root, 'known_hosts2')
+    ])
+
+    expect(evidence.unreadableFileCount).toBe(0)
+    expect(evidence.entries).toEqual([])
+  })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'counts a file that exists but will not open',
+    async () => {
+      const root = await createRoot()
+      const unreadable = join(root, 'known_hosts')
+      await writeFile(unreadable, hostLine('secret.example', ED_B))
+      await chmod(unreadable, 0o000)
+
+      const evidence = await loadKnownHostsEvidence([unreadable])
+
+      // The entry that would have said "this key changed" could be in here; we cannot tell.
+      expect(evidence.unreadableFileCount).toBe(1)
+    }
+  )
+
+  it('counts a path that is a directory', async () => {
+    const root = await createRoot()
+    await mkdir(join(root, 'a_directory'))
+
+    const evidence = await loadKnownHostsEvidence([join(root, 'a_directory')])
+
+    expect(evidence.unreadableFileCount).toBe(1)
+  })
+
+  it('reports nothing unreadable when every file parses', async () => {
+    const root = await createRoot()
+    const present = join(root, 'known_hosts')
+    await writeFile(present, hostLine('alpha.example', ED_A))
+
+    const evidence = await loadKnownHostsEvidence([present])
+
+    expect(evidence.unreadableFileCount).toBe(0)
+    expect(evidence.entries).toHaveLength(1)
+  })
+
+  // An empty file is a file we read successfully. Nothing is withheld, so nothing is suppressed.
+  it('does not count an empty file as unreadable', async () => {
+    const root = await createRoot()
+    const empty = join(root, 'known_hosts')
+    await writeFile(empty, '')
+
+    const evidence = await loadKnownHostsEvidence([empty])
+
+    expect(evidence.unreadableFileCount).toBe(0)
   })
 })
 

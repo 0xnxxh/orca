@@ -461,6 +461,25 @@ describe('SshConnection', () => {
     expect(conn.getState().error).toMatch(/host key verification failed/i)
   })
 
+  // Everyone's first connection happens before ~/.ssh/known_hosts exists — ssh creates it on its
+  // own first connect. Treating a file that was never there as a source we failed to read would
+  // refuse every connection a new profile ever makes, which is how a fail-closed rule turns into a
+  // product that does not work.
+  it('connects on first contact when no known_hosts file exists yet', async () => {
+    const emptyHome = mkdtempSync(join(tmpdir(), 'orca-ssh-home-'))
+    vi.stubEnv('HOME', emptyHome)
+
+    try {
+      const conn = new SshConnection(createTarget(), createCallbacks())
+      await conn.connect()
+
+      expect(lastHostKeyAccepted).toBe(true)
+      expect(conn.getState().status).toBe('connected')
+    } finally {
+      rmSync(emptyHome, { recursive: true, force: true })
+    }
+  })
+
   // Retrying re-derives the same decision, so a ladder that treated this as transient would back off
   // against a host it has already refused until it gave up — burying the reason.
   it('does not retry a refused host key', async () => {
