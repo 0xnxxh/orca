@@ -162,5 +162,3 @@ export function SourceControlBranchTreeDirectoryRow({
     </div>
   )
 }
-
-// Why: use git decoration tokens so counts follow the documented light/dark status palette.
