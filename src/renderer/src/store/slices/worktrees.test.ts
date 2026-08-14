@@ -140,6 +140,9 @@ const mockApi = {
   hooks: {
     check: vi.fn().mockResolvedValue({ hasHooks: false, hooks: null, mayNeedUpdate: false })
   },
+  workspaceCleanup: {
+    recordRemovalSnapshotPrune: vi.fn().mockResolvedValue(undefined)
+  },
   runtimeEnvironments: {
     call: runtimeEnvironmentTransportCall
   },
@@ -2360,6 +2363,42 @@ describe('fetchWorktrees', () => {
 
     // The backend can reuse persisted instance metadata for the same path.
     expect(hasDismissedHugeRepoWarning(beginHugeRepoWarningProbe(hidden))).toBe(false)
+  })
+
+  it('refreshes only repos owned by the changed visibility-default host', async () => {
+    const store = createTestStore()
+    mockApi.worktrees.listDetected.mockImplementationOnce(async (args) =>
+      qualifyDetectedResult(args, makeDetectedResult(args.repoId, []))
+    )
+    store.setState({
+      repos: [
+        {
+          id: 'local-repo',
+          path: '/local',
+          displayName: 'Local',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: 'local'
+        },
+        {
+          id: 'runtime-repo',
+          path: '/remote',
+          displayName: 'Remote',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: 'runtime:env-1'
+        }
+      ],
+      hasHydratedWorktreePurge: true
+    } as Partial<AppState>)
+
+    await store.getState().fetchAllWorktrees({ visibilityOwnerHostId: 'local' })
+
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledOnce()
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledWith(
+      expect.objectContaining({ repoId: 'local-repo', executionHostId: 'local' })
+    )
+    expect(mockApi.runtime.call).not.toHaveBeenCalled()
   })
 
   it('purges session-only tab keys after an authoritative refresh', async () => {
@@ -6490,7 +6529,9 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { repo1: [wt] }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(wt.id)
+    const result = await store.getState().removeWorktree(wt.id, false, {
+      snapshotPruneBatchId: 'batch-1'
+    })
 
     expect(result).toEqual({ ok: true })
     expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
@@ -6499,14 +6540,20 @@ describe('worktree remote runtime mutations', () => {
       params: {
         worktree: `id:${wt.id}`,
         hostId: 'runtime:env-1',
-        force: undefined,
+        force: false,
         allowUnverifiedPtyStop: false,
         runHooks: true
       },
       timeoutMs: 60_000,
-      expectedEnvironmentPairingRevision: undefined
+      expectedEnvironmentPairingRevision: undefined,
+      expectedRuntimeId: undefined
     })
     expect(mockApi.worktrees.remove).not.toHaveBeenCalled()
+    expect(mockApi.workspaceCleanup.recordRemovalSnapshotPrune).toHaveBeenCalledExactlyOnceWith({
+      batchId: 'batch-1',
+      worktreeId: wt.id,
+      executionHostId: 'runtime:env-1'
+    })
     expect(store.getState().shutdownWorktreeTerminals).toHaveBeenCalledWith(wt.id, {
       shutdownReason: 'remove-worktree',
       backendOwnsPtyTeardown: true

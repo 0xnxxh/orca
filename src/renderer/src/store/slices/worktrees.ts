@@ -85,6 +85,7 @@ import {
   getSettingsFocusedExecutionHostId,
   LOCAL_EXECUTION_HOST_ID,
   parseExecutionHostId,
+  toRuntimeExecutionHostId,
   toSshExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
@@ -3486,10 +3487,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   }) as WorktreeSlice['fetchWorktrees'],
 
   fetchAllWorktrees: async (options) => {
-    const { repos } = get()
+    const repos = options?.visibilityOwnerHostId
+      ? get().repos.filter((repo) => {
+          const repoHost = parseExecutionHostId(getRepoExecutionHostId(repo))
+          const ownerHost = parseExecutionHostId(options.visibilityOwnerHostId)
+          return ownerHost?.kind === 'runtime'
+            ? repoHost?.kind === 'runtime' && repoHost.environmentId === ownerHost.environmentId
+            : repoHost?.kind !== 'runtime'
+        })
+      : get().repos
 
     // Why: after the one-shot hydration purge, later calls only refresh cached lists — no IPC double-probe for the per-repo success signal.
-    if (get().hasHydratedWorktreePurge) {
+    if (get().hasHydratedWorktreePurge || options?.visibilityOwnerHostId) {
       await mapReposForWorktreeRefresh(repos, async (r) => {
         try {
           const requestStartedState = get()
@@ -4267,9 +4276,16 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             : { activeRuntimeEnvironmentId: null }
       )
       let removalResult: RemoveWorktreeResult
+      let snapshotPruneHandledByLocalMain = forgetLocalOnly || target.kind === 'local'
       try {
         removalResult = await (forgetLocalOnly
-          ? window.api.worktrees.forgetLocal({ worktreeId, hostId })
+          ? window.api.worktrees.forgetLocal({
+              worktreeId,
+              hostId,
+              ...(options?.snapshotPruneBatchId
+                ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
+                : {})
+            })
           : target.kind === 'local'
             ? (removalGenerationGuard?.assertCurrent(),
               window.api.worktrees.remove({
@@ -4277,7 +4293,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                 hostId,
                 force,
                 allowUnverifiedPtyStop: options?.allowUnverifiedPtyStop === true,
-                skipArchive
+                skipArchive,
+                ...(options?.snapshotPruneBatchId
+                  ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
+                  : {})
               }))
             : (removalGenerationGuard?.assertCurrent(),
               callRuntimeRpc<RemoveWorktreeResult>(
@@ -4307,7 +4326,14 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             removalGenerationGuard?.assertCurrent()
           }
           try {
-            removalResult = await window.api.worktrees.forgetLocal({ worktreeId, hostId })
+            removalResult = await window.api.worktrees.forgetLocal({
+              worktreeId,
+              hostId,
+              ...(options?.snapshotPruneBatchId
+                ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
+                : {})
+            })
+            snapshotPruneHandledByLocalMain = true
           } catch (fallbackError) {
             // Preserve the remote verdict as fallback failure context.
             throw new Error(
@@ -4317,6 +4343,23 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           }
         } else {
           throw error
+        }
+      }
+
+      if (!snapshotPruneHandledByLocalMain) {
+        try {
+          await window.api.workspaceCleanup?.recordRemovalSnapshotPrune?.({
+            // Why: a single (unbatched) remote delete must still drop the row
+            // from the local persisted snapshots or it resurrects from cache;
+            // an unknown batch id degrades to an immediate one-off prune. The
+            // id must stay bounded — main rejects batch ids over 128 chars,
+            // so it cannot embed the unbounded worktreeId.
+            batchId: options?.snapshotPruneBatchId ?? `single-removal:${crypto.randomUUID()}`,
+            worktreeId,
+            ...(hostId ? { executionHostId: hostId } : {})
+          })
+        } catch (error) {
+          console.warn('Failed to record workspace cleanup snapshot prune:', error)
         }
       }
 
@@ -6235,12 +6278,33 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
       const restoredSessionOwnersChanged =
         survivingRestoredSessionOwners !== s.restoredRuntimeHostIdByWorkspaceSessionKey
+      let survivingVisibilityDefaults = s.worktreeVisibilityDefaultsByHost
+      for (const environmentId of removed) {
+        const hostId = toRuntimeExecutionHostId(environmentId)
+        if (hostId in survivingVisibilityDefaults) {
+          if (survivingVisibilityDefaults === s.worktreeVisibilityDefaultsByHost) {
+            survivingVisibilityDefaults = { ...survivingVisibilityDefaults }
+          }
+          delete survivingVisibilityDefaults[hostId]
+        }
+      }
+      const visibilityDefaultsChanged =
+        survivingVisibilityDefaults !== s.worktreeVisibilityDefaultsByHost
+      const visibilitySupportChanged = removed.has(
+        s.worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId ?? ''
+      )
+      const visibilitySourceSupportChanged = removed.has(
+        s.worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId ?? ''
+      )
       if (
         !reposChanged &&
         !setupsChanged &&
         !worktreesChanged &&
         !detectedChanged &&
         !restoredSessionOwnersChanged &&
+        !visibilityDefaultsChanged &&
+        !visibilitySupportChanged &&
+        !visibilitySourceSupportChanged &&
         removedWorktreeIds.size === 0
       ) {
         return s
@@ -6264,6 +6328,15 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...(detectedChanged ? { detectedWorktreesByRepo } : {}),
         ...(restoredSessionOwnersChanged
           ? { restoredRuntimeHostIdByWorkspaceSessionKey: survivingRestoredSessionOwners }
+          : {}),
+        ...(visibilityDefaultsChanged
+          ? { worktreeVisibilityDefaultsByHost: survivingVisibilityDefaults }
+          : {}),
+        ...(visibilitySupportChanged
+          ? { worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: null }
+          : {}),
+        ...(visibilitySourceSupportChanged
+          ? { worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId: null }
           : {}),
         ...(rowsChanged ? { sortEpoch: s.sortEpoch + 1 } : {}),
         // Why: mirror validateRepoScopedUi so a filtered/active sidebar can't reference a purged repo id.

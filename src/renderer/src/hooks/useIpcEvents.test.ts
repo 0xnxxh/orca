@@ -10328,6 +10328,78 @@ describe('runtime host catalog refresh on reposChanged', () => {
       vi.useRealTimers()
     }
   })
+
+  // Why: the catalog fetches carry 15s RPC timeouts; serializing them ahead of the
+  // worktree refresh stalled lineage convergence for 30s on a connected-but-wedged host.
+  it('refreshes worktrees and lineage without waiting on a stalled catalog fetch', async () => {
+    vi.resetModules()
+    vi.useFakeTimers()
+    try {
+      const fetchRuntimeEnvironmentRepos = vi.fn(() => Promise.resolve([{ id: 'repo-1' }]))
+      // Never settles, standing in for a host that accepted the connection but stopped answering.
+      const fetchProjectGroups = vi.fn(() => new Promise<void>(() => {}))
+      const fetchFolderWorkspaces = vi.fn(() => Promise.resolve())
+      const fetchWorktrees = vi.fn(() => Promise.resolve())
+      const fetchWorktreeLineage = vi.fn(() => Promise.resolve())
+      const state = {
+        settings: { activeRuntimeEnvironmentId: 'env-1' as string | null },
+        repos: [],
+        worktreesByRepo: {},
+        folderWorkspaces: [],
+        projectGroups: [],
+        runtimeEnvironments: [],
+        runtimeStatusByEnvironmentId: new Map(),
+        tabsByWorktree: {},
+        ptyIdsByTabId: {},
+        remountTerminalTabForRecovery: vi.fn(),
+        markEnvironmentSshStateStale: vi.fn(),
+        fetchRepos: vi.fn(() => Promise.resolve()),
+        fetchRuntimeEnvironmentRepos,
+        fetchProjectGroups,
+        fetchFolderWorkspaces,
+        fetchWorktrees,
+        fetchWorktreeLineage
+      }
+
+      vi.doMock('react', async () => {
+        const actual = await vi.importActual<typeof ReactModule>('react')
+        return { ...actual, useEffect: (effect: () => void | (() => void)) => void effect() }
+      })
+      vi.doMock('../store', () => ({
+        useAppStore: { subscribe: vi.fn(() => () => {}), getState: () => state }
+      }))
+      const noopListener = (): (() => void) => () => {}
+      const autoStubNamespace = new Proxy(
+        {},
+        {
+          get:
+            () =>
+            (...args: unknown[]) => {
+              if (typeof args[0] === 'function') {
+                return noopListener()
+              }
+              return new Promise(() => {})
+            }
+        }
+      )
+      const api = new Proxy({} as Record<string, unknown>, {
+        get: (target, prop: string) => target[prop] ?? autoStubNamespace
+      })
+      vi.stubGlobal('window', { api })
+
+      const { useIpcEvents } = await import('./useIpcEvents')
+      useIpcEvents()
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(fetchProjectGroups).toHaveBeenCalled()
+      // Folder workspaces still wait on their groups; worktrees and lineage must not.
+      expect(fetchFolderWorkspaces).not.toHaveBeenCalled()
+      expect(fetchWorktrees).toHaveBeenCalledWith('repo-1', expect.anything())
+      expect(fetchWorktreeLineage).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('repo catalog refresh on repos:changed', () => {

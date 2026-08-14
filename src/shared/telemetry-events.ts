@@ -386,6 +386,9 @@ const runtimeRpcStartFailedSchema = z
   .object({ error_class: runtimeRpcStartErrorClassSchema })
   .strict()
 
+// Why: classify session-killing 1013 closures as producer size failures or queue backpressure.
+const remoteOutboundBudgetCloseSchema = z.object({ emitter: z.enum(['size', 'queue']) }).strict()
+
 // Why: a deadlocked main thread never crashes, so it produces no crash report and no user report
 // beyond "it froze" — incidence has been unmeasurable. `self_recovered` splits stalls that cleared
 // from ones that never did, which is the number that decides whether auto-recovery is ever safe to
@@ -1447,6 +1450,7 @@ export const eventSchemas = {
   daemon_lifecycle: daemonLifecycleSchema,
   daemon_audit_eligibility: daemonAuditEligibilitySchema,
   runtime_rpc_start_failed: runtimeRpcStartFailedSchema,
+  remote_outbound_budget_close: remoteOutboundBudgetCloseSchema,
 
   codex_trust_grant: codexTrustGrantSchema,
 

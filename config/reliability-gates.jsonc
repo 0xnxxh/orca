@@ -1453,6 +1453,181 @@
       "demotionRule": "Quarantine the Electron journey only with a linked product or harness defect; demote if activation changes the owner/runtime/daemon/PTY identity, loses prior output, opens before provider readiness, or fails to honor a committed quit."
     },
     {
+      "id": "runtime.renderer-graph-reload-termination",
+      "title": "Renderer graph reloads terminate under exact document and window authority",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "runtime-platform",
+      "layer": "electron-runtime-contract",
+      "surfaces": [
+        "desktop renderer reload and crash recovery",
+        "headless-to-desktop promotion",
+        "CLI and paired-runtime graph availability"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local", "daemon", "ssh", "paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local", "daemon", "paired-runtime"],
+      "coverageNotes": "Deterministic lifecycle, IPC, window-notification, and runtime ownership tests cover generation replacement, stale callbacks, same-frame old-document publication, blocked external navigation, cancelled renderer navigation, concurrent provisional starts, process loss, timeout cleanup, headless fallback, and competing windows. Isolated macOS Electron validation covers cancelled navigation, forced renderer recovery, and headless serve promotion with live daemon-backed PTY identity and I/O. Linux, Windows, WSL, SSH promotion, and mixed-version desktop/server live runs remain uncollected; the renderer generation stays local to Electron IPC and does not change the remote wire.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/issues/14066",
+        "https://linear.app/stably/issue/STA-4016",
+        "https://github.com/stablyai/orca/pull/14070"
+      ],
+      "invariant": "Every genuine renderer graph reload revision settles exactly once, while a blocked external navigation that preserves the current document never starts a revision. A cancelled renderer-document navigation restores authority only when that same renderer survived; cancellation after an earlier document committed remains fenced until publication or timeout. Replacing a reload cancels only the prior revision; its timer and callbacks cannot settle a newer revision. A desktop reload succeeds only from a publication carrying a new renderer-document generation, while a failed headless promotion may recover only from its originating window. Timeout, renderer loss, and close reach a terminal graph state, and successful desktop publication permanently retires headless sentinel fallback until a new headless runtime is established.",
+      "oracle": "Start a blocked external main-frame navigation and require the current renderer graph and notification path to remain authoritative. Start a same-renderer navigation, cancel it before commit, and require the renderer canary and ready authority to survive; coalesce overlapping provisional starts into one fence, and keep an earlier committed reload fenced if a later navigation is cancelled. Drive two genuine reloads half a timeout apart and require the first deadline to leave the second revision reloading while the second deadline alone makes it unavailable. During the second revision publish from the prior renderer document through the still-current main frame and require rejection without graph mutation or timeout cancellation. Restore headless authority after failed promotion, publish from a competing window, and require rejection while the sentinel remains authoritative. Then force a real renderer crash and separately promote an isolated headless serve owner; require runtime graph readiness, stable runtime/main/daemon/PTY identities, recovered visible terminal output, and post-recovery input/output.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/runtime-graph-reload-lifecycle.test.ts src/main/window/runtime-renderer-notification-sender.test.ts src/main/window/renderer-document-navigation.test.ts src/main/ipc/runtime.test.ts src/main/window/attach-main-window-services.test.ts src/main/runtime/orca-runtime.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/runtime/sync-runtime-graph-payload-partition.test.ts",
+        "pnpm exec electron-vite build --mode e2e",
+        "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/renderer-blocked-navigation-graph-authority.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+        "SKIP_BUILD=1 pnpm exec playwright test e2e/renderer-crash-recovery-terminal-input.spec.ts tests/e2e/renderer-crash-recovery-terminal-input.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+        "SKIP_BUILD=1 pnpm exec playwright test e2e/headless-serve-desktop-activation.spec.ts tests/e2e/headless-serve-desktop-activation.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
+      ],
+      "testFiles": [
+        "src/main/runtime/runtime-graph-reload-lifecycle.test.ts",
+        "src/main/window/runtime-renderer-notification-sender.test.ts",
+        "src/main/window/renderer-document-navigation.test.ts",
+        "src/main/ipc/runtime.test.ts",
+        "src/main/window/attach-main-window-services.test.ts",
+        "src/main/runtime/orca-runtime.test.ts",
+        "src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts",
+        "src/renderer/src/runtime/sync-runtime-graph-payload-partition.test.ts",
+        "tests/e2e/renderer-blocked-navigation-graph-authority.spec.ts",
+        "tests/e2e/renderer-crash-recovery-terminal-input.spec.ts",
+        "tests/e2e/headless-serve-desktop-activation.spec.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/runtime/runtime-graph-reload-lifecycle.test.ts",
+          "assertions": [
+            "each revision settles exactly once",
+            "replacement cancels the old revision and fences its timeout",
+            "settlement and timeout release their timers"
+          ]
+        },
+        {
+          "file": "src/main/runtime/orca-runtime.test.ts",
+          "assertions": [
+            "only the newest reload owns the terminal timeout",
+            "a superseded renderer-document generation cannot settle a reload",
+            "cancelled navigation restores only the renderer or headless authority that actually survived",
+            "cancellation after an earlier document commit stays fenced until its restarted timeout",
+            "failed headless promotion remains pinned to its originating window",
+            "successful desktop publication retires headless fallback"
+          ]
+        },
+        {
+          "file": "src/main/ipc/runtime.test.ts",
+          "assertions": [
+            "graph publication requires a non-empty renderer generation",
+            "only the current BrowserWindow main frame may publish"
+          ]
+        },
+        {
+          "file": "src/main/window/runtime-renderer-notification-sender.test.ts",
+          "assertions": [
+            "renderer failure is contained once per load generation",
+            "late events cannot revive a closed sender"
+          ]
+        },
+        {
+          "file": "src/main/window/renderer-document-navigation.test.ts",
+          "assertions": [
+            "blocked external navigation does not start a renderer generation",
+            "only the packaged renderer file or development origin starts a renderer generation",
+            "concurrent provisional starts share one reload fence and cancel only after every attempt fails"
+          ]
+        },
+        {
+          "file": "tests/e2e/renderer-blocked-navigation-graph-authority.spec.ts",
+          "assertions": [
+            "blocked external navigation starts and stops loading without replacing the renderer document",
+            "runtime graph epoch, readiness, and authoritative window remain unchanged",
+            "a later listener can cancel a renderer navigation while its canary and authoritative graph recover"
+          ]
+        },
+        {
+          "file": "tests/e2e/renderer-crash-recovery-terminal-input.spec.ts",
+          "assertions": [
+            "main observes renderer process loss and a completed recovery load",
+            "the same daemon-backed PTY remains reachable through transport and direct-write probes"
+          ]
+        },
+        {
+          "file": "tests/e2e/headless-serve-desktop-activation.spec.ts",
+          "assertions": [
+            "promotion preserves main owner, runtime, daemon, and PTY identity",
+            "terminal output survives promotion and post-promotion input/output remains live"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-14",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/runtime-graph-reload-lifecycle.test.ts src/main/window/runtime-renderer-notification-sender.test.ts src/main/window/renderer-document-navigation.test.ts src/main/ipc/runtime.test.ts src/main/window/attach-main-window-services.test.ts src/main/runtime/orca-runtime.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/runtime/sync-runtime-graph-payload-partition.test.ts",
+          "result": "passed",
+          "durationSeconds": 12,
+          "summary": "Eight focused files passed with 1,175 tests and one pre-existing skip after the merge from latest main. The suite covers exact reload settlement, timeout replacement, cancelled-navigation recovery, concurrent provisional starts, document and window authority, notification containment, preload IPC, and renderer publication scheduling."
+        },
+        {
+          "date": "2026-08-14",
+          "runner": "local",
+          "platform": "macos",
+          "command": "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/renderer-blocked-navigation-graph-authority.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 8,
+          "summary": "Two isolated Electron flows passed: blocked external navigation left epoch and authority unchanged, and a same-renderer navigation cancelled by a later listener preserved its canary while returning the incremented graph generation to ready under the same authoritative window."
+        },
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "macos",
+          "command": "SKIP_BUILD=1 pnpm exec playwright test e2e/renderer-crash-recovery-terminal-input.spec.ts tests/e2e/renderer-crash-recovery-terminal-input.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 18,
+          "summary": "Two forced renderer process deaths each produced a main-observed recovery load; the same daemon-backed PTY remained live through renderer transport and direct-write probes."
+        },
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "macos",
+          "command": "SKIP_BUILD=1 pnpm exec playwright test e2e/headless-serve-desktop-activation.spec.ts tests/e2e/headless-serve-desktop-activation.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 10,
+          "summary": "The isolated headless serve owner promoted to a real renderer while preserving main owner, runtime, daemon, and PTY identity. Pre-promotion output remained visible and post-promotion terminal input/output succeeded; a full-window proof image records both markers."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 420,
+        "scope": "focused deterministic contracts plus isolated forced-crash and headless-promotion Electron journeys"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "Fresh deterministic and two isolated Electron journeys are green; CI soak history is pending."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "A byte-identical three-case oracle was rerun on 2026-08-13. Latest main ee8dd4796e failed all three: reload remained reloading after 22.5 seconds, the prior renderer document settled the replacement, and a competing window stole failed-promotion authority. Submitted PR head feeca6c22f passed the bounded replacement timeout but failed both authority cases. The locally rewritten candidate passed all three. Disabling the local document-generation and pending-window fences reproduces the submitted-head failures; disabling the cancelled-navigation classifier leaves the graph reloading and increments its epoch in the new live oracle."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "Fresh delegated audit passed with no blocking, major, or actionable minor findings. The candidate retains at most one unref'd timer, reuses the existing renderer document UUID, adds about 67 serialized bytes to each already-coalesced local graph IPC, and performs constant-time generation/window checks. It adds no polling, subprocess, network request, remote frame, provider scan, or steady-state fanout; a dedicated benchmark would measure existing graph/structured-clone noise rather than meaningful incremental work."
+      },
+      "promotionCriteria": [
+        "Collect CI and soak history without unexplained flakes.",
+        "Collect live Linux and Windows desktop reload evidence.",
+        "Add live SSH or WSL promotion evidence if provider-specific graph restoration diverges."
+      ],
+      "knownGaps": [
+        "The live journeys cover macOS and daemon-backed local terminals, not Linux desktop, Windows, WSL, or SSH promotion.",
+        "The same-frame stale-document race is deterministic fault injection because Playwright cannot schedule an invoke precisely between did-start-loading and frame replacement.",
+        "No mixed-version live run is required because rendererGeneration is confined to same-version preload/main Electron IPC and the remote runtime wire is unchanged."
+      ],
+      "demotionRule": "Demote if a reload revision settles more than once, a stale document or competing window can publish, a timer survives settlement, desktop failure stays indefinitely reloading, headless fallback returns after successful promotion, or either isolated Electron journey loses runtime or PTY identity."
+    },
+    {
       "id": "runtime.websocket-heartbeat-cadence",
       "title": "Runtime WebSockets enter an owned shared heartbeat cadence",
       "maturity": "experimental",
@@ -8470,10 +8645,14 @@
       "providers": ["local", "daemon", "ssh", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local"],
-      "coverageNotes": "Local macOS evidence covers the runtime PTY write contract, a live dev-runtime CLI repro, and a Haiku composer trace. The Claude render gate stays on the PTY-owning runtime, so paired and SSH callers use the same provider write/output path without a wire change. SSH, daemon, remote-runtime, Linux, and Windows live journeys remain gaps.",
-      "motivatingLinks": ["https://github.com/stablyai/orca/issues/7226"],
-      "invariant": "Injected orchestration task prompts for recognized agent CLIs must send the prompt body inside one bracketed-paste frame, sanitize embedded ESC bytes, preserve chunk boundaries without losing the frame, and submit exactly once only after the agent can accept Enter. Claude must emit a post-paste composer marker and then settle, or reach the bounded fallback first.",
-      "oracle": "Runtime tests assert the exact PTY write sequence, failure cleanup, and a Claude-shaped multi-frame render where the legacy 500 ms delay and first show-cursor marker are both premature. The candidate waits for post-marker output quiescence before one submit, resets that window on later frames, and still submits once at the hard deadline if output never settles. Orchestration tests assert dispatch/coordinator use the agent prompt path; the live CLI harness covers long Codex-like framing.",
+      "coverageNotes": "Local macOS evidence covers the runtime PTY write contract, live Codex orchestration, a dev-runtime CLI repro, and Claude and Codex composer traces. The render gate stays on the PTY-owning runtime, so paired and SSH callers use the same provider write/output path without a wire change. SSH, daemon, remote-runtime, Linux, and Windows live journeys remain gaps.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/issues/7226",
+        "https://github.com/stablyai/orca/issues/13821",
+        "https://github.com/stablyai/orca/issues/14347"
+      ],
+      "invariant": "Injected orchestration task prompts for recognized agent CLIs must send the prompt body inside one bracketed-paste frame, sanitize embedded ESC bytes, preserve chunk boundaries without losing the frame, and submit exactly once only after the agent can accept Enter. Claude and Codex must emit a post-paste composer marker and then settle, or reach the bounded fallback first; a late marker receives a fresh settlement window.",
+      "oracle": "Runtime tests assert the exact PTY write sequence, failure cleanup, and Claude- and Codex-shaped multi-frame renders where the legacy platform delay and first show-cursor marker are both premature. The candidate waits for post-marker output quiescence before one submit, resets that window on later frames, gives a late marker a fresh bounded window, and still submits once at the hard deadline if output never settles. Orchestration tests assert dispatch/coordinator use the agent prompt path; the live CLI harness covers long Codex-like framing.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/shared/agent-prompt-injection.test.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/methods/orchestration.test.ts src/main/runtime/orchestration/coordinator.test.ts",
         "node tests/tools/repro-orchestration-long-prompt.mjs --cli out/bin/orca-dev --mode codex-like --size-kb 32 --timeout-ms 20000"
@@ -8499,7 +8678,8 @@
           "file": "src/main/runtime/orca-runtime.test.ts",
           "assertions": [
             "runtime writes bracketed paste before a delayed submit",
-            "Claude ignores unrelated and split pre-marker output, then waits for post-marker render quiescence before one submit",
+            "Claude and Codex ignore unrelated and split pre-marker output, then wait for post-marker render quiescence before one submit",
+            "a late Codex marker receives a fresh settlement window before one submit",
             "a silent Claude composer reaches one bounded fallback submit",
             "a marked Claude composer with continuous render output reaches one bounded fallback submit",
             "large prompt frames are chunked and reconstructed before submit",
@@ -8531,6 +8711,15 @@
         }
       ],
       "evidenceRuns": [
+        {
+          "date": "2026-08-14",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/agent-prompt-injection.test.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/methods/orchestration.test.ts src/main/runtime/orchestration/coordinator.test.ts",
+          "result": "passed",
+          "durationSeconds": 11.32,
+          "summary": "4 files and 1,303 tests passed with one skipped. Claude and Codex both wait for post-marker quiescence, and a Codex marker arriving at 7.9 seconds receives a fresh window through its final slow frame. Exact-build live Codex workers accepted injected prompts without manual Enter, replied, called worker_done, and settled successfully in the rendered Electron UI."
+        },
         {
           "date": "2026-08-13",
           "runner": "local",
@@ -8578,11 +8767,11 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "The original Claude-shaped oracle fails on unmodified main and passes with the render gate. The hardened multi-frame oracle then fails on the first-marker candidate, which submits at 751 ms during an intermediate frame, and passes when the gate requires post-marker quiescence. The earlier live harness also reproduced the unsafe raw multiline contract before its framing fix. Intentional-break evidence remains local rather than a separate CI job."
+        "evidence": "The original Claude-shaped oracle fails on unmodified main and passes with the render gate. The hardened multi-frame oracle then fails on the first-marker candidate, which submits at 751 ms during an intermediate frame, and passes when the gate requires post-marker quiescence. Codex used the legacy platform delay before this candidate; the late-marker oracle proves the original deadline would pre-empt slow-host settlement without re-arming. The earlier live harness also reproduced the unsafe raw multiline contract before its framing fix. Intentional-break evidence remains local rather than a separate CI job."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Agent prompt dispatch remains O(prompt bytes) with existing 16KB chunking. Claude adds one PTY-local output listener until 1.5s of post-marker output quiescence or an 8s fallback; each later frame resets one timer. Other agents retain the platform delay. No polling, provider listing, subprocess churn, hidden-pane wakeups, renderer work, or wire traffic is added."
+        "evidence": "Agent prompt dispatch remains O(prompt bytes) with existing 16KB chunking. Claude and Codex add one PTY-local output listener until 1.5s of post-marker output quiescence or an 8s fallback; a late first marker restarts the bounded window and each later frame resets one quiet timer. Other agents retain the platform delay. No polling, provider listing, subprocess churn, hidden-pane wakeups, renderer work, or wire traffic is added."
       },
       "promotionCriteria": [
         "Run the live harness in soak with a self-starting dev runtime or provider-contract fixture.",
@@ -12056,6 +12245,105 @@
         "Platform-named bundles are loaded on macOS locally; physical Linux and Windows evidence is not yet recorded."
       ],
       "demotionRule": "Demote if any shipped companion stops loading on Node 18, selected installers mutate outside the isolated home, or the CI lane no longer runs the built artifact with Node 18."
+    },
+    {
+      "id": "terminal-history.daemon-checkpoint-session-isolation",
+      "title": "Daemon history checkpoints isolate stalled terminal sessions",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "daemon-terminal",
+      "layer": "main-process-daemon-history",
+      "surfaces": [
+        "warm daemon terminal reattach",
+        "deep daemon buffer snapshots",
+        "periodic and final durable-history checkpoints"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local-daemon", "ssh-daemon", "wsl-daemon", "paired-runtime-host"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local-daemon"],
+      "coverageNotes": "A real daemon server and adapter on macOS cover per-session isolation, same-session deadlines, post-deadline commit, aggregate overlay admission, and live-window fallback. The provider-neutral adapter has no new path or wire assumptions; a live Linux SSH-relay journey covers the unchanged remote consumer, while live Linux daemon, Windows, WSL, and paired-runtime-host journeys remain gaps.",
+      "motivatingLinks": [
+        "https://linear.app/stably/issue/STA-4173",
+        "https://github.com/stablyai/orca/pull/14346"
+      ],
+      "invariant": "A stalled durable-history checkpoint may delay only its own daemon session. Warm reattach and deep snapshots degrade to the live window after five seconds, non-final background checkpoints defer after fifteen seconds, same-session writes remain serialized, non-final running plus queued work stays bounded to three per session, overlay compacts stay bounded to four across sessions, and final sleep or disconnect checkpoints remain deadline-free.",
+      "oracle": "Park one session inside the real history checkpoint write, then require an unrelated warm reattach to return within two seconds with its own output while the first write remains parked. Require the stalled session to return its live window after the overlay deadline and later commit the abandoned write. Park four distinct overlay compacts, require a fifth reattach to return its live window without starting another compact, and require fast non-final RPC rejection plus both deadlines to leave diagnostic breadcrumbs.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/daemon-checkpoint-session-queue.test.ts src/main/daemon/daemon-reattach-checkpoint-isolation.test.ts src/main/daemon/daemon-pty-adapter.test.ts --reporter=dot"
+      ],
+      "testFiles": [
+        "src/main/daemon/daemon-checkpoint-session-queue.test.ts",
+        "src/main/daemon/daemon-reattach-checkpoint-isolation.test.ts",
+        "src/main/daemon/daemon-pty-adapter.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/daemon/daemon-checkpoint-session-queue.test.ts",
+          "assertions": [
+            "same-session operations serialize while unrelated sessions run independently",
+            "deadline fallback leaves the operation running and retains later waiter ordering",
+            "operation rejection remains distinct from a deadline",
+            "running plus queued work is bounded per session and drains"
+          ]
+        },
+        {
+          "file": "src/main/daemon/daemon-reattach-checkpoint-isolation.test.ts",
+          "assertions": [
+            "an unrelated session reattaches while another checkpoint remains parked",
+            "same-session deadline fallback returns the live window and logs a breadcrumb",
+            "an abandoned checkpoint commits when the stalled write resumes",
+            "four parked overlays turn away a fifth compact without blocking its reattach"
+          ]
+        },
+        {
+          "file": "src/main/daemon/daemon-pty-adapter.test.ts",
+          "assertions": [
+            "periodic checkpoint work caps concurrent snapshot, disk operations, and admission probes at four",
+            "non-final checkpoint RPC failures retain the existing warning path",
+            "final checkpoints bypass cooldown and remain awaited"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "macos",
+          "result": "passed",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/daemon-checkpoint-session-queue.test.ts src/main/daemon/daemon-reattach-checkpoint-isolation.test.ts src/main/daemon/daemon-pty-adapter.test.ts --reporter=dot",
+          "durationSeconds": 15,
+          "summary": "Three focused files passed, including unrelated-session reattach, five-second fallback, post-deadline durable commit, aggregate non-final admission, late-rejection diagnostics, and final-checkpoint behavior."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 30,
+        "scope": "focused queue, real daemon-adapter isolation, and daemon adapter regression suite"
+      },
+      "flakeHistory": {
+        "status": "not-started",
+        "evidence": "Fresh deterministic local runs pass; CI and soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "partial",
+        "evidence": "Origin main routes the parked overlay through one process-wide checkpoint tail, while the candidate oracle observes unrelated reattach at about 79 milliseconds. The exact reverted-source oracle was not executed in this review worktree."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "Non-final work holds one admission per session and four globally; a full admission set stops the current periodic pass after four probes, and its diagnostic state stays bounded to the active admissions plus one global marker. Deadline timers are unrefed, abandoned waits retain admission until the actual write settles, dirty-gated polling remains unchanged, final checkpoints remain deadline-free, and the change adds no subprocess, renderer, store, startup probe, or wire work."
+      },
+      "promotionCriteria": [
+        "Execute the oracle against an affected baseline and retain the exact red result.",
+        "Collect 100 consecutive focused CI passes or 14 days of soak history.",
+        "Collect live Linux daemon, Windows, WSL, and paired-runtime-host reattach evidence.",
+        "Keep per-session and aggregate admission, deadline, diagnostics, and final-checkpoint assertions green."
+      ],
+      "knownGaps": [
+        "Live Electron evidence covers the unchanged Linux SSH-relay consumer rather than a daemon running on the SSH host.",
+        "Physical Windows, WSL, Linux daemon, and paired-runtime-host journeys were not run.",
+        "The reverted-source failure is established from the old process-wide call path but was not executed."
+      ],
+      "demotionRule": "Demote if unrelated reattach joins a stalled session tail, overlay or periodic work exceeds its admission bound, a deadline cancels durable work, final checkpoints defer, or failures and deadline fallbacks lose their diagnostic breadcrumbs."
     }
   ]
 }

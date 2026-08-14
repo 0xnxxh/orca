@@ -39,6 +39,7 @@ import type {
 } from '@/lib/pending-worktree-creation'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import type { AppState } from '../types'
+import type { WorktreeRefreshAllOptions } from './worktree-refresh-options'
 export { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 
 export type WorktreeDeleteState = {
@@ -165,7 +166,7 @@ export type WorktreeSlice = {
     ): Promise<HostQualifiedDetectedWorktreeResult>
     (repoId: string, options?: WorktreeFetchOptions): Promise<boolean>
   }
-  fetchAllWorktrees: (options?: { hydrationPurge?: 'allow' | 'defer' }) => Promise<void>
+  fetchAllWorktrees: (options?: WorktreeRefreshAllOptions) => Promise<void>
   fetchWorktreeLineage: (options?: {
     forceLocalOwner?: boolean
     executionHostId?: ExecutionHostId
@@ -252,6 +253,7 @@ export type WorktreeSlice = {
       // Why (#11960): only an explicit Force Delete waives the proof that every
       // PTY stopped; `force` alone is set by the ordinary delete confirmation.
       allowUnverifiedPtyStop?: boolean
+      snapshotPruneBatchId?: string
     }
   ) => Promise<({ ok: true } & RendererRemoveWorktreeResult) | { ok: false; error: string }>
   markWorktreesDeleting: (worktreeIds: readonly string[]) => void
