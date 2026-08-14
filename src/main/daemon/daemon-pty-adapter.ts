@@ -257,6 +257,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private checkpointQueue = new CheckpointSessionQueue()
   private nonFinalCheckpointAdmissionSessionIds = new Set<string>()
   private nonFinalAdmissionDeniedSessionIds = new Set<string>()
+  private nonFinalGlobalAdmissionWarningActive = false
   private overlayDeadlineWarnedSessionIds = new Set<string>()
   private periodicDeadlineWarnedSessionIds = new Set<string>()
   private keepHistoryShutdowns = new Set<Promise<void>>()
@@ -1376,10 +1377,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return false
     }
     if (this.nonFinalCheckpointAdmissionSessionIds.size >= MAX_CONCURRENT_CHECKPOINTS) {
-      if (!this.nonFinalAdmissionDeniedSessionIds.has(sessionId)) {
-        this.nonFinalAdmissionDeniedSessionIds.add(sessionId)
-        console.warn('[history] non-final checkpoint global admission limit reached:', sessionId)
-      }
+      this.reportNonFinalGlobalAdmissionDenial(sessionId)
       return false
     }
     this.nonFinalAdmissionDeniedSessionIds.delete(sessionId)
@@ -1387,8 +1385,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return true
   }
 
+  private reportNonFinalGlobalAdmissionDenial(sessionId: string): void {
+    if (!this.nonFinalGlobalAdmissionWarningActive) {
+      this.nonFinalGlobalAdmissionWarningActive = true
+      console.warn('[history] non-final checkpoint global admission limit reached:', sessionId)
+    }
+  }
+
   private releaseNonFinalCheckpointAdmission(sessionId: string): void {
-    this.nonFinalCheckpointAdmissionSessionIds.delete(sessionId)
+    if (this.nonFinalCheckpointAdmissionSessionIds.delete(sessionId)) {
+      this.nonFinalAdmissionDeniedSessionIds.delete(sessionId)
+      this.nonFinalGlobalAdmissionWarningActive = false
+    }
   }
 
   private async compactDurableRestoreSnapshot(
@@ -2174,6 +2182,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
     const checkpointNext = async (): Promise<void> => {
       for (;;) {
+        // No worker in this pass awaits abandoned work, so a full admission set cannot open here.
+        if (
+          opts?.final !== true &&
+          this.nonFinalCheckpointAdmissionSessionIds.size >= MAX_CONCURRENT_CHECKPOINTS
+        ) {
+          const deferredSessionId = ids[nextIndex]
+          if (deferredSessionId !== undefined) {
+            this.reportNonFinalGlobalAdmissionDenial(deferredSessionId)
+          }
+          return
+        }
         const index = nextIndex
         nextIndex++
         if (index >= ids.length) {

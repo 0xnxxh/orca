@@ -11916,7 +11916,7 @@
         {
           "file": "src/main/daemon/daemon-pty-adapter.test.ts",
           "assertions": [
-            "periodic checkpoint work caps concurrent snapshot and disk operations at four",
+            "periodic checkpoint work caps concurrent snapshot, disk operations, and admission probes at four",
             "non-final checkpoint RPC failures retain the existing warning path",
             "final checkpoints bypass cooldown and remain awaited"
           ]
@@ -11947,7 +11947,7 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Non-final per-session running plus queued work is capped at three and aggregate overlay admission at four; the existing periodic worker cap remains four. Deadline timers are unrefed, abandoned waits retain admission until the actual write settles, dirty-gated polling remains unchanged, final checkpoints remain unbounded, and the change adds no subprocess, renderer, store, startup probe, or wire work."
+        "evidence": "Non-final work holds one admission per session and four globally; a full admission set stops the current periodic pass after four probes, and its diagnostic state stays bounded to the active admissions plus one global marker. Deadline timers are unrefed, abandoned waits retain admission until the actual write settles, dirty-gated polling remains unchanged, final checkpoints remain deadline-free, and the change adds no subprocess, renderer, store, startup probe, or wire work."
       },
       "promotionCriteria": [
         "Execute the oracle against an affected baseline and retain the exact red result.",

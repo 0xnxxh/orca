@@ -2568,6 +2568,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         }
         checkpointSessions(sessionIds: Iterable<string>): Promise<Set<string>>
         nonFinalCheckpointAdmissionSessionIds: Set<string>
+        tryAdmitNonFinalCheckpoint(sessionId: string): boolean
       }
       internals.client = { request, disconnect: vi.fn() }
       internals.historyManager = {
@@ -2576,6 +2577,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         dispose: vi.fn(async () => {})
       }
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const tryAdmit = vi.spyOn(internals, 'tryAdmitNonFinalCheckpoint')
 
       try {
         const checkpointing = internals.checkpointSessions(['a', 'b', 'c', 'd', 'e', 'f'])
@@ -2583,6 +2585,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         await expect(checkpointing).resolves.toEqual(new Set())
 
         expect(requestedSessionIds).toEqual(['a', 'b', 'c', 'd'])
+        expect(tryAdmit).toHaveBeenCalledTimes(4)
         expect(internals.nonFinalCheckpointAdmissionSessionIds).toEqual(
           new Set(['a', 'b', 'c', 'd'])
         )
@@ -2604,6 +2607,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         tryAdmitNonFinalCheckpoint(sessionId: string): boolean
         releaseNonFinalCheckpointAdmission(sessionId: string): void
         nonFinalCheckpointAdmissionSessionIds: Set<string>
+        nonFinalAdmissionDeniedSessionIds: Set<string>
       }
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
@@ -2618,16 +2622,25 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         expect(internals.tryAdmitNonFinalCheckpoint('healthy-b')).toBe(true)
         expect(internals.tryAdmitNonFinalCheckpoint('healthy-c')).toBe(true)
         expect(internals.tryAdmitNonFinalCheckpoint('overflow')).toBe(false)
+        expect(internals.tryAdmitNonFinalCheckpoint('another-overflow')).toBe(false)
 
         expect(internals.nonFinalCheckpointAdmissionSessionIds).toEqual(
           new Set(['stalled', 'healthy-a', 'healthy-b', 'healthy-c'])
         )
+        expect(internals.nonFinalAdmissionDeniedSessionIds).toEqual(new Set(['stalled']))
         expect(warn).toHaveBeenCalledWith(
           '[history] non-final checkpoint global admission limit reached:',
           'overflow'
         )
+        expect(
+          warn.mock.calls.filter(
+            ([message]) =>
+              message === '[history] non-final checkpoint global admission limit reached:'
+          )
+        ).toHaveLength(1)
 
         internals.releaseNonFinalCheckpointAdmission('stalled')
+        expect(internals.nonFinalAdmissionDeniedSessionIds).toEqual(new Set())
         expect(internals.tryAdmitNonFinalCheckpoint('overflow')).toBe(true)
       } finally {
         warn.mockRestore()
