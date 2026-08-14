@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { AGENT_STATUS_MAX_SUBAGENTS } from './agent-status-types'
 import { readClaudeBackgroundAgentTasks } from './claude-background-task-inventory'
 import {
+  claudeRosterHasRuntimeWorkingSubagent,
   claudeRosterHasWorkingSubagent,
   claudeRosterToSnapshots,
   claudeTeammateIdMatchesName,
@@ -495,6 +496,7 @@ describe('restored-row liveness reap', () => {
 
   it('drops a restored row when no agent process is left behind it', () => {
     const roster = restored('areview-loop-c237a4c577493352')
+    expect(claudeRosterHasRuntimeWorkingSubagent(roster)).toBe(false)
     expect(reapRestoredClaudeSubagentsWithoutLiveAgent(roster)).toBe(true)
     expect(claudeRosterHasWorkingSubagent(roster)).toBe(false)
   })
@@ -502,6 +504,7 @@ describe('restored-row liveness reap', () => {
   it('keeps a row a live lifecycle event re-tracked', () => {
     const roster = restored('areview-loop-c237a4c577493352')
     upsertWorkingClaudeSubagent(roster, 'areview-loop-c237a4c577493352', {}, 150)
+    expect(claudeRosterHasRuntimeWorkingSubagent(roster)).toBe(true)
     expect(reapRestoredClaudeSubagentsWithoutLiveAgent(roster)).toBe(false)
     expect(claudeRosterHasWorkingSubagent(roster)).toBe(true)
   })

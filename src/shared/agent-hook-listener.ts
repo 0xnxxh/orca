@@ -27,6 +27,7 @@ import {
 import { normalizeOptionalField } from './agent-status-field-normalization'
 import { isAskUserQuestionTool } from './agent-question-answered-intent'
 import {
+  claudeRosterHasRuntimeWorkingSubagent,
   claudeRosterHasWorkingSubagent,
   claudeRosterToSnapshots,
   claudeTeammateIdMatchesName,
@@ -2643,7 +2644,8 @@ function normalizeClaudeSubagentLifecycleEvent(
     state.claudeSubagentRosterByPaneKey.delete(paneKey)
   }
   return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
-    childActivity: eventName === 'SubagentStart',
+    workingChildEvidence:
+      eventName === 'SubagentStart' || claudeRosterHasRuntimeWorkingSubagent(roster),
     endedChildWork
   })
 }
@@ -2743,10 +2745,10 @@ function buildClaudeCachedLeadStatusPayload(
   eventName: unknown,
   paneKey: string,
   hookPayload: Record<string, unknown>,
-  evidence: { childActivity?: boolean; endedChildWork?: boolean } = {}
+  evidence: { workingChildEvidence?: boolean; endedChildWork?: boolean } = {}
 ): ParsedAgentStatusPayload | null {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
-  if (!lead && !evidence.childActivity && !evidence.endedChildWork) {
+  if (!lead && !evidence.workingChildEvidence && !evidence.endedChildWork) {
     return null
   }
   // Why: no-lead completion requires an identity-matched work ending; delayed unknown stops cannot retire newer work.
@@ -2904,7 +2906,7 @@ function normalizeClaudeEvent(
     const lead = state.claudeLeadStateByPaneKey.get(paneKey)
     if (lead?.state !== 'waiting' || lead.waitingAgentId !== subagentOriginId) {
       return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
-        childActivity: true
+        workingChildEvidence: true
       })
     }
     const isParallelSiblingCompletionDuringChildQuestion =
@@ -2914,7 +2916,7 @@ function normalizeClaudeEvent(
       eventToolUseId !== lead.waitingToolUseId
     if (isParallelSiblingCompletionDuringChildQuestion) {
       return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
-        childActivity: true
+        workingChildEvidence: true
       })
     }
     // Why: approval granted — update the tool snapshot (drop the pending card) as the lead's own next tool event would.
@@ -2930,7 +2932,11 @@ function normalizeClaudeEvent(
 
   // Why: lead events never carry agent_id; even a child missed by lifecycle tracking cannot own the lead turn or its background-work evidence.
   if (eventAgentId && !isWaitingInducing) {
-    return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload)
+    return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
+      workingChildEvidence: claudeRosterHasRuntimeWorkingSubagent(
+        state.claudeSubagentRosterByPaneKey.get(paneKey)
+      )
+    })
   }
 
   if (isTurnBoundary && eventAgentId === undefined) {

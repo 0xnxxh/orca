@@ -318,6 +318,21 @@ export function claudeRosterHasWorkingSubagent(roster: ClaudeSubagentRoster | un
   return false
 }
 
+/** A working child observed in this listener runtime, not merely restored from disk. */
+export function claudeRosterHasRuntimeWorkingSubagent(
+  roster: ClaudeSubagentRoster | undefined
+): boolean {
+  if (!roster) {
+    return false
+  }
+  for (const tracked of roster.values()) {
+    if (tracked.state === 'working' && tracked.restoredFromSnapshot !== true) {
+      return true
+    }
+  }
+  return false
+}
+
 export function claudeRosterToSnapshots(
   roster: ClaudeSubagentRoster | undefined
 ): AgentSubagentSnapshot[] | undefined {
