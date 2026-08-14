@@ -204,6 +204,8 @@ export type AgentStatusSlice = {
     paneKey: string,
     options?: { preserveSleepingAgentSession?: boolean }
   ) => void
+  /** Lift a pane's retirement fence once a live PTY re-attaches to it. Closed tabs stay retired. */
+  restoreAgentPaneAuthority: (paneKey: string) => void
   transferAgentPaneAuthority: (args: {
     fromPaneKey: string
     toPaneKey: string
@@ -1542,6 +1544,41 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       }
       if (typeof window !== 'undefined') {
         window.api?.agentStatus?.retirePaneAuthority?.(ownerPaneKey)
+      }
+    },
+
+    // Why: the tombstone claims this pane is gone; a live PTY binding to it proves
+    // otherwise. Lift the fence on that proof rather than on the next hook event —
+    // a pane re-attached mid-turn or while idle emits no new-turn event, so a
+    // turn-triggered revival leaves exactly the reported permanent suppression
+    // (STA-4114). This deliberately does NOT restore the rows retirement dropped;
+    // those are genuinely stale. It only re-opens the pane to future status.
+    restoreAgentPaneAuthority: (paneKey) => {
+      const ownerPaneKey = resolveAgentPaneAuthorityKey(paneKey)
+      // Why: a closed tab is a stronger, separate claim — re-attach must not undo it.
+      if (
+        isRecentlyClosedAgentStatusTab(
+          get().recentlyClosedAgentStatusTabIds,
+          getTabIdFromPaneKey(ownerPaneKey)
+        )
+      ) {
+        return
+      }
+      set((s) => {
+        const restorable = [paneKey, ownerPaneKey].filter(
+          (key) => key in s.recentlyRetiredAgentStatusPaneKeys
+        )
+        if (restorable.length === 0) {
+          return s
+        }
+        const next = { ...s.recentlyRetiredAgentStatusPaneKeys }
+        for (const key of restorable) {
+          delete next[key]
+        }
+        return { recentlyRetiredAgentStatusPaneKeys: next }
+      })
+      if (typeof window !== 'undefined') {
+        window.api?.agentStatus?.restorePaneAuthority?.(ownerPaneKey)
       }
     },
 

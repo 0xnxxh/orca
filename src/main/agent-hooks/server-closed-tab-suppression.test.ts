@@ -267,6 +267,103 @@ describe('AgentHookServer listener replay', () => {
     }
   })
 
+  // STA-4114: a detach/reattach cycle retires the pane, and nothing lifted the fence.
+  // Reviving only on a new turn cannot help a pane re-attached mid-turn (its remaining
+  // events are agent_end, not a new-turn event) or one re-attached idle.
+  for (const kind of ['pi', 'omp', 'prime-agent'] as const) {
+    it(`re-attaching a retired ${kind} pane restores status without needing a new turn`, async () => {
+      const server = new AgentHookServer()
+      await server.start({ env: 'production' })
+      try {
+        const env = server.buildPtyEnv()
+        const postHook = (payload: Record<string, unknown>): Promise<Response> =>
+          fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/${kind}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+            },
+            body: JSON.stringify(buildBody(payload, { launchToken: `retired-${kind}-token` }))
+          })
+
+        await postHook({ hook_event_name: 'before_agent_start', prompt: 'turn in flight' })
+        server.retirePaneAuthority(PANE)
+
+        // The turn was already running, so only its completion is left to report —
+        // and while retired it is suppressed. This is the reported permanent failure.
+        await postHook({ hook_event_name: 'agent_end' })
+        expect(server.getStatusSnapshot()).toEqual([])
+
+        expect(server.restorePaneAuthority(PANE)).toBe(true)
+
+        await postHook({ hook_event_name: 'agent_end' })
+        expect(server.getStatusSnapshot()).toEqual([
+          expect.objectContaining({ paneKey: PANE, state: 'done' })
+        ])
+      } finally {
+        server.stop()
+      }
+    })
+  }
+
+  it('re-attaching a retired pane while idle re-opens it for a much later first turn', async () => {
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const postHook = (payload: Record<string, unknown>): Promise<Response> =>
+        fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/pi`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+          },
+          body: JSON.stringify(buildBody(payload, { launchToken: 'idle-reattach-token' }))
+        })
+
+      // Nothing in flight: the pane is retired and re-attached while the agent sits idle.
+      server.retirePaneAuthority(PANE)
+      expect(server.restorePaneAuthority(PANE)).toBe(true)
+
+      await postHook({ hook_event_name: 'before_agent_start', prompt: 'much later turn' })
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({ paneKey: PANE, state: 'working', prompt: 'much later turn' })
+      ])
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('re-attach does not lift a closed-tab tombstone', async () => {
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const postHook = (payload: Record<string, unknown>): Promise<Response> =>
+        fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/pi`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+          },
+          body: JSON.stringify(buildBody(payload, { launchToken: 'closed-tab-token' }))
+        })
+
+      // Pane fence AND tab fence are both standing; re-attach may lift neither.
+      server.retirePaneAuthority(PANE)
+      server.dropStatusEntriesByTabPrefix('tab-1')
+      expect(server.restorePaneAuthority(PANE)).toBe(false)
+
+      await postHook({ hook_event_name: 'before_agent_start', prompt: 'after tab close' })
+      expect(server.getStatusSnapshot()).toEqual([])
+
+      // The pane fence must still be standing too, not silently lifted underneath.
+      expect(server.restorePaneAuthority(PANE)).toBe(false)
+    } finally {
+      server.stop()
+    }
+  })
+
   it('accepts a resumed-session SessionStart after launch authority retires in a reusable pane', async () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production' })

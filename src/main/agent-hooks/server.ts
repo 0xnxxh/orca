@@ -1659,6 +1659,26 @@ export class AgentHookServer {
     }
   }
 
+  // Why: retirement is a claim that a pane is gone. Re-attaching a live PTY to that
+  // exact pane disproves the claim at the moment it stops being true, so the fence
+  // lifts here instead of waiting for the agent to speak again — an agent re-attached
+  // mid-turn or left idle would otherwise stay suppressed for the rest of its life
+  // (STA-4114). A closed *tab* is a separate, stronger claim and is left standing.
+  restorePaneAuthority(paneKey: string): boolean {
+    const ownerPaneKey = this.resolvePaneKeyAlias(paneKey)
+    const tabId = parsePaneKey(ownerPaneKey)?.tabId
+    if (tabId && this.closedAgentStatusTabIds.has(tabId)) {
+      return false
+    }
+    let restored = false
+    for (const key of new Set([paneKey, ownerPaneKey])) {
+      if (this.closedAgentStatusPaneKeys.delete(key)) {
+        restored = true
+      }
+    }
+    return restored
+  }
+
   clearPaneKeyAliasesForPty(
     ptyId: string,
     options?: { shouldClearStablePaneKey?: (paneKey: string) => boolean }
