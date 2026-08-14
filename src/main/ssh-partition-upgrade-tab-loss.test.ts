@@ -61,7 +61,18 @@ function paneSession() {
     activeTabId: TAB,
     activeTabIdByWorktree: { [WORKTREE]: TAB },
     tabsByWorktree: {
-      [WORKTREE]: [{ id: TAB, worktreeId: WORKTREE, title: 'shell', type: 'terminal' }]
+      [WORKTREE]: [
+        {
+          id: TAB,
+          worktreeId: WORKTREE,
+          title: 'shell',
+          ptyId: PTY,
+          customTitle: null,
+          color: null,
+          sortOrder: 0,
+          createdAt: 1_700_000_000_000
+        }
+      ]
     },
     terminalLayoutsByTabId: {
       [TAB]: {
