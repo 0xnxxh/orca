@@ -47916,6 +47916,44 @@ describe('OrcaRuntimeService', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([{}, {}])
   })
 
+  it('does not coalesce concurrent same-id removals on different hosts', async () => {
+    const runtimeStore = {
+      ...store,
+      getRepos: () => [
+        { ...store.getRepos()[0], executionHostId: 'local' },
+        { ...store.getRepos()[0], executionHostId: 'runtime:env-1' }
+      ]
+    }
+    const runtime = createWorktreeRemovalRuntime(runtimeStore)
+    vi.spyOn(runtime, 'acquireFileWatcherRemoval').mockResolvedValue({ finish: vi.fn() })
+    const bothStarted = deferred<void>()
+    const finishRemovals = deferred<void>()
+    let startedCount = 0
+    vi.mocked(removeWorktree).mockImplementation(async () => {
+      startedCount += 1
+      if (startedCount === 2) {
+        bothStarted.resolve()
+      }
+      await finishRemovals.promise
+      return {}
+    })
+
+    const local = runtime.removeManagedWorktree(TEST_WORKTREE_ID, true, false, false, 'local')
+    const paired = runtime.removeManagedWorktree(
+      TEST_WORKTREE_ID,
+      true,
+      false,
+      false,
+      'runtime:env-1'
+    )
+
+    await bothStarted.promise
+    expect(removeWorktree).toHaveBeenCalledTimes(2)
+
+    finishRemovals.resolve()
+    await expect(Promise.all([local, paired])).resolves.toEqual([{}, {}])
+  })
+
   it('rejects concurrent runtime worktree removals for the same id with different options', async () => {
     const runtime = createWorktreeRemovalRuntime()
     const removeStarted = deferred<void>()

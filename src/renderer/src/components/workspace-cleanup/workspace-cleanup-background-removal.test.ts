@@ -5,6 +5,7 @@ import {
   type WorkspaceCleanupBackgroundRemovalArgs
 } from './workspace-cleanup-background-removal'
 import { makeCandidate } from './workspace-cleanup-presentation-fixtures'
+import { getWorkspaceCleanupHostIdentity } from '../../../../shared/workspace-cleanup-host-identity'
 
 vi.mock('sonner', () => ({
   toast: {
@@ -391,6 +392,60 @@ describe('startWorkspaceCleanupBackgroundRemoval', () => {
           message: 'busy'
         }
       ]
+    })
+  })
+
+  it('does not skip a paired-runtime ancestor after another runtime child fails', async () => {
+    const failedChild = makeCandidate({
+      worktreeId: 'repo-1::/repo/parent/child',
+      displayName: 'child',
+      branch: 'child',
+      path: '/repo/parent/child',
+      executionHostId: 'runtime:hub-a'
+    })
+    const unrelatedParent = makeCandidate({
+      worktreeId: 'repo-2::/repo/parent',
+      repoId: 'repo-2',
+      repoName: 'Repo 2',
+      displayName: 'parent',
+      branch: 'parent',
+      path: '/repo/parent',
+      executionHostId: 'runtime:hub-b'
+    })
+    const removeCandidates = vi
+      .fn()
+      .mockResolvedValueOnce({
+        removedIds: [],
+        removedIdentities: [],
+        failures: [
+          {
+            worktreeId: failedChild.worktreeId,
+            executionHostId: failedChild.executionHostId,
+            displayName: failedChild.displayName,
+            message: 'busy'
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        removedIds: [unrelatedParent.worktreeId],
+        removedIdentities: [
+          getWorkspaceCleanupHostIdentity('runtime:hub-b', unrelatedParent.worktreeId)
+        ],
+        failures: []
+      })
+
+    startWorkspaceCleanupBackgroundRemoval({
+      candidates: [unrelatedParent, failedChild],
+      removeCandidates,
+      onProgress: vi.fn()
+    })
+    await settleBackgroundRemoval()
+
+    expect(removeCandidates).toHaveBeenNthCalledWith(1, [failedChild.worktreeId], {
+      approvedCandidates: [failedChild]
+    })
+    expect(removeCandidates).toHaveBeenNthCalledWith(2, [unrelatedParent.worktreeId], {
+      approvedCandidates: [unrelatedParent]
     })
   })
 

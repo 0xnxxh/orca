@@ -374,8 +374,9 @@ describe('workspace cleanup removal and protection', () => {
   })
 
   it('fails a queued removal that now needs a force the user never approved', async () => {
-    const approvedCandidate = makeCandidate()
+    const approvedCandidate = makeCandidate({ executionHostId: 'local' })
     const dirtySinceConfirmation = makeCandidate({
+      executionHostId: 'local',
       tier: 'review',
       blockers: ['dirty-files'],
       git: { clean: false, upstreamAhead: 0, upstreamBehind: 0, checkedAt: NOW }
@@ -399,6 +400,7 @@ describe('workspace cleanup removal and protection', () => {
       failures: [
         {
           worktreeId: WORKTREE_ID,
+          executionHostId: 'local',
           displayName: 'old-workspace',
           message: 'Workspace changed after confirmation. Refresh to review it before removing.'
         }
@@ -409,6 +411,7 @@ describe('workspace cleanup removal and protection', () => {
 
   it('still force-removes rows whose approved candidate already carried git risk', async () => {
     const approvedCandidate = makeCandidate({
+      executionHostId: 'local',
       tier: 'review',
       blockers: ['dirty-files'],
       git: { clean: false, upstreamAhead: 0, upstreamBehind: 0, checkedAt: NOW }
@@ -432,17 +435,20 @@ describe('workspace cleanup removal and protection', () => {
       failures: []
     })
     expect(removeWorktree).toHaveBeenCalledWith(WORKTREE_ID, true, {
-      suppressPreservedBranchToast: true
+      suppressPreservedBranchToast: true,
+      requiredExecutionHostId: 'local'
     })
   })
 
   it('fails a removal that reveals concrete git risk after an unverified force approval', async () => {
     const approvedCandidate = makeCandidate({
+      executionHostId: 'local',
       tier: 'review',
       blockers: ['git-status-error'],
       git: { clean: null, upstreamAhead: null, upstreamBehind: null, checkedAt: null }
     })
     const nowRevealsUnpushed = makeCandidate({
+      executionHostId: 'local',
       tier: 'review',
       blockers: ['unpushed-commits'],
       git: { clean: true, upstreamAhead: 3, upstreamBehind: 0, checkedAt: NOW }
@@ -466,6 +472,7 @@ describe('workspace cleanup removal and protection', () => {
       failures: [
         {
           worktreeId: WORKTREE_ID,
+          executionHostId: 'local',
           displayName: 'old-workspace',
           message: 'Workspace changed after confirmation. Refresh to review it before removing.'
         }

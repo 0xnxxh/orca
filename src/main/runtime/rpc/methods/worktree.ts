@@ -250,15 +250,18 @@ export const WORKTREE_METHODS: RpcMethod[] = [
     name: 'worktree.rm',
     params: WorktreeRemove,
     handler: async (params, { runtime }) => {
+      // An old client cannot prove which same-id host row the user confirmed.
+      // Keep the field optional on the wire, but reject omission at this destructive boundary.
+      if (!params.hostId) {
+        throw new Error('worktree.rm requires an explicit hostId')
+      }
       const removalArgs = [
         params.worktree,
         params.force === true,
         params.runHooks === true,
         params.allowUnverifiedPtyStop === true
       ] as const
-      const result = params.hostId
-        ? await runtime.removeManagedWorktree(...removalArgs, params.hostId)
-        : await runtime.removeManagedWorktree(...removalArgs)
+      const result = await runtime.removeManagedWorktree(...removalArgs, params.hostId)
       return { removed: true, ...result }
     }
   }),

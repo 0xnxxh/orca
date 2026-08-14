@@ -64,7 +64,7 @@ vi.mock('@/runtime/runtime-rpc-client', async (importOriginal) => ({
   callRuntimeRpc: runtimeRpc.callRuntimeRpc
 }))
 
-import { createTestStore, seedStore, makeWorktree } from './store-test-helpers'
+import { createTestStore, seedStore, makeTab, makeWorktree } from './store-test-helpers'
 import { resetAuthoritativelyRemovedWorktreeMemoryForTests } from './worktrees'
 import type { AppState } from '../types'
 import type {
@@ -232,8 +232,17 @@ describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
             repoId: 'repo1',
             path: worktreePath,
             hostId: HOST_A_HOST_ID
+          }),
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo1',
+            path: worktreePath,
+            hostId: HOST_B_HOST_ID
           })
         ]
+      },
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'host-a-tab', worktreeId })]
       }
     } as Partial<AppState>)
 
@@ -253,6 +262,13 @@ describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
       'HOST B (confirmed) worktree directory must be gone'
     ).toBe(false)
     expect(routedHostIds).toEqual([HOST_B_HOST_ID])
+    expect(store.getState().worktreesByRepo.repo1).toEqual([
+      expect.objectContaining({ id: worktreeId, hostId: HOST_A_HOST_ID })
+    ])
+    expect(store.getState().tabsByWorktree[worktreeId]).toEqual([
+      expect.objectContaining({ id: 'host-a-tab' })
+    ])
+    expect(store.getState().activeWorktreeId).toBe(worktreeId)
   })
 
   it('soundness control: with host B ACTIVE, confirming host B still deletes only host B', async () => {
@@ -377,7 +393,10 @@ describe('STA-4343 wrong-host cleanup removal (folder workspace identity)', () =
     // Folder workspaces are not Git worktrees: no worktree owner rows exist.
     seedStore(store, {
       activeWorktreeId: worktreeId,
-      activeWorkspaceExecutionHostId: HOST_A_HOST_ID
+      activeWorkspaceExecutionHostId: HOST_A_HOST_ID,
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'host-a-folder-tab', worktreeId })]
+      }
     } as Partial<AppState>)
 
     const removal = await store
@@ -392,6 +411,10 @@ describe('STA-4343 wrong-host cleanup removal (folder workspace identity)', () =
     ).toBe(true)
     expect(fs.existsSync(hosts.hostBMarkerPath)).toBe(false)
     expect(routedHostIds).toEqual([HOST_B_HOST_ID])
+    expect(store.getState().tabsByWorktree[worktreeId]).toEqual([
+      expect.objectContaining({ id: 'host-a-folder-tab' })
+    ])
+    expect(store.getState().activeWorktreeId).toBe(worktreeId)
   })
 })
 
@@ -505,6 +528,37 @@ describe('STA-4343 cleanup removal fails closed on an unresolved owner', () => {
           })
         ]
       }
+    } as Partial<AppState>)
+
+    const removal = await store
+      .getState()
+      .removeWorkspaceCleanupCandidates([worktreeId], { approvedCandidates: [legacyCandidate] })
+
+    expect(removal.removedIds).toEqual([])
+    expect(removal.failures).toHaveLength(1)
+    expect(fs.existsSync(hosts.hostAMarkerPath), 'host A must survive').toBe(true)
+    expect(fs.existsSync(hosts.hostBMarkerPath), 'host B must survive').toBe(true)
+    expect(routedHostIds).toEqual([])
+    expect(mockApi.worktrees.remove).not.toHaveBeenCalled()
+    expect(runtimeRpc.callRuntimeRpc).not.toHaveBeenCalled()
+  })
+
+  it('deletes nothing for an old-client row with no host qualifier or catalog owner', async () => {
+    const worktreeId = 'repo1::/shared/workspace/path'
+    const worktreePath = '/shared/workspace/path'
+    const hosts = createHostDirectories(worktreeId)
+    const routedHostIds: string[] = []
+    installRemovalTransports(
+      { [HOST_A_HOST_ID]: hosts.hostARoot, [HOST_B_HOST_ID]: hosts.hostBRoot },
+      routedHostIds
+    )
+    const legacyCandidate = makeHostCandidate(worktreeId, undefined, worktreePath, null)
+    seedCollidingScan([legacyCandidate])
+
+    const store = createTestStore()
+    seedStore(store, {
+      activeWorktreeId: worktreeId,
+      activeWorkspaceExecutionHostId: HOST_A_HOST_ID
     } as Partial<AppState>)
 
     const removal = await store

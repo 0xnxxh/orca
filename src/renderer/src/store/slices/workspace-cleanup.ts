@@ -324,7 +324,12 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
     set((state) => {
       const nextDismissals = { ...state.workspaceCleanupDismissals }
       for (const dismissal of dismissals) {
-        nextDismissals[dismissal.worktreeId] = dismissal
+        nextDismissals[
+          getWorkspaceCleanupCandidateIdentity({
+            worktreeId: dismissal.worktreeId,
+            executionHostId: dismissal.executionHostId
+          })
+        ] = dismissal
       }
       const nextScan = state.workspaceCleanupScan
         ? {
@@ -466,7 +471,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
               : state.workspaceCleanupScan,
           // Why: dismissals and viewed marks for removed worktrees are dead
           // weight in the store and in every persisted-dismissals write.
-          workspaceCleanupDismissals: pruneWorkspaceCleanupRecord(
+          workspaceCleanupDismissals: pruneWorkspaceCleanupDismissals(
             state.workspaceCleanupDismissals,
             prunableWorktreeIds
           ),
@@ -822,7 +827,7 @@ async function enrichWorkspaceCleanupCandidatesWithCache(
       }
       const inputSignature = getWorkspaceCleanupCandidateInputSignature(candidate)
       const localSignature = getWorkspaceCleanupLocalStateSignature(
-        candidate.worktreeId,
+        candidate,
         state,
         projection,
         options
@@ -899,11 +904,12 @@ function getWorkspaceCleanupCandidateInputSignature(candidate: WorkspaceCleanupC
 }
 
 function getWorkspaceCleanupLocalStateSignature(
-  worktreeId: string,
+  candidate: WorkspaceCleanupCandidate,
   state: AppState,
   projection: WorkspaceCleanupEnrichmentProjection,
   options: EnrichOptions
 ): string {
+  const { worktreeId } = candidate
   const tabs = state.tabsByWorktree[worktreeId] ?? []
   const tabIds = tabs.map((tab) => tab.id)
   const tabIdSet = new Set(tabIds)
@@ -935,7 +941,7 @@ function getWorkspaceCleanupLocalStateSignature(
   const dismissal =
     options.applyDismissals === false
       ? null
-      : (state.workspaceCleanupDismissals[worktreeId] ?? null)
+      : (getWorkspaceCleanupDismissal(candidate, state.workspaceCleanupDismissals) ?? null)
 
   return JSON.stringify({
     active: state.activeWorktreeId === worktreeId,
@@ -1037,13 +1043,39 @@ function applyDismissal(
   candidate: WorkspaceCleanupCandidate,
   dismissals: Record<string, WorkspaceCleanupDismissal>
 ): WorkspaceCleanupCandidate {
-  if (!shouldHideWorkspaceCleanupCandidate(candidate, dismissals[candidate.worktreeId])) {
+  if (
+    !shouldHideWorkspaceCleanupCandidate(
+      candidate,
+      getWorkspaceCleanupDismissal(candidate, dismissals)
+    )
+  ) {
     return candidate
   }
   return applyWorkspaceCleanupPolicy({
     ...candidate,
     blockers: [...new Set<WorkspaceCleanupBlocker>([...candidate.blockers, 'dismissed'])]
   })
+}
+
+function getWorkspaceCleanupDismissal(
+  candidate: WorkspaceCleanupCandidate,
+  dismissals: Record<string, WorkspaceCleanupDismissal>
+): WorkspaceCleanupDismissal | undefined {
+  return (
+    dismissals[getWorkspaceCleanupCandidateIdentity(candidate)] ?? dismissals[candidate.worktreeId]
+  )
+}
+
+function pruneWorkspaceCleanupDismissals(
+  dismissals: Record<string, WorkspaceCleanupDismissal>,
+  removedIds: ReadonlySet<string>
+): Record<string, WorkspaceCleanupDismissal> {
+  if (!Object.values(dismissals).some((dismissal) => removedIds.has(dismissal.worktreeId))) {
+    return dismissals
+  }
+  return Object.fromEntries(
+    Object.entries(dismissals).filter(([, dismissal]) => !removedIds.has(dismissal.worktreeId))
+  )
 }
 
 function pruneWorkspaceCleanupRecord<T>(

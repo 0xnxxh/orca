@@ -5,7 +5,7 @@
  * host's row silently replaced — or silently hid, or silently dropped — the
  * other's, which is what let a user confirm a row that was not the one shown.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   getWorkspaceCleanupCandidateIdentity,
   getWorkspaceCleanupHostIdentity,
@@ -19,6 +19,12 @@ import {
 } from '../../../../shared/workspace-cleanup'
 import { resolveWorkspaceCleanupRemovalTargets } from './workspace-cleanup-removal-targets'
 import type { AppState } from '../types'
+import { createTestStore, seedStore } from './store-test-helpers'
+
+const dismissMock = vi.fn().mockResolvedValue(undefined)
+
+// @ts-expect-error -- minimal window.api stub for dismissal persistence
+globalThis.window = { api: { workspaceCleanup: { dismiss: dismissMock } } }
 
 const WORKTREE_ID = 'repo1::/shared/workspace'
 
@@ -98,6 +104,36 @@ describe('workspace cleanup dismissals', () => {
   it('keeps a legacy id-only dismissal hiding its row', () => {
     expect(shouldHideWorkspaceCleanupCandidate(makeCandidate('local'), makeDismissal())).toBe(true)
   })
+
+  it('stores same-id dismissals independently and still reads a legacy id-only key', async () => {
+    const local = makeCandidate('local')
+    const remote = makeCandidate('ssh:ssh-1', 'ssh-1')
+    const store = createTestStore()
+    seedStore(store, {
+      workspaceCleanupScan: { scannedAt: 1, candidates: [local, remote], errors: [] }
+    } as Partial<AppState>)
+
+    await store.getState().dismissWorkspaceCleanupCandidates([local, remote])
+
+    expect(Object.keys(store.getState().workspaceCleanupDismissals).sort()).toEqual(
+      [
+        getWorkspaceCleanupCandidateIdentity(local),
+        getWorkspaceCleanupCandidateIdentity(remote)
+      ].sort()
+    )
+    expect(store.getState().workspaceCleanupScan?.candidates).toEqual([
+      expect.objectContaining({ blockers: expect.arrayContaining(['dismissed']) }),
+      expect.objectContaining({ blockers: expect.arrayContaining(['dismissed']) })
+    ])
+
+    seedStore(store, {
+      workspaceCleanupDismissals: { [WORKTREE_ID]: makeDismissal() },
+      workspaceCleanupScan: { scannedAt: 1, candidates: [local], errors: [] }
+    } as Partial<AppState>)
+    await store.getState().dismissWorkspaceCleanupCandidates([])
+
+    expect(store.getState().workspaceCleanupScan?.candidates[0]?.blockers).toContain('dismissed')
+  })
 })
 
 describe('workspace cleanup removal targets', () => {
@@ -117,7 +153,7 @@ describe('workspace cleanup removal targets', () => {
     expect(target?.kind).toBe('unresolved')
   })
 
-  it('adopts the single known owner for a row with no host evidence', () => {
+  it('fails closed for a confirmed row with no host evidence despite one known owner', () => {
     const state = {
       worktreesByRepo: { repo1: [{ id: WORKTREE_ID, repoId: 'repo1', hostId: 'ssh:ssh-1' }] },
       detectedWorktreesByRepo: {}
@@ -125,13 +161,13 @@ describe('workspace cleanup removal targets', () => {
     const [target] = resolveWorkspaceCleanupRemovalTargets([WORKTREE_ID], state, {
       approvedCandidates: [makeCandidate(undefined)]
     })
-    expect(target).toMatchObject({ kind: 'target', executionHostId: 'ssh:ssh-1' })
+    expect(target?.kind).toBe('unresolved')
   })
 
-  it('keeps the legacy id-only route when no owner row carries a host', () => {
+  it('fails closed for a confirmed row when no owner row carries a host', () => {
     const [target] = resolveWorkspaceCleanupRemovalTargets([WORKTREE_ID], emptyState, {
       approvedCandidates: [makeCandidate(undefined)]
     })
-    expect(target).toMatchObject({ kind: 'target', executionHostId: null })
+    expect(target?.kind).toBe('unresolved')
   })
 })

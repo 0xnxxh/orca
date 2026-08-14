@@ -30,9 +30,8 @@ export type WorkspaceCleanupRemovalTarget = {
   kind: 'target'
   worktreeId: string
   /**
-   * The host the user confirmed. Null only for a row that carries no host
-   * evidence at all AND that the store knows on exactly one (unqualified)
-   * owner — the legacy single-host path, which keeps its previous routing.
+   * The host the user confirmed. Null is reserved for legacy internal callers
+   * that did not supply confirmation candidates.
    */
   executionHostId: ExecutionHostId | null
   displayName: string
@@ -109,9 +108,14 @@ export function resolveWorkspaceCleanupRemovalTargets(
         approvedCandidate: confirmedCandidate
       }
     }
+    // A displayed row without host evidence cannot prove where the user
+    // intended to delete, even if the current catalog happens to list one owner.
+    if (confirmedCandidate) {
+      return ambiguousHostFailure(worktreeId, displayName)
+    }
     // No host evidence on the row: accept it only while the store itself knows
-    // a single owner. Zero known owners is the legacy pre-host-provenance
-    // hydration, which keeps its existing (id-only) routing.
+    // a single owner. This compatibility path is reachable only by internal
+    // callers that did not provide a confirmed candidate.
     const ownerHostIds = getWorktreeOperationOwnerHostIds(state, worktreeId)
     if (ownerHostIds.length > 1) {
       return ambiguousHostFailure(worktreeId, displayName)
