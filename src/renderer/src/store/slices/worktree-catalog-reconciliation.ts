@@ -2,14 +2,14 @@ import { structuralValuesEqualIgnoringUndefined } from '../../../../shared/struc
 
 type CatalogRow = { id: string }
 
-// NOTHING HITS THIS TODAY: both callers key on ids that are unique by
-// construction, so buckets stay at 1-3. It only bounds the damage if that ever
-// changes — a same-id bucket costs one deep compare per candidate, so an
-// unbounded one is O(k^2). A cap beats an index keyed on a second walk that
-// would have to stay in step with structuralValuesEqualIgnoringUndefined, and
-// reuse is only an optimization: dropping a match past the window costs object
-// identity, never correctness.
-const MAX_DUPLICATE_ID_SCAN = 8
+// Above this many rows sharing an id, matching switches from a linear scan to
+// a fingerprint index: scanning costs one deep compare per candidate, so an
+// unbounded bucket would be O(k^2). Below it the scan is cheaper than building
+// an index, and that is where every live caller sits — but not because ids are
+// globally unique. areWorktreesEqual compares unfiltered cross-host lists in
+// which one worktree path legitimately repeats, so a bucket is bounded by the
+// hosts sharing that path, which is why it stays far below the threshold.
+const DUPLICATE_ID_INDEX_THRESHOLD = 8
 
 export function reuseEqualCatalogRows<T extends CatalogRow>(
   current: readonly T[] | undefined,
@@ -27,25 +27,100 @@ export function reuseEqualCatalogRows<T extends CatalogRow>(
       currentById.set(row.id, [row])
     }
   }
+  // Stays null unless some id actually exceeds the threshold, so the live path
+  // allocates exactly what it did before — one array per id and nothing else.
+  let indexesById: Map<string, Map<string, T[]> | null> | null = null
   const reconciled = incoming.map((row) => {
     const candidates = currentById.get(row.id)
-    if (!candidates) {
+    if (candidates === undefined) {
       return row
     }
-    const scanLimit = Math.min(candidates.length, MAX_DUPLICATE_ID_SCAN)
-    for (let index = 0; index < scanLimit; index++) {
-      const candidate = candidates[index]
-      if (candidate !== undefined && structuralValuesEqualIgnoringUndefined(candidate, row)) {
-        candidates.splice(index, 1)
-        return candidate
-      }
+    const existing = indexesById?.get(row.id)
+    // A bucket only shrinks, so once it is under the threshold with no index it
+    // stays on the scan, and the two strategies never both consume from it.
+    if (existing === undefined && candidates.length <= DUPLICATE_ID_INDEX_THRESHOLD) {
+      return spliceEqualRow(candidates, row, candidates.length) ?? row
     }
-    return row
+    let index = existing
+    if (index === undefined) {
+      index = buildFingerprintIndex(candidates)
+      indexesById ??= new Map()
+      indexesById.set(row.id, index)
+    }
+    if (index === null) {
+      // JSON.stringify rejects some values the equality walk handles fine
+      // (BigInt); those fall back to a capped scan so O(k^2) cannot return here.
+      return spliceEqualRow(candidates, row, DUPLICATE_ID_INDEX_THRESHOLD) ?? row
+    }
+    // Confirm inside the fingerprint group WITHOUT discarding non-matches: JSON
+    // collapses distinctions the walk keeps (two Dates at one instant, -0 vs 0,
+    // undefined vs null inside an array), and a rejected candidate
+    // dropped here would be invisible to every later row. Bounded so an
+    // all-colliding group cannot bring O(k^2) back.
+    const matches = index.get(catalogRowFingerprint(row) ?? '')
+    // Consumes at most one previous row, so two duplicates cannot both reuse it.
+    return (
+      (matches === undefined ? null : spliceEqualRow(matches, row, DUPLICATE_ID_INDEX_THRESHOLD)) ??
+      row
+    )
   })
   return current.length === reconciled.length &&
     current.every((row, index) => row === reconciled[index])
     ? (current as T[])
     : reconciled
+}
+
+function spliceEqualRow<T>(rows: T[], row: T, scanLimit: number): T | null {
+  const limit = Math.min(rows.length, scanLimit)
+  for (let index = 0; index < limit; index++) {
+    const candidate = rows[index]
+    if (candidate !== undefined && structuralValuesEqualIgnoringUndefined(candidate, row)) {
+      rows.splice(index, 1)
+      return candidate
+    }
+  }
+  return null
+}
+
+function buildFingerprintIndex<T>(rows: readonly T[]): Map<string, T[]> | null {
+  const index = new Map<string, T[]>()
+  for (const row of rows) {
+    const key = catalogRowFingerprint(row)
+    if (key === null) {
+      return null
+    }
+    const existing = index.get(key)
+    if (existing) {
+      existing.push(row)
+    } else {
+      index.set(key, [row])
+    }
+  }
+  return index
+}
+
+// Only a pre-filter — every hit is confirmed with the real equality walk before
+// it is reused. That is what stops this being a second equality implementation
+// to hold in step with structuralValuesEqualIgnoringUndefined: if the two ever
+// disagree the cost is a missed reuse (one fresh object identity), never a wrong
+// row. Keys are sorted because property order is not significant, and JSON drops
+// undefined-valued keys, which is the ignoring-undefined semantics.
+function catalogRowFingerprint(row: unknown): string | null {
+  try {
+    return (
+      JSON.stringify(row, (_key, value: unknown) =>
+        value !== null && typeof value === 'object' && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+                left < right ? -1 : left > right ? 1 : 0
+              )
+            )
+          : value
+      ) ?? 'undefined'
+    )
+  } catch {
+    return null
+  }
 }
 
 export function catalogRowsEqual<T extends CatalogRow>(
