@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getRuntimeRepoBaseRefDefault } from '@/runtime/runtime-repo-client'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
 
 export function useSourceControlBaseRefDefault({
   activeRepoConnectionId,
@@ -10,7 +11,7 @@ export function useSourceControlBaseRefDefault({
   isFolder
 }: {
   activeRepoConnectionId: string | null
-  activeRepoExecutionHostId: string | null
+  activeRepoExecutionHostId: ExecutionHostId | null
   activeRepoId: string | null
   activeRepoRuntimeEnvironmentId: string | null | undefined
   isBranchVisible: boolean
@@ -27,7 +28,9 @@ export function useSourceControlBaseRefDefault({
     let stale = false
     void getRuntimeRepoBaseRefDefault(
       { activeRuntimeEnvironmentId: activeRepoRuntimeEnvironmentId },
-      activeRepoId
+      activeRepoId,
+      // Why: the direct-repo path resolves the record by OWNER host, not the focused runtime.
+      activeRepoExecutionHostId ?? undefined
     )
       .then((result) => {
         if (!stale) {

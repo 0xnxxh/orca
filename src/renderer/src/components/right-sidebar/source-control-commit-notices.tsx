@@ -4,13 +4,7 @@ import {
   isPullPolicyRemoteActionError
 } from './source-control-pull-policy-error-notice'
 import { SourceControlRecoveryNotice } from './source-control-recovery-notice'
-import type { SourceControlPushRecovery } from './source-control-push-recovery'
-import type { CreatePrIntentNotice } from './source-control-commit-area-types'
-import type {
-  SourceControlActionRecipe,
-  SourceControlLaunchActionId
-} from '../../../../shared/source-control-ai-actions'
-import type { SourceControlAiWriteTarget } from '../../../../shared/source-control-ai-recipe-save'
+import type { CommitNoticesProps } from './source-control-commit-area-types'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 
@@ -38,35 +32,7 @@ export function CommitNotices({
   onOpenSourceControlAiSettings,
   onFixCommitFailureWithAI,
   onFixPushFailureWithAI
-}: {
-  worktreeId: string | null
-  groupId: string | null
-  connectionId?: string | null
-  repoId?: string | null
-  launchPlatform?: NodeJS.Platform
-  commitError: string | null
-  commitFailureSummary: string | null
-  commitFailureKindLabel: string | null
-  hasCommitFailureDetails: boolean
-  commitFailureRecoveryPrompt: string | null
-  pushRecovery: SourceControlPushRecovery | null
-  remoteActionError: string | null
-  createPrIntentNotice?: CreatePrIntentNotice | null
-  generateError: string | null
-  sourceControlAiActionsVisible: boolean
-  isFixingCommitFailureWithAI: boolean
-  isFixingPushFailureWithAI: boolean
-  fixCommitFailureRecipe?: SourceControlActionRecipe
-  fixPushFailureRecipe?: SourceControlActionRecipe
-  onSaveLaunchActionDefault?: (
-    target: SourceControlAiWriteTarget,
-    actionId: SourceControlLaunchActionId,
-    recipe: SourceControlActionRecipe
-  ) => void | Promise<void>
-  onOpenSourceControlAiSettings?: () => void
-  onFixCommitFailureWithAI: (promptOverride?: string) => Promise<boolean> | boolean
-  onFixPushFailureWithAI: (promptOverride?: string) => Promise<boolean> | boolean
-}): React.JSX.Element {
+}: CommitNoticesProps): React.JSX.Element {
   return (
     <>
       {commitError && commitFailureSummary ? (

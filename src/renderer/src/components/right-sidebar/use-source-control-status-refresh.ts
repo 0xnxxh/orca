@@ -13,6 +13,14 @@ import type { GitPushTarget } from '../../../../shared/worktree/types'
 import type { PullRequestGenerationContext } from '@/store/slices/pull-request-generation'
 import { refreshGitStatusForWorktree } from './git-status-refresh'
 
+export type SourceControlStatusRefresh = {
+  refreshActiveGitStatus: (signal?: AbortSignal) => Promise<void>
+  refreshActiveGitStatusAfterMutation: () => Promise<void>
+  refreshGitStatusAfterPullRequestGeneration: (
+    context: PullRequestGenerationContext
+  ) => Promise<void>
+}
+
 export function useSourceControlStatusRefresh({
   activeRepoSettings,
   activeWorktreeId,
@@ -29,11 +37,11 @@ export function useSourceControlStatusRefresh({
   worktreePath: string | null
   activePushTarget?: GitPushTarget
   isFolder: boolean
-  repositoryHuge: unknown
+  repositoryHuge: { limit: number } | null | undefined
   activeConnectionId: string | null
   activeWorktreeInstanceId?: string
   worktreeMap: ReadonlyMap<string, { pushTarget?: GitPushTarget }>
-}) {
+}): SourceControlStatusRefresh {
   const setGitStatus = useAppStore((s) => s.setGitStatus)
   const updateWorktreeGitIdentity = useAppStore((s) => s.updateWorktreeGitIdentity)
   const setUpstreamStatus = useAppStore((s) => s.setUpstreamStatus)
@@ -51,7 +59,12 @@ export function useSourceControlStatusRefresh({
         worktreePath,
         connectionId,
         pushTarget: activePushTarget,
-        deps: { setGitStatus, updateWorktreeGitIdentity, setUpstreamStatus, fetchUpstreamStatus },
+        deps: {
+          setGitStatus,
+          updateWorktreeGitIdentity,
+          setUpstreamStatus,
+          fetchUpstreamStatus
+        },
         ...(signal ? { request: { signal } } : {})
       })
     },
@@ -150,7 +163,12 @@ export function useSourceControlStatusRefresh({
           worktreePath: context.worktreePath,
           connectionId: context.connectionId,
           pushTarget: worktreeMap.get(context.worktreeId)?.pushTarget,
-          deps: { setGitStatus, updateWorktreeGitIdentity, setUpstreamStatus, fetchUpstreamStatus }
+          deps: {
+            setGitStatus,
+            updateWorktreeGitIdentity,
+            setUpstreamStatus,
+            fetchUpstreamStatus
+          }
         })
       } catch (error) {
         console.warn('[SourceControl] post-generation git status refresh failed', error)

@@ -31,7 +31,10 @@ const SECTION_LABELS: Record<SourceControlSectionArea, { key: string; fallback: 
     key: 'auto.components.right.sidebar.SourceControl.48a003c1b1',
     fallback: 'Staged Changes'
   },
-  unstaged: { key: 'auto.components.right.sidebar.SourceControl.d4ef4bafc5', fallback: 'Changes' },
+  unstaged: {
+    key: 'auto.components.right.sidebar.SourceControl.d4ef4bafc5',
+    fallback: 'Changes'
+  },
   untracked: {
     key: 'auto.components.right.sidebar.SourceControl.522f44dce5',
     fallback: 'Untracked Files'
@@ -188,9 +191,32 @@ export function SourceControlUncommittedSections(props: {
             />
             {!isCollapsed && (
               <SourceControlSectionFileList
-                {...props}
                 treeRows={props.visibleTreeRowsBySection[id] ?? []}
                 listRows={props.visibleListRowsBySection[id] ?? []}
+                sourceControlViewMode={props.sourceControlViewMode}
+                fileListScrollElement={props.fileListScrollElement}
+                normalizedFilter={props.normalizedFilter}
+                isExecutingBulk={props.isExecutingBulk}
+                collapsedTreeDirs={props.collapsedTreeDirs}
+                toggleTreeDir={props.toggleTreeDir}
+                requestDiscardPaths={props.requestDiscardPaths}
+                handleStageAllPaths={props.handleStageAllPaths}
+                handleUnstagePaths={props.handleUnstagePaths}
+                expandedSubmoduleKeys={props.expandedSubmoduleKeys}
+                toggleSubmodule={props.toggleSubmodule}
+                currentWorktreeId={props.currentWorktreeId}
+                worktreePath={props.worktreePath}
+                selectedKeySet={props.selectedKeySet}
+                activeOpenRowKeys={props.activeOpenRowKeys}
+                handleSelect={props.handleSelect}
+                handleContextMenu={props.handleContextMenu}
+                revealInExplorer={props.revealInExplorer}
+                activeConnectionId={props.activeConnectionId}
+                handleOpenDiff={props.handleOpenDiff}
+                handleStage={props.handleStage}
+                handleUnstage={props.handleUnstage}
+                requestDiscardEntry={props.requestDiscardEntry}
+                diffCommentCountByPath={props.diffCommentCountByPath}
               />
             )}
           </div>

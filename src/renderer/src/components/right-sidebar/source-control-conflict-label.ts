@@ -1,6 +1,7 @@
 import type { GitStatusEntry } from '../../../../shared/git-status-types'
 import { translate } from '@/i18n/i18n'
 
+/** Localized short label for a merge-conflict kind, e.g. `both_modified` → "both modified". */
 export function getLocalizedConflictKindLabel(
   kind: NonNullable<GitStatusEntry['conflictKind']>
 ): string {

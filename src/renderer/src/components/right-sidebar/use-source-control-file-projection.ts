@@ -6,7 +6,8 @@ import { compareGitStatusEntries } from './source-control-status-sort'
 import {
   filterAndSortSourceControlPathEntries,
   filterSourceControlGroupedPathEntries,
-  getSourceControlFileFilterState
+  getSourceControlFileFilterState,
+  type SourceControlFileFilterState
 } from './source-control-file-filter'
 import {
   applyGitStatusEntryAreasToSourceControlTree,
@@ -14,11 +15,13 @@ import {
   buildSourceControlTree,
   compactSourceControlTree,
   flattenSourceControlTree,
-  namespaceSourceControlTreeDirectoryKeys
+  namespaceSourceControlTreeDirectoryKeys,
+  type SourceControlTreeNode
 } from './source-control-tree'
 import {
   buildSourceControlDisplaySections,
   SOURCE_CONTROL_AREAS,
+  type SourceControlDisplaySection,
   type SourceControlDisplaySectionId,
   type SourceControlEntryGroups,
   type SourceControlSectionArea
@@ -34,6 +37,28 @@ import {
 import type { FlatEntry } from './useSourceControlSelection'
 import type { GitStatusSourceControlTreeNode } from './source-control-directory-action-paths'
 import { SUBMODULE_EMPTY_LABEL, SUBMODULE_LOADING_LABEL } from './source-control-row-layout'
+
+export type SourceControlFileProjection = {
+  grouped: SourceControlEntryGroups
+  fileFilterState: SourceControlFileFilterState
+  normalizedFilter: string
+  isGitHistoryVisible: boolean
+  filteredGrouped: SourceControlEntryGroups
+  displaySections: SourceControlDisplaySection[]
+  unfilteredDisplaySectionsById: ReadonlyMap<
+    SourceControlDisplaySectionId,
+    SourceControlDisplaySection
+  >
+  filteredBranchEntries: GitBranchChangeEntry[]
+  visibleTreeRowsBySection: Partial<
+    Record<SourceControlDisplaySectionId, RenderableSourceControlNode[]>
+  >
+  visibleListRowsBySection: Partial<
+    Record<SourceControlDisplaySectionId, RenderableSubmoduleListItem[]>
+  >
+  visibleBranchTreeRows: SourceControlTreeNode<GitBranchChangeEntry, 'branch'>[]
+  visibleSelectionEntries: FlatEntry[]
+}
 
 export function useSourceControlFileProjection({
   entries,
@@ -61,9 +86,13 @@ export function useSourceControlFileProjection({
   submoduleStatusByKey: Record<string, SubmoduleStatusState>
   sourceControlViewMode: SourceControlViewMode
   collapsedSections: Set<string>
-}) {
+}): SourceControlFileProjection {
   const grouped = useMemo(() => {
-    const groups: SourceControlEntryGroups = { staged: [], unstaged: [], untracked: [] }
+    const groups: SourceControlEntryGroups = {
+      staged: [],
+      unstaged: [],
+      untracked: []
+    }
     for (const entry of entries) {
       groups[entry.area].push(entry)
     }

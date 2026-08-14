@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { getConnectionId } from '@/lib/connection-context'
+import { translate } from '@/i18n/i18n'
 import {
   bulkStageRuntimeGitPaths,
   bulkUnstageRuntimeGitPaths,
@@ -58,7 +60,7 @@ export function useSourceControlBulkActions({
   const selectedKeySet = selectedKeys
 
   const handleBulkStage = useCallback(async () => {
-    if (!worktreePath || bulkStagePaths.length === 0) {
+    if (!worktreePath || isExecutingBulk || bulkStagePaths.length === 0) {
       return
     }
     setIsExecutingBulk(true)
@@ -76,6 +78,16 @@ export function useSourceControlBulkActions({
       )
       await refreshActiveGitStatusAfterMutation()
       clearSelection()
+    } catch (error) {
+      // Why: callers invoke these with `void`, so an uncaught Git failure would surface as an unhandled rejection with no user feedback.
+      console.error('[SourceControl] bulk stage/unstage failed', error)
+      toast.error(
+        translate(
+          'auto.components.right.sidebar.use.source.control.bulk.actions.2f67630884',
+          'Bulk stage/unstage failed'
+        ),
+        { description: error instanceof Error ? error.message : undefined }
+      )
     } finally {
       setIsExecutingBulk(false)
     }
@@ -85,11 +97,12 @@ export function useSourceControlBulkActions({
     bulkStagePaths,
     clearSelection,
     activeWorktreeId,
+    isExecutingBulk,
     refreshActiveGitStatusAfterMutation
   ])
 
   const handleBulkUnstage = useCallback(async () => {
-    if (!worktreePath || bulkUnstagePaths.length === 0) {
+    if (!worktreePath || isExecutingBulk || bulkUnstagePaths.length === 0) {
       return
     }
     setIsExecutingBulk(true)
@@ -107,6 +120,16 @@ export function useSourceControlBulkActions({
       )
       await refreshActiveGitStatusAfterMutation()
       clearSelection()
+    } catch (error) {
+      // Why: callers invoke these with `void`, so an uncaught Git failure would surface as an unhandled rejection with no user feedback.
+      console.error('[SourceControl] bulk stage/unstage failed', error)
+      toast.error(
+        translate(
+          'auto.components.right.sidebar.use.source.control.bulk.actions.2f67630884',
+          'Bulk stage/unstage failed'
+        ),
+        { description: error instanceof Error ? error.message : undefined }
+      )
     } finally {
       setIsExecutingBulk(false)
     }
@@ -116,6 +139,7 @@ export function useSourceControlBulkActions({
     bulkUnstagePaths,
     clearSelection,
     activeWorktreeId,
+    isExecutingBulk,
     refreshActiveGitStatusAfterMutation
   ])
 
@@ -214,6 +238,16 @@ export function useSourceControlBulkActions({
       )
       await refreshActiveGitStatusAfterMutation()
       clearSelection()
+    } catch (error) {
+      // Why: callers invoke these with `void`, so an uncaught Git failure would surface as an unhandled rejection with no user feedback.
+      console.error('[SourceControl] bulk stage/unstage failed', error)
+      toast.error(
+        translate(
+          'auto.components.right.sidebar.use.source.control.bulk.actions.2f67630884',
+          'Bulk stage/unstage failed'
+        ),
+        { description: error instanceof Error ? error.message : undefined }
+      )
     } finally {
       setIsExecutingBulk(false)
     }

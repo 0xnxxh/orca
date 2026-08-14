@@ -23,7 +23,7 @@ export function SourceControlForkPushNotice({
     >
       <GitFork className="size-3 shrink-0" aria-hidden="true" />
       <span className="truncate">
-        {translate('auto.components.right.sidebar.SourceControl.78ce2d37ac', 'Pushes to fork')}
+        {translate('auto.components.right.sidebar.SourceControl.78ce2d37ac', 'Pushes to fork')}{' '}
         {describeForkPushTarget(pushTarget)}
       </span>
     </div>

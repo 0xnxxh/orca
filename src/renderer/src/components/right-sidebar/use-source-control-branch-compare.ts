@@ -37,7 +37,7 @@ export function useSourceControlBranchCompare({
   remoteStatus: GitUpstreamStatus | undefined
 }): {
   refreshBranchCompare: () => Promise<void>
-  refreshBranchCompareRef: React.MutableRefObject<() => Promise<void>>
+  refreshBranchCompareRef: React.RefObject<() => Promise<void>>
 } {
   const beginGitBranchCompareRequest = useAppStore((s) => s.beginGitBranchCompareRequest)
   const setGitBranchCompareResult = useAppStore((s) => s.setGitBranchCompareResult)
@@ -132,7 +132,10 @@ export function useSourceControlBranchCompare({
       }
     }
   }, [runBranchCompare])
-  refreshBranchCompareRef.current = refreshBranchCompare
+  // Why: publish in an effect, not the render body — a discarded render must not install its callback. Declared first so the effects below see the fresh one.
+  useEffect(() => {
+    refreshBranchCompareRef.current = refreshBranchCompare
+  }, [refreshBranchCompare])
 
   useEffect(() => {
     if (!activeWorktreeId || !worktreePath || !isBranchVisible || !compareBaseRef || isFolder) {
@@ -204,7 +207,11 @@ export function useSourceControlBranchCompare({
     // Why: when compare-base resolves to no base, drop the stale summary (gate on loaded upstream status to avoid flicker).
     if (
       !activeWorktreeId ||
-      !shouldClearBranchCompareForMissingBase({ isFolder, compareBaseRef, remoteStatus })
+      !shouldClearBranchCompareForMissingBase({
+        isFolder,
+        compareBaseRef,
+        remoteStatus
+      })
     ) {
       return
     }

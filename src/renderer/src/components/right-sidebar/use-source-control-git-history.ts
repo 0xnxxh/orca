@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { getConnectionId } from '@/lib/connection-context'
 import { getRuntimeGitHistory, type RuntimeGitContext } from '@/runtime/runtime-git-client'
 import type { GitHistoryPanelState } from './GitHistoryPanel'
@@ -28,7 +28,7 @@ export function useSourceControlGitHistory({
 }): {
   gitHistoryState: GitHistoryPanelState
   refreshGitHistory: () => Promise<void>
-  refreshGitHistoryRef: MutableRefObject<() => Promise<void>>
+  refreshGitHistoryRef: RefObject<() => Promise<void>>
 } {
   const [gitHistoryByWorktree, setGitHistoryByWorktree] = useState<
     Record<string, GitHistoryPanelState>
@@ -98,7 +98,10 @@ export function useSourceControlGitHistory({
       if (gitHistoryRequestByWorktreeRef.current[worktreeId] !== requestId) {
         return
       }
-      setGitHistoryByWorktree((prev) => ({ ...prev, [worktreeId]: { status: 'ready', result } }))
+      setGitHistoryByWorktree((prev) => ({
+        ...prev,
+        [worktreeId]: { status: 'ready', result }
+      }))
     } catch (error) {
       if (gitHistoryRequestByWorktreeRef.current[worktreeId] !== requestId) {
         return
@@ -125,7 +128,10 @@ export function useSourceControlGitHistory({
     worktreePath
   ])
   const refreshGitHistoryRef = useRef(refreshGitHistory)
-  refreshGitHistoryRef.current = refreshGitHistory
+  // Why: publish in an effect, not the render body — a discarded render must not install its callback. Declared first so the effect below sees the fresh one.
+  useEffect(() => {
+    refreshGitHistoryRef.current = refreshGitHistory
+  }, [refreshGitHistory])
 
   useEffect(() => {
     // Why: history shells out to git; defer first load until the user expands Commits so source control stays cheap for large/remote repos.

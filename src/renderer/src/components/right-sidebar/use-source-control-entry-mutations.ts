@@ -42,8 +42,8 @@ export function useSourceControlEntryMutations({
           filePath
         )
         await refreshActiveGitStatusAfterMutation()
-      } catch {
-        // git operation failed silently
+      } catch (error) {
+        console.error('[SourceControl] stage failed', error)
       }
     },
     [activeRepoSettings, worktreePath, activeWorktreeId, refreshActiveGitStatusAfterMutation]
@@ -67,8 +67,8 @@ export function useSourceControlEntryMutations({
           filePath
         )
         await refreshActiveGitStatusAfterMutation()
-      } catch {
-        // git operation failed silently
+      } catch (error) {
+        console.error('[SourceControl] unstage failed', error)
       }
     },
     [activeRepoSettings, worktreePath, activeWorktreeId, refreshActiveGitStatusAfterMutation]

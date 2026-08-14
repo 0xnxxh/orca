@@ -26,12 +26,24 @@ export function ConflictSummaryCard({
 }): React.JSX.Element {
   const operationLabel =
     conflictOperation === 'merge'
-      ? 'Merge conflicts'
+      ? translate(
+          'auto.components.right.sidebar.source.control.conflict.status.cards.5302a1ddba',
+          'Merge conflicts'
+        )
       : conflictOperation === 'rebase'
-        ? 'Rebase conflicts'
+        ? translate(
+            'auto.components.right.sidebar.source.control.conflict.status.cards.7f3af87549',
+            'Rebase conflicts'
+          )
         : conflictOperation === 'cherry-pick'
-          ? 'Cherry-pick conflicts'
-          : 'Conflicts'
+          ? translate(
+              'auto.components.right.sidebar.source.control.conflict.status.cards.6a8e9ad490',
+              'Cherry-pick conflicts'
+            )
+          : translate(
+              'auto.components.right.sidebar.source.control.conflict.status.cards.bdf8772106',
+              'Conflicts'
+            )
 
   return (
     <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2">
@@ -114,12 +126,24 @@ export function OperationBanner({
 }): React.JSX.Element {
   const label =
     conflictOperation === 'merge'
-      ? 'Merge in progress'
+      ? translate(
+          'auto.components.right.sidebar.source.control.conflict.status.cards.edc2d82a2b',
+          'Merge in progress'
+        )
       : conflictOperation === 'rebase'
-        ? 'Rebase in progress'
+        ? translate(
+            'auto.components.right.sidebar.source.control.conflict.status.cards.5c3707aa44',
+            'Rebase in progress'
+          )
         : conflictOperation === 'cherry-pick'
-          ? 'Cherry-pick in progress'
-          : 'Operation in progress'
+          ? translate(
+              'auto.components.right.sidebar.source.control.conflict.status.cards.ffe53a1da6',
+              'Cherry-pick in progress'
+            )
+          : translate(
+              'auto.components.right.sidebar.source.control.conflict.status.cards.35eb76d323',
+              'Operation in progress'
+            )
 
   const Icon = conflictOperation === 'rebase' ? GitPullRequestArrow : GitMerge
 

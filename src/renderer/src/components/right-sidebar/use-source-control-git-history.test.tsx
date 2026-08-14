@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ getRuntimeGitHistory: vi.fn() }))
@@ -12,31 +12,8 @@ vi.mock('@/runtime/runtime-git-client', () => ({
 vi.mock('@/lib/connection-context', () => ({ getConnectionId: () => undefined }))
 
 import { useSourceControlGitHistory } from './use-source-control-git-history'
+import { deferred, flush, mountProbe, unmountProbes } from './source-control-hook-test-harness'
 import type { GitHistoryResult } from '../../../../shared/git-history-types'
-
-const roots: Root[] = []
-
-function deferred<T>(): {
-  promise: Promise<T>
-  resolve: (v: T) => void
-  reject: (e: unknown) => void
-} {
-  let resolve!: (v: T) => void
-  let reject!: (e: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
-}
-
-async function flush(): Promise<void> {
-  await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-  })
-}
 
 function historyResult(subject: string): GitHistoryResult {
   return {
@@ -82,12 +59,7 @@ function Probe(props: {
 }
 
 async function mount(props: Parameters<typeof Probe>[0] = {}): Promise<Root> {
-  const root = createRoot(document.createElement('div'))
-  roots.push(root)
-  await act(async () => {
-    root.render(<Probe {...props} />)
-  })
-  return root
+  return mountProbe(<Probe {...props} />)
 }
 
 beforeEach(() => {
@@ -95,11 +67,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  act(() => {
-    for (const root of roots.splice(0)) {
-      root.unmount()
-    }
-  })
+  unmountProbes()
   vi.clearAllMocks()
   latest = null
 })
@@ -243,7 +211,8 @@ describe('useSourceControlGitHistory stale completion', () => {
     await act(async () => {
       root.render(<Probe worktreeId="A" worktreePath="/a" worktreeMap={ALL_WORKTREES} />)
     })
-    expect(latest?.gitHistoryState).not.toMatchObject({ result: historyResult('from-deleted-a') })
+    // Exact empty state, not merely "different": the entry must be gone, not replaced.
+    expect(latest?.gitHistoryState).toEqual({ status: 'idle' })
   })
 
   it('re-fetches when the compare base moves and passes it to the history read', async () => {

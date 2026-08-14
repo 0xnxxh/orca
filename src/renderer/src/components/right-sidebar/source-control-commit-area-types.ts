@@ -58,3 +58,32 @@ export type CommitAreaProps = {
   onPrimaryAction: () => void
   onDropdownAction: (kind: DropdownActionKind) => void
 }
+
+/** Notice-strip subset of {@link CommitAreaProps}, plus the commit-failure fields CommitArea derives locally. */
+export type CommitNoticesProps = Pick<
+  CommitAreaProps,
+  | 'worktreeId'
+  | 'groupId'
+  | 'connectionId'
+  | 'repoId'
+  | 'launchPlatform'
+  | 'commitError'
+  | 'commitFailureRecoveryPrompt'
+  | 'pushRecovery'
+  | 'remoteActionError'
+  | 'createPrIntentNotice'
+  | 'generateError'
+  | 'sourceControlAiActionsVisible'
+  | 'isFixingCommitFailureWithAI'
+  | 'isFixingPushFailureWithAI'
+  | 'fixCommitFailureRecipe'
+  | 'fixPushFailureRecipe'
+  | 'onSaveLaunchActionDefault'
+  | 'onOpenSourceControlAiSettings'
+  | 'onFixCommitFailureWithAI'
+  | 'onFixPushFailureWithAI'
+> & {
+  commitFailureSummary: string | null
+  commitFailureKindLabel: string | null
+  hasCommitFailureDetails: boolean
+}

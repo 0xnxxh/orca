@@ -21,7 +21,10 @@ import { getSourceControlRecoveryFailureKindLabel } from './source-control-push-
 const PRIMARY_ICONS: Partial<
   Record<
     PrimaryAction['kind'],
-    React.ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>
+    React.ComponentType<{
+      className?: string
+      'aria-hidden'?: boolean | 'true' | 'false'
+    }>
   >
 > = {
   commit: Check,
@@ -131,15 +134,30 @@ export function CommitArea({
   const showGenerate = showComposer && sourceControlAiActionsVisible && !isCreatePrIntentInFlight
   let generateTooltip: string | undefined
   if (isGenerating) {
-    generateTooltip = 'Generating commit message…'
+    generateTooltip = translate(
+      'auto.components.right.sidebar.source.control.commit.area.cc5739bd1d',
+      'Generating commit message…'
+    )
   } else if (isCommitting) {
-    generateTooltip = 'Commit in progress…'
+    generateTooltip = translate(
+      'auto.components.right.sidebar.source.control.commit.area.4cbd0cd9d2',
+      'Commit in progress…'
+    )
   } else if (stagedCount === 0) {
-    generateTooltip = 'Stage at least one file to generate a message.'
+    generateTooltip = translate(
+      'auto.components.right.sidebar.source.control.commit.area.e7876a2bde',
+      'Stage at least one file to generate a message.'
+    )
   } else if (hasMessage) {
-    generateTooltip = 'Clear the message to regenerate.'
+    generateTooltip = translate(
+      'auto.components.right.sidebar.source.control.commit.area.0904be2505',
+      'Clear the message to regenerate.'
+    )
   } else if (!aiAgentConfigured) {
-    generateTooltip = 'Pick an agent in Settings -> Git -> Source Control AI.'
+    generateTooltip = translate(
+      'auto.components.right.sidebar.source.control.commit.area.1ea9ba37aa',
+      'Pick an agent in Settings -> Git -> Source Control AI.'
+    )
   }
   const isGenerateDisabled =
     isGenerating || isCommitting || stagedCount === 0 || hasMessage || hasUnresolvedConflicts
@@ -222,31 +240,29 @@ export function CommitArea({
         onPrimaryAction={onPrimaryAction}
       />
       <CommitNotices
-        {...{
-          worktreeId,
-          groupId,
-          connectionId,
-          repoId,
-          launchPlatform,
-          commitError,
-          commitFailureSummary,
-          commitFailureKindLabel,
-          hasCommitFailureDetails,
-          commitFailureRecoveryPrompt,
-          pushRecovery,
-          remoteActionError,
-          createPrIntentNotice,
-          generateError,
-          sourceControlAiActionsVisible,
-          isFixingCommitFailureWithAI,
-          isFixingPushFailureWithAI,
-          fixCommitFailureRecipe,
-          fixPushFailureRecipe,
-          onSaveLaunchActionDefault,
-          onOpenSourceControlAiSettings,
-          onFixCommitFailureWithAI,
-          onFixPushFailureWithAI
-        }}
+        worktreeId={worktreeId}
+        groupId={groupId}
+        connectionId={connectionId}
+        repoId={repoId}
+        launchPlatform={launchPlatform}
+        commitError={commitError}
+        commitFailureSummary={commitFailureSummary}
+        commitFailureKindLabel={commitFailureKindLabel}
+        hasCommitFailureDetails={hasCommitFailureDetails}
+        commitFailureRecoveryPrompt={commitFailureRecoveryPrompt}
+        pushRecovery={pushRecovery}
+        remoteActionError={remoteActionError}
+        createPrIntentNotice={createPrIntentNotice}
+        generateError={generateError}
+        sourceControlAiActionsVisible={sourceControlAiActionsVisible}
+        isFixingCommitFailureWithAI={isFixingCommitFailureWithAI}
+        isFixingPushFailureWithAI={isFixingPushFailureWithAI}
+        fixCommitFailureRecipe={fixCommitFailureRecipe}
+        fixPushFailureRecipe={fixPushFailureRecipe}
+        onSaveLaunchActionDefault={onSaveLaunchActionDefault}
+        onOpenSourceControlAiSettings={onOpenSourceControlAiSettings}
+        onFixCommitFailureWithAI={onFixCommitFailureWithAI}
+        onFixPushFailureWithAI={onFixPushFailureWithAI}
       />
     </div>
   )

@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MutableRefObject } from 'react'
+import { useCallback, useRef, type RefObject } from 'react'
 import { detectLanguage } from '@/lib/language-detect'
 import { getDiffCommentSource } from '@/lib/diff-comment-compat'
 import { joinPath } from '@/lib/path'
@@ -13,6 +13,11 @@ import {
   cancelSourceControlEditorRevealFrames,
   requestSourceControlEditorRevealFrame
 } from './source-control-editor-reveal-frames'
+
+export type SourceControlNoteOpening = {
+  handleOpenComment: (comment: DiffComment) => void
+  setSourceControlRoot: (node: HTMLDivElement | null) => void
+}
 
 export function useSourceControlNoteOpening({
   activeWorktreeId,
@@ -31,8 +36,8 @@ export function useSourceControlNoteOpening({
   branchSummary: GitBranchCompareSummary | null
   handleOpenDiff: (entry: GitStatusEntry) => void
   openCommittedDiff: (entry: GitBranchChangeEntry) => void
-  sourceControlRef: MutableRefObject<HTMLDivElement | null>
-}) {
+  sourceControlRef: RefObject<HTMLDivElement | null>
+}): SourceControlNoteOpening {
   const openFile = useAppStore((s) => s.openFile)
   const setEditorViewMode = useAppStore((s) => s.setEditorViewMode)
   const setMarkdownViewMode = useAppStore((s) => s.setMarkdownViewMode)

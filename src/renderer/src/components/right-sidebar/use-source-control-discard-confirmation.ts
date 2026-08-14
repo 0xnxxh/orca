@@ -160,9 +160,14 @@ export function useSourceControlDiscardConfirmation({
     [activeWorktreeId, isExecutingBulk, worktreePath]
   )
   const requestDiscardPaths = useCallback(
-    (area: DiscardAllArea, paths: readonly string[]) =>
-      setPendingDiscard({ kind: 'area', area, paths: [...paths] }),
-    []
+    (area: DiscardAllArea, paths: readonly string[]): void => {
+      // Why: same gate as the other request handlers — handleRevertAllInArea rejects these states silently, so the dialog would confirm into a no-op.
+      if (!worktreePath || !activeWorktreeId || isExecutingBulk || paths.length === 0) {
+        return
+      }
+      setPendingDiscard({ kind: 'area', area, paths: [...paths] })
+    },
+    [activeWorktreeId, isExecutingBulk, worktreePath]
   )
   const cancelPendingDiscard = useCallback(() => setPendingDiscard(null), [])
   const confirmPendingDiscard = useCallback((): void => {

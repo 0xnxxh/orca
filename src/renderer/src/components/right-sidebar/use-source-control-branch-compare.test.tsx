@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -34,31 +34,10 @@ import {
   BRANCH_REFRESH_INTERVAL_MS,
   useSourceControlBranchCompare
 } from './use-source-control-branch-compare'
+import { deferred, flush, mountProbe, unmountProbes } from './source-control-hook-test-harness'
+import type { GitBranchCompareResult } from '../../../../shared/git-diff-compare-types'
 import type { GitUpstreamStatus } from '../../../../shared/git-status-types'
 
-const roots: Root[] = []
-
-function deferred<T>(): {
-  promise: Promise<T>
-  resolve: (v: T) => void
-  reject: (e: unknown) => void
-} {
-  let resolve!: (v: T) => void
-  let reject!: (e: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
-}
-
-async function flush(): Promise<void> {
-  await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-  })
-}
 type Api = ReturnType<typeof useSourceControlBranchCompare>
 
 let latest: Api | null = null
@@ -87,28 +66,31 @@ function Probe(props: {
 }
 
 async function mount(props: Parameters<typeof Probe>[0] = {}): Promise<Root> {
-  const root = createRoot(document.createElement('div'))
-  roots.push(root)
-  await act(async () => {
-    root.render(<Probe {...props} />)
-  })
-  return root
+  return mountProbe(<Probe {...props} />)
 }
 
-const OK = { summary: { status: 'ready' }, entries: [] }
+const OK: GitBranchCompareResult = {
+  summary: {
+    baseRef: 'origin/main',
+    baseOid: null,
+    compareRef: 'feature',
+    headOid: null,
+    mergeBase: null,
+    changedFiles: 0,
+    status: 'ready'
+  },
+  entries: []
+}
 
 beforeEach(() => {
   mocks.getRuntimeGitBranchCompare.mockResolvedValue(OK)
 })
 
 afterEach(() => {
-  act(() => {
-    for (const root of roots.splice(0)) {
-      root.unmount()
-    }
-  })
+  unmountProbes()
   vi.useRealTimers()
-  vi.clearAllMocks()
+  // Why: resetAllMocks also drops unconsumed mockReturnValueOnce queues; beforeEach restores the default.
+  vi.resetAllMocks()
   mocks.gitBranchCompareSummaryByWorktree = {}
   latest = null
 })
@@ -325,5 +307,38 @@ describe('useSourceControlBranchCompare scheduler', () => {
       expect.objectContaining({ worktreeId: 'A' }),
       'origin/dev'
     )
+  })
+
+  it('refreshes when HEAD moves on a visible branch', async () => {
+    const root = await mount({ isBranchVisible: true, statusHead: 'head-1' })
+    await flush()
+    expect(mocks.getRuntimeGitBranchCompare).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      root.render(<Probe isBranchVisible statusHead="head-2" />)
+    })
+    await flush()
+    expect(mocks.getRuntimeGitBranchCompare).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes when the remote status moves without a HEAD change', async () => {
+    const remote: GitUpstreamStatus = {
+      hasUpstream: true,
+      upstreamName: 'origin/feature',
+      ahead: 0,
+      behind: 0
+    }
+    const root = await mount({ isBranchVisible: true, statusHead: 'head-1', remoteStatus: remote })
+    await flush()
+    expect(mocks.getRuntimeGitBranchCompare).toHaveBeenCalledTimes(1)
+
+    // A push moves the remote base and ahead count while local HEAD stays put.
+    await act(async () => {
+      root.render(
+        <Probe isBranchVisible statusHead="head-1" remoteStatus={{ ...remote, ahead: 1 }} />
+      )
+    })
+    await flush()
+    expect(mocks.getRuntimeGitBranchCompare).toHaveBeenCalledTimes(2)
   })
 })

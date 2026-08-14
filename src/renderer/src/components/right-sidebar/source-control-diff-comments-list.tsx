@@ -9,6 +9,13 @@ import { useCopyFeedbackState } from './source-control-copy-feedback'
 function getLocalizedDiffCommentLineLabel(
   comment: Pick<DiffComment, 'lineNumber' | 'startLine'>
 ): string {
+  // Why: lineNumber 0 is the file-level note sentinel (see formatDiffComment's "Scope: file"), not a real line.
+  if (comment.lineNumber === 0) {
+    return translate(
+      'auto.components.right.sidebar.source.control.diff.comments.list.cefacd0ec7',
+      'whole file'
+    )
+  }
   if (comment.startLine !== undefined && comment.startLine !== comment.lineNumber) {
     return translate(
       'auto.components.right.sidebar.SourceControl.d97ef8f221',
