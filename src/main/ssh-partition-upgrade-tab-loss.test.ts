@@ -157,4 +157,28 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
     expect(changed, 'the function reported no change').toBe(true)
     expect(state.workspaceSession?.tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(1)
   })
+
+  // A migration that leaves its source behind runs again on the next launch and re-adds panes the
+  // user has since closed, because "local has no such tab" is precisely its hoist condition.
+  it('does not resurrect a tab the user closed after upgrading', async () => {
+    const before = await createStore()
+    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    before.flushOrThrow()
+
+    // The upgrade launch hoists the pane.
+    const upgraded = await reopenStore()
+    expect(upgraded.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(1)
+
+    // The user closes it, and that sticks.
+    upgraded.setWorkspaceSession(
+      { ...upgraded.getWorkspaceSession(), tabsByWorktree: { [WORKTREE]: [] } } as never
+    )
+    upgraded.flushOrThrow()
+
+    const relaunched = await reopenStore()
+    expect(
+      relaunched.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [],
+      'the migration re-added a tab the user had closed'
+    ).toHaveLength(0)
+  })
 })

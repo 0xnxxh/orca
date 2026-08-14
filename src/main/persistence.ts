@@ -2913,6 +2913,15 @@ export function hoistSshPartitionsIntoLocalSession(
       local.activeTabIdByWorktree = { ...local.activeTabIdByWorktree, [worktreeId]: tabId }
       changed = true
     }
+    // Consume the source. A migration that leaves it behind runs again every launch and
+    // resurrects panes the user has since closed, because "local has no such tab" is exactly
+    // what this function treats as "needs hoisting".
+    if (state.workspaceSessionsByHostId?.[hostId]) {
+      const remaining = { ...state.workspaceSessionsByHostId }
+      delete remaining[hostId]
+      state.workspaceSessionsByHostId = remaining
+      changed = true
+    }
   }
   return changed
 }
