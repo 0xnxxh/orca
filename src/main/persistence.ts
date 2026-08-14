@@ -2335,13 +2335,17 @@ const MAX_CLAUDE_LIVE_PTY_SESSION_IDS = 200
 // Why: bound removed-SSH-target history so remove/re-add churn can't grow the file unbounded.
 const MAX_REMOVED_SSH_TARGET_TOMBSTONES = 50
 
-// Why: bound per-repo retirement so long-lived repos can't grow the file unbounded. Deliberately
-// far above the 552-name pool — a cap below it would start reissuing names and reintroduce the bug
-// this registry exists to prevent, so only `-2`/`-3` tier accumulation can ever reach it.
+// Bounds per-repo retirement so a long-lived repo can't grow the state file unbounded.
+//
+// DO NOT lower this to match the two bounds above. Those cap histories, where evicting the oldest
+// entry is harmless. This set is a correctness guarantee, so any cap below the 552-name pool hands
+// back a name whose agent conversation is still on disk — the exact bug this registry exists to
+// prevent. Only `-2`/`-3` tier accumulation can reach 2000, at roughly 21KB per repo.
 const MAX_RETIRED_WORKTREE_NAMES_PER_REPO = 2000
 
-/** Oldest-first eviction: entries are appended in retirement order, and the oldest paths are the
- *  ones whose agent state is likeliest to be gone already. */
+/** Oldest-first once the bound bites — a deliberate least-bad degradation rather than a neutral
+ *  policy. Something must be dropped, and the oldest directories are the likeliest to have been
+ *  reclaimed since, so their names are the safest of a bad set to reissue. */
 function boundRetiredWorktreeNames(names: readonly string[]): string[] {
   return names.length > MAX_RETIRED_WORKTREE_NAMES_PER_REPO
     ? names.slice(names.length - MAX_RETIRED_WORKTREE_NAMES_PER_REPO)
