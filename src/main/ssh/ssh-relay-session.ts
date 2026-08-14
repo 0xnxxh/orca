@@ -2619,21 +2619,6 @@ export class SshRelaySession {
         console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
       }
       if (bind?.bound === false && bind.refusalReason === 'noTab') {
-        // The partition is a live plane, so a tab created there mid-session is not in `local` yet.
-        // Fold it in and try once more before concluding no pane owns this shell.
-        if (this.store?.hoistSshPartitionsNow()) {
-          bind = bindPaneShell({
-            store: this.store,
-            worktreeId: lease.worktreeId,
-            tabId,
-            leafId: lease.leafId,
-            ptyId: appPtyId,
-            mayCreate: false,
-            ...(incarnationId ? { incarnationId } : {})
-          })
-        }
-      }
-      if (bind?.bound === false && bind.refusalReason === 'noTab') {
         // No durable tab owns this leaf, so there is nothing to publish it against — registering
         // would announce a pane that does not exist. Unresolved, not dead: the shell keeps running
         // and stays reattachable once a durable pane names it again.

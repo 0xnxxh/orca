@@ -485,40 +485,4 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       'a local-only layout edit reached through into the ssh partition'
     ).toBe(PTY)
   })
-
-  // `ssh:<target>` is a LIVE plane: the CLI and headless surfaces still write it. A tab created
-  // there mid-session is not in `local`, so a reattach refuses it as noTab and its shell runs on
-  // unbound. Re-hoisting on demand closes that window without waiting for a restart.
-  it('folds in a tab the partition gained mid-session, without a restart', async () => {
-    const before = await createStore()
-    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
-    before.flushOrThrow()
-    stripHoistMarker()
-
-    const store = await reopenStore()
-    expect(store.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(1)
-
-    // The CLI adds a pane to the partition while the app is running.
-    const grown = paneSession()
-    grown.tabsByWorktree[WORKTREE] = [
-      ...grown.tabsByWorktree[WORKTREE],
-      { ...grown.tabsByWorktree[WORKTREE][0], id: 'tab-cli' }
-    ]
-    grown.terminalLayoutsByTabId = {
-      ...grown.terminalLayoutsByTabId,
-      'tab-cli': {
-        root: { type: 'leaf' as const, leafId: LEAF_TWO },
-        activeLeafId: LEAF_TWO,
-        expandedLeafId: null,
-        ptyIdsByLeafId: { [LEAF_TWO]: PTY }
-      }
-    } as typeof grown.terminalLayoutsByTabId
-    store.setWorkspaceSession(grown as never, SSH_PARTITION)
-
-    expect(store.hoistSshPartitionsNow(), 'the on-demand hoist reported no change').toBe(true)
-    expect(
-      (store.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).map((tab) => tab.id).sort(),
-      'a tab the partition gained mid-session stayed invisible until restart'
-    ).toEqual(['tab-1', 'tab-cli'])
-  })
 })
