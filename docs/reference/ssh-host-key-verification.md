@@ -302,6 +302,20 @@ Fixed after review:
 
 ## Action items (STA-4319)
 
+**Where the message actually lands.** Traced end to end, because a rejection the user cannot read is
+a half-shipped feature. Fixed in this branch: the settings card clamped it to one line with no
+tooltip, and the terminal reconnect overlay never asked for it at all. Still open:
+
+- **The "Remote Hosts" status bar shows only `Error`.** `SshTargetStatusRow` does not receive the
+  error, so the status bar is a dead end for the most likely place a user notices the failure.
+- **"Connect again" is the wrong advice for a decision that will never change.** The terminal overlay
+  now prints the reason underneath, but its call to action still invites an action that cannot
+  succeed. Telling a permanent rejection from a transient fault in the renderer needs a typed reason
+  on the wire rather than a string — a remote-wire-compatibility decision, so deliberately deferred.
+- **Toasts carry Electron's `Error invoking remote method 'ssh:connect':` prefix.** The repo has
+  strippers for exactly this; no SSH call site uses one. Also worth noting sonner auto-dismisses in
+  4s, which is short for a message ending in a command the user is meant to copy.
+
 **Before Phase 2:**
 
 - **`UpdateHostKeys` (out of scope above, now the highest-value gap).** We read it and use nothing,
@@ -309,8 +323,11 @@ Fixed after review:
   routine path for key rotation, and it will be the most common way a legitimate user meets a
   rejection. Decide whether Phase 2 honours it or D5's recovery surface absorbs it.
 - **The web user never sees the reason.** `runtime/rpc/methods/ssh.ts` rethrows
-  `getPublicSshError(status)`, so a paired-web client gets a generic failure. Pre-existing, but it
-  makes the Phase 2 dialog message unreachable there without a change.
+  `getPublicSshError(status)` on all three paths, and push events are redacted through
+  `getPublicSshState`, so a paired-web client always sees exactly `SSH connection unavailable`.
+  Pre-existing, but it makes the Phase 2 dialog message unreachable there without a change. Note the
+  redaction is not web-only: any target owned by a paired runtime environment is redacted, so a
+  *desktop* user viewing a remote-Orca-server-owned host gets the same generic string.
 - **RPC fail-fast** becomes load-bearing the moment the dialog exists (see Phasing).
 
 **Known gaps that Phase 1 accepts, listed so they are choices and not surprises:**
