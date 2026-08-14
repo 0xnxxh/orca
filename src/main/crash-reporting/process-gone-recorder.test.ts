@@ -392,6 +392,70 @@ describe('recordProcessGoneCrash', () => {
 
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
   })
+
+  function withStubbedPlatform(platform: NodeJS.Platform, run: () => void): void {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+    try {
+      run()
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: original })
+    }
+  }
+
+  it('names the decoded POSIX wait status on the span and keeps the stored code raw', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+
+    withStubbedPlatform('linux', () => {
+      recordProcessGoneCrash(
+        { record } as never,
+        event({ reason: 'killed', exitCode: 61696 }),
+        new ProcessGoneDedupe()
+      )
+    })
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalledOnce())
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ exitCode: 61696 }))
+    expect(sink.records).toEqual([
+      expect.objectContaining({
+        name: 'electron.process_gone',
+        attributes: expect.objectContaining({
+          'crash.exit_code': 61696,
+          'crash.exit_code_decoded': 'exit status 241'
+        })
+      })
+    ])
+  })
+
+  it('leaves Windows exit codes and launch-failed codes undecoded', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+
+    withStubbedPlatform('win32', () => {
+      recordProcessGoneCrash(
+        { record } as never,
+        event({ reason: 'killed', exitCode: 1 }),
+        new ProcessGoneDedupe()
+      )
+    })
+    withStubbedPlatform('linux', () => {
+      recordProcessGoneCrash(
+        { record } as never,
+        event({ reason: 'launch-failed', exitCode: 18 }),
+        new ProcessGoneDedupe()
+      )
+    })
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
+    for (const span of sink.records) {
+      expect(span).toEqual(
+        expect.objectContaining({
+          attributes: expect.not.objectContaining({
+            'crash.exit_code_decoded': expect.anything()
+          })
+        })
+      )
+    }
+  })
 })
 
 describe('minidump signature attachment', () => {
