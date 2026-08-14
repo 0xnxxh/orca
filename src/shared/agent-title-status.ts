@@ -236,7 +236,7 @@ export function isQuarterCircleSpinnerOnlyAgentTitle(title: string | null | unde
   if (!title || !containsQuarterCircleSpinner(title)) {
     return false
   }
-  return detectAgentStatusFromTitle(title.replace(QUARTER_CIRCLE_SPINNER_RE, '').trim()) === null
+  return progressSpinnerRemainderLacksIdentity(title)
 }
 
 /**
@@ -248,9 +248,22 @@ export function isBrailleSpinnerOnlyAgentTitle(title: string | null | undefined)
   if (!title || !containsBrailleSpinner(title)) {
     return false
   }
+  return progressSpinnerRemainderLacksIdentity(title)
+}
+
+// Why: strip both families so mixed progress glyphs cannot become each other's identity.
+function progressSpinnerRemainderLacksIdentity(title: string): boolean {
   // Why: Orca's synthetic Cursor spinner title is identity, not a generic progress frame.
   if (isCursorAgentTitle(title)) {
     return false
   }
-  return detectAgentStatusFromTitle(title.replace(BRAILLE_SPINNER_RE, '').trim()) === null
+  // Why: Droid hook status is null, but Orca's synthesized "⠋ Droid" still carries identity.
+  if (DROID_AGENT_NAME_RE.test(title)) {
+    return false
+  }
+  const remainder = title
+    .replace(BRAILLE_SPINNER_RE, '')
+    .replace(QUARTER_CIRCLE_SPINNER_RE, '')
+    .trim()
+  return detectAgentStatusFromTitle(remainder) === null
 }

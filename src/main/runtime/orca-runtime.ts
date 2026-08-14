@@ -37649,10 +37649,11 @@ function ptyTitleProvesAgentPresence(
   if (!ptyLaunchRecordOwnsCurrentIncarnation(pty)) {
     return false
   }
-  if (isQuarterCircleSpinnerOnlyAgentTitle(title)) {
-    return pty.launchAgent === 'claude'
+  // Why: mixed titles follow braille's multi-agent authority; quarter-circle-only stays Claude.
+  if (isBrailleSpinnerOnlyAgentTitle(title)) {
+    return true
   }
-  return isBrailleSpinnerOnlyAgentTitle(title)
+  return isQuarterCircleSpinnerOnlyAgentTitle(title) && pty.launchAgent === 'claude'
 }
 
 function classifyAgentTitle(title: string | null): 'agent' | 'management' | 'neutral' {

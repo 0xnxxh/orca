@@ -25,9 +25,12 @@ const WORKTREE_ID = 'wt-1'
 const PTY_ID = 'pty-1'
 
 const BRAILLE_ONLY_TITLE = '⠙ Deploying release 4.2'
+const MIXED_SPINNER_ONLY_TITLE = '⠙◑ Deploying release 4.2'
 const BRAILLE_WITH_IDENTITY_TITLE = '⠂ Claude Code'
 const CURSOR_SYNTHETIC_TITLE = '⠋ Cursor Agent'
 const PI_SYNTHETIC_TITLE = '⠇ Pi'
+const DROID_SYNTHETIC_TITLE = '⠋ Droid'
+const ANDROID_PATH_TITLE = '⠋ android build'
 
 type HostSurface = {
   connectionId?: string | null
@@ -127,6 +130,9 @@ describe('braille title send authorization (STA-4048)', () => {
     expect(isBrailleSpinnerOnlyAgentTitle(BRAILLE_WITH_IDENTITY_TITLE)).toBe(false)
     expect(isBrailleSpinnerOnlyAgentTitle(CURSOR_SYNTHETIC_TITLE)).toBe(false)
     expect(isBrailleSpinnerOnlyAgentTitle(PI_SYNTHETIC_TITLE)).toBe(false)
+    expect(isBrailleSpinnerOnlyAgentTitle(DROID_SYNTHETIC_TITLE)).toBe(false)
+    expect(isBrailleSpinnerOnlyAgentTitle(ANDROID_PATH_TITLE)).toBe(true)
+    expect(isBrailleSpinnerOnlyAgentTitle(MIXED_SPINNER_ONLY_TITLE)).toBe(true)
     expect(detectAgentStatusFromTitle(BRAILLE_ONLY_TITLE)).toBe('working')
   })
 
@@ -241,6 +247,31 @@ describe('braille title send authorization (STA-4048)', () => {
       status: 'working'
     })
     await expect(guardedSendResult(runtime, handle)).resolves.toBe(AUTHORIZED)
+  })
+
+  it('authorizes Orca synthesized Droid working titles without a launch record', async () => {
+    const { runtime, handle } = await createRuntimeWithTitle(DROID_SYNTHETIC_TITLE, null)
+
+    await expect(runtime.getTerminalAgentStatus(handle)).resolves.toMatchObject({
+      isRunningAgent: true,
+      status: 'working'
+    })
+    await expect(guardedSendResult(runtime, handle)).resolves.toBe(AUTHORIZED)
+  })
+
+  it('does not treat an android path title as Droid identity', async () => {
+    const { runtime, handle } = await createRuntimeWithTitle(ANDROID_PATH_TITLE, null)
+
+    await expect(guardedSendResult(runtime, handle)).resolves.toBe('terminal_guard_no_agent')
+  })
+
+  it('refuses a mixed braille and quarter-circle title with no other identity', async () => {
+    const { runtime, handle } = await createRuntimeWithTitle(MIXED_SPINNER_ONLY_TITLE, null)
+
+    await expect(runtime.getTerminalAgentStatus(handle)).resolves.toMatchObject({
+      isRunningAgent: false
+    })
+    await expect(guardedSendResult(runtime, handle)).resolves.toBe('terminal_guard_no_agent')
   })
 
   it('still authorizes Orca synthetic Cursor and Pi spinner titles', async () => {
