@@ -940,14 +940,20 @@ export function useIpcEvents(): void {
         // Why: the host emits one reposChanged for group/folder-workspace edits too, so those
         // catalogs go stale without this; groups first because folder workspaces resolve owners from them.
         const runtimeOwner = { runtimeEnvironmentId: environmentId }
-        await useAppStore.getState().fetchProjectGroups(runtimeOwner)
-        await useAppStore.getState().fetchFolderWorkspaces(runtimeOwner)
-        await refreshRuntimeProjectWorktreesAndLineage(
-          environmentId,
-          repos,
-          (repoId, options) => useAppStore.getState().fetchWorktrees(repoId, options),
-          (options) => useAppStore.getState().fetchWorktreeLineage(options)
-        )
+        // Why: catalogs and worktrees are independent; serializing them put two 15s RPC
+        // timeouts ahead of worktree/lineage convergence on a wedged host.
+        await Promise.all([
+          (async () => {
+            await useAppStore.getState().fetchProjectGroups(runtimeOwner)
+            await useAppStore.getState().fetchFolderWorkspaces(runtimeOwner)
+          })(),
+          refreshRuntimeProjectWorktreesAndLineage(
+            environmentId,
+            repos,
+            (repoId, options) => useAppStore.getState().fetchWorktrees(repoId, options),
+            (options) => useAppStore.getState().fetchWorktreeLineage(options)
+          )
+        ])
       },
       onError: (error) => {
         console.error('Failed to refresh runtime projects:', error)
