@@ -159,6 +159,20 @@ export function applyTerminalAppearance(
     settings.terminalFontFamily
   )
 
+  // Why before the pane loop: FitAddon subtracts live .xterm padding, so the
+  // CSS vars must be stamped before safeFit or a padding shrink leaves a stale grid.
+  manager.setPaneStyleOptions({
+    splitBackground: paneBackground,
+    paneBackground,
+    inactivePaneOpacity: paneStyles.inactivePaneOpacity,
+    activePaneOpacity: paneStyles.activePaneOpacity,
+    opacityTransitionMs: paneStyles.opacityTransitionMs,
+    dividerThicknessPx: paneStyles.dividerThicknessPx,
+    focusFollowsMouse: paneStyles.focusFollowsMouse,
+    paddingX: settings.terminalPaddingX ?? 4,
+    paddingY: settings.terminalPaddingY ?? 4
+  })
+
   for (const pane of manager.getPanes()) {
     // Why value-gated: writing options.theme rebuilds the palette, discarding TUI OSC 4/10/11/12 mutations; skip on no-op change.
     if (theme && !composedTerminalThemesEqual(pane.terminal.options.theme, theme)) {
@@ -227,16 +241,4 @@ export function applyTerminalAppearance(
       safeFit(pane)
     }
   }
-
-  manager.setPaneStyleOptions({
-    splitBackground: paneBackground,
-    paneBackground,
-    inactivePaneOpacity: paneStyles.inactivePaneOpacity,
-    activePaneOpacity: paneStyles.activePaneOpacity,
-    opacityTransitionMs: paneStyles.opacityTransitionMs,
-    dividerThicknessPx: paneStyles.dividerThicknessPx,
-    focusFollowsMouse: paneStyles.focusFollowsMouse,
-    paddingX: settings.terminalPaddingX,
-    paddingY: settings.terminalPaddingY
-  })
 }

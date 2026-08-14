@@ -360,6 +360,24 @@ describe('applyTerminalAppearance theme assignment', () => {
     // Latest wins, exactly one write: intermediate hidden values never touch xterm.
     expect(writes).toEqual([21])
   })
+
+  it('stamps settings-UI padding defaults when padding is unset', () => {
+    const pane = makePane(1)
+    const manager = makeManager([pane])
+    applyTerminalAppearance(
+      manager,
+      getDefaultSettings('/tmp'),
+      true,
+      new Map(),
+      new Map(),
+      'false',
+      new Map(),
+      new Map()
+    )
+    expect(manager.setPaneStyleOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ paddingX: 4, paddingY: 4 })
+    )
+  })
 })
 
 describe('publishTerminalViewAttributesAtAppStart', () => {
