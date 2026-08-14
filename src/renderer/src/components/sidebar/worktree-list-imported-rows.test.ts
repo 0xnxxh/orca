@@ -3,7 +3,8 @@ import { canKeepImportedWorktreesHidden } from './worktree-list/imported-worktre
 import { getRenderRowKey } from './worktree-list-virtual-rows'
 import { getWorktreeDragGroups, getWorktreeDragIndexes } from './worktree-list/worktree-drag-groups'
 import { renderRowContainsWorktree } from './worktree-list/render-row-worktree-lookup'
-import type { Repo, Worktree } from '../../../../shared/types'
+import type { Repo } from '../../../../shared/repo-types'
+import type { Worktree } from '../../../../shared/worktree/types'
 import type { Row } from './worktree-list-groups'
 
 const repo: Repo = {

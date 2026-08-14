@@ -4,7 +4,8 @@ import {
   SCROLL_TO_CURRENT_WORKSPACE_REVEAL_REQUEST_EVENT,
   type ScrollToCurrentWorkspaceRevealRequestDetail
 } from '@/lib/scroll-to-current-workspace-status'
-import type { FolderWorkspace, Worktree } from '../../../../../shared/types'
+import type { FolderWorkspace } from '../../../../../shared/folder-workspace-types'
+import type { Worktree } from '../../../../../shared/worktree/types'
 import type { WorktreeGroupBy } from '../worktree-list-groups'
 import { getKnownSidebarWorktreeById } from '../worktree-list-folder-reveal'
 

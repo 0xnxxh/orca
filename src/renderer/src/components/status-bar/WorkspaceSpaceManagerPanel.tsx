@@ -29,7 +29,10 @@ import type {
   AgentStatusEntry,
   MigrationUnsupportedPtyEntry
 } from '../../../../shared/agent-status-types'
-import type { GitStatusResult, Repo, TerminalTab, Worktree } from '../../../../shared/types'
+import type { GitStatusResult } from '../../../../shared/git-status-types'
+import type { Repo } from '../../../../shared/repo-types'
+import type { TerminalTab } from '../../../../shared/terminal-tab-types'
+import type { Worktree } from '../../../../shared/worktree/types'
 import type {
   WorkspaceSpaceItem,
   WorkspaceSpaceWorktree

@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import type React from 'react'
-import type { WorkspaceStatus } from '../../../../../shared/types'
+import type { WorkspaceStatus } from '../../../../../shared/worktree/types'
 import type { HostSectionRow } from '../host-section-rows'
 import { PINNED_GROUP_KEY, type WorktreeGroupBy } from '../worktree-list-groups'
 import { hasWorkspaceDragData, readWorkspaceDragDataIds } from '../workspace-status'

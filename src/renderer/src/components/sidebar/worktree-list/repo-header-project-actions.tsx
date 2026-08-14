@@ -25,7 +25,8 @@ import {
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import { getRepositoryIconSectionId } from '@/components/settings/repository-settings-targets'
-import type { ProjectGroup, Repo } from '../../../../../shared/types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
+import type { Repo } from '../../../../../shared/repo-types'
 import { isGitRepoKind } from '../../../../../shared/repo-kind'
 import {
   REPO_HEADER_ACTION_BUTTON_CLASS,

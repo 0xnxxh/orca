@@ -1,5 +1,8 @@
 import type React from 'react'
-import type { WorkspaceStatus, WorkspaceStatusDefinition } from '../../../../../shared/types'
+import type {
+  WorkspaceStatus,
+  WorkspaceStatusDefinition
+} from '../../../../../shared/worktree/types'
 import type { WorktreeDragGroup } from '../worktree-manual-order'
 import type { WorktreeDragUnitGroup } from '../worktree-drag-units'
 import type { WorktreeSidebarDropPreview } from '../worktree-sidebar-drop-preview'

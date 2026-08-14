@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type React from 'react'
-import type { Worktree } from '../../../../../shared/types'
+import type { Worktree } from '../../../../../shared/worktree/types'
 import type { HostSectionRow } from '../host-section-rows'
 import type { PinnedWorktreeDisplayPolicy } from '../worktree-list-groups'
 import { getRenderedWorktreesInSidebarOrder } from '../worktree-sidebar-row-preference'

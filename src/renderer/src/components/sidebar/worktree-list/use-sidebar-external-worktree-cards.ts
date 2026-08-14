@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
-import type { Repo } from '../../../../../shared/types'
+import type { Repo } from '../../../../../shared/repo-types'
 import {
   IMPORTED_WORKTREES_KEEP_HIDDEN_ERROR,
   keepImportedWorktreesHiddenCard,

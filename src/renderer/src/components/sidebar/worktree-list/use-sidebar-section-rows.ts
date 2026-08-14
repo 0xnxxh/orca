@@ -2,15 +2,12 @@ import { useCallback, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
-import type {
-  FolderWorkspace,
-  ProjectGroup,
-  ProjectOrderBy,
-  Repo,
-  WorkspaceStatusDefinition,
-  Worktree,
-  WorktreeLineage
-} from '../../../../../shared/types'
+import type { FolderWorkspace } from '../../../../../shared/folder-workspace-types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
+import type { ProjectOrderBy } from '../../../../../shared/ui-chrome-types'
+import type { Repo } from '../../../../../shared/repo-types'
+import type { WorkspaceStatusDefinition, Worktree } from '../../../../../shared/worktree/types'
+import type { WorktreeLineage } from '../../../../../shared/worktree/lineage-types'
 import type { ExecutionHostId } from '../../../../../shared/execution-host'
 import { folderWorkspaceKey } from '../../../../../shared/workspace-scope'
 import { getHostDisplayLabelOverrides } from '../../../../../shared/host-setting-overrides'

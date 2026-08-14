@@ -1,7 +1,12 @@
 import React from 'react'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type { AppState } from '@/store/types'
-import type { Repo, WorkspaceLineage, Worktree, WorktreeLineage } from '../../../../../shared/types'
+import type { Repo } from '../../../../../shared/repo-types'
+import type {
+  WorkspaceLineage,
+  WorktreeLineage
+} from '../../../../../shared/worktree/lineage-types'
+import type { Worktree } from '../../../../../shared/worktree/types'
 import type { FolderWorkspacePathStatus } from '../../../../../shared/folder-workspace-path-status'
 import { isConfirmedStaleFolderPathStatus } from '../../../../../shared/folder-workspace-path-status'
 import { folderWorkspaceToWorktree } from '../../../../../shared/folder-workspace-worktree'

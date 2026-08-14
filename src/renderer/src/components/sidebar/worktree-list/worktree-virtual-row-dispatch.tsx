@@ -1,7 +1,10 @@
 import React from 'react'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import { cn } from '@/lib/utils'
-import type { WorkspaceStatus, WorkspaceStatusDefinition } from '../../../../../shared/types'
+import type {
+  WorkspaceStatus,
+  WorkspaceStatusDefinition
+} from '../../../../../shared/worktree/types'
 import { getWorkspaceStatus } from '../workspace-status'
 import type { WorktreeGroupBy } from '../worktree-list-groups'
 import {

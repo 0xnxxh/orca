@@ -2,14 +2,11 @@ import type React from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 import type { AppState } from '@/store/types'
 import type { PendingSidebarRowReveal, PendingSidebarWorktreeReveal } from '@/store/slices/ui'
-import type {
-  FolderWorkspace,
-  ProjectGroup,
-  Repo,
-  WorkspaceStatusDefinition,
-  Worktree,
-  WorktreeLineage
-} from '../../../../../shared/types'
+import type { FolderWorkspace } from '../../../../../shared/folder-workspace-types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
+import type { Repo } from '../../../../../shared/repo-types'
+import type { WorkspaceStatusDefinition, Worktree } from '../../../../../shared/worktree/types'
+import type { WorktreeLineage } from '../../../../../shared/worktree/lineage-types'
 import type { ExecutionHostId } from '../../../../../shared/execution-host'
 import { getWorktreeExecutionHostId } from '../../../../../shared/execution-host'
 import type { RenderRow } from '../worktree-list-virtual-rows'

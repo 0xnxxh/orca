@@ -2,17 +2,19 @@ import type React from 'react'
 import type { AppState } from '@/store/types'
 import type { VirtualizedScrollAnchor } from '@/hooks/useVirtualizedScrollAnchor'
 import type { PendingSidebarRowReveal, PendingSidebarWorktreeReveal } from '@/store/slices/ui'
+import type { FolderWorkspace } from '../../../../../shared/folder-workspace-types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
+import type { ProjectOrderBy } from '../../../../../shared/ui-chrome-types'
+import type { Repo } from '../../../../../shared/repo-types'
 import type {
-  FolderWorkspace,
-  ProjectGroup,
-  ProjectOrderBy,
-  Repo,
   WorkspaceLineage,
+  WorktreeLineage
+} from '../../../../../shared/worktree/lineage-types'
+import type {
   WorkspaceStatus,
   WorkspaceStatusDefinition,
-  Worktree,
-  WorktreeLineage
-} from '../../../../../shared/types'
+  Worktree
+} from '../../../../../shared/worktree/types'
 import type { ExecutionHostId } from '../../../../../shared/execution-host'
 import type { HostSectionRow } from '../host-section-rows'
 import type { ImportedWorktreeCardActionState } from '../imported-worktrees-card-actions'

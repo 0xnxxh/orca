@@ -1,12 +1,9 @@
 import { useMemo } from 'react'
 import type { AppState } from '@/store/types'
-import type {
-  ProjectGroup,
-  Repo,
-  WorkspaceStatusDefinition,
-  Worktree,
-  WorktreeLineage
-} from '../../../../../shared/types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
+import type { Repo } from '../../../../../shared/repo-types'
+import type { WorkspaceStatusDefinition, Worktree } from '../../../../../shared/worktree/types'
+import type { WorktreeLineage } from '../../../../../shared/worktree/lineage-types'
 import {
   getGroupKeysForWorktree,
   getLineageGroupKey,

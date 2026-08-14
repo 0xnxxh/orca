@@ -3,9 +3,9 @@ import { useAppStore } from '@/store'
 import type {
   WorkspaceStatus,
   WorkspaceStatusDefinition,
-  Worktree,
-  WorktreeMeta
-} from '../../../../../shared/types'
+  Worktree
+} from '../../../../../shared/worktree/types'
+import type { WorktreeMeta } from '../../../../../shared/worktree/meta-types'
 import { getWorkspaceStatus, getWorkspaceStatusGroupKey } from '../workspace-status'
 import {
   buildManualOrderUpdatesForGroupDrop,

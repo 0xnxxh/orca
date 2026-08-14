@@ -7,7 +7,8 @@ import {
   useRepoMap,
   useWorktreeMap
 } from '@/store/selectors'
-import type { ProjectGroup, Repo } from '../../../../shared/types'
+import type { ProjectGroup } from '../../../../shared/project-group-types'
+import type { Repo } from '../../../../shared/repo-types'
 import {
   getRepoExecutionHostId,
   getSettingsFocusedExecutionHostId

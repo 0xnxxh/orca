@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type React from 'react'
-import type { WorkspaceStatus } from '../../../../../shared/types'
+import type { WorkspaceStatus } from '../../../../../shared/worktree/types'
 import { clearWorkspaceKanbanSidebarDropTargetVisual } from '../workspace-kanban-sidebar-drop'
 import { setSidebarPointerDragDocumentStyles } from '../worktree-sidebar-pointer-drag-dom'
 import type {

@@ -1,5 +1,6 @@
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
-import type { GitHubAssignableUser, GlobalSettings } from '../../../shared/types'
+import type { GitHubAssignableUser } from '../../../shared/github/pull-request-types'
+import type { GlobalSettings } from '../../../shared/global-settings-types'
 import type {
   ListAssignableUsersBySlugResult,
   ListLabelsBySlugResult

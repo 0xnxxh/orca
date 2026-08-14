@@ -1,5 +1,7 @@
 import { useMemo } from 'react'
-import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../../shared/types'
+import type { FolderWorkspace } from '../../../../../shared/folder-workspace-types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
+import type { Repo } from '../../../../../shared/repo-types'
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../../../../shared/execution-host'
 import type { SidebarWorktreeFilters } from './use-sidebar-worktree-filters'
 import { filterFolderWorkspacesFromOtherDevices } from '../workspace-creator-visibility'

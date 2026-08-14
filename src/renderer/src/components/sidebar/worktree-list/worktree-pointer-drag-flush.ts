@@ -1,5 +1,5 @@
 import type React from 'react'
-import type { WorkspaceStatus } from '../../../../../shared/types'
+import type { WorkspaceStatus } from '../../../../../shared/worktree/types'
 import {
   clearWorkspaceKanbanSidebarDropTargetVisual,
   hasWorkspaceKanbanSidebarDropBoard,

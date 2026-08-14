@@ -5,12 +5,10 @@ import type {
   WriteTerminalRenderDesyncEvidenceArgs,
   WriteTerminalRenderDesyncEvidenceResult
 } from '../../shared/terminal-render-desync-evidence'
-import type {
-  FloatingTerminalCwdRequest,
-  MarkdownDocument,
-  PersistedUIState,
-  WorkspaceSessionState
-} from '../../shared/types'
+import type { MarkdownDocument } from '../../shared/filesystem-entry-types'
+import type { PersistedUIState } from '../../shared/persisted-ui-state-types'
+import type { FloatingTerminalCwdRequest } from '../../shared/ui-chrome-types'
+import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
 
 export type AppApi = {
   /** Returns the app identity currently exposed to native chrome and the titlebar. */

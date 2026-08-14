@@ -41,7 +41,7 @@ import type {
   GitHubProjectViewSummary,
   ListProjectViewsResult
 } from '../../../../shared/github/project-types'
-import type { GitHubWorkItem } from '../../../../shared/types'
+import type { GitHubWorkItem } from '../../../../shared/github/work-item-types'
 import ProjectPicker, { type ResolvedProjectSelection } from './ProjectPicker'
 import ProjectViewList from './ProjectViewList'
 import ProjectItemSlugDialog from './ProjectItemSlugDialog'

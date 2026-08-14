@@ -7,11 +7,11 @@ import { RepoIconGlyph } from '@/components/repo/repo-icon'
 import { RepoForkIndicator } from '@/components/repo/repo-fork-indicator'
 import type { FolderWorkspacePathStatus } from '../../../../../shared/folder-workspace-path-status'
 import { isConfirmedStaleFolderPathStatus } from '../../../../../shared/folder-workspace-path-status'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
 import type {
-  ProjectGroup,
   WorkspaceStatus,
   WorkspaceStatusDefinition
-} from '../../../../../shared/types'
+} from '../../../../../shared/worktree/types'
 import type { GroupHeaderRow, WorktreeGroupBy } from '../worktree-list-groups'
 import { PINNED_GROUP_KEY } from '../worktree-list-groups'
 import { getWorkspaceStatusFromGroupKey } from '../workspace-status'

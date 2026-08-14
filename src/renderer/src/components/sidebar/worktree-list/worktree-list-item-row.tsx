@@ -1,7 +1,7 @@
 import React from 'react'
 import { cn } from '@/lib/utils'
 import type { AppState } from '@/store/types'
-import type { Worktree } from '../../../../../shared/types'
+import type { Worktree } from '../../../../../shared/worktree/types'
 import WorktreeCard, { type ActiveSurfaceVariant } from '../WorktreeCard'
 import { PINNED_GROUP_KEY, type WorktreeGroupBy } from '../worktree-list-groups'
 import {

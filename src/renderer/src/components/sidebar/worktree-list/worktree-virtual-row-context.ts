@@ -1,6 +1,6 @@
 import type React from 'react'
 import type { AppState } from '@/store/types'
-import type { ProjectGroup } from '../../../../../shared/types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
 import type { RenderRow } from '../worktree-list-virtual-rows'
 import type { LineageToggleHandler } from '../worktree-lineage-toggle-handler-cache'
 import type { SidebarRevealHighlight } from './use-sidebar-reveal-highlight'

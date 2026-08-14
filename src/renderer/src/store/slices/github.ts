@@ -4,30 +4,31 @@ import { toast } from 'sonner'
 import type { AppState } from '../types'
 import { githubRepoIdentityKey } from '../../../../shared/github/repository-identity-key'
 import { githubProjectIdentityKey } from '../../../../shared/github/project-identity'
+import type { ClassifiedError } from '../../../../shared/classified-error'
+import type { PRCheckDetail, PRCheckRunDetails } from '../../../../shared/github/check-types'
 import type {
-  ClassifiedError,
-  GitHubOwnerRepo,
+  GitHubCommentResult,
+  GitHubReactionContent,
+  PRComment
+} from '../../../../shared/github/comment-types'
+import type {
   GitHubPRRefreshAlias,
-  IssueSourcePreference,
-  PRInfo,
   GitHubPRRefreshCandidate,
   GitHubPRRefreshEvent,
   GitHubPRRefreshReason,
   GitHubPRRefreshSkippedReason,
   PRRefreshErrorType,
-  PRRefreshOutcome,
-  GitHubCommentResult,
-  GitHubReactionContent,
+  PRRefreshOutcome
+} from '../../../../shared/github/pull-request-refresh-types'
+import type {
+  GitHubOwnerRepo,
   IssueInfo,
-  PRCheckDetail,
-  PRCheckRunDetails,
-  PRComment,
-  Repo,
-  Worktree,
-  GitHubWorkItem,
-  ListWorkItemsResult,
-  GlobalSettings
-} from '../../../../shared/types'
+  PRInfo
+} from '../../../../shared/github/pull-request-types'
+import type { GitHubWorkItem, ListWorkItemsResult } from '../../../../shared/github/work-item-types'
+import type { GlobalSettings } from '../../../../shared/global-settings-types'
+import type { IssueSourcePreference, Repo } from '../../../../shared/repo-types'
+import type { Worktree } from '../../../../shared/worktree/types'
 import type {
   GetProjectViewTableArgs,
   GetProjectViewTableResult,

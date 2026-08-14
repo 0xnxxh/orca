@@ -4,7 +4,8 @@ import { getAllWorktreesFromState } from '@/store/selectors'
 import { track } from '@/lib/telemetry'
 import { tabHasLivePty } from '@/lib/tab-has-live-pty'
 import { persistWorktreeSortOrderByHost } from '@/lib/worktree-sort-order-persistence'
-import type { Repo, Worktree } from '../../../../../shared/types'
+import type { Repo } from '../../../../../shared/repo-types'
+import type { Worktree } from '../../../../../shared/worktree/types'
 import { buildWorktreeComparator, compareWorktreeSortLabel, type SortBy } from '../smart-sort'
 import {
   buildAttentionByWorktree,

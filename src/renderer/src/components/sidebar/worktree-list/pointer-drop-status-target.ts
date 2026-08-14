@@ -1,4 +1,7 @@
-import type { WorkspaceStatus, WorkspaceStatusDefinition } from '../../../../../shared/types'
+import type {
+  WorkspaceStatus,
+  WorkspaceStatusDefinition
+} from '../../../../../shared/worktree/types'
 import { getWorkspaceStatusFromGroupKey } from '../workspace-status'
 import { getWorktreeLineageDropTargetId } from '../worktree-lineage-drag-drop'
 import type { WorktreeSidebarStatusDropTarget } from '../worktree-sidebar-drop-preview'

@@ -3,7 +3,8 @@ import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
 import { selectProjectGroupRemovalTargets } from '@/store/slices/project-group-removal-targets'
-import type { ProjectGroup, Repo } from '../../../../../shared/types'
+import type { ProjectGroup } from '../../../../../shared/project-group-types'
+import type { Repo } from '../../../../../shared/repo-types'
 
 export type ProjectGroupNameDialogState =
   | { type: 'create-from-repo'; repo: Repo }
