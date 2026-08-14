@@ -196,7 +196,9 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
       // WHICH state makes the orphan sweep fire were each disproved by the next reviewer
       // (`hydrateWorkspaceSession` vs `reconnectPersistedTerminals`, the abort race, the
       // `sshConnected` gate, and the claim that the predicate goes false at all — see
-      // terminals.ts:4259-4273, which writes `ptyIdsByTabId` and `tab.ptyId` unconditionally, and
+      // terminals.ts:4259-4273, which writes `ptyIdsByTabId` and `tab.ptyId` without consulting
+      // `sshConnected` at all — its own guards are on whether a pty id exists, not on the gate the
+      // disproved theory named — and
       // terminals.ts:936-957, which seeds `pendingReconnectPtyIdByTabId` during hydration). The
       // scope mismatch between `scopedTabIds` and the seed loops is the strongest remaining
       // candidate, not a conclusion.
