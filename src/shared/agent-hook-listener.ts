@@ -2666,8 +2666,13 @@ function normalizeClaudeSubagentLifecycleEvent(
   if (roster?.size === 0) {
     state.claudeSubagentRosterByPaneKey.delete(paneKey)
   }
-  if (!hasCachedLeadEvidence && endedChildWork && !workingChildEvidence && hasUnconfirmedChild) {
-    // Why: this ending proves nothing about a different child restored from disk; keep the aggregate explicitly unconfirmed instead of publishing fresh work or completion.
+  if (
+    !hasCachedLeadEvidence &&
+    endedChildWork &&
+    !workingChildEvidence &&
+    (hasUnconfirmedChild || !endedRuntimeChildWork)
+  ) {
+    // Why: a restored-only ending proves no lead boundary, and an unmatched restored sibling proves no current liveness; persist the roster transition without publishing fresh work or completion.
     state.claudeUnconfirmedRestoredStatusPaneKeys.add(paneKey)
   }
   return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
@@ -2784,12 +2789,9 @@ function buildClaudeCachedLeadStatusPayload(
     if (evidence.workingChildEvidence || evidence.endedRuntimeChildWork) {
       // Why: ending a current-runtime child wakes its parent; only a cached lead boundary can prove the whole pane completed.
       leadState = 'working'
-    } else if (
-      evidence.endedChildWork &&
-      resolveClaudePaneState(state, paneKey, { state: 'done' }) !== 'done'
-    ) {
-      // Why: a restored child ending proves only that child ended; publish only when independent pane work still gates the aggregate.
-      leadState = 'done'
+    } else if (evidence.endedChildWork) {
+      // Why: a restored child ending proves only that child ended; persist its roster transition as unconfirmed working, never as lead completion.
+      leadState = 'working'
     } else {
       return null
     }
@@ -3020,6 +3022,19 @@ function normalizeClaudeEvent(
     state: reportedStateName,
     interrupted
   })
+  const effectiveRoster = state.claudeSubagentRosterByPaneKey.get(paneKey)
+  if (
+    isTurnBoundary &&
+    eventAgentId === undefined &&
+    effectiveState === 'working' &&
+    claudeRosterHasRestoredSnapshotSubagent(effectiveRoster) &&
+    !claudeRosterHasRuntimeWorkingSubagent(effectiveRoster) &&
+    !state.claudeRunningNonAgentTaskPaneKeys.has(paneKey) &&
+    !state.claudeActiveSessionCronPaneKeys.has(paneKey)
+  ) {
+    // Why: a legacy or partial Stop confirms the lead boundary, not a child restored from disk; keep the child-only gate eligible for reconciliation.
+    state.claudeUnconfirmedRestoredStatusPaneKeys.add(paneKey)
+  }
 
   return buildClaudeStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
     stateName: effectiveState,

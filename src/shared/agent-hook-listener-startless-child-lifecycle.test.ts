@@ -5,6 +5,7 @@ import {
   seedClaudeSubagentRosterFromSnapshots,
   type HookListenerState
 } from './agent-hook-listener'
+import { AGENT_STATUS_MAX_SUBAGENTS } from './agent-status-types'
 import { makePaneKey } from './stable-pane-id'
 
 const LEAF_ID = '22222222-2222-4222-8222-222222222222'
@@ -142,7 +143,13 @@ describe('Claude child lifecycle events with no cached lead state', () => {
         hook_event_name: 'TeammateIdle',
         teammate_name: 'reviewer'
       })
-    ).toBeNull()
+    ).toMatchObject({
+      restoredUnconfirmed: true,
+      payload: {
+        state: 'working',
+        subagents: [expect.objectContaining({ id: 'areviewer-8f5dc7d7', state: 'idle' })]
+      }
+    })
 
     const leadStop = claudeEvent(state, paneKey, {
       hook_event_name: 'Stop',
@@ -222,7 +229,10 @@ describe('Claude child lifecycle events with no cached lead state', () => {
         hook_event_name: 'SubagentStop',
         agent_id: 'a0000000000000008'
       })
-    ).toBeNull()
+    ).toMatchObject({
+      restoredUnconfirmed: true,
+      payload: { state: 'working', subagents: undefined }
+    })
     expect(state.claudeSubagentRosterByPaneKey.size).toBe(0)
   })
 
@@ -247,6 +257,49 @@ describe('Claude child lifecycle events with no cached lead state', () => {
     expect(stopped?.payload.subagents).toEqual([
       expect.objectContaining({ id: 'a0000000000000010', state: 'working' })
     ])
+  })
+
+  it('keeps a legacy lead Stop unconfirmed when only a restored child gates it', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('restored-child-legacy-stop', LEAF_ID)
+    seedClaudeSubagentRosterFromSnapshots(state, paneKey, [
+      { id: 'a0000000000000012', state: 'working', startedAt: 100 }
+    ])
+
+    const stopped = claudeEvent(state, paneKey, { hook_event_name: 'Stop' })
+
+    expect(stopped).toMatchObject({
+      restoredUnconfirmed: true,
+      payload: {
+        state: 'working',
+        subagents: [expect.objectContaining({ id: 'a0000000000000012' })]
+      }
+    })
+  })
+
+  it('does not let a truncated terminal inventory confirm a restored child', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('restored-child-truncated-inventory', LEAF_ID)
+    seedClaudeSubagentRosterFromSnapshots(state, paneKey, [
+      { id: 'arestored', state: 'working', startedAt: 100 }
+    ])
+
+    const stopped = claudeEvent(state, paneKey, {
+      hook_event_name: 'Stop',
+      background_tasks: Array.from({ length: AGENT_STATUS_MAX_SUBAGENTS + 1 }, (_, index) => ({
+        id: `finished-${index}`,
+        type: 'subagent',
+        status: 'completed'
+      }))
+    })
+
+    expect(stopped).toMatchObject({
+      restoredUnconfirmed: true,
+      payload: {
+        state: 'working',
+        subagents: [expect.objectContaining({ id: 'arestored' })]
+      }
+    })
   })
 
   it('resolves a first-event child wait back to working when that child stops', () => {
