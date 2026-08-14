@@ -6,6 +6,10 @@ setlocal
 set "orca_real=%ORCA_REAL___ORCA_UPPER_COMMAND__%"
 set "orca_wrapper_dir=%~dp0"
 set "orca_legacy_wrapper_dir=%ORCA_ATTRIBUTION_SHIM_DIR%"
+rem Why: normalize once here rather than per PATH entry; the value cannot change mid-run.
+set "orca_legacy_norm="
+if defined orca_legacy_wrapper_dir for %%G in ("%orca_legacy_wrapper_dir%") do set "orca_legacy_norm=%%~fG"
+if defined orca_legacy_norm if "%orca_legacy_norm:~-1%"=="%orca_sep%" set "orca_legacy_norm=%orca_legacy_norm:~0,-1%"
 set "orca_clean_path="
 rem Why: holds a single separator so the trailing-separator tests below need neither a literal
 rem backslash before a quote (which breaks cmd parsing) nor a sentinel character (which would
@@ -80,8 +84,6 @@ if defined orca_clean_path (set "orca_clean_path=%orca_clean_path%;%~1") else se
 exit /b
 
 :orca_reject_legacy_dir
-for %%G in ("%orca_legacy_wrapper_dir%") do set "orca_legacy_norm=%%~fG"
-if "%orca_legacy_norm:~-1%"=="%orca_sep%" set "orca_legacy_norm=%orca_legacy_norm:~0,-1%"
 if /I "%orca_path_entry_dir%"=="%orca_legacy_norm%\" set "orca_skip_entry=1"
 exit /b
 `

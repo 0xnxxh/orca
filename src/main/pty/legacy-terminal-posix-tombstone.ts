@@ -73,16 +73,14 @@ const POSIX_TOMBSTONE = String.raw`#!__ORCA_INTERPRETER__
 set -u
 
 command_name="__ORCA_COMMAND__"
-# Why: parameter expansion, not the external dirname — if that were unresolvable the substitution
-# would be empty and cd into it succeeds, silently making wrapper_dir the cwd so the wrapper
-# fails to exclude itself from PATH.
+# Why this shape, rather than dirname: an unresolvable external would leave the substitution empty
+# and cd into it succeeds, silently making wrapper_dir the cwd. With no slash the %/* strip yields the
+# file name rather than a directory, so that case takes $PWD. CDPATH is cleared because cd searches
+# it for a relative operand and echoes where it landed, which the substitution would capture.
+# Each of these made self-exclusion miss the wrapper's own directory, so the lookup resolved back
+# to this script.
 wrapper_src="${SHELL_DOLLAR}{BASH_SOURCE[0]}"
 case "$wrapper_src" in
-  # Why: with no slash the %/* strip yields the file name, not a directory, so self-exclusion
-  # would miss the wrapper's own dir and the lookup would resolve back to this script.
-  # Why: with CDPATH set, cd searches it for a relative operand and echoes the directory it lands
-  # in, which the command substitution then captures — wrapper_dir ends up wrong and doubled.
-  # Clear it for this one command.
   */*) wrapper_dir="$(CDPATH= cd -P -- "${SHELL_DOLLAR}{wrapper_src%/*}" 2>/dev/null && pwd)" ;;
   *) wrapper_dir="$PWD" ;;
 esac
@@ -99,7 +97,7 @@ filter_path() {
   local filtered_path=""
   local separator=""
   path_entry_kept=0
-  local entry normalized candidate has_more
+  local entry normalized has_more
   while true; do
     if [[ "$remaining" == *:* ]]; then
       entry="${SHELL_DOLLAR}{remaining%%:*}"
@@ -113,14 +111,13 @@ filter_path() {
     while [[ "$normalized" != "/" && "$normalized" == */ ]]; do
       normalized="${SHELL_DOLLAR}{normalized%/}"
     done
-    candidate="${SHELL_DOLLAR}{entry:-.}"
     if [[ "$entry" != /* ]]; then
       # Why: an empty or relative PATH element resolves against the current directory, so keeping
       # it would let a repository-local git/gh win the lookup below.
       :
     elif [[ -n "$legacy_target" && "$normalized" == "$legacy_target" ]]; then
       :
-    elif [[ "$candidate" -ef "$wrapper_dir" ]]; then
+    elif [[ "$entry" -ef "$wrapper_dir" ]]; then
       :
     else
       filtered_path+="$separator$entry"

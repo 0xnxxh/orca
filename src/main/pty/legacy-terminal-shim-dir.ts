@@ -126,6 +126,22 @@ function writeFileAtomically(filePath: string, contents: string, mode: number): 
   }
 }
 
+// Why: the captured directory and the PATH entry naming it can differ by a trailing separator (or
+// its slash style on Windows). A literal compare missed that and left the shim dir on PATH. The
+// literal compare itself has to stay: a shim path may contain the PATH delimiter, which splitting
+// would fragment.
+function pathEntrySpellings(dir: string, windows: boolean): string[] {
+  const base = dir.replace(/[\\/]+$/, '')
+  if (!base) {
+    return [dir]
+  }
+  const spellings = new Set<string>([dir, base, `${base}/`])
+  if (windows) {
+    spellings.add(`${base}\\`)
+  }
+  return [...spellings]
+}
+
 export function isLegacyTerminalShimPathEntry(entry: string): boolean {
   const normalized = entry.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
   return (
@@ -164,7 +180,11 @@ export function stripLegacyTerminalShimEnv(
       continue
     }
     const withoutExplicitDirs = explicitShimDirs.reduce(
-      (pathValue, shimDir) => removeLiteralPathEntry(pathValue, shimDir, delimiter, windows),
+      (pathValue, shimDir) =>
+        pathEntrySpellings(shimDir, windows).reduce(
+          (value, spelling) => removeLiteralPathEntry(value, spelling, delimiter, windows),
+          pathValue
+        ),
       current
     )
     const cleaned = withoutExplicitDirs

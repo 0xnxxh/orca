@@ -707,6 +707,25 @@ describe('legacy terminal shim neutralization', () => {
     expect(env).toEqual({ PATH: '/usr/local/bin:/usr/bin', HOME: '/home/u' })
   })
 
+  it('strips the captured shim directory when PATH spells it with a trailing separator', () => {
+    // Why: the captured value and the PATH entry can differ by a trailing separator; comparing
+    // them literally left the shim directory on PATH and the wrapper reachable.
+    const posix: Record<string, string> = {
+      PATH: '/custom/elsewhere/:/usr/bin',
+      ORCA_ATTRIBUTION_SHIM_DIR: '/custom/elsewhere'
+    }
+    stripLegacyTerminalShimEnv(posix, 'linux')
+    expect(posix.PATH).toBe('/usr/bin')
+
+    // And the reverse spelling, plus Windows slash style.
+    const win: Record<string, string> = {
+      Path: 'C:\\Custom\\Else;C:\\Windows',
+      ORCA_ATTRIBUTION_SHIM_DIR: 'C:\\Custom\\Else\\'
+    }
+    stripLegacyTerminalShimEnv(win, 'win32')
+    expect(win.Path).toBe('C:\\Windows')
+  })
+
   it('uses the captured POSIX shim directory literally when it contains a colon', () => {
     const shimDir = '/tmp/orca:user/orca-terminal-attribution/posix'
     const env: Record<string, string> = {
