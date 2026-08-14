@@ -95,15 +95,15 @@ describe('STA-4228 final checkpoint honors the caller stop deadline', () => {
    * from a dropped checkpoint.
    */
   async function stallCheckpointFor(stalledSessionId: string): Promise<{
-    entered: () => number
-    committed: () => number
+    entered: (sessionId?: string) => number
+    committed: (sessionId?: string) => number
     release: () => void
   }> {
     const manager = adapter.getHistoryManager()
     expect(manager).not.toBeNull()
     const original = manager!.checkpoint.bind(manager!)
-    let entered = 0
-    let committed = 0
+    const entered = new Map<string, number>()
+    const committed = new Map<string, number>()
     let release = (): void => {}
     const stalled = new Promise<void>((resolve) => {
       release = resolve
@@ -114,17 +114,20 @@ describe('STA-4228 final checkpoint honors the caller stop deadline', () => {
         snapshot: TerminalSnapshot,
         opts?: { pendingOutputSeq?: number }
       ): Promise<HistoryCheckpointResult> => {
-        if (sessionId !== stalledSessionId) {
-          return await original(sessionId, snapshot, opts)
+        entered.set(sessionId, (entered.get(sessionId) ?? 0) + 1)
+        if (sessionId === stalledSessionId) {
+          await stalled
         }
-        entered += 1
-        await stalled
         const result = await original(sessionId, snapshot, opts)
-        committed += 1
+        committed.set(sessionId, (committed.get(sessionId) ?? 0) + 1)
         return result
       }
     )
-    return { entered: () => entered, committed: () => committed, release }
+    return {
+      entered: (sessionId = stalledSessionId) => entered.get(sessionId) ?? 0,
+      committed: (sessionId = stalledSessionId) => committed.get(sessionId) ?? 0,
+      release
+    }
   }
 
   async function spawnWithOutput(sessionId: string, output: string): Promise<string> {
@@ -133,9 +136,20 @@ describe('STA-4228 final checkpoint honors the caller stop deadline', () => {
     return id
   }
 
-  it('gives up waiting on a stalled final checkpoint without committing the stop', async () => {
+  it('bounds the wait behind the same-session queue and later commits the final checkpoint', async () => {
     const stalledId = await spawnWithOutput('stalled-stop', 'STALLED_STOP\r\n')
     const stall = await stallCheckpointFor(stalledId)
+    const internals = adapter as unknown as {
+      checkpointSession(
+        sessionId: string,
+        opts: { final: boolean; teardown: boolean }
+      ): Promise<'done' | 'deferred'>
+    }
+    const predecessor = internals.checkpointSession(stalledId, {
+      final: true,
+      teardown: false
+    })
+    await vi.waitFor(() => expect(stall.entered()).toBe(1))
 
     const stop = withinBudget(
       adapter
@@ -149,6 +163,7 @@ describe('STA-4228 final checkpoint honors the caller stop deadline', () => {
     // Before the fix this never settled: the final checkpoint enqueued without a deadline.
     expect(outcome).not.toBe('timed-out')
     expect(outcome).toBeInstanceOf(FinalCheckpointDeadlineError)
+    // The stop's final checkpoint is waiting behind the first write and has not run concurrently.
     expect(stall.entered()).toBe(1)
     // The stop must not be silently committed — the PTY stays alive so the caller reports it
     // unstopped rather than recording a sleep whose snapshot never landed.
@@ -159,7 +174,42 @@ describe('STA-4228 final checkpoint honors the caller stop deadline', () => {
     // This is what proves the caller-side bound did not regress STA-4173 losslessness.
     expect(stall.committed()).toBe(0)
     stall.release()
-    await vi.waitFor(() => expect(stall.committed()).toBe(1))
+    await predecessor
+    await vi.waitFor(() => expect(stall.committed()).toBe(2))
+  })
+
+  it('bounds the wait behind the process-wide exclusive tail and later commits', async () => {
+    const blockerId = await spawnWithOutput('exclusive-blocker', 'EXCLUSIVE_BLOCKER\r\n')
+    const targetId = await spawnWithOutput('exclusive-target', 'EXCLUSIVE_TARGET\r\n')
+    const stall = await stallCheckpointFor(blockerId)
+    const internals = adapter as unknown as {
+      checkpointSession(
+        sessionId: string,
+        opts: { final: boolean; teardown: boolean }
+      ): Promise<'done' | 'deferred'>
+      runExclusiveCheckpoint(operation: () => Promise<void>): Promise<void>
+    }
+    const predecessor = internals.runExclusiveCheckpoint(async () => {
+      await internals.checkpointSession(blockerId, { final: true, teardown: false })
+    })
+    await vi.waitFor(() => expect(stall.entered(blockerId)).toBe(1))
+
+    const outcome = await withinBudget(
+      adapter
+        .shutdown(targetId, { keepHistory: true, deadlineMs: Date.now() + STOP_DEADLINE_MS })
+        .then(() => 'stopped' as const)
+        .catch((error: unknown) => error),
+      STOP_BUDGET_MS
+    )
+
+    expect(outcome).not.toBe('timed-out')
+    expect(outcome).toBeInstanceOf(FinalCheckpointDeadlineError)
+    expect(stall.entered(targetId)).toBe(0)
+    expect(subprocesses.at(1)!.kill).not.toHaveBeenCalled()
+
+    stall.release()
+    await predecessor
+    await vi.waitFor(() => expect(stall.committed(targetId)).toBe(1))
   })
 
   it('still stops normally when the final checkpoint beats the deadline', async () => {
