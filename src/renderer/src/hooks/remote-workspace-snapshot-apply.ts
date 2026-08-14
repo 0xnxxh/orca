@@ -179,32 +179,31 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
     }
     if (isArrivalCurrent(authority.targetId, arrival) && isPreparationTokenCurrent(token)) {
       finalizeHydratedTerminals(authority)
-      // KNOWN DEFECT, still open (STA-3077 follow-up). A snapshot is terminal-only —
+      // KNOWN DEFECT, still open (STA-3077 follow-up).
+      //
+      // OBSERVED, and the only part of this that is established: a snapshot is terminal-only —
       // `RemoteWorkspaceSession` cannot carry `unifiedTabs`/`tabGroups` — so replacing
-      // `tabsByWorktree` leaves tabs no group's `tabOrder` names, and the tab bar renders from
-      // `tabOrder`. Those tabs exist and are invisible. Same symptom as the partition-upgrade bug,
-      // reachable with no partition at all.
+      // `tabsByWorktree` leaves tabs that no group's `tabOrder` names. The tab bar renders from
+      // `tabOrder`, so those tabs exist and are invisible. Reachable with no partition at all: a
+      // fresh client, a reset profile, or tabs created from another client.
       //
-      // `reconcileWorktreeTabModel(worktreeId)` for each replaced key fixes it and converges — but
-      // it also DELETES the tabs whenever `reconnectPersistedTerminals` binds no PTY. That is
-      // reachable: the reconnect races a 30s timeout that aborts, and its rejection path is
-      // swallowed, so both fall through to here.
+      // ALSO OBSERVED: calling `reconcileWorktreeTabModel(worktreeId)` for each replaced key fixes
+      // the visibility and converges, but placed beside the `hydrateTabsSession` above it DELETES
+      // the tabs — reproduced, `tabsByWorktree` came back `[]`. Moving it after
+      // `finalizeHydratedTerminals` stops that in the paths under test.
       //
-      // The safety net does not save it. The deferred-id seeding lives in
-      // `reconnectPersistedTerminals` (terminals.ts:4172-4350), not in `hydrateWorkspaceSession`.
-      // On the reachable case — a snapshot arriving over a CONNECTED target — the `sshConnected`
-      // check at terminals.ts:4308 skips seeding, and the commit at :4341-4350 strips
-      // `pendingReconnectPtyIdByTabId` for the scoped tabs. `terminalTabHasReconnectablePty` then
-      // sees nothing and the orphan sweep wipes every worktree in `replaceWorkspaceKeys`,
-      // including background ones the user never opened. Losing tabs on a snapshot is worse than
-      // tabs that need a click to reappear.
+      // NOT ESTABLISHED — do not trust a prose mechanism here. Four successive attempts to explain
+      // WHICH state makes the orphan sweep fire were each disproved by the next reviewer
+      // (`hydrateWorkspaceSession` vs `reconnectPersistedTerminals`, the abort race, the
+      // `sshConnected` gate, and the claim that the predicate goes false at all — see
+      // terminals.ts:4259-4273, which writes `ptyIdsByTabId` and `tab.ptyId` unconditionally, and
+      // terminals.ts:936-957, which seeds `pendingReconnectPtyIdByTabId` during hydration). The
+      // scope mismatch between `scopedTabIds` and the seed loops is the strongest remaining
+      // candidate, not a conclusion.
       //
-      // Note the abort/timeout race is NOT the dangerous path: its early return at :4321-4326
-      // skips that same commit, so the pending ids survive and the predicate stays true.
-      // `sshConnected` is the gate a fix has to address.
-      //
-      // A fix must gate on reconnect having actually bound something, and needs a test for the
-      // failed-reconnect path, which nothing covers today.
+      // So: reinstating the reconcile needs a TEST that exercises a snapshot apply where reconnect
+      // binds nothing, not another reading of the control flow. Nothing covers that today, which
+      // is why every explanation above was cheap to write and wrong.
     }
   } finally {
     snapshotWriteSuppressUntil = Date.now() + REMOTE_WORKSPACE_SNAPSHOT_WRITE_SUPPRESS_MS
