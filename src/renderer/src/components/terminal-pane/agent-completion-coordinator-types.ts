@@ -53,6 +53,7 @@ export type AgentCompletionCoordinator = {
   observeTitleWorking: () => void
   observeOutputActivity: () => void
   observeHookStatus: (payload: AgentCompletionStatusSnapshot) => void
+  seedHookStatus: (payload: AgentCompletionStatusSnapshot) => void
   startProcessTracking: () => void
   hasPendingHookDoneCompletion: () => boolean
   resetCompletionState: (options?: { requireFreshWorking?: boolean }) => void

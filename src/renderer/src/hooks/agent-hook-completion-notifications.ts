@@ -273,11 +273,13 @@ function createCoordinator(paneKey: string, worktreeId: string): AgentCompletion
 export function observeAgentHookCompletionForNotification({
   paneKey,
   worktreeId,
-  payload
+  payload,
+  seedOnly
 }: {
   paneKey: string
   worktreeId: string
   payload: AgentCompletionStatusSnapshot
+  seedOnly?: boolean
 }): void {
   pruneClosedPaneCoordinators()
   if (!paneCanReceiveHookCompletion(paneKey)) {
@@ -303,7 +305,11 @@ export function observeAgentHookCompletionForNotification({
   if (payload.state === 'working' && trackingEnabled) {
     paneKeysRequiringFreshWorking.delete(paneKey)
   }
-  entry.coordinator.observeHookStatus(payload)
+  if (seedOnly === true) {
+    entry.coordinator.seedHookStatus(payload)
+  } else {
+    entry.coordinator.observeHookStatus(payload)
+  }
 }
 
 export function resetAgentHookCompletionNotificationCoordinators(): void {

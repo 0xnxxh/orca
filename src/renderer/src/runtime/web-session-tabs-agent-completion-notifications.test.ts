@@ -12,7 +12,10 @@ vi.mock('@/hooks/agent-hook-completion-notifications', () => ({
 }))
 
 import { useAppStore } from '@/store'
-import { createAgentCompletionCoordinator } from '@/components/terminal-pane/agent-completion-coordinator'
+import {
+  createAgentCompletionCoordinator,
+  resetAgentCompletionCoordinatorIdentitiesForTest
+} from '@/components/terminal-pane/agent-completion-coordinator'
 import {
   markRendererOwnedAgentStatusWrite,
   registerRendererOwnedAgentStatusPane,
@@ -83,8 +86,10 @@ describe('paired session-tab agent completion notifications', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     mocks.observeAgentHookCompletionForNotification.mockReset()
+    resetAgentCompletionCoordinatorIdentitiesForTest()
     resetWebSessionTabsSnapshotFreshnessForTests()
     resetRendererOwnedAgentStatusPanesForTests()
+    resetAgentCompletionCoordinatorIdentitiesForTest()
     useAppStore.setState(initialState, true)
   })
 
@@ -128,8 +133,8 @@ describe('paired session-tab agent completion notifications', () => {
       dispatchCompletion,
       isLive: () => true
     })
-    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload }) =>
-      coordinator.observeHookStatus(payload)
+    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload, seedOnly }) =>
+      seedOnly ? coordinator.seedHookStatus(payload) : coordinator.observeHookStatus(payload)
     )
 
     applySnapshot(makeAgentSnapshot(1, NOW), false)
@@ -166,8 +171,8 @@ describe('paired session-tab agent completion notifications', () => {
       dispatchCompletion,
       isLive: () => true
     })
-    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload }) =>
-      coordinator.observeHookStatus(payload)
+    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload, seedOnly }) =>
+      seedOnly ? coordinator.seedHookStatus(payload) : coordinator.observeHookStatus(payload)
     )
 
     applySnapshot(makeAgentSnapshot(1, NOW - 2_000), true)
@@ -211,8 +216,8 @@ describe('paired session-tab agent completion notifications', () => {
       dispatchCompletion,
       isLive: () => true
     })
-    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload }) =>
-      coordinator.observeHookStatus(payload)
+    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload, seedOnly }) =>
+      seedOnly ? coordinator.seedHookStatus(payload) : coordinator.observeHookStatus(payload)
     )
 
     applySnapshot(makeAgentSnapshot(1, NOW, NOW), false)
@@ -220,5 +225,50 @@ describe('paired session-tab agent completion notifications', () => {
 
     expect(mocks.observeAgentHookCompletionForNotification).toHaveBeenCalledTimes(2)
     expect(dispatchCompletion).not.toHaveBeenCalled()
+  })
+
+  it('seeds an older restarted-host stamp without replaying its completion', () => {
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: makePaneKey(toWebTerminalSurfaceTabId(HOST_TAB_ID), LEAF_ID),
+      statusLane: 'hook',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload, seedOnly }) =>
+      seedOnly ? coordinator.seedHookStatus(payload) : coordinator.observeHookStatus(payload)
+    )
+    const firstTurnCompletedAt = NOW + 100_000
+    const secondTurnCompletedAt = NOW + 200_000
+
+    applySnapshot(makeAgentSnapshot(1, NOW), false)
+    applySnapshot(makeAgentSnapshot(2, NOW + 1_000, firstTurnCompletedAt), true)
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    applySnapshot(makeAgentSnapshot(3, NOW + 2_000), true)
+    expect(mocks.observeAgentHookCompletionForNotification).toHaveBeenCalledTimes(3)
+    applySnapshot(makeAgentSnapshot(4, NOW + 3_000, secondTurnCompletedAt), true)
+    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
+    applySnapshot(makeAgentSnapshot(5, NOW + 4_000), true)
+
+    applySnapshot(
+      {
+        ...makeAgentSnapshot(1, NOW + 5_000, firstTurnCompletedAt),
+        publicationEpoch: 'epoch-2'
+      },
+      false
+    )
+    applySnapshot(
+      {
+        ...makeAgentSnapshot(2, NOW + 6_000, firstTurnCompletedAt, 'done'),
+        publicationEpoch: 'epoch-2'
+      },
+      true
+    )
+    vi.advanceTimersByTime(1_500)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
   })
 })

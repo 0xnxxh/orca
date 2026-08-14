@@ -3426,6 +3426,7 @@ export function applyWebSessionTabsStorePatch(
   const acceptedNotificationStatuses: {
     paneKey: string
     worktreeId: string
+    seedOnly?: true
     payload: ReturnType<typeof pickParsedAgentStatusPayload> & {
       stateStartedAt: number
       localStateStartedAt?: number
@@ -3474,6 +3475,7 @@ export function applyWebSessionTabsStorePatch(
           acceptedNotificationStatuses.push({
             paneKey: notificationStatus.paneKey,
             worktreeId: notificationStatus.worktreeId ?? snapshot.worktree,
+            ...(!allowCompletionNotification ? { seedOnly: true as const } : {}),
             payload: {
               ...pickParsedAgentStatusPayload({
                 ...notificationStatus,
