@@ -394,5 +394,17 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       store.getWorkspaceSession(SSH_PARTITION).tabsByWorktree?.[WORKTREE]?.[0]?.ptyId,
       'a local-only edit reached through into the ssh partition'
     ).toBe(PTY)
+
+    // The layout is hoisted separately and was cloned separately, so it needs its own assertion.
+    const localLayout = store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB]
+    expect(localLayout, 'no layout was hoisted, so its isolation cannot be observed').toBeDefined()
+    localLayout!.ptyIdsByLeafId = {}
+
+    expect(
+      store.getWorkspaceSession(SSH_PARTITION).terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[
+        LEAF
+      ],
+      'a local-only layout edit reached through into the ssh partition'
+    ).toBe(PTY)
   })
 })
