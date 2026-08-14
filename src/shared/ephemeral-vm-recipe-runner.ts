@@ -33,6 +33,7 @@ export type EphemeralVmRecipeContext = {
   repoUrl?: string
   branch?: string
   ref?: string
+  expectedRefHead?: string
   orcaVersion?: string
 }
 

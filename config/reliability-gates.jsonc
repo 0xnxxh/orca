@@ -33,11 +33,11 @@
         "https://github.com/stablyai/orca/pull/14352",
         "https://github.com/stablyai/orca/issues/13044"
       ],
-      "invariant": "A sidecar written by the new build cannot make the previous production build lose otherwise compatible VM runtimes. Downgrade lifecycle writes remain authoritative after re-upgrade, provisioned-root metadata remains recoverable, and corrupt or future feature metadata is preserved without poisoning the rollback-readable v1 store. Destroy attempts are force-stopped at a bounded deadline, retry starts fresh, and provider failure retains the SSH/project context needed for safe cleanup. Unrecoverable recipe context releases only the hidden SSH registration while preserving lifecycle/provider metadata. Adoption must verify the requested branch/ref, and resume must preserve the connection mode plus stable SSH ownership identity while allowing endpoint rotation.",
-      "oracle": "Write one ordinary schema-v1 runtime and one provisioned-root runtime. Require the exact pre-#14352 reader to return both, run the old destroy lifecycle against the projected provisioned record, then require the candidate to retain the cleaned state while restoring schema-v2 and checkout-mode metadata. The same old reader must reject affected-main and fix-reverted bytes. Malformed, oversized, unknown-record, and future-version feature sidecars must leave rollback-compatible records accessible and must not be overwritten during compatible lifecycle mutations. Force destroy to outlive its deadline, require cleanup_failed plus a fresh successful retry, prove provider or project-host rollback failure retains every ownership record required to retry, and prove missing recipe context cannot leave an unremovable hidden SSH registration. Reject a provisioned checkout on the wrong branch/ref and a resume that changes connection mode or SSH ownership.",
+      "invariant": "A sidecar written by the new build cannot make the previous production build lose otherwise compatible VM runtimes. Downgrade lifecycle writes remain authoritative after re-upgrade, provisioned-root metadata remains recoverable, and corrupt or future feature metadata is preserved without poisoning the rollback-readable v1 store. Destroy attempts are force-stopped at a bounded deadline, retry starts fresh, and provider failure retains the SSH/project context needed for safe cleanup. Unrecoverable recipe context releases only the hidden SSH registration while preserving lifecycle/provider metadata. Provisioned-root create receives the source ref's pinned commit, adoption verifies the requested branch/ref, and resume preserves the connection mode plus stable SSH ownership identity while allowing endpoint rotation.",
+      "oracle": "Write one ordinary schema-v1 runtime and one provisioned-root runtime. Require the exact pre-#14352 reader to return both, run the old destroy lifecycle against the projected provisioned record, then require the candidate to retain the cleaned state while restoring schema-v2 and checkout-mode metadata. The same old reader must reject affected-main and fix-reverted bytes. Malformed, oversized, unknown-record, and future-version feature sidecars must leave rollback-compatible records accessible and must not be overwritten during compatible lifecycle mutations. Force destroy to outlive its deadline, require cleanup_failed plus a fresh successful retry, prove provider or project-host rollback failure retains every ownership record required to retry, and prove missing recipe context cannot leave an unremovable hidden SSH registration. Supply the source ref's captured commit to create, reject a provisioned checkout on the wrong branch/ref, and reject a resume that changes connection mode or SSH ownership.",
       "commands": [
         "node config/scripts/run-ephemeral-vm-runtime-store-rollback-repro.mjs config/scripts/ephemeral-vm-runtime-store-cross-version.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/shared/ephemeral-vm-runtime-store.test.ts src/shared/ephemeral-vm-runtime-store-rollback.test.ts src/shared/ephemeral-vm-recipe-process.test.ts src/main/ephemeral-vm-runtime-service.test.ts src/main/ephemeral-vm-resume-integrity.test.ts src/main/ephemeral-vm-recipe-runner.test.ts src/main/ephemeral-vm-runtime-ssh-cleanup.test.ts src/main/ipc/ephemeral-vm-runtime-handler-cleanup.test.ts src/main/ipc/ephemeral-vm-provisioned-root-ref.test.ts src/main/ipc/ephemeral-vm.test.ts src/main/provisioned-root-ssh-adoption.test.ts src/renderer/src/lib/ephemeral-vm-failed-create-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-runtime-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-workspace-target.test.ts src/renderer/src/lib/ephemeral-vm-worktree-creation.test.ts src/renderer/src/lib/provisioned-root-create-options.test.ts src/renderer/src/store/slices/repos-ephemeral-vm-cleanup-retention.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/shared/ephemeral-vm-runtime-store.test.ts src/shared/ephemeral-vm-runtime-store-rollback.test.ts src/shared/ephemeral-vm-recipe-process.test.ts src/main/ephemeral-vm-runtime-service.test.ts src/main/ephemeral-vm-resume-integrity.test.ts src/main/ephemeral-vm-recipe-runner.test.ts src/main/ephemeral-vm-runtime-ssh-cleanup.test.ts src/main/ipc/ephemeral-vm-runtime-handler-cleanup.test.ts src/main/ipc/ephemeral-vm-provision-cancel.test.ts src/main/ipc/ephemeral-vm-provisioned-root-ref.test.ts src/main/ipc/ephemeral-vm.test.ts src/main/provisioned-root-ssh-adoption.test.ts src/renderer/src/lib/ephemeral-vm-failed-create-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-runtime-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-workspace-target.test.ts src/renderer/src/lib/ephemeral-vm-worktree-creation.test.ts src/renderer/src/lib/provisioned-root-create-options.test.ts src/renderer/src/store/slices/repos-ephemeral-vm-cleanup-retention.test.ts",
         "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/ephemeral-vm-provisioned-root.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "SKIP_BUILD=1 ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/ephemeral-vm-provisioned-root.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
       ],
@@ -52,6 +52,7 @@
         "src/main/ephemeral-vm-runtime-ssh-cleanup.test.ts",
         "src/main/ephemeral-vm-resume-integrity.test.ts",
         "src/main/ipc/ephemeral-vm-runtime-handler-cleanup.test.ts",
+        "src/main/ipc/ephemeral-vm-provision-cancel.test.ts",
         "src/main/ipc/ephemeral-vm-provisioned-root-ref.test.ts",
         "src/main/ipc/ephemeral-vm.test.ts",
         "src/main/provisioned-root-ssh-adoption.test.ts",
@@ -122,9 +123,15 @@
         {
           "file": "src/main/ipc/ephemeral-vm-provisioned-root-ref.test.ts",
           "assertions": [
-            "the source ref commit is captured before provider create",
+            "selected and default source ref commits are captured before provider create",
+            "the create recipe receives both the symbolic ref and its pinned commit",
+            "multi-remote bases pair the selected remote URL with a fetchable branch ref",
             "an unresolved source ref rejects before provider create"
           ]
+        },
+        {
+          "file": "src/main/ipc/ephemeral-vm-provision-cancel.test.ts",
+          "assertions": ["cancellation during source-ref resolution aborts before provider create"]
         },
         {
           "file": "src/renderer/src/lib/ephemeral-vm-worktree-creation.test.ts",
@@ -137,6 +144,13 @@
           "assertions": [
             "resume allows host and port rotation",
             "resume rejects connection-mode and stable SSH ownership drift"
+          ]
+        },
+        {
+          "file": "tests/e2e/ephemeral-vm-provisioned-root.spec.ts",
+          "assertions": [
+            "default-base create adopts the recipe checkout at the captured source commit",
+            "workspace removal invokes recipe destroy and removes the provider container"
           ]
         }
       ],
@@ -154,10 +168,10 @@
           "date": "2026-08-14",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/ephemeral-vm-runtime-store.test.ts src/shared/ephemeral-vm-runtime-store-rollback.test.ts src/shared/ephemeral-vm-recipe-process.test.ts src/main/ephemeral-vm-runtime-service.test.ts src/main/ephemeral-vm-resume-integrity.test.ts src/main/ephemeral-vm-recipe-runner.test.ts src/main/ephemeral-vm-runtime-ssh-cleanup.test.ts src/main/ipc/ephemeral-vm-runtime-handler-cleanup.test.ts src/main/ipc/ephemeral-vm-provisioned-root-ref.test.ts src/main/ipc/ephemeral-vm.test.ts src/main/provisioned-root-ssh-adoption.test.ts src/renderer/src/lib/ephemeral-vm-failed-create-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-runtime-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-workspace-target.test.ts src/renderer/src/lib/ephemeral-vm-worktree-creation.test.ts src/renderer/src/lib/provisioned-root-create-options.test.ts src/renderer/src/store/slices/repos-ephemeral-vm-cleanup-retention.test.ts",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/ephemeral-vm-runtime-store.test.ts src/shared/ephemeral-vm-runtime-store-rollback.test.ts src/shared/ephemeral-vm-recipe-process.test.ts src/main/ephemeral-vm-runtime-service.test.ts src/main/ephemeral-vm-resume-integrity.test.ts src/main/ephemeral-vm-recipe-runner.test.ts src/main/ephemeral-vm-runtime-ssh-cleanup.test.ts src/main/ipc/ephemeral-vm-runtime-handler-cleanup.test.ts src/main/ipc/ephemeral-vm-provision-cancel.test.ts src/main/ipc/ephemeral-vm-provisioned-root-ref.test.ts src/main/ipc/ephemeral-vm.test.ts src/main/provisioned-root-ssh-adoption.test.ts src/renderer/src/lib/ephemeral-vm-failed-create-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-runtime-cleanup.test.ts src/renderer/src/lib/ephemeral-vm-workspace-target.test.ts src/renderer/src/lib/ephemeral-vm-worktree-creation.test.ts src/renderer/src/lib/provisioned-root-create-options.test.ts src/renderer/src/store/slices/repos-ephemeral-vm-cleanup-retention.test.ts",
           "result": "passed",
           "durationSeconds": 3,
-          "summary": "One hundred eight focused store, recipe-process, lifecycle, cleanup-handler, retry-context, source-ref, adoption-integrity, resume-integrity, and provisioning-recovery tests passed."
+          "summary": "One hundred eleven focused store, recipe-process, lifecycle, cleanup-handler, retry-context, source-ref, adoption-integrity, resume-integrity, and provisioning-recovery tests passed."
         },
         {
           "date": "2026-08-14",
@@ -165,8 +179,8 @@
           "platform": "macos",
           "command": "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/ephemeral-vm-provisioned-root.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 21,
-          "summary": "The final-tree full-build run completed the Docker Linux SSH journey: create, provisioned-root adoption, terminal, workspace removal, destroy, and provider-container cleanup."
+          "durationSeconds": 22,
+          "summary": "The final-tree full-build run completed the Docker Linux SSH journey: default-base create at the captured source commit, provisioned-root adoption, terminal, workspace removal, destroy, and provider-container cleanup."
         }
       ],
       "runtimeBudget": {

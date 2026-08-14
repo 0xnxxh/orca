@@ -31,6 +31,7 @@ export type ProvisionEphemeralVmRuntimeArgs = {
   repoUrl?: string
   branch?: string
   ref?: string
+  expectedRefHead?: string
   orcaVersion?: string
   now?: number
   signal?: AbortSignal
@@ -113,6 +114,7 @@ export async function provisionEphemeralVmRuntime(
       repoUrl: args.repoUrl,
       branch: args.branch,
       ref: args.ref,
+      expectedRefHead: args.expectedRefHead,
       orcaVersion: args.orcaVersion,
       ...(compatibility ? { instanceId: compatibility.instanceId } : {})
     },

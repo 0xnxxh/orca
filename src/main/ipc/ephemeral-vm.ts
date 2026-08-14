@@ -35,8 +35,7 @@ import {
 import { registerEphemeralVmRuntimeHandlers } from './ephemeral-vm-runtime-handlers'
 import type { PluginService } from '../plugins/plugin-service'
 import { getApprovedPluginVmRecipes } from '../plugins/plugin-approved-vm-recipes'
-import { gitExecFileAsync } from '../git/runner'
-import { getLocalProjectGitExecOptions } from '../project-runtime-git-options'
+import { resolveProvisionedRootSource } from '../ephemeral-vm-provisioned-root-source'
 
 const activeProvisionControllers = new Map<string, AbortController>()
 
@@ -131,30 +130,6 @@ export function registerEphemeralVmHandlers(store: Store, pluginService?: Plugin
       if (!recipe) {
         return { ok: false, error: `Recipe not found: ${args.recipeId}`, stdout: '', stderr: '' }
       }
-      const repoUrl = getProvisionedRootRecipeRepoUrl(
-        recipe.checkoutMode,
-        repo.repo.gitRemoteIdentity?.remoteUrl
-      )
-      let expectedRefHead: string | undefined
-      if (recipe.checkoutMode === 'provisioned-root' && args.ref) {
-        try {
-          const { stdout } = await gitExecFileAsync(
-            ['rev-parse', '--verify', '--quiet', '--end-of-options', `${args.ref}^{commit}`],
-            getLocalProjectGitExecOptions(store, repo.repo)
-          )
-          expectedRefHead = stdout.trim() || undefined
-        } catch {
-          expectedRefHead = undefined
-        }
-        if (!expectedRefHead) {
-          return {
-            ok: false,
-            error: `Could not resolve provisioned-root start ref: ${args.ref}`,
-            stdout: '',
-            stderr: ''
-          }
-        }
-      }
       const controller = args.provisionId ? new AbortController() : null
       if (args.provisionId && controller) {
         activeProvisionControllers.set(args.provisionId, controller)
@@ -174,6 +149,34 @@ export function registerEphemeralVmHandlers(store: Store, pluginService?: Plugin
       // abort during the up-to-10s SSH connect window. Removing it in the provision
       // promise's own .finally() would deregister it before SSH connect even starts.
       try {
+        let recipeRepoUrl = repo.repo.gitRemoteIdentity?.remoteUrl
+        let sourceRef = args.ref
+        let expectedRefHead: string | undefined
+        if (recipe.checkoutMode === 'provisioned-root') {
+          const source = await resolveProvisionedRootSource(
+            store,
+            repo.repo,
+            args.ref,
+            controller?.signal
+          )
+          if (controller?.signal.aborted) {
+            return { ok: false, error: 'Provisioning cancelled.', stdout: '', stderr: '' }
+          }
+          if (!source) {
+            return {
+              ok: false,
+              error: args.ref
+                ? `Could not resolve provisioned-root start ref: ${args.ref}`
+                : 'Could not resolve a default provisioned-root start ref.',
+              stdout: '',
+              stderr: ''
+            }
+          }
+          sourceRef = source.ref
+          expectedRefHead = source.head
+          recipeRepoUrl = source.remoteUrl ?? recipeRepoUrl
+        }
+        const repoUrl = getProvisionedRootRecipeRepoUrl(recipe.checkoutMode, recipeRepoUrl)
         const result = await provisionEphemeralVmRuntime({
           userDataPath: app.getPath('userData'),
           repoPath: repo.repo.path,
@@ -184,7 +187,8 @@ export function registerEphemeralVmHandlers(store: Store, pluginService?: Plugin
           workspaceName: args.workspaceName,
           ...(repoUrl ? { repoUrl } : {}),
           ...(args.branch ? { branch: args.branch } : {}),
-          ...(args.ref ? { ref: args.ref } : {}),
+          ...(sourceRef ? { ref: sourceRef } : {}),
+          ...(expectedRefHead ? { expectedRefHead } : {}),
           ...(controller ? { signal: controller.signal } : {}),
           onStdout: (chunk) => sendProvisionEvent('stdout', chunk),
           onStderr: (chunk) => sendProvisionEvent('stderr', chunk)

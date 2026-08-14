@@ -181,6 +181,7 @@ function buildRecipeEnv(
     ORCA_REPO_URL: context.repoUrl ?? '',
     ORCA_REPO_BRANCH: context.branch ?? '',
     ORCA_REPO_REF: context.ref ?? '',
+    ORCA_REPO_REF_HEAD: context.expectedRefHead ?? '',
     ORCA_RECIPE_RESULT_SCHEMA_VERSION: String(resultSchemaVersion),
     ORCA_VERSION: context.orcaVersion ?? ''
   }
