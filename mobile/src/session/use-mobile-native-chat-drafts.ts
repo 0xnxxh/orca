@@ -7,8 +7,6 @@ import {
   findLandedUnconfirmedSends,
   mergeLandedImagePreviewEchoes,
   migrateImagePreviewMessageIds,
-  normalizeReconcileText,
-  normalizeReconcileTextWithLiteralFallback,
   userTextOccurrenceCounts,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
@@ -21,6 +19,7 @@ import {
   type MobileNativeChatSendOrigin
 } from './mobile-native-chat-pending-echo'
 import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
+import { nativeChatUserTextMatchText } from './mobile-native-chat-image-transcript-markers'
 import { useMobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 
@@ -135,14 +134,18 @@ export function useMobileNativeChatDrafts(args: {
       }
       // Without an attached image an `[Image #n]` run is the user's own text, so
       // it has to stay in the key the transcript echo will be matched against.
-      const normalizedText = images?.length
-        ? normalizeReconcileText(text)
-        : normalizeReconcileTextWithLiteralFallback(text)
+      const imageCount = images?.length ?? 0
+      const normalizedText = nativeChatUserTextMatchText(text, imageCount > 0)
       return {
         draftKey,
         pendingKey,
         normalizedText,
-        baselineOccurrences: countUserTextOccurrences(messagesRef.current, normalizedText),
+        imageCount,
+        baselineOccurrences: countUserTextOccurrences(
+          messagesRef.current,
+          normalizedText,
+          imageCount
+        ),
         baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null
       }
     },
@@ -207,6 +210,7 @@ export function useMobileNativeChatDrafts(args: {
         pendingKey: origin.pendingKey,
         text,
         normalizedText: origin.normalizedText,
+        imageCount: origin.imageCount,
         baselineTailMessageId: origin.baselineTailMessageId,
         deadline: null
       }
@@ -299,17 +303,14 @@ export function useMobileNativeChatDrafts(args: {
       const landedCounts = userTextOccurrenceCounts(messages)
       // Image-only source-turn counts stay stable across reruns and ignore paginated history.
       const next = current.filter((item) => {
-        if (landedImagePendingIds.has(item.id)) {
-          return false
-        }
         // Keep image echoes until their local preview reaches the authoritative message.
         if (item.images?.length) {
-          return true
+          return !landedImagePendingIds.has(item.id)
         }
         return item.text.trim() === ''
           ? countImageSourceTurnsAfter(messages, item.baselineTailMessageId) <
               item.expectedOccurrence
-          : (landedCounts.get(normalizeReconcileTextWithLiteralFallback(item.text)) ?? 0) <
+          : (landedCounts.get(nativeChatUserTextMatchText(item.text, false)) ?? 0) <
               item.expectedOccurrence
       })
       if (next.length === current.length) {

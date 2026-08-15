@@ -7,10 +7,11 @@ export {
   imageSourcePathFromText,
   hasImagePromptMarker,
   isImageSourceUserTurn,
+  nativeChatUserMessageImageEvidenceCount,
   nativeChatUserMessageMatchText,
+  nativeChatUserTextMatchText,
   normalizeImageTranscriptMessages,
   normalizeNativeChatUserText,
-  normalizeNativeChatUserTextWithLiteralFallback,
   normalizedNativeChatUserMessageText,
   stripImagePromptMarker
 } from '../../../src/shared/native-chat-image-transcript-markers'

@@ -37,6 +37,7 @@ describe('mobile native chat image preview reconciliation', () => {
       pendingKey: 'pending-key',
       text: 'look at this',
       normalizedText: 'look at this',
+      imageCount: 1,
       baselineTailMessageId: null,
       deadline: null
     }
@@ -58,6 +59,7 @@ describe('mobile native chat image preview reconciliation', () => {
       pendingKey: 'pending-key',
       text: 'look here',
       normalizedText: 'look here',
+      imageCount: 1,
       baselineTailMessageId: null,
       deadline: null
     }

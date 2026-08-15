@@ -1,6 +1,6 @@
 import {
-  normalizeNativeChatUserText,
-  normalizeNativeChatUserTextWithLiteralFallback
+  nativeChatUserTextMatchText,
+  normalizeNativeChatUserText
 } from './mobile-native-chat-image-transcript-markers'
 
 export type MobileNativeChatPendingMessage = {
@@ -16,6 +16,7 @@ export type MobileNativeChatSendOrigin = {
   draftKey: string
   pendingKey: string | null
   normalizedText: string
+  imageCount: number
   baselineOccurrences: number
   baselineTailMessageId: string | null
 }
@@ -25,9 +26,7 @@ type PendingByKey = Record<string, MobileNativeChatPendingMessage[]>
 /** Markers are the agent's only on a send that carried images; otherwise they
  *  are literal text, so `captureSendOrigin` keeps them and so must this. */
 function pendingMatchText(pending: MobileNativeChatPendingMessage): string {
-  return pending.images?.length
-    ? normalizeNativeChatUserText(pending.text)
-    : normalizeNativeChatUserTextWithLiteralFallback(pending.text)
+  return nativeChatUserTextMatchText(pending.text, Boolean(pending.images?.length))
 }
 
 export function combineMobileNativeChatPending(

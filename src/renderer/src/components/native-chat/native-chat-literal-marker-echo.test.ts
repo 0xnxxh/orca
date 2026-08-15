@@ -124,4 +124,38 @@ describe('literal image-marker turns in native chat', () => {
     expect(rowText(rows[0]!)).toBe('')
     expect(rowImagePaths(rows[0]!)).toEqual(['/tmp/a.png'])
   })
+
+  it('keeps a captioned multi-image echo until the transcript accounts for every image', () => {
+    const pending: NativeChatPendingSend[] = [
+      {
+        id: 'p1',
+        text: 'compare these',
+        imagePaths: ['/tmp/a.png', '/tmp/b.png', '/tmp/c.png'],
+        sentAt: 100
+      }
+    ]
+    const transcript = [
+      userMessage('source-a', '[Image: source: /tmp/a.png]'),
+      userMessage('prompt', 'compare these [Image #1]')
+    ]
+
+    const rows = renderedUserRows(transcript, pending)
+
+    expect(rows.map(rowText)).toEqual(['compare these', 'compare these'])
+    expect(rows.map(rowImagePaths)).toEqual([
+      ['/tmp/a.png'],
+      ['/tmp/a.png', '/tmp/b.png', '/tmp/c.png']
+    ])
+
+    const complete = [
+      userMessage('source-a', '[Image: source: /tmp/a.png]'),
+      userMessage('source-b', '[Image: source: /tmp/b.png]'),
+      userMessage('source-c', '[Image: source: /tmp/c.png]'),
+      userMessage('complete-prompt', 'compare these [Image #1] [Image #2] [Image #3]')
+    ]
+    const completeRows = renderedUserRows(complete, pending)
+    expect(completeRows).toHaveLength(1)
+    expect(rowText(completeRows[0]!)).toBe('compare these')
+    expect(rowImagePaths(completeRows[0]!)).toEqual(['/tmp/a.png', '/tmp/b.png', '/tmp/c.png'])
+  })
 })
