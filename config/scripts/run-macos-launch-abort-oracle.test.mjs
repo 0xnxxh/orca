@@ -3,6 +3,7 @@ import {
   ALREADY_RUNNING_EXIT_CODE,
   SANDBOX_PROFILE,
   SCENARIOS,
+  executableWrapperScript,
   judge,
   orderedScenarios,
   parseArgs
@@ -76,6 +77,16 @@ describe('macOS launch-abort oracle scenarios', () => {
       'open-duplicate',
       'recipe-json-duplicate'
     ])
+  })
+
+  it('pins the spawned Electron to the run profile so a packaged arm cannot touch the real one', () => {
+    // Why: a packaged main ignores ORCA_DEV_USER_DATA_PATH, so `--user-data-dir`
+    // is the only isolation the CLI-spawned child gets.
+    const script = executableWrapperScript('/base/Orca.app/Contents/MacOS/Orca', '/tmp/profile')
+
+    expect(script).toContain("exec '/base/Orca.app/Contents/MacOS/Orca'")
+    expect(script).toContain("'--user-data-dir=/tmp/profile'")
+    expect(script.trimEnd().endsWith('"$@"')).toBe(true)
   })
 
   it('refuses a flag whose value is missing rather than labelling a run undefined', () => {

@@ -376,13 +376,35 @@ async function startSharedOwner(session) {
   session.ownerReady = session.owner !== null
 }
 
+/**
+ * Why: the CLI spawns `ORCA_APP_EXECUTABLE` with no profile switch, and only
+ * `ORCA_DEV_USER_DATA_PATH` redirects userData — which a *packaged* main ignores.
+ * Without this, the packaged arm would start Electron on the real user profile.
+ * The wrapper pins `--user-data-dir` for every arm so the arms stay comparable,
+ * and sits at a `<name>.app/Contents/MacOS/` path so the CLI's bundle-shape
+ * checks (serve-update handoff) take the same branch a real bundle would.
+ */
+export function executableWrapperScript(electron, profile) {
+  return `#!/bin/sh\nexec '${electron}' '--user-data-dir=${profile}' "$@"\n`
+}
+
+async function writeExecutableWrapper(context) {
+  const macOsDir = path.join(context.runDir, 'Orca.app', 'Contents', 'MacOS')
+  await fs.mkdir(macOsDir, { recursive: true })
+  const wrapper = path.join(macOsDir, 'Orca')
+  await fs.writeFile(wrapper, executableWrapperScript(context.electron, context.profile), {
+    mode: 0o755
+  })
+  return wrapper
+}
+
 function cliEnv(context, extra = {}) {
   return {
     ...context.baseEnv,
     ELECTRON_RUN_AS_NODE: '1',
     ORCA_USER_DATA_PATH: context.profile,
     ORCA_DEV_USER_DATA_PATH: context.profile,
-    ORCA_APP_EXECUTABLE: context.electron,
+    ORCA_APP_EXECUTABLE: context.executable,
     ORCA_APP_EXECUTABLE_NEEDS_APP_ROOT: context.appRoot ? '1' : '0',
     ORCA_STARTUP_DIAGNOSTICS: '1',
     ORCA_STARTUP_DIAGNOSTICS_FILE: path.join(context.runDir, 'child-startup.log'),
@@ -487,6 +509,7 @@ async function runScenario(session, scenario) {
   }
 
   const context = { ...session, profile, runDir }
+  context.executable = await writeExecutableWrapper(context)
   const reportsDir = path.join(os.homedir(), 'Library', 'Logs', 'DiagnosticReports')
   try {
     const ownerReady = isDuplicate ? session.ownerReady : null
