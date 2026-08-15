@@ -7973,7 +7973,11 @@ export function connectPanePty(
     // it is only set when a pending or live SSH pane retry matches this connection AND this tab
     // generation.
     const isSshReconnectRemount = Boolean(directSshRetryAttempt)
-    const paintsIntoEmptyTerminal = mountFollowsTerminalPark || isSshReconnectRemount
+    // MUTABLE, and consumed with mountFollowsTerminalPark below. A const here is a bug: the payload
+    // path clears mountFollowsTerminalPark after the first reattach so a later in-place reconnect on
+    // the SAME mount cannot repaint, and a snapshot written then lands on a terminal that already
+    // has live content. Reading a frozen copy reintroduced exactly that.
+    let paintsIntoEmptyTerminal = mountFollowsTerminalPark || isSshReconnectRemount
 
     let parkedSshSnapshotPrefetch: {
       ptyId: string
@@ -8230,6 +8234,9 @@ export function connectPanePty(
         mountFollowsTerminalPark &&
         (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))
       mountFollowsTerminalPark = false
+      // Consumed together: the prepaint's own guard reads this, and both reasons a mount paints into
+      // an empty terminal are spent by the first reattach.
+      paintsIntoEmptyTerminal = false
       // Why: ordinary parking destroys xterm. Rebuild from the authoritative
       // host snapshot before releasing queued live bytes; null falls back to
       // the subscribe screen without keeping the old xterm mounted.
