@@ -57,13 +57,19 @@ export function createGoldenWorktree(repoPath: string, label: string): GoldenWor
     cwd: repoPath,
     stdio: 'pipe'
   })
+  // Callers only register cleanup once this returns, so roll back here or the
+  // half-built worktree and branch leak into every later run.
   // Why: Windows CI tmpdir is often the 8.3 alias (RUNNER~1) while Git lists
   // the long path (runneradmin). Seeded repos already realpath; this extra
   // worktree must too or activateGoldenWorktree never matches the sidebar.
-  const worktreePath = realpathSync.native(requestedPath)
+  let worktreePath: string
+  try {
+    worktreePath = realpathSync.native(requestedPath)
+  } catch (realpathError) {
+    rollbackGoldenWorktree(repoPath, { branchName, worktreePath: requestedPath })
+    throw realpathError
+  }
   const fixture: GoldenWorktree = { branchName, worktreePath }
-  // Callers only register cleanup once this returns, so roll back here or the
-  // half-built worktree and branch leak into every later run.
   try {
     execFileSync('git', ['config', 'extensions.worktreeConfig', 'true'], {
       cwd: worktreePath,
@@ -78,14 +84,19 @@ export function createGoldenWorktree(repoPath: string, label: string): GoldenWor
       stdio: 'pipe'
     })
   } catch (setupError) {
-    try {
-      cleanupGoldenWorktree(repoPath, fixture)
-    } catch {
-      // Keep the setup failure as the reported cause.
-    }
+    rollbackGoldenWorktree(repoPath, fixture)
     throw setupError
   }
   return fixture
+}
+
+/** Best-effort cleanup that keeps the original setup failure as the reported cause. */
+function rollbackGoldenWorktree(repoPath: string, fixture: GoldenWorktree): void {
+  try {
+    cleanupGoldenWorktree(repoPath, fixture)
+  } catch {
+    // Intentionally ignored.
+  }
 }
 
 export function cleanupGoldenWorktree(repoPath: string, fixture: GoldenWorktree): void {
