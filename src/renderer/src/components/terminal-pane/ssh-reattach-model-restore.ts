@@ -114,7 +114,15 @@ export function sshReconnectPaintsFromModel(args: {
   return !args.altFrameWouldBeSkipped && lastAlternateScreenTransition(args.replay) !== 'exited'
 }
 
-/** Skip the snapshot fetch entirely when the paint could never use it. */
+/**
+ * Skip the snapshot fetch entirely when the paint could never use it.
+ *
+ * DELIBERATE that terminalSshViewParking gates the reconnect repaint too, not just parking: it is
+ * the kill switch for painting an SSH pane from main's model at all, and a reconnect does exactly
+ * that from the same probe. Off means every SSH reattach degrades to the relay tail — the behavior
+ * that predates this machinery, which is what an escape hatch should restore. The cost is that a
+ * user who disables parking also loses the full-screen reconnect repaint.
+ */
 export function shouldFetchSshReattachModelSnapshot(args: {
   ptyId: string
   sshParkingEnabled: boolean
