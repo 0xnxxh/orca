@@ -174,7 +174,8 @@ function isCoalescedCrumbStillInEvidence(crumb: CrashReportBreadcrumb): boolean 
 
 /** Fold a key's newest suppressed payload into the ring entry it owns. */
 function resolvePendingCoalescedBreadcrumb(state: CoalescedBreadcrumbState): void {
-  if (!state.pending || !state.emitted) {
+  // `data` is optional, so the count—not pending payload presence—marks unresolved work.
+  if (!state.emitted || state.suppressed <= state.resolved) {
     return
   }
   // Eviction can orphan the crumb mid-window; folding into it would mark the

@@ -125,6 +125,24 @@ describe('crash breadcrumb store', () => {
     vi.useRealTimers()
   })
 
+  it('folds data-less repeats into the emitted breadcrumb', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-20T12:00:00.000Z'))
+
+    recordCoalescedCrashBreadcrumb({
+      name: 'terminal_safe_fit_retry_exhausted',
+      coalesceKey: 'terminal_safe_fit_retry_exhausted',
+      minIntervalMs: 30_000
+    })
+    recordCoalescedCrashBreadcrumb({
+      name: 'terminal_safe_fit_retry_exhausted',
+      coalesceKey: 'terminal_safe_fit_retry_exhausted',
+      minIntervalMs: 30_000
+    })
+
+    expect(getCrashBreadcrumbSnapshot()[0]?.data).toEqual({ suppressedSinceLast: 1 })
+  })
+
   // Windows crash F0BKR84AHEH: two `terminal_safe_fit_retry_exhausted` bursts
   // (34 crumbs in 76ms, 34 in 56ms) flushed the pre-crash trail out of a
   // 30-entry ring. Every hidden pane is display:none, so it measures 0x0, fails
@@ -450,9 +468,9 @@ describe('crash breadcrumb store', () => {
       expect(resumed).toEqual({ suppressedSinceLast: 2 })
     })
 
-    // Two crash reports filed inside one window fold twice into the same crumb;
-    // the claim is a running total, and the next window starts from zero debt.
-    it('keeps a second fold in the same window a running total, claimed exactly once', () => {
+    // Two crash reports filed inside one window are immutable cumulative views;
+    // the next window must still start from zero unresolved debt.
+    it('keeps immutable snapshots cumulative without re-claiming resolved debt', () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2026-07-22T12:00:00.000Z'))
       const hit = (livePanes: number): { suppressedSinceLast: number } | undefined =>
@@ -467,12 +485,13 @@ describe('crash breadcrumb store', () => {
       vi.advanceTimersByTime(10)
       hit(2)
       hit(3)
-      getCrashBreadcrumbSnapshot()
+      const firstSnapshot = getCrashBreadcrumbSnapshot()
       vi.advanceTimersByTime(10)
       hit(4)
       const secondFold = getCrashBreadcrumbSnapshot().find(
         (entry) => entry.name === 'terminal_safe_fit_retry_exhausted'
       )
+      expect(firstSnapshot[0]?.data).toEqual({ livePanes: 3, suppressedSinceLast: 2 })
       expect(secondFold?.data).toEqual({ livePanes: 4, suppressedSinceLast: 3 })
 
       vi.advanceTimersByTime(31_000)

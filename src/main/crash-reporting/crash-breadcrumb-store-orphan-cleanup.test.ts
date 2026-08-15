@@ -102,6 +102,24 @@ describe('orphaned coalesced breadcrumb cleanup', () => {
     expectSuppressedBurstPreserved()
   })
 
+  it('preserves data-less repeats through orphan cleanup', () => {
+    for (let index = 0; index < 3; index += 1) {
+      recordCoalescedCrashBreadcrumb({
+        name: ORPHAN_KEY,
+        coalesceKey: ORPHAN_KEY,
+        minIntervalMs: COALESCE_WINDOW_MS
+      })
+    }
+    orphanFromRing()
+
+    expireWithUnrelatedKey()
+
+    const recovered = getCrashBreadcrumbSnapshot().find(
+      (breadcrumb) => breadcrumb.name === ORPHAN_KEY
+    )
+    expect(recovered?.data).toEqual({ suppressedSinceLast: 2 })
+  })
+
   it('preserves snapshot-budget-orphaned repeats through unrelated expiry cleanup', () => {
     recordSuppressedBurst()
     orphanFromSnapshotBudget()
