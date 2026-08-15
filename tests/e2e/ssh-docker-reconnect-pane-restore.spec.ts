@@ -32,6 +32,17 @@ const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
  *
  * Reading the pane's own text is the point. Asserting a pty id, a status, or a spy call is what let
  * both of these through: every one of those was correct while the screen was wrong.
+ *
+ * KNOWN: (1) is fixed at the symptom, not the cause. The cause is that a PTY source delivery is the
+ * only per-client relay state that survives its client detaching — fs-handler, git-handler and
+ * relay-filesystem-watch-registry all subscribe to dispatcher.onClientDetached and release theirs;
+ * relay-pty-source-publication never does. The primary client keeps its id across a transport
+ * replacement (detachClient refuses to detach it, setWrite revives that id), so its delivery
+ * outlives the dead transport and activate() answers 'existing' for a client that can no longer
+ * receive anything. requireReplay makes the client ask for what the relay wrongly decided it did
+ * not need. Retiring the delivery on detach is the real fix and is deliberately NOT done here: it
+ * is the flow-control and credit path, and it was not worth shipping unverified. This test pins the
+ * user-visible contract either way, so it should keep passing when that lands.
  */
 async function openTerminalTab(page: Page): Promise<void> {
   await page.evaluate(async () => {
