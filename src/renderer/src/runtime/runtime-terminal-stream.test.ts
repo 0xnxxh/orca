@@ -581,6 +581,44 @@ describe('remote runtime terminal multiplex ACK gate', () => {
     injectSnapshot(
       {
         kind: 'scrollback',
+        cols: 120.5,
+        rows: 40,
+        reason: 'ack-pending-overflow',
+        truncated: false
+      },
+      'fractional-grid recovery'
+    )
+    expect(onSnapshot).toHaveBeenLastCalledWith(
+      `\x1b[2J\x1b[3J\x1b[H${'fractional-grid recovery'}`,
+      {
+        cols: undefined,
+        rows: undefined,
+        pendingEscapeTailAnsi: undefined
+      }
+    )
+
+    injectSnapshot(
+      {
+        kind: 'scrollback',
+        cols: 1_001,
+        rows: 501,
+        reason: 'ack-pending-overflow',
+        truncated: false
+      },
+      'oversized-grid recovery'
+    )
+    expect(onSnapshot).toHaveBeenLastCalledWith(
+      `\x1b[2J\x1b[3J\x1b[H${'oversized-grid recovery'}`,
+      {
+        cols: undefined,
+        rows: undefined,
+        pendingEscapeTailAnsi: undefined
+      }
+    )
+
+    injectSnapshot(
+      {
+        kind: 'scrollback',
         cols: 120,
         rows: 40,
         reason: 'ack-pending-overflow',

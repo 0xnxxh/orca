@@ -17322,6 +17322,21 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(12)
     expect(pane.terminal.resize).not.toHaveBeenCalledWith(0, 0)
 
+    for (const [snapshotCols, snapshotRows] of [
+      [60.5, 20],
+      [1_001, 501]
+    ]) {
+      vi.mocked(pane.terminal.resize).mockClear()
+      vi.mocked(pane.terminal.write).mockClear()
+      const payload = `invalid-grid ${snapshotCols}x${snapshotRows}`
+      capturedReplayCallback.current?.(payload, { snapshotCols, snapshotRows })
+      await vi.waitFor(() =>
+        expect(pane.terminal.write).toHaveBeenCalledWith(payload, expect.any(Function))
+      )
+      await flushAsyncTicks(4)
+      expect(pane.terminal.resize).not.toHaveBeenCalled()
+    }
+
     vi.mocked(pane.terminal.resize).mockClear()
     capturedReplayCallback.current?.('', {
       snapshotCols: 30,

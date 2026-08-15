@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Why: the remote terminal multiplexer owns one bridged subscription, stream lifecycle, binary frame parsing, and remote lock events as a single transport contract. */
 import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
 import { isRecoverableRemoteRuntimeConnectionError } from '../../../shared/remote-runtime-client-error-classification'
+import { isValidTerminalHistorySize } from '../../../shared/terminal-history-dimensions'
 import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame,
@@ -1558,9 +1559,10 @@ function decodeSnapshotInfo(
   if (!raw) {
     return null
   }
+  const hasSnapshotDimensions = isValidTerminalHistorySize(raw.cols, raw.rows)
   return {
-    cols: typeof raw.cols === 'number' ? raw.cols : undefined,
-    rows: typeof raw.rows === 'number' ? raw.rows : undefined,
+    cols: hasSnapshotDimensions ? (raw.cols as number) : undefined,
+    rows: hasSnapshotDimensions ? (raw.rows as number) : undefined,
     seq: typeof raw.seq === 'number' ? raw.seq : undefined,
     source: raw.source === 'headless' || raw.source === 'renderer' ? raw.source : undefined,
     // Negative, fractional, and unsafe values are treated as absent, never clamped.
