@@ -84,8 +84,25 @@ import {
   type CookieImportMode,
   type ReplacedImportedDomainCookies
 } from './browser-cookie-import-policy'
-import { removeTransplantableCookies, withCookieClearLock } from './browser-cookie-import-clear'
+import {
+  removeTransplantableCookies,
+  withCookieClearLock,
+  type CookieClearStore,
+  type CookieImportWriteStore
+} from './browser-cookie-import-clear'
 import { openCookieClearStore } from './browser-cookie-clear-store'
+import {
+  readChromiumRowPartition,
+  readJsonCookiePartition,
+  type SourcePartitionRead
+} from './browser-cookie-source-partition'
+import {
+  emptyImportWritePhase,
+  writeImportedCookies,
+  type ImportedCookieFields,
+  type ImportWritePhase,
+  type SourceCookieToWrite
+} from './browser-cookie-import-write'
 import {
   createChromiumCookieSnapshot,
   type ChromiumCookieSnapshot
@@ -448,18 +465,14 @@ type RawCookieEntry = {
   httpOnly?: unknown
   sameSite?: unknown
   expirationDate?: unknown
+  partitionKey?: unknown
 }
 
-type ValidatedCookie = {
-  url: string
-  name: string
-  value: string
-  domain: string
-  path: string
-  secure: boolean
-  httpOnly: boolean
+// Why (STA-4300): `partition` is required, not optional, so every source that builds a cookie has to
+// state what it read. An optional field would let a new source silently default to unpartitioned.
+type ValidatedCookie = ImportedCookieFields & {
   sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict'
-  expirationDate: number | undefined
+  partition: SourcePartitionRead
 }
 
 // Why: Chromium's CookieSameSiteForStorage enum (0=Unspecified,1=None,2=Lax,3=Strict) differs from Firefox's numbering.
@@ -556,16 +569,35 @@ function validateCookieEntry(raw: RawCookieEntry): ValidatedCookie | null {
     secure,
     httpOnly: raw.httpOnly === true || raw.httpOnly === 1,
     sameSite: normalizeSameSite(raw.sameSite),
-    expirationDate
+    expirationDate,
+    partition: readJsonCookiePartition(raw.partitionKey)
+  }
+}
+
+// Why (STA-4300): the import writes get a store with no `set` on it and no Session behind it, so
+// the partition-dropping write is not merely unused here — it cannot be reached.
+type CookieImportSessionStore = CookieClearStore & CookieImportWriteStore & { dispose: () => void }
+
+type CookieImportTarget = {
+  partition: string
+  openWriteStore: () => CookieImportSessionStore
+}
+
+function cookieImportTarget(targetPartition: string): CookieImportTarget {
+  const targetSession = session.fromPartition(targetPartition)
+  return {
+    partition: targetPartition,
+    openWriteStore: () => openCookieClearStore(targetSession)
   }
 }
 
 async function importValidatedCookies(
   cookies: ValidatedCookie[],
   totalInput: number,
-  targetPartition: string,
+  target: CookieImportTarget,
   mode: CookieImportMode
 ): Promise<BrowserCookieImportResult> {
+  const targetPartition = target.partition
   const importDomainCache = new Map<string, boolean>()
   const validDomainCookies = cookies.filter((cookie) => {
     let valid = importDomainCache.get(cookie.domain)
@@ -590,128 +622,82 @@ async function importValidatedCookies(
   diag(
     `importValidatedCookies: ${cookies.length} validated, ${invalidDomainSkipped} unsafe-domain skipped, ${integritySkipped} source-bound skipped, ${nonTransplantableSkipped} non-transplantable skipped of ${totalInput} total, partition="${targetPartition}"`
   )
-  const targetSession = session.fromPartition(targetPartition)
-  let importedCount = 0
   let skipped = totalInput - importableCookies.length
-  const domainSet = new Set<string>()
-  let replaced: ReplacedImportedDomainCookies | null = null
-  // Why (STA-4097): the rollback below has to put back cookies this import already deleted, and
-  // only CDP identities carry partitionKey — rebuilding them with cookies.set drops it silently.
-  const cookieClearStore =
-    mode === 'replace-imported-domains' && importableCookies.length > 0
-      ? openCookieClearStore(targetSession)
-      : null
+  let phase: ImportWritePhase = emptyImportWritePhase()
+  // Why (STA-4097/STA-4300): both the rollback and the import writes need CDP identities — only
+  // they carry partitionKey. cookies.set drops it silently, on the success path as well.
+  const cookieClearStore = importableCookies.length > 0 ? target.openWriteStore() : null
 
-  try {
-    if (cookieClearStore) {
-      try {
-        replaced = await replaceCookiesForImportedDomains(
-          cookieClearStore,
-          importableCookies.map((cookie) => cookie.domain)
-        )
-        diag(`  removed ${replaced.removed.length} existing cookies in imported domain scopes`)
-      } catch (err) {
-        diag(`  existing cookie replacement failed: ${summarizeCookieImportError(err)}`)
+  if (cookieClearStore) {
+    let replaced: ReplacedImportedDomainCookies | null = null
+    try {
+      if (mode === 'replace-imported-domains') {
+        try {
+          replaced = await replaceCookiesForImportedDomains(
+            cookieClearStore,
+            importableCookies.map((cookie) => cookie.domain)
+          )
+          diag(`  removed ${replaced.removed.length} existing cookies in imported domain scopes`)
+        } catch (err) {
+          diag(`  existing cookie replacement failed: ${summarizeCookieImportError(err)}`)
+          return {
+            ok: false,
+            reason: reasonWithDiagLog('Could not replace existing cookies for the imported sites.')
+          }
+        }
+      }
+
+      // Why: Chromium rejects any non-printable-ASCII byte in a cookie value; strip as a safety net.
+      const stripNonPrintable = (s: string): string => s.replace(/[^\x20-\x7E]/g, '')
+      phase = await writeImportedCookies(
+        cookieClearStore,
+        importableCookies.map((cookie) => ({ ...cookie, value: stripNonPrintable(cookie.value) })),
+        { stopOnFailure: replaced !== null, log: diag }
+      )
+      skipped += phase.writeRejected + phase.partitionSkipped
+
+      if (phase.failure && replaced) {
+        const rollbackFailures: unknown[] = []
+        for (const cookie of phase.importedKeys.toReversed()) {
+          try {
+            await cookieClearStore.remove(cookie.url, cookie.name)
+          } catch (err) {
+            rollbackFailures.push(err)
+          }
+        }
+        // Why: restoreClearIdentities attaches the debugger before it iterates, so an empty
+        // restore set would spin up a hidden BrowserWindow to put nothing back.
+        if (replaced.identities.length > 0) {
+          try {
+            await cookieClearStore.restoreClearIdentities(replaced.identities.toReversed())
+          } catch (err) {
+            rollbackFailures.push(err)
+          }
+        }
+        if (rollbackFailures.length > 0) {
+          diag(`  cookie replacement rollback failed: ${rollbackFailures.length} operation(s)`)
+        }
         return {
           ok: false,
-          reason: reasonWithDiagLog('Could not replace existing cookies for the imported sites.')
+          reason: reasonWithDiagLog('Could not safely replace cookies for the imported sites.')
         }
       }
+    } finally {
+      cookieClearStore.dispose()
     }
-
-    // Why: Electron's cookies.set() rejects any non-printable-ASCII byte; strip as a safety net.
-    const stripNonPrintable = (s: string): string => s.replace(/[^\x20-\x7E]/g, '')
-    const importedCookieKeys: { url: string; name: string }[] = []
-    let setFailure: unknown = null
-
-    for (const cookie of importableCookies) {
-      try {
-        // Why: Chromium rejects __Host- cookies unless they omit domain and use path=/.
-        const isHostPrefixed = cookie.name.startsWith('__Host-')
-        const path = isHostPrefixed ? '/' : cookie.path
-        await targetSession.cookies.set({
-          url: cookie.url,
-          name: cookie.name,
-          value: stripNonPrintable(cookie.value),
-          ...(isHostPrefixed ? {} : { domain: cookie.domain }),
-          path,
-          secure: cookie.secure,
-          httpOnly: cookie.httpOnly,
-          sameSite: cookie.sameSite,
-          expirationDate: cookie.expirationDate
-        })
-        const removalUrl = new URL(cookie.url)
-        removalUrl.pathname = path.startsWith('/') ? path : '/'
-        importedCookieKeys.push({ url: removalUrl.toString(), name: cookie.name })
-        importedCount++
-        // Why: surface only the domain (never name/value/path) so the summary doesn't leak secret cookie data.
-        const cleanDomain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain
-        domainSet.add(cleanDomain)
-      } catch (err) {
-        skipped++
-        setFailure = err
-        if (skipped <= 5) {
-          // Find the exact offending character position and code
-          const val = cookie.value
-          let badInfo = 'none found'
-          for (let i = 0; i < val.length; i++) {
-            const code = val.charCodeAt(i)
-            if (code < 0x20 || code > 0x7e) {
-              badInfo = `pos=${i} char=U+${code.toString(16).padStart(4, '0')}`
-              break
-            }
-          }
-          diag(
-            `  cookie.set FAILED: domain=${cookie.domain} name=${cookie.name} valLen=${val.length} badChar=${badInfo} err=${String(err)}`
-          )
-        }
-        if (replaced) {
-          break
-        }
-      }
-    }
-
-    // Why: replaced is only ever set alongside cookieClearStore, which owns the CDP restore.
-    if (setFailure && replaced && cookieClearStore) {
-      const rollbackFailures: unknown[] = []
-      for (const cookie of importedCookieKeys.toReversed()) {
-        try {
-          await targetSession.cookies.remove(cookie.url, cookie.name)
-        } catch (err) {
-          rollbackFailures.push(err)
-        }
-      }
-      // Why: restoreClearIdentities attaches the debugger before it iterates, so an empty
-      // restore set would spin up a hidden BrowserWindow to put nothing back.
-      if (replaced.identities.length > 0) {
-        try {
-          await cookieClearStore.restoreClearIdentities(replaced.identities.toReversed())
-        } catch (err) {
-          rollbackFailures.push(err)
-        }
-      }
-      if (rollbackFailures.length > 0) {
-        diag(`  cookie replacement rollback failed: ${rollbackFailures.length} operation(s)`)
-      }
-      return {
-        ok: false,
-        reason: reasonWithDiagLog('Could not safely replace cookies for the imported sites.')
-      }
-    }
-  } finally {
-    cookieClearStore?.dispose()
   }
 
   diag(
-    `importValidatedCookies result: imported=${importedCount} skipped=${skipped} domains=${domainSet.size}`
+    `importValidatedCookies result: imported=${phase.importedCount} skipped=${skipped} partition-unreadable=${phase.partitionSkipped} domains=${phase.domains.size}`
   )
 
   const summary: BrowserCookieImportSummary = {
     totalCookies: totalInput,
-    importedCookies: importedCount,
+    importedCookies: phase.importedCount,
     skippedCookies: skipped,
     ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
-    domains: [...domainSet].sort()
+    ...(phase.partitionSkipped > 0 ? { partitionSkippedCookies: phase.partitionSkipped } : {}),
+    domains: [...phase.domains].sort()
   }
 
   return { ok: true, profileId: '', summary }
@@ -792,7 +778,7 @@ export async function importCookiesFromFile(
   return importValidatedCookies(
     validated,
     parsed.length,
-    targetPartition,
+    cookieImportTarget(targetPartition),
     'replace-imported-domains'
   )
 }
@@ -1264,7 +1250,10 @@ function decodeSafariCookie(buf: Buffer): ValidatedCookie | null {
     secure,
     httpOnly,
     sameSite: 'unspecified',
-    expirationDate
+    expirationDate,
+    // Why: Cookies.binarycookies has no partition field — Safari's format predates CHIPS, so every
+    // decoded cookie is genuinely unpartitioned rather than missing an identity.
+    partition: { status: 'unpartitioned' }
   }
 }
 
@@ -1366,7 +1355,10 @@ async function importCookiesFromFirefox(
         secure,
         httpOnly: row.isHttpOnly === 1,
         sameSite: firefoxSameSite(row.sameSite),
-        expirationDate: row.expiry > 0 ? row.expiry : undefined
+        expirationDate: row.expiry > 0 ? row.expiry : undefined,
+        // Why: Firefox partitions through originAttributes, a different model from CHIPS that this
+        // query does not read. Unpartitioned is what the selected columns actually describe.
+        partition: { status: 'unpartitioned' }
       })
     }
 
@@ -1379,7 +1371,7 @@ async function importCookiesFromFirefox(
     return importValidatedCookies(
       validated,
       rows.length,
-      targetPartition,
+      cookieImportTarget(targetPartition),
       'replace-imported-domains'
     )
   } catch (err) {
@@ -1438,7 +1430,7 @@ async function importCookiesFromSafari(
     return importValidatedCookies(
       valid,
       cookies.length,
-      targetPartition,
+      cookieImportTarget(targetPartition),
       'replace-imported-domains'
     )
   } catch (err) {
@@ -1474,8 +1466,15 @@ export async function importCookiesFromBrowser(
   const targetSession = session.fromPartition(targetPartition)
   await targetSession.cookies.flushStore()
 
+  // Why (STA-4300): ask the Session where its own storage lives instead of rebuilding the path from
+  // the caller's partition string. String surgery on a caller-supplied name is what let a value like
+  // "persist:../.." resolve a Cookies DB outside the Partitions directory and stage a replacement
+  // over it; it also drifts whenever Chromium changes how a partition name maps to a directory.
+  const partitionDir = targetSession.getStoragePath()
+  if (!partitionDir) {
+    return { ok: false, reason: 'Target cookie database not found. Open a browser tab first.' }
+  }
   const partitionName = targetPartition.replace('persist:', '')
-  const partitionDir = join(app.getPath('userData'), 'Partitions', partitionName)
   let liveCookiesPath = resolveChromiumCookiesPath(partitionDir)
 
   // Why: Electron creates the Cookies file only after a cookie is stored; a throwaway set/remove forces DB init for unused profiles.
@@ -1591,6 +1590,13 @@ export async function importCookiesFromBrowser(
       }
     }
 
+    // Why (STA-4300): the partition columns drift across Chromium versions, so read the source
+    // schema rather than assuming a row's missing column means "unpartitioned".
+    const sourceColumns = new Set(
+      (sourceDb.prepare('PRAGMA table_info(cookies)').all() as ChromiumCookieColumnInfo[]).map(
+        (column) => column.name
+      )
+    )
     const sourceRows = sourceDb.prepare('SELECT * FROM cookies ORDER BY rowid').all() as Record<
       string,
       unknown
@@ -1636,16 +1642,10 @@ export async function importCookiesFromBrowser(
     let memoryFailed = 0
     const domainSet = new Set<string>()
 
-    type DecryptedCookie = {
+    type DecryptedCookie = Omit<ImportedCookieFields, 'url'> & {
       decryptedValue: Buffer
-      value: string
-      domain: string
-      name: string
-      path: string
-      secure: boolean
-      httpOnly: boolean
       sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict'
-      expirationDate: number | undefined
+      partition: SourcePartitionRead
     }
 
     const decryptedCookies: DecryptedCookie[] = []
@@ -1741,7 +1741,8 @@ export async function importCookiesFromBrowser(
         secure,
         httpOnly,
         sameSite,
-        expirationDate: expiresUtc > 0 ? expiresUtc : undefined
+        expirationDate: expiresUtc > 0 ? expiresUtc : undefined,
+        partition: readChromiumRowPartition(sourceRow, sourceColumns)
       })
 
       if (insertStmt && targetColumnInfo) {
@@ -1796,7 +1797,10 @@ export async function importCookiesFromBrowser(
     // Why: clear stale cookies first; mixing them with the imported set makes sites reject the
     // session. Non-transplantable families are exempt — nothing was imported for them, and their
     // live session is the only one that works.
+    // Why (STA-4300): one store spans the clear and the writes, so both halves of the import speak
+    // the same CDP identities — cookies.set() cannot express the partition either one reads.
     const cookieClearStore = openCookieClearStore(targetSession)
+    let partitionSkipped = 0
     try {
       await withCookieClearLock(targetSession, () =>
         removeTransplantableCookies({
@@ -1807,41 +1811,38 @@ export async function importCookiesFromBrowser(
             cookieClearStore.restoreClearIdentities(identities)
         })
       )
+      diag(
+        `  cleared existing session cookies before loading ${decryptedCookies.length} imported cookies`
+      )
+
+      const writable: SourceCookieToWrite[] = []
+      for (const cookie of decryptedCookies) {
+        const url = deriveUrl(cookie.domain, cookie.secure)
+        if (!url) {
+          memoryFailed++
+          continue
+        }
+        writable.push({ ...cookie, url })
+      }
+      // Why: a rejected cookie here falls back to the staged cold-start replay rather than
+      // unwinding the import, so one failure must not stop the rest from loading.
+      const phase = await writeImportedCookies(cookieClearStore, writable, {
+        stopOnFailure: false,
+        log: diag
+      })
+      memoryLoaded = phase.importedCount
+      partitionSkipped = phase.partitionSkipped
+      // Why: an unreadable partition is a cookie this process must not write, so it joins the
+      // rejected set and rides the staged cold-start replay — which copies the source's own
+      // partition columns verbatim instead of reconstructing an identity we could not read.
+      memoryFailed += phase.writeRejected + phase.partitionSkipped
     } finally {
       cookieClearStore.dispose()
     }
+
     diag(
-      `  cleared existing session cookies before loading ${decryptedCookies.length} imported cookies`
+      `  memory load: ${memoryLoaded} OK, ${memoryFailed} failed, ${partitionSkipped} partition-unreadable`
     )
-
-    // Why: load into memory via cookies.set() so imported cookies work without a restart.
-    for (const cookie of decryptedCookies) {
-      const url = deriveUrl(cookie.domain, cookie.secure)
-      if (!url) {
-        memoryFailed++
-        continue
-      }
-      try {
-        // Why: Chromium rejects __Host- cookies unless they omit domain and use path=/.
-        const isHostPrefixed = cookie.name.startsWith('__Host-')
-        await targetSession.cookies.set({
-          url,
-          name: cookie.name,
-          value: cookie.value,
-          ...(isHostPrefixed ? {} : { domain: cookie.domain }),
-          path: isHostPrefixed ? '/' : cookie.path,
-          secure: cookie.secure,
-          httpOnly: cookie.httpOnly,
-          sameSite: cookie.sameSite,
-          expirationDate: cookie.expirationDate
-        })
-        memoryLoaded++
-      } catch {
-        memoryFailed++
-      }
-    }
-
-    diag(`  memory load: ${memoryLoaded} OK, ${memoryFailed} failed`)
 
     let warning: BrowserCookieImportSummary['warning']
     if (memoryFailed > 0 && stagingAvailable) {
@@ -1879,6 +1880,7 @@ export async function importCookiesFromBrowser(
       importedCookies: imported,
       skippedCookies: skipped + integritySkipped + nonTransplantableSkipped,
       ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
+      ...(partitionSkipped > 0 ? { partitionSkippedCookies: partitionSkipped } : {}),
       domains: [...domainSet].sort(),
       ...(warning ? { warning } : {})
     }
