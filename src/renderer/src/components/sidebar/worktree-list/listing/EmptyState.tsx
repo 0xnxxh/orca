@@ -1,5 +1,6 @@
 import React from 'react'
 import { CircleX } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 
 export function SidebarWorktreeListEmptyState({
@@ -21,13 +22,15 @@ export function SidebarWorktreeListEmptyState({
             {translate('auto.components.sidebar.WorktreeList.b7acbf038b', 'No workspaces found')}
           </span>
           {hasFilters && (
-            <button
+            <Button
+              variant="secondary"
+              size="xs"
               onClick={onClearFilters}
-              className="inline-flex items-center gap-1.5 bg-secondary/70 border border-border/80 text-foreground font-medium text-[11px] px-2.5 py-1 rounded-md cursor-pointer hover:bg-accent transition-colors"
+              className="gap-1.5 border border-border/80 text-[11px]"
             >
               <CircleX className="size-3.5" />
               {translate('auto.components.sidebar.WorktreeList.370c6a55dd', 'Clear Filters')}
-            </button>
+            </Button>
           )}
         </div>
       </div>

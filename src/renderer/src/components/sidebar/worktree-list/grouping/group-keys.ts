@@ -33,21 +33,21 @@ export const PR_GROUP_META: Record<
       return translate('auto.components.sidebar.worktree.list.groups.5076efc3d2', 'Done')
     },
     icon: ConductorDoneIcon,
-    tone: 'text-[#c7a594]'
+    tone: 'text-workspace-status-done'
   },
   'in-review': {
     get label() {
       return translate('auto.components.sidebar.worktree.list.groups.6798dc7c94', 'In review')
     },
     icon: ConductorReviewIcon,
-    tone: 'text-[#16a34a]'
+    tone: 'text-workspace-status-review'
   },
   'in-progress': {
     get label() {
       return translate('auto.components.sidebar.worktree.list.groups.7c2f009786', 'In progress')
     },
     icon: ConductorProgressIcon,
-    tone: 'text-[#d4a300]'
+    tone: 'text-workspace-status-progress'
   },
   closed: {
     get label() {
