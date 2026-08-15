@@ -5,6 +5,7 @@ import Sidebar from '../components/Sidebar'
 import RightSidebar from '../components/right-sidebar'
 import { RecoverableRenderErrorBoundary } from '../components/error-boundaries/RecoverableRenderErrorBoundary'
 import { FloatingTerminalToggleButton } from '../components/floating-terminal/FloatingTerminalToggleButton'
+import { TerminalWorkbenchContainer } from '../components/TerminalWorkbenchContainer'
 import type { VirtualizedScrollAnchor } from '../hooks/useVirtualizedScrollAnchor'
 import { TitlebarLeftControls } from './TitlebarLeftControls'
 import { RightSidebarToggle, TitlebarMainStrip } from './TitlebarMainStrip'
@@ -174,13 +175,7 @@ export function AppWorkspaceShell(props: {
                 )}
                 <div className="flex flex-1 min-w-0 min-h-0 flex-col">
                   {layout.shouldMountTerminalWorkbench ? (
-                    <div
-                      className={
-                        layout.terminalWorkbenchVisible
-                          ? 'flex flex-1 min-w-0 min-h-0'
-                          : 'hidden flex-1 min-w-0 min-h-0'
-                      }
-                    >
+                    <TerminalWorkbenchContainer isVisible={layout.terminalWorkbenchVisible}>
                       <Suspense fallback={null}>
                         <RecoverableRenderErrorBoundary
                           boundaryId="terminal.workbench"
@@ -198,7 +193,7 @@ export function AppWorkspaceShell(props: {
                           <Terminal />
                         </RecoverableRenderErrorBoundary>
                       </Suspense>
-                    </div>
+                    </TerminalWorkbenchContainer>
                   ) : null}
                   <Suspense fallback={null}>
                     <RecoverableRenderErrorBoundary

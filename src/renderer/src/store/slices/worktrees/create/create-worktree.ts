@@ -3,6 +3,7 @@ import type { WorktreeSliceGet, WorktreeSliceSet } from '../listing/worktree-sli
 import {
   CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS,
   getClientWorktreeCreateCandidate,
+  getGeneratedWorktreeCreateRetryCandidate,
   isRetryableWorktreeCreateConflict
 } from '../../../../../../shared/new-workspace/worktree-create-retry-policy'
 import { parseWorkspaceKey, folderWorkspaceKey } from '../../../../../../shared/workspace-scope'
@@ -61,7 +62,9 @@ export function createCreateWorktree(
     const provisionedRoot = options?.provisionedRoot
     try {
       for (let attempt = 0; attempt < CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS; attempt += 1) {
-        const candidateName = getClientWorktreeCreateCandidate(name, attempt)
+        const candidateName = options?.nameWasGenerated
+          ? getGeneratedWorktreeCreateRetryCandidate(name, attempt)
+          : getClientWorktreeCreateCandidate(name, attempt)
         // Why: older runtimes reject exact PR branch overrides on collision, so retry both branch and worktree names.
         const candidateBranchNameOverride = branchNameOverride
           ? getClientWorktreeCreateCandidate(branchNameOverride, attempt)
@@ -77,6 +80,7 @@ export function createCreateWorktree(
           const createArgs = {
             repoId,
             name: candidateName,
+            ...(options?.nameWasGenerated ? { nameWasGenerated: true } : {}),
             baseBranch,
             ...(compareBaseRef ? { compareBaseRef } : {}),
             ...(candidateBranchNameOverride
@@ -139,6 +143,7 @@ export function createCreateWorktree(
                   {
                     repo: repoId,
                     name: candidateName,
+                    ...(options?.nameWasGenerated ? { nameWasGenerated: true } : {}),
                     baseBranch,
                     ...(compareBaseRef ? { compareBaseRef } : {}),
                     ...(candidateBranchNameOverride
