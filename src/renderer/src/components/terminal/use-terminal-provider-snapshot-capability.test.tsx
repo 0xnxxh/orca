@@ -154,13 +154,14 @@ describe('useTerminalProviderSnapshotCapability', () => {
   it('prefetches restored PTYs after render before activation is enabled', async () => {
     resolveCapabilities.mockResolvedValue([{ id: 'ssh:target@@pty-1', authoritative: false }])
 
-    renderHook(() => {
+    const hook = renderHook(() => {
       useTerminalProviderSnapshotCapability(false)
       expect(resolveCapabilities).not.toHaveBeenCalled()
     })
 
     await waitFor(() => expect(resolveCapabilities).toHaveBeenCalledOnce())
     expect(resolveCapabilities).toHaveBeenCalledWith(['ssh:target@@pty-1'])
+    hook.unmount()
   })
 
   it('does not poll again after a provider returns a definitive result', async () => {
