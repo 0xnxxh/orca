@@ -122,7 +122,21 @@ export async function restoreTerminalTestGlobals(): Promise<void> {
   } else {
     delete (globalThis as { document?: Document }).document
   }
-  delete (globalThis as unknown as { window?: unknown }).window
+  // Why: an in-flight reattach/settle chain can resolve after teardown and call
+  // `window.api.pty.*`. Deleting `window` turned that into a ReferenceError that
+  // failed the whole file (orca#14728). A real renderer never loses `window`, so
+  // swap in an inert stand-in instead: late calls become harmless no-ops, and the
+  // next test replaces it wholesale via installTerminalTestGlobals().
+  ;(globalThis as unknown as { window?: unknown }).window = { api: createInertApi() }
   delete (globalThis as Record<string, unknown>).__ptyConnectDiag
   resetAgentStartupDelayedDeliveryForTests()
+}
+
+/** Any property resolves to another inert callable; any call resolves to undefined. */
+function createInertApi(): unknown {
+  return new Proxy(() => {}, {
+    // `then` must stay undefined so awaiting a returned value cannot recurse.
+    get: (_target, property) => (property === 'then' ? undefined : createInertApi()),
+    apply: () => Promise.resolve(undefined)
+  })
 }
