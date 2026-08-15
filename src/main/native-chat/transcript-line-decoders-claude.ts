@@ -70,12 +70,9 @@ export function decodeClaudeTranscriptLine(
 }
 
 function isImageSourceRecord(blocks: NativeChatBlock[]): boolean {
-  const block = blocks[0]
   return (
-    blocks.length === 1 &&
-    block != null &&
-    isTextBlock(block) &&
-    imageSourcePathFromText(block.text) !== null
+    blocks.length > 0 &&
+    blocks.every((block) => isTextBlock(block) && imageSourcePathFromText(block.text) !== null)
   )
 }
 

@@ -175,18 +175,31 @@ describe('readNativeChatTranscript (claude)', () => {
     })
   })
 
-  it('folds real isMeta image-source records in either Claude transcript order', async () => {
+  it('folds one real multi-source isMeta record in either Claude transcript order', async () => {
+    const promptContent = [
+      { type: 'text', text: '[Image #1]' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'a' } },
+      { type: 'text', text: '[Image #2]' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'b' } },
+      { type: 'text', text: '[Image #3]' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'c' } }
+    ]
+    const sourceContent = [
+      { type: 'text', text: '[Image: source: /tmp/a.png]' },
+      { type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' },
+      { type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }
+    ]
     const filePath = await writeFixture('orca-native-chat-claude-meta-images-', [
       {
         type: 'user',
-        uuid: 'source-first',
-        isMeta: true,
-        message: { role: 'user', content: '[Image: source: /tmp/source-first.png]' }
+        uuid: 'prompt-first',
+        message: { role: 'user', content: promptContent }
       },
       {
         type: 'user',
-        uuid: 'prompt-after',
-        message: { role: 'user', content: 'describe this[Image #1]' }
+        uuid: 'sources-after',
+        isMeta: true,
+        message: { role: 'user', content: sourceContent }
       },
       {
         type: 'assistant',
@@ -195,14 +208,14 @@ describe('readNativeChatTranscript (claude)', () => {
       },
       {
         type: 'user',
-        uuid: 'prompt-first',
-        message: { role: 'user', content: '[Image #1] compare this' }
+        uuid: 'sources-first',
+        isMeta: true,
+        message: { role: 'user', content: sourceContent }
       },
       {
         type: 'user',
-        uuid: 'source-after',
-        isMeta: true,
-        message: { role: 'user', content: '[Image: source: /tmp/source-after.png]' }
+        uuid: 'prompt-after',
+        message: { role: 'user', content: promptContent }
       },
       {
         type: 'user',
@@ -219,18 +232,20 @@ describe('readNativeChatTranscript (claude)', () => {
 
     expect(normalizeImageTranscriptMessages(result.messages)).toMatchObject([
       {
-        id: 'prompt-after',
+        id: 'prompt-first',
         blocks: [
-          { type: 'image-ref', path: '/tmp/source-first.png' },
-          { type: 'text', text: 'describe this' }
+          { type: 'image-ref', path: '/tmp/a.png' },
+          { type: 'image-ref', path: 'C:\\Users\\me\\b.png' },
+          { type: 'image-ref', path: '/ssh/workspace/c.png' }
         ]
       },
       { id: 'separator' },
       {
-        id: 'prompt-first',
+        id: 'prompt-after',
         blocks: [
-          { type: 'image-ref', path: '/tmp/source-after.png' },
-          { type: 'text', text: 'compare this' }
+          { type: 'image-ref', path: '/tmp/a.png' },
+          { type: 'image-ref', path: 'C:\\Users\\me\\b.png' },
+          { type: 'image-ref', path: '/ssh/workspace/c.png' }
         ]
       }
     ])

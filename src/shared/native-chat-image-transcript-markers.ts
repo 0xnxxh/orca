@@ -13,10 +13,22 @@ const IMAGE_PROMPT_MARKER_AT_END = /\[Image #\d+\][^\S\r\n]*$/
 const HORIZONTAL_WHITESPACE_START = /^[^\S\r\n]+/
 const HORIZONTAL_WHITESPACE_END = /[^\S\r\n]+$/
 
-function soleText(message: NativeChatMessage): string | null {
-  return message.blocks.length === 1 && isTextBlock(message.blocks[0])
-    ? message.blocks[0].text
-    : null
+function imageSourcePathsFromBlocks(blocks: readonly NativeChatBlock[]): string[] | null {
+  if (blocks.length === 0) {
+    return null
+  }
+  const paths: string[] = []
+  for (const block of blocks) {
+    if (!isTextBlock(block)) {
+      return null
+    }
+    const path = imageSourcePathFromText(block.text)
+    if (!path) {
+      return null
+    }
+    paths.push(path)
+  }
+  return paths
 }
 
 export function imageSourcePathFromText(text: string): string | null {
@@ -24,7 +36,7 @@ export function imageSourcePathFromText(text: string): string | null {
 }
 
 export function isImageSourceUserTurn(message: NativeChatMessage): boolean {
-  return message.role === 'user' && imageSourcePathFromText(soleText(message) ?? '') !== null
+  return message.role === 'user' && imageSourcePathsFromBlocks(message.blocks) !== null
 }
 
 export function stripImagePromptMarker(text: string): string {
@@ -146,11 +158,11 @@ function imageSourceRun(
   let end = start
   while (end < messages.length) {
     const candidate = messages[end]!
-    const path = imageSourcePathFromText(soleText(candidate) ?? '')
-    if (candidate.role !== 'user' || candidate.source !== source || !path) {
+    const candidatePaths = imageSourcePathsFromBlocks(candidate.blocks)
+    if (candidate.role !== 'user' || candidate.source !== source || !candidatePaths) {
       break
     }
-    paths.push(path)
+    paths.push(...candidatePaths)
     end += 1
   }
   return { end, paths }
@@ -182,9 +194,9 @@ export function normalizeImageTranscriptMessages(
       normalized?.push(message)
       continue
     }
-    const imagePath = imageSourcePathFromText(soleText(message) ?? '')
+    const imagePaths = imageSourcePathsFromBlocks(message.blocks)
     const markerCount = countImagePromptMarkers(message)
-    if (!imagePath && markerCount > 0) {
+    if (!imagePaths && markerCount > 0) {
       const sources = imageSourceRun(messages, index + 1, message.source)
       if (sources.paths.length === markerCount) {
         normalized ??= messages.slice(0, index)
@@ -193,7 +205,7 @@ export function normalizeImageTranscriptMessages(
         continue
       }
     }
-    if (imagePath) {
+    if (imagePaths) {
       normalized ??= messages.slice(0, index)
       const sources = imageSourceRun(messages, index, message.source)
       const prompt = messages[sources.end]
@@ -208,9 +220,10 @@ export function normalizeImageTranscriptMessages(
       }
       for (let sourceIndex = index; sourceIndex < sources.end; sourceIndex += 1) {
         const sourceMessage = messages[sourceIndex]!
+        const sourcePaths = imageSourcePathsFromBlocks(sourceMessage.blocks)!
         normalized.push({
           ...sourceMessage,
-          blocks: [{ type: 'image-ref', path: sources.paths[sourceIndex - index]! }]
+          blocks: sourcePaths.map((path) => ({ type: 'image-ref', path }))
         })
       }
       index = sources.end - 1

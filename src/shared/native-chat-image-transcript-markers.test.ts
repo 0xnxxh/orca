@@ -20,6 +20,17 @@ function userText(id: string, text: string): NativeChatMessage {
   }
 }
 
+function multiImageSource(id = 'sources'): NativeChatMessage {
+  return {
+    ...userText(id, 'unused'),
+    blocks: [
+      { type: 'text', text: '[Image: source: /tmp/a.png]' },
+      { type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' },
+      { type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }
+    ]
+  }
+}
+
 describe('normalizeImageTranscriptMessages', () => {
   it('merges the paired [Image: source]/[Image #1] turns into one image-ref turn', () => {
     const out = normalizeImageTranscriptMessages([
@@ -135,9 +146,10 @@ describe('normalizeImageTranscriptMessages', () => {
     expect(nativeChatUserMessageMatchText(attached)).toBe('keep literal')
   })
 
-  it('recognizes only sole-text image-source user turns', () => {
+  it('recognizes only all-source-text user turns', () => {
     const source = userText('source', '[Image: source: /tmp/a.png]')
     expect(isImageSourceUserTurn(source)).toBe(true)
+    expect(isImageSourceUserTurn(multiImageSource())).toBe(true)
     expect(isImageSourceUserTurn({ ...source, role: 'assistant' })).toBe(false)
     expect(
       isImageSourceUserTurn({
@@ -172,6 +184,43 @@ describe('normalizeImageTranscriptMessages', () => {
       { type: 'image-ref', path: '/tmp/b.png' },
       { type: 'image-ref', path: '/tmp/c.png' },
       { type: 'text', text: 'compare these' }
+    ])
+  })
+
+  it.each([
+    [
+      'source before prompt',
+      [multiImageSource(), userText('prompt', '[Image #1] [Image #2] [Image #3] compare these')]
+    ],
+    [
+      'prompt before source',
+      [userText('prompt', '[Image #1] [Image #2] [Image #3] compare these'), multiImageSource()]
+    ]
+  ])('folds one multi-source record in %s order', (_label, messages) => {
+    const out = normalizeImageTranscriptMessages(messages)
+
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ id: 'prompt' })
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'image-ref', path: 'C:\\Users\\me\\b.png' },
+      { type: 'image-ref', path: '/ssh/workspace/c.png' },
+      { type: 'text', text: 'compare these' }
+    ])
+  })
+
+  it('does not let one marker claim one record containing three sources', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('prompt', '[Image #1] compare these'),
+      multiImageSource()
+    ])
+
+    expect(out).toHaveLength(2)
+    expect(out[0]?.blocks).toEqual([{ type: 'text', text: '[Image #1] compare these' }])
+    expect(out[1]?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'image-ref', path: 'C:\\Users\\me\\b.png' },
+      { type: 'image-ref', path: '/ssh/workspace/c.png' }
     ])
   })
 

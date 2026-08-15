@@ -140,6 +140,44 @@ describe('assembleNativeChatSession', () => {
     ])
   })
 
+  it('renders one multi-source record as exactly three image chips', () => {
+    const sources = msg({
+      id: 'u-image-sources',
+      role: 'user',
+      timestamp: 101,
+      blocks: [
+        { type: 'text', text: '[Image: source: /tmp/a.png]' },
+        { type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' },
+        { type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }
+      ]
+    })
+    const prompt = msg({
+      id: 'u-prompt',
+      role: 'user',
+      timestamp: 100,
+      blocks: [
+        { type: 'text', text: '[Image #1]' },
+        { type: 'text', text: '[Image #2]' },
+        { type: 'text', text: '[Image #3]' }
+      ]
+    })
+
+    const session = assembleNativeChatSession({
+      sources: { transcript: [prompt, sources] },
+      sessionId: 's1',
+      agent: 'claude',
+      status: 'working'
+    })
+
+    expect(session.status).toBe('working')
+    expect(session.messages).toHaveLength(1)
+    expect(session.messages[0]?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'image-ref', path: 'C:\\Users\\me\\b.png' },
+      { type: 'image-ref', path: '/ssh/workspace/c.png' }
+    ])
+  })
+
   it('renders literal image-marker text in a standalone user turn', () => {
     const literal = msg({
       id: 'u-literal',

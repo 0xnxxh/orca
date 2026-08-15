@@ -20,6 +20,17 @@ function user(id: string, text: string): NativeChatMessage {
   return { id, role: 'user', blocks: [{ type: 'text', text }], timestamp: 0, source: 'transcript' }
 }
 
+function multiImageSource(): NativeChatMessage {
+  return {
+    ...user('sources', 'unused'),
+    blocks: [
+      { type: 'text', text: '[Image: source: /tmp/a.png]' },
+      { type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' },
+      { type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }
+    ]
+  }
+}
+
 describe('mobileNativeChatEmptyState', () => {
   it('invites a first message naming the agent, matching desktop copy', () => {
     // waiting-session (live agent, no transcript) and ready (loaded, empty) both
@@ -122,6 +133,25 @@ describe('buildMobileNativeChatTransientData', () => {
     expect(data[0]?.blocks).toEqual([
       { type: 'image-ref', path: '/tmp/a.png' },
       { type: 'text', text: 'look at this' }
+    ])
+  })
+
+  it('renders one multi-source record as exactly three image chips', () => {
+    const prompt: NativeChatMessage = {
+      ...user('prompt', 'unused'),
+      blocks: [
+        { type: 'text', text: '[Image #1]' },
+        { type: 'text', text: '[Image #2]' },
+        { type: 'text', text: '[Image #3]' }
+      ]
+    }
+    const data = build([prompt, multiImageSource()], null, [])
+
+    expect(data).toHaveLength(1)
+    expect(data[0]?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'image-ref', path: 'C:\\Users\\me\\b.png' },
+      { type: 'image-ref', path: '/ssh/workspace/c.png' }
     ])
   })
 
