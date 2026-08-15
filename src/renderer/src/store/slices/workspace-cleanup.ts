@@ -434,7 +434,11 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
           preservedBranches.push({
             worktreeId: candidate.worktreeId,
             branchName: result.preservedBranch.branchName,
-            expectedHead: result.preservedBranch.head
+            expectedHead: result.preservedBranch.head,
+            ...(result.preservedBranch.hostId ? { hostId: result.preservedBranch.hostId } : {}),
+            ...(result.preservedBranch.runtimeEnvironmentId
+              ? { runtimeEnvironmentId: result.preservedBranch.runtimeEnvironmentId }
+              : {})
           })
         }
       } else {

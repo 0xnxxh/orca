@@ -168,6 +168,7 @@ import {
 } from './agent-hooks/migration-unsupported-pty-state'
 import { agentHookServer } from './agent-hooks/server'
 import { pruneLocalTerminalScrollbackBuffers } from '../shared/workspace-session-terminal-buffers'
+import { hasWorktreeRemovalRepoOwnerOnOtherHost } from './worktree-removal-repo-owner'
 import {
   backfillAutomationRunNumbers,
   nextAutomationRunNumber,
@@ -5645,19 +5646,28 @@ export class Store {
     const preservesDifferentPersistedOwner = Boolean(
       hostId && persistedOwner && persistedOwner !== hostId
     )
+    const ownerPartition = workspaceSessionOwnerPartitionForHost(owner)
+    const preservesSameIdSessionOwner = Boolean(
+      preservesDifferentPersistedOwner ||
+      (owner &&
+        hasWorktreeRemovalRepoOwnerOnOtherHost(
+          this,
+          getRepoIdFromWorktreeId(worktreeId),
+          ownerPartition
+        ))
+    )
     // Skip partitions main never wrote: materializing one fences every sibling worktree of the repo.
     const partitions = new Set<ExecutionHostId>(
       workspaceSessionPartitionIdsForHost(owner).filter(
         (partition) =>
           this.hasPersistedWorkspaceSession(partition) &&
-          // The local partition can be a remote spill surface or a real local
-          // same-id owner. Preserve it when metadata proves the latter.
-          (!preservesDifferentPersistedOwner || partition === owner)
+          // The local partition can be a remote spill surface or a same-id owner.
+          // Preserve it whenever another owner may still use the bare id.
+          (!preservesSameIdSessionOwner || partition === ownerPartition)
       )
     )
     // A repo-wide fence must not rebase a sibling's unpersisted tabs onto main's copy, and a spill
     // partition that never held this worktree has no claim on the repo at all.
-    const ownerPartition = workspaceSessionOwnerPartitionForHost(owner)
     const fencedPartitions = new Set(
       [...partitions].filter(
         (partition) =>

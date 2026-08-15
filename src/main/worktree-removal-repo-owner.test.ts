@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  hasWorktreeRemovalRepoOwnerOnOtherHost,
   resolveWorktreeRemovalMetadata,
   resolveWorktreeRemovalRepoOwner
 } from './worktree-removal-repo-owner'
@@ -54,6 +55,16 @@ describe('resolveWorktreeRemovalRepoOwner', () => {
       kind: 'missing'
     })
     expect(resolveWorktreeRemovalRepoOwner(makeStore([]), 'repo1')).toEqual({ kind: 'missing' })
+  })
+
+  it('detects a surviving same-id owner only on another host', () => {
+    const store = makeStore([localRepo, sshRepo])
+
+    expect(hasWorktreeRemovalRepoOwnerOnOtherHost(store, 'repo1', 'ssh:ssh-1')).toBe(true)
+    expect(hasWorktreeRemovalRepoOwnerOnOtherHost(store, 'repo1', 'local')).toBe(true)
+    expect(hasWorktreeRemovalRepoOwnerOnOtherHost(makeStore([sshRepo]), 'repo1', 'ssh:ssh-1')).toBe(
+      false
+    )
   })
 
   it('does not borrow destructive metadata from a colliding host', () => {

@@ -46,6 +46,21 @@ export type RepoWorktreeRowDeps = {
   listFolderWorkspaces: (repo: Repo) => Worktree[]
 }
 
+export function getRepoOwnedWorktreeMeta(
+  repo: Repo,
+  worktreeId: string,
+  metaById: Readonly<Record<string, WorktreeMeta>>,
+  repoOwnerCount: number
+): WorktreeMeta | undefined {
+  const existingMeta = metaById[worktreeId]
+  if (!existingMeta) {
+    return undefined
+  }
+  return repoOwnerCount === 1 || existingMeta.hostId === getRepoExecutionHostId(repo)
+    ? existingMeta
+    : undefined
+}
+
 /**
  * Persisted rows for a repo whose scan is unreachable or stalled, so a degraded host publishes what
  * it last knew instead of an empty catalog. `worktrees:list` does the same for disconnected SSH.
@@ -126,10 +141,7 @@ export async function resolveRepoWorktreeRows(
     const worktreeId = `${repo.id}::${gitWorktree.path}`
     // Why: lineage validation needs a durable instance ID even when the runtime sees a workspace before renderer discovery-stamp.
     const existingMeta = metaById[worktreeId]
-    const ownedExistingMeta =
-      existingMeta && (repoOwnerCount === 1 || existingMeta.hostId === expectedHostId)
-        ? existingMeta
-        : undefined
+    const ownedExistingMeta = getRepoOwnedWorktreeMeta(repo, worktreeId, metaById, repoOwnerCount)
     const meta = ownedExistingMeta?.instanceId
       ? ownedExistingMeta
       : ownedExistingMeta || (!existingMeta && repoOwnerCount === 1)

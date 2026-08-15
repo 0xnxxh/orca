@@ -13130,6 +13130,43 @@ describe('Store host-partitioned workspace sessions', () => {
     expect(store.getWorkspaceSession('runtime:env-b').tabsByWorktree[worktreeId]).toBeUndefined()
   })
 
+  it('preserves a surviving local session when removed-host metadata owns the shared id', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-split::/workspace/stale'
+    store.addRepo(makeRepo({ id: 'repo-split', path: '/local/repo' }))
+    store.addRepo(
+      makeRepo({
+        id: 'repo-split',
+        path: '/remote/repo',
+        connectionId: 'ssh-b',
+        executionHostId: 'ssh:ssh-b'
+      })
+    )
+    const localSession = {
+      ...makeHostSession('repo-split'),
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'same-id-local-tab', worktreeId })]
+      }
+    }
+    const remoteSession = {
+      ...makeHostSession('repo-split'),
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'removed-remote-tab', worktreeId })]
+      }
+    }
+    store.setWorkspaceSession(localSession, 'local')
+    store.setWorkspaceSession(remoteSession, 'ssh:ssh-b')
+    store.setWorktreeMeta(worktreeId, { hostId: 'ssh:ssh-b' })
+
+    store.removeWorktreeMeta(worktreeId, 'ssh:ssh-b')
+
+    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toEqual([
+      expect.objectContaining({ id: 'same-id-local-tab' })
+    ])
+    expect(store.getWorkspaceSession('ssh:ssh-b').tabsByWorktree[worktreeId]).toBeUndefined()
+    expect(store.getWorktreeMeta(worktreeId)).toBeUndefined()
+  })
+
   it('falls back to the caller hostId only when no ownership was recorded', async () => {
     const store = await createStore()
     const worktreeId = 'repo-gone::/workspace/stale'

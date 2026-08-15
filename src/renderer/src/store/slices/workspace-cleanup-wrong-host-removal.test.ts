@@ -159,7 +159,8 @@ function parseRuntimeSelector(selector: string): string {
 /** Deletes for real on whichever host the removal is routed to. */
 function installRemovalTransports(
   hostRootsByHostId: Record<string, string>,
-  routedHostIds: string[]
+  routedHostIds: string[],
+  options: { preservedBranch?: { branchName: string; head: string } } = {}
 ): void {
   const deleteOnHost = (hostId: string | undefined, worktreeId: string): void => {
     routedHostIds.push(hostId ?? '<missing>')
@@ -174,7 +175,7 @@ function installRemovalTransports(
   mockApi.worktrees.remove.mockImplementation(
     async (args: { worktreeId: string; hostId?: string }) => {
       deleteOnHost(args.hostId, args.worktreeId)
-      return { ok: true }
+      return options.preservedBranch ? { preservedBranch: options.preservedBranch } : { ok: true }
     }
   )
   runtimeRpc.callRuntimeRpc.mockImplementation(
@@ -335,6 +336,38 @@ describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
     expect(fs.existsSync(hosts.hostAMarkerPath)).toBe(false)
     expect(fs.existsSync(hosts.hostBMarkerPath), 'host B must survive').toBe(true)
     expect(routedHostIds).toEqual([HOST_A_HOST_ID])
+  })
+
+  it('keeps the confirmed host on the preserved-branch follow-up', async () => {
+    const worktreeId = 'repo1::/shared/workspace/path'
+    const worktreePath = '/shared/workspace/path'
+    const hosts = createHostDirectories(worktreeId)
+    const routedHostIds: string[] = []
+    installRemovalTransports(
+      { [HOST_A_HOST_ID]: hosts.hostARoot, [HOST_B_HOST_ID]: hosts.hostBRoot },
+      routedHostIds,
+      { preservedBranch: { branchName: 'feature/kept', head: 'abc123' } }
+    )
+    const hostBCandidate = makeHostCandidate(worktreeId, HOST_B_HOST_ID, worktreePath)
+    seedCollidingScan([makeHostCandidate(worktreeId, HOST_A_HOST_ID, worktreePath), hostBCandidate])
+    const store = createTestStore()
+    seedStore(store, {
+      activeWorktreeId: worktreeId,
+      activeWorkspaceExecutionHostId: HOST_A_HOST_ID
+    } as Partial<AppState>)
+
+    const removal = await store
+      .getState()
+      .removeWorkspaceCleanupCandidates([worktreeId], { approvedCandidates: [hostBCandidate] })
+
+    expect(removal.preservedBranches).toEqual([
+      {
+        worktreeId,
+        branchName: 'feature/kept',
+        expectedHead: 'abc123',
+        hostId: HOST_B_HOST_ID
+      }
+    ])
   })
 
   it('routes a Windows-path colliding identity to the confirmed host', async () => {

@@ -220,6 +220,7 @@ function getRepoForWorktreeRemoval(
   return owner.kind === 'resolved' ? owner.repo : undefined
 }
 import {
+  hasWorktreeRemovalRepoOwnerOnOtherHost,
   resolveWorktreeRemovalMetadata,
   resolveWorktreeRemovalRepoOwner
 } from '../worktree-removal-repo-owner'
@@ -333,7 +334,12 @@ function removeWorktreeMetadataAndTransientState(
   snapshotPruneBatchId?: string
 ): void {
   const persistedHostId = store.getWorktreeMeta(worktreeId)?.hostId
-  const preservesSameIdOwner = Boolean(hostId && persistedHostId && persistedHostId !== hostId)
+  const repoId = getRepoIdFromWorktreeId(worktreeId)
+  const preservesSameIdOwner = Boolean(
+    hostId &&
+    ((persistedHostId && persistedHostId !== hostId) ||
+      hasWorktreeRemovalRepoOwnerOnOtherHost(store, repoId, hostId))
+  )
   // Why: worktree IDs are path-derived and reusable; drop process-local caches before the same ID can map to a new workspace.
   if (hostId) {
     store.removeWorktreeMeta(worktreeId, hostId)

@@ -39,6 +39,16 @@ export function resolveWorktreeRemovalRepoOwner(
     : { kind: 'missing' }
 }
 
+export function hasWorktreeRemovalRepoOwnerOnOtherHost(
+  store: Pick<WorktreeRemovalRepoSource, 'getRepos'>,
+  repoId: string,
+  hostId: ExecutionHostId
+): boolean {
+  return store
+    .getRepos()
+    .some((repo) => repo.id === repoId && getRepoExecutionHostId(repo) !== hostId)
+}
+
 export function resolveWorktreeRemovalMetadata(
   store: Pick<WorktreeRemovalRepoSource, 'getRepos'> & {
     getWorktreeMeta: (worktreeId: string) => WorktreeMeta | undefined
