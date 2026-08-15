@@ -1317,11 +1317,20 @@ async function importCookiesFromFirefox(
       isSecure: number
       isHttpOnly: number
       sameSite: number
-      originAttributes: string | null
+      originAttributes?: string | null
     }
+    // Why (STA-4300): originAttributes carries the partition, but selecting a column an older
+    // moz_cookies schema lacks throws and would fail the whole import. A schema without it predates
+    // partitioning, so its rows are genuinely unpartitioned.
+    const firefoxColumns = new Set(
+      (db.prepare('PRAGMA table_info(moz_cookies)').all() as { name: string }[]).map(
+        (column) => column.name
+      )
+    )
+    const partitionColumn = firefoxColumns.has('originAttributes') ? ', originAttributes' : ''
     const rows = db
       .prepare(
-        'SELECT name, value, host, path, expiry, isSecure, isHttpOnly, sameSite, originAttributes FROM moz_cookies'
+        `SELECT name, value, host, path, expiry, isSecure, isHttpOnly, sameSite${partitionColumn} FROM moz_cookies`
       )
       .all() as FirefoxRow[]
     db.close()
