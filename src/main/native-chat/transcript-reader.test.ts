@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { normalizeImageTranscriptMessages } from '../../shared/native-chat-image-transcript-markers'
 import { readNativeChatTranscript } from './transcript-reader'
 import {
   nativeChatLineDecoderForAgent,
@@ -172,6 +173,67 @@ describe('readNativeChatTranscript (claude)', () => {
       role: 'tool',
       blocks: [{ type: 'tool-result', output: 'mixed result' }]
     })
+  })
+
+  it('folds real isMeta image-source records in either Claude transcript order', async () => {
+    const filePath = await writeFixture('orca-native-chat-claude-meta-images-', [
+      {
+        type: 'user',
+        uuid: 'source-first',
+        isMeta: true,
+        message: { role: 'user', content: '[Image: source: /tmp/source-first.png]' }
+      },
+      {
+        type: 'user',
+        uuid: 'prompt-after',
+        message: { role: 'user', content: 'describe this[Image #1]' }
+      },
+      {
+        type: 'assistant',
+        uuid: 'separator',
+        message: { role: 'assistant', content: 'first answer' }
+      },
+      {
+        type: 'user',
+        uuid: 'prompt-first',
+        message: { role: 'user', content: '[Image #1] compare this' }
+      },
+      {
+        type: 'user',
+        uuid: 'source-after',
+        isMeta: true,
+        message: { role: 'user', content: '[Image: source: /tmp/source-after.png]' }
+      },
+      {
+        type: 'user',
+        uuid: 'unrelated-meta',
+        isMeta: true,
+        message: { role: 'user', content: '<system-reminder>hidden machinery</system-reminder>' }
+      }
+    ])
+
+    const result = await readNativeChatTranscript('claude', 'sess', { filePath })
+    if (!('messages' in result)) {
+      throw new Error('expected messages')
+    }
+
+    expect(normalizeImageTranscriptMessages(result.messages)).toMatchObject([
+      {
+        id: 'prompt-after',
+        blocks: [
+          { type: 'image-ref', path: '/tmp/source-first.png' },
+          { type: 'text', text: 'describe this' }
+        ]
+      },
+      { id: 'separator' },
+      {
+        id: 'prompt-first',
+        blocks: [
+          { type: 'image-ref', path: '/tmp/source-after.png' },
+          { type: 'text', text: 'compare this' }
+        ]
+      }
+    ])
   })
 
   it('marks thinking-only assistant content as a reasoning surface', async () => {

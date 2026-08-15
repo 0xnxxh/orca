@@ -111,6 +111,9 @@ export function decodeClaudeTurnLifecycle(
   if (record.type !== 'user') {
     return null
   }
+  if (record.isMeta === true || record.isSynthetic === true || record.isCompactSummary === true) {
+    return null
+  }
   const decoded = decodeClaudeTranscriptLine(line, fallbackId)
   if (decoded?.role !== 'user' || decoded.blocks.some((block) => block.type === 'tool-result')) {
     // Why: Claude can attach text sidecars to tool-result user rows; those are

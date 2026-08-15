@@ -243,6 +243,21 @@ describe('native chat transcript turn lifecycle', () => {
     ).toBeNull()
   })
 
+  it('does not treat a retained meta image-source row as a new generation', () => {
+    expect(
+      decodeClaudeTurnLifecycle(
+        JSON.stringify({
+          type: 'user',
+          uuid: 'image-source',
+          isMeta: true,
+          timestamp: '2026-07-16T23:46:11.000Z',
+          message: { role: 'user', content: '[Image: source: /tmp/a.png]' }
+        }),
+        'fallback'
+      )
+    ).toBeNull()
+  })
+
   it('excludes Claude tool-result rows that also carry text sidecars', () => {
     expect(
       decodeClaudeTurnLifecycle(

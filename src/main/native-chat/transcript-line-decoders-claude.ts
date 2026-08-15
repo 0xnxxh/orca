@@ -2,9 +2,11 @@
 
 import {
   NATIVE_CHAT_INTERRUPTED_STATUS_TEXT,
+  isTextBlock,
   type NativeChatBlock,
   type NativeChatMessage
 } from '../../shared/native-chat-types'
+import { imageSourcePathFromText } from '../../shared/native-chat-image-transcript-markers'
 import {
   asRecord,
   extractString,
@@ -44,13 +46,15 @@ export function decodeClaudeTranscriptLine(
   if (decodedBlocks.length === 0) {
     return null
   }
-  // Why: Claude structurally marks injected turns, but tool-result records are
-  // genuine output and must remain visible even when the containing turn is meta.
+  // Why: tool results are genuine output, and Claude marks the exact image-source
+  // sidecar needed by downstream folding as meta too.
   const isInjectedUserTurn =
     role === 'user' &&
     (record.isMeta === true || record.isSynthetic === true || record.isCompactSummary === true)
   const blocks = isInjectedUserTurn
-    ? decodedBlocks.filter((block) => block.type === 'tool-result')
+    ? isImageSourceRecord(decodedBlocks)
+      ? decodedBlocks
+      : decodedBlocks.filter((block) => block.type === 'tool-result')
     : decodedBlocks
   if (blocks.length === 0) {
     return null
@@ -63,6 +67,16 @@ export function decodeClaudeTranscriptLine(
     timestamp,
     source: 'transcript'
   }
+}
+
+function isImageSourceRecord(blocks: NativeChatBlock[]): boolean {
+  const block = blocks[0]
+  return (
+    blocks.length === 1 &&
+    block != null &&
+    isTextBlock(block) &&
+    imageSourcePathFromText(block.text) !== null
+  )
 }
 
 // Claude marks reasoning via `thinking` content blocks; when a message is made
