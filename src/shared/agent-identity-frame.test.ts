@@ -169,6 +169,17 @@ describe('Qwen Code title visibility (STA-2840 / #11148)', () => {
     expect(isAgentIdentityFrameTitleFor('Qwen-orca', 'qwen-code')).toBe(false)
   })
 
+  // Why: inside a multiplexer Qwen writes OSC 2 only and skips the padding, and a long
+  // cwd is truncated at 80 chars mid-name — both must still resolve to the same agent.
+  it('resolves the unpadded multiplexer form and an 80-char-truncated cwd', () => {
+    expect(resolveAgentIdentityFrameType('zsh | Qwen - orca')).toBe('qwen-code')
+    expect(resolveAgentIdentityFrameType(`Qwen - ${'a'.repeat(200)}`.slice(0, 80))).toBe(
+      'qwen-code'
+    )
+    // Why: qwen falls back to its own name when the cwd basename is empty.
+    expect(resolveAgentIdentityFrameType('Qwen - qwen')).toBe('qwen-code')
+  })
+
   // Why: the registry is shared — prove the neighbours it already carried still hold.
   it('leaves the agents already in the registry unchanged', () => {
     expect(resolveAgentIdentityFrameType('Cline')).toBe('cline')
