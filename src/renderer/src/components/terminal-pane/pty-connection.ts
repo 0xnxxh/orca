@@ -4350,8 +4350,29 @@ export function connectPanePty(
       }
     }
   }
+  const reportRemoteViewportAfterFit = (
+    ptyId: string | null,
+    expectedStreamGeneration: number
+  ): void => {
+    if (
+      !ptyId ||
+      !isRemoteRuntimePtyId(ptyId) ||
+      disposed ||
+      transport.getPtyId() !== ptyId ||
+      transportStreamGeneration !== expectedStreamGeneration ||
+      shouldSuppressDesktopPtyResize()
+    ) {
+      return
+    }
+    const cols = pane.terminal.cols
+    const rows = pane.terminal.rows
+    if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
+      transport.resize(cols, rows)
+    }
+  }
   const reportRemoteViewportOnReveal = (): void => {
     const revealedPtyId = transport.getPtyId()
+    const revealedStreamGeneration = transportStreamGeneration
     if (
       !revealedPtyId ||
       !isRemoteRuntimePtyId(revealedPtyId) ||
@@ -4362,14 +4383,7 @@ export function connectPanePty(
       return
     }
     safeFitAndThen(pane, 'remote-reveal-viewport', () => {
-      if (disposed || transport.getPtyId() !== revealedPtyId || shouldSuppressDesktopPtyResize()) {
-        return
-      }
-      const cols = pane.terminal.cols
-      const rows = pane.terminal.rows
-      if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
-        transport.resize(cols, rows)
-      }
+      reportRemoteViewportAfterFit(revealedPtyId, revealedStreamGeneration)
     })
   }
   let pendingForegroundGridDriftCheckRaf: number | null = null
@@ -5649,7 +5663,8 @@ export function connectPanePty(
     let replayDrainQueued = false
     const drainReplayDataQueue = async (
       expectedPtyId: string | null,
-      expectedStreamGeneration: number
+      expectedStreamGeneration: number,
+      noteSnapshotGridReplay: () => void
     ): Promise<boolean> => {
       let appliedCurrentPayload = false
       while (pendingReplayData !== null) {
@@ -5692,9 +5707,11 @@ export function connectPanePty(
         )
         if (
           snapshotDimensions &&
+          data.length > 0 &&
           (pane.terminal.cols !== snapshotDimensions.cols ||
             pane.terminal.rows !== snapshotDimensions.rows)
         ) {
+          noteSnapshotGridReplay()
           suppressStructuralReplayPtyResize = true
           try {
             pane.terminal.resize(snapshotDimensions.cols, snapshotDimensions.rows)
@@ -5760,6 +5777,7 @@ export function connectPanePty(
         pendingReplayData?.streamGeneration ?? transportStreamGeneration
       beginReattachLiveDataDeferral(scheduledStreamGeneration)
       let replayCompleted = false
+      let replayUsedSnapshotGrid = false
       replayWriteQueue = replayWriteQueue
         .catch(() => undefined)
         .then(() =>
@@ -5767,7 +5785,10 @@ export function connectPanePty(
             async () => {
               replayCompleted = await drainReplayDataQueue(
                 scheduledPtyId,
-                scheduledStreamGeneration
+                scheduledStreamGeneration,
+                () => {
+                  replayUsedSnapshotGrid = true
+                }
               )
             },
             {
@@ -5776,8 +5797,9 @@ export function connectPanePty(
                 transport.getPtyId() === scheduledPtyId &&
                 transportStreamGeneration === scheduledStreamGeneration,
               afterRestore: () => {
-                if (replayCompleted) {
-                  safeFit(pane)
+                if (replayCompleted && replayUsedSnapshotGrid && safeFit(pane)) {
+                  // Why: a measurable hidden pane is authoritative; only presence ownership gates this report (#12768).
+                  reportRemoteViewportAfterFit(scheduledPtyId, scheduledStreamGeneration)
                 }
               }
             }

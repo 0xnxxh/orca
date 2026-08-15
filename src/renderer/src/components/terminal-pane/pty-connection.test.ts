@@ -17256,13 +17256,20 @@ describe('connectPanePty', () => {
     disposable.dispose()
   })
 
-  it('paints remote replay at its snapshot grid before returning to the live pane grid', async () => {
+  it('paints remote replay at its snapshot grid and reports the live grid from a measurable hidden pane', async () => {
     const { connectPanePty } = await import('./pty-connection')
     enableActiveRuntimeEnvironment()
     const transport = createMockTransport('remote:env-1@@terminal-grid')
     const capturedReplayCallback: {
       current:
-        | ((data: string, meta?: { snapshotCols?: number; snapshotRows?: number }) => void)
+        | ((
+            data: string,
+            meta?: {
+              snapshotCols?: number
+              snapshotRows?: number
+              pendingEscapeTailAnsi?: string
+            }
+          ) => void)
         | null
     } = { current: null }
     transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
@@ -17285,9 +17292,10 @@ describe('connectPanePty', () => {
       callback?.()
     }) as typeof pane.terminal.write
     const manager = createManager(1)
-    const deps = createDeps()
+    const deps = createDeps({ isVisibleRef: { current: false } })
     const disposable = connectPanePty(pane as never, manager as never, deps as never)
     await flushAsyncTicks(6)
+    transport.resize.mockClear()
 
     capturedReplayCallback.current?.('snapshot payload', {
       snapshotCols: 60,
@@ -17304,6 +17312,40 @@ describe('connectPanePty', () => {
     )
     expect(pane.terminal.cols).toBe(180)
     expect(pane.terminal.rows).toBe(50)
+    expect(transport.resize).toHaveBeenCalledWith(180, 50)
+
+    vi.mocked(pane.terminal.resize).mockClear()
+    capturedReplayCallback.current?.('unknown-size payload', {
+      snapshotCols: 0,
+      snapshotRows: 0
+    })
+    await flushAsyncTicks(12)
+    expect(pane.terminal.resize).not.toHaveBeenCalledWith(0, 0)
+
+    vi.mocked(pane.terminal.resize).mockClear()
+    capturedReplayCallback.current?.('', {
+      snapshotCols: 30,
+      snapshotRows: 10,
+      pendingEscapeTailAnsi: '\x1b[3'
+    })
+    await flushAsyncTicks(12)
+    expect(pane.terminal.resize).not.toHaveBeenCalledWith(30, 10)
+
+    const { setDriverForPty } = await import('@/lib/pane-manager/mobile-driver-state')
+    setDriverForPty('remote:env-1@@terminal-grid', { kind: 'mobile', clientId: 'phone-1' })
+    transport.resize.mockClear()
+    try {
+      capturedReplayCallback.current?.('mobile-owned payload', {
+        snapshotCols: 60,
+        snapshotRows: 20
+      })
+      await flushAsyncTicks(12)
+      expect(pane.terminal.cols).toBe(180)
+      expect(pane.terminal.rows).toBe(50)
+      expect(transport.resize).not.toHaveBeenCalled()
+    } finally {
+      setDriverForPty('remote:env-1@@terminal-grid', { kind: 'idle' })
+    }
     disposable.dispose()
   })
 
@@ -25807,6 +25849,7 @@ describe('connectPanePty', () => {
 
       expect(getSize).not.toHaveBeenCalled()
       expect(pane.fitAddon.proposeDimensions).toHaveBeenCalled()
+      expect(pane.fitAddon.fit).not.toHaveBeenCalled()
       expect(transport.resize).toHaveBeenCalledWith(120, 40)
     })
 
