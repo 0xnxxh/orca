@@ -2,7 +2,8 @@ import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { countImageSourceTurnsAfter } from './mobile-native-chat-draft-reconcile'
 import {
   nativeChatUserMessageMatchText,
-  nativeChatUserTextMatchText
+  nativeChatUserTextMatchText,
+  normalizeImageTranscriptMessages
 } from './mobile-native-chat-image-transcript-markers'
 import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pending-echo'
 
@@ -26,6 +27,12 @@ export function selectGluedPendingIds(
   const turns: UserTurn[] = []
   for (const [index, message] of messages.entries()) {
     messageIndexById.set(message.id, index)
+  }
+  for (const message of normalizeImageTranscriptMessages(messages)) {
+    const index = messageIndexById.get(message.id)
+    if (index === undefined) {
+      continue
+    }
     const text = nativeChatUserMessageMatchText(message)
     if (text) {
       turns.push({ index, text })
@@ -112,7 +119,7 @@ export function retireLandedMobileNativeChatPending(
   landedImagePendingIds: ReadonlySet<string>
 ): MobileNativeChatPendingMessage[] {
   const landedCounts = new Map<string, number>()
-  for (const message of messages) {
+  for (const message of normalizeImageTranscriptMessages(messages)) {
     const text = nativeChatUserMessageMatchText(message)
     if (text) {
       landedCounts.set(text, (landedCounts.get(text) ?? 0) + 1)
