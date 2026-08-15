@@ -1,4 +1,4 @@
-import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { isImageRefBlock, type NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { countImageSourceTurnsAfter } from './mobile-native-chat-draft-reconcile'
 import {
   nativeChatUserMessageMatchText,
@@ -33,7 +33,9 @@ export function selectGluedPendingIds(
     if (index === undefined) {
       continue
     }
-    const text = nativeChatUserMessageMatchText(message)
+    const text = message.blocks.some(isImageRefBlock)
+      ? null
+      : nativeChatUserMessageMatchText(message)
     if (text) {
       turns.push({ index, text })
     }
@@ -120,6 +122,9 @@ export function retireLandedMobileNativeChatPending(
 ): MobileNativeChatPendingMessage[] {
   const landedCounts = new Map<string, number>()
   for (const message of normalizeImageTranscriptMessages(messages)) {
+    if (message.blocks.some(isImageRefBlock)) {
+      continue
+    }
     const text = nativeChatUserMessageMatchText(message)
     if (text) {
       landedCounts.set(text, (landedCounts.get(text) ?? 0) + 1)

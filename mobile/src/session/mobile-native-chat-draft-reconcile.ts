@@ -34,8 +34,14 @@ export function countUserTextOccurrences(
 ): number {
   let count = 0
   for (const message of normalizeImageTranscriptMessages(messages)) {
+    const hasImageRefs = message.blocks.some(isImageRefBlock)
+    const matchText =
+      imageCount > 0
+        ? normalizedNativeChatUserMessageText(message)
+        : nativeChatUserMessageMatchText(message)
     if (
-      nativeChatUserMessageMatchText(message) === text &&
+      matchText === text &&
+      (imageCount > 0 || !hasImageRefs) &&
       nativeChatUserMessageImageEvidenceCount(message) >= imageCount
     ) {
       count++
@@ -176,7 +182,7 @@ export function findLandedImagePreviewEchoes(
       const imageCount = nativeChatUserMessageImageEvidenceCount(message)
       if (targetText) {
         return (
-          nativeChatUserMessageMatchText(message) === targetText &&
+          normalizedNativeChatUserMessageText(message) === targetText &&
           imageCount >= entry.images!.length
         )
       }
@@ -222,7 +228,11 @@ export function findLandedUnconfirmedSends(
   // (`[Image: source: …]` or no text) keys under '' so an empty-text send can
   // claim it.
   const messageIndexById = new Map(messages.map((message, index) => [message.id, index]))
-  const userMessagesByText = new Map<string, { id: string; index: number; imageCount: number }[]>()
+  const literalMessagesByText = new Map<
+    string,
+    { id: string; index: number; imageCount: number }[]
+  >()
+  const imageMessagesByText = new Map<string, { id: string; index: number; imageCount: number }[]>()
   for (const message of normalizeImageTranscriptMessages(messages)) {
     const index = messageIndexById.get(message.id)
     if (index === undefined) {
@@ -232,15 +242,19 @@ export function findLandedUnconfirmedSends(
       continue
     }
     const isImageSource = isImageSourceUserTurn(message)
-    const key = isImageSource ? '' : (normalizedUserText(message) ?? '')
-    // A marker-only turn keys both ways: '' claims it for a caption-less image
-    // send, and its literal text claims it for a send of that same text.
-    const literalKey = isImageSource ? key : (nativeChatUserMessageMatchText(message) ?? key)
     const imageCount = nativeChatUserMessageImageEvidenceCount(message)
-    for (const candidateKey of literalKey === key ? [key] : [key, literalKey]) {
-      const current = userMessagesByText.get(candidateKey) ?? []
-      current.push({ id: message.id, index, imageCount })
-      userMessagesByText.set(candidateKey, current)
+    const candidate = { id: message.id, index, imageCount }
+    if (!message.blocks.some(isImageRefBlock)) {
+      const literalKey = isImageSource ? '' : (nativeChatUserMessageMatchText(message) ?? '')
+      const current = literalMessagesByText.get(literalKey) ?? []
+      current.push(candidate)
+      literalMessagesByText.set(literalKey, current)
+    }
+    if (imageCount > 0) {
+      const imageKey = isImageSource ? '' : (normalizedUserText(message) ?? '')
+      const current = imageMessagesByText.get(imageKey) ?? []
+      current.push(candidate)
+      imageMessagesByText.set(imageKey, current)
     }
   }
 
@@ -253,7 +267,8 @@ export function findLandedUnconfirmedSends(
     if (tailIndex === undefined) {
       continue
     }
-    const echo = userMessagesByText
+    const messagesByText = entry.imageCount > 0 ? imageMessagesByText : literalMessagesByText
+    const echo = messagesByText
       .get(entry.normalizedText)
       ?.find(
         (message) =>

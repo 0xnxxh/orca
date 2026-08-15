@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from './native-chat-types'
 import {
   isImageSourceUserTurn,
+  nativeChatUserMessageMatchText,
   nativeChatUserTextMatchText,
   normalizeImageTranscriptMessages,
   normalizeNativeChatUserText,
@@ -110,6 +111,14 @@ describe('normalizeImageTranscriptMessages', () => {
       'keep [Image #1] literal'
     )
     expect(nativeChatUserTextMatchText(' keep [Image #1] literal ', true)).toBe('keep literal')
+
+    const literal = userText('literal', 'keep [Image #1] literal')
+    const attached = {
+      ...literal,
+      blocks: [{ type: 'image-ref' as const, path: '/tmp/a.png' }, ...literal.blocks]
+    }
+    expect(nativeChatUserMessageMatchText(literal)).toBe('keep [Image #1] literal')
+    expect(nativeChatUserMessageMatchText(attached)).toBe('keep literal')
   })
 
   it('recognizes only sole-text image-source user turns', () => {

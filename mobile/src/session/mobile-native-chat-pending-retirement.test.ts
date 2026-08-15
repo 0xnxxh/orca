@@ -282,4 +282,28 @@ describe('retireLandedMobileNativeChatPending', () => {
     ).toEqual(['p1'])
     expect(retireLandedMobileNativeChatPending(messages, pending, new Set(['p1']))).toEqual([])
   })
+
+  it('keeps literal and attached-image turns in separate retirement lanes', () => {
+    const markerPending = [pendingSend('marker', 'keep [Image #1] literal', null)]
+    const plainPending = [pendingSend('plain', 'keep literal', null)]
+    const literalMarker = [userTurn('literal', 'keep [Image #1] literal', 1000)]
+    const attachedImage = [
+      userTurn('source', '[Image: source: /tmp/a.png]', 1000),
+      userTurn('prompt', 'keep [Image #1] literal', 1001)
+    ]
+
+    expect(
+      retireLandedMobileNativeChatPending(literalMarker, plainPending, NO_IMAGE_ECHOES).map(
+        (item) => item.id
+      )
+    ).toEqual(['plain'])
+    expect(
+      retireLandedMobileNativeChatPending(literalMarker, markerPending, NO_IMAGE_ECHOES)
+    ).toEqual([])
+    expect(
+      retireLandedMobileNativeChatPending(attachedImage, plainPending, NO_IMAGE_ECHOES).map(
+        (item) => item.id
+      )
+    ).toEqual(['plain'])
+  })
 })
