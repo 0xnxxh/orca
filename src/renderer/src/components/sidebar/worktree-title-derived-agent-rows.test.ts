@@ -245,6 +245,83 @@ describe('buildTitleDerivedAgentRows', () => {
     expect(owned.map((row) => row.agentType)).toEqual(['claude'])
   })
 
+  // Why: #11643's repro shows a live TRAE CN pane whose title is the bare launcher name
+  // `traecli`. Trae posts no hooks, so the title path is the only thing that can put the
+  // pane on the worktree card at all (STA-3048).
+  it('adds idle rows for live Trae panes titled with the launcher name', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: 'traecli' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: 'traecli', 2: 'traecli.cmd' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-posix', 'pty-windows'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSplitLayout() },
+      now: 2000
+    })
+
+    expect(rows.map((row) => [row.agentType, row.state, row.entry.lastAssistantMessage])).toEqual([
+      ['trae', 'idle', 'Idle'],
+      ['trae', 'idle', 'Idle']
+    ])
+    expect(rows[0]?.paneKey).toBe(makePaneKey('tab-1', LEAF_ID_1))
+  })
+
+  // Why: the issue's last acceptance criterion — closing the session must clear the row.
+  it('drops the Trae row once the tab has no live pty', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: 'traecli' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: 'traecli' } },
+      ptyIdsByTabId: {},
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+
+    expect(rows).toHaveLength(0)
+  })
+
+  it('does not invent a Trae row from Claude task text that mentions traecli', () => {
+    const unowned = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1')],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: '⠋ fix the traecli mapping' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-claude-task'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+    expect(unowned).toHaveLength(0)
+
+    const owned = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { launchAgent: 'claude' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: '⠋ fix the traecli mapping' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-claude-task'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+    expect(owned.map((row) => row.agentType)).toEqual(['claude'])
+  })
+
+  // Why: `trae-cli` is the unrelated open-source bytedance/trae-agent binary, and a
+  // traecli-named worktree path is an ordinary shell title.
+  it('keeps trae-cli and traecli-named paths out of the sidebar', () => {
+    for (const title of ['trae-cli', '~/orca/workspaces/traecli-scratch']) {
+      const rows = buildWorktreeAgentRows({
+        tabs: [makeTab('tab-1', { title })],
+        entries: [],
+        retained: [],
+        runtimePaneTitlesByTabId: { 'tab-1': { 1: title } },
+        ptyIdsByTabId: { 'tab-1': ['pty-shell'] },
+        terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+        now: 2000
+      })
+      expect(rows).toHaveLength(0)
+    }
+  })
+
   it('keeps a cline-named worktree path out of the sidebar', () => {
     const rows = buildWorktreeAgentRows({
       tabs: [makeTab('tab-1', { title: '~/orca/workspaces/cline-scratch' })],

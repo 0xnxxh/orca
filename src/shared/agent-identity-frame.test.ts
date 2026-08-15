@@ -5,7 +5,7 @@ import {
   isAgentIdentityFrameTitleFor,
   resolveAgentIdentityFrameType
 } from './agent-identity-frame'
-import { getAgentLabel } from './agent-title-identity'
+import { getAgentLabel, isClaudeAgent } from './agent-title-identity'
 import { detectAgentStatusFromTitle } from './agent-title-status'
 import {
   isClaudeIdentityFrameTitle,
@@ -108,5 +108,82 @@ describe('isClaudeIdentityFrameTitle after the shared-builder move', () => {
     ]) {
       expect(isClaudeIdentityFrameTitle(title)).toBe(false)
     }
+  })
+})
+
+// The only Trae title Orca has on record is the one in #11643's repro: a live TRAE CN
+// session whose pane title is the bare launcher name `traecli`, undecorated, while the
+// session is interactive and already answering. TRAE CN's installer is region locked
+// (trae.cn 403s "denied by region block" from outside CN), so nothing beyond that frame
+// is observed — hence no glyph or context vocabulary is declared for it.
+describe('Trae CLI title visibility (STA-3048 / #11643)', () => {
+  it('resolves the launcher-name title to identity, label, and an idle status', () => {
+    expect(resolveAgentIdentityFrameType('traecli')).toBe('trae')
+    expect(getAgentLabel('traecli')).toBe('Trae')
+    expect(resolveTerminalTitleAgentType('traecli')).toBe('trae')
+    expect(resolveExplicitTerminalTitleAgentType('traecli')).toBe('trae')
+    expect(detectAgentStatusFromTitle('traecli')).toBe('idle')
+  })
+
+  // Why: TRAE CN ships a `.cmd` launcher on Windows, so the pane title there surfaces
+  // the extension rather than the bare name.
+  it('accepts the Windows launcher forms and the multiplexer-wrapped form', () => {
+    for (const title of ['traecli.exe', 'traecli.cmd', 'zsh | traecli']) {
+      expect(resolveAgentIdentityFrameType(title)).toBe('trae')
+      expect(detectAgentStatusFromTitle(title)).toBe('idle')
+    }
+  })
+
+  // Why: the unrelated open-source bytedance/trae-agent installs a `trae-cli` binary and
+  // `trae` is an ordinary word — TUI_AGENT_CONFIG.trae detects on `traecli` for exactly
+  // this reason, and the frame must not be looser than the launcher it mirrors.
+  it('rejects the bare word, the unrelated trae-agent binary, paths, and task text', () => {
+    for (const title of [
+      'trae',
+      'trae-cli',
+      'trae-agent',
+      '~/traecli/working',
+      'src/traecli/index.ts',
+      'traecli-scratch',
+      'port the traecli prompt'
+    ]) {
+      expect(resolveAgentIdentityFrameType(title)).toBeNull()
+      expect(detectAgentStatusFromTitle(title)).toBeNull()
+      expect(getAgentLabel(title)).not.toBe('Trae')
+    }
+  })
+
+  // Why: a decorated `traecli` frame resolved to Claude Code before the registry row, so
+  // a Trae pane could reach Claude-only behavior (the prompt-cache timer and the parked
+  // byte watcher both branch on isClaudeAgent).
+  it('stops a decorated traecli title from being attributed to Claude', () => {
+    expect(getAgentLabel('⠋ traecli')).toBe('Trae')
+    expect(resolveTerminalTitleAgentType('⠋ traecli')).toBe('trae')
+    expect(isClaudeAgent('⠋ traecli')).toBe(false)
+    expect(isClaudeIdentityFrameTitle('⠋ traecli')).toBe(false)
+  })
+
+  it('keeps Claude task text that mentions traecli as Claude', () => {
+    expect(getAgentLabel('⠋ fix the traecli mapping')).toBe('Claude Code')
+    expect(resolveTerminalTitleAgentType('⠋ fix the traecli mapping')).toBe('claude')
+    expect(isClaudeAgent('⠋ fix the traecli mapping')).toBe(true)
+  })
+
+  it('never lets the frame swallow trailing prose or a context tail', () => {
+    expect(isAgentIdentityFrameTitleFor('traecli fix the parser', 'trae')).toBe(false)
+    // Why: Trae has never been seen appending a cwd, so its frame stays anchored on the
+    // name alone — a trailing tail is somebody's shell title, not Trae identity.
+    expect(isAgentIdentityFrameTitleFor('traecli - orca', 'trae')).toBe(false)
+  })
+
+  // Why: the registry is shared — prove the neighbours it already carried still hold.
+  it('leaves the agents already in the registry unchanged', () => {
+    expect(resolveAgentIdentityFrameType('Cline')).toBe('cline')
+    expect(detectAgentStatusFromTitle('Cline')).toBe('idle')
+    expect(getAgentLabel('Cline')).toBe('Cline')
+    expect(resolveAgentIdentityFrameType('Claude Code')).toBe('claude')
+    expect(isClaudeIdentityFrameTitle('zsh | ⠋ Claude Code')).toBe(true)
+    expect(getAgentLabel('⠋ use cline for the sidebar fix')).toBe('Claude Code')
+    expect(AGENT_IDENTITY_FRAMES.amp).toBeUndefined()
   })
 })

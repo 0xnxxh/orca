@@ -48,7 +48,13 @@ export const AGENT_IDENTITY_FRAMES: Partial<Record<TuiAgent, AgentIdentityFrameS
   claude: { names: ['claude code', 'claude'] },
   // Verified against cline 3.0.55: it emits OSC 0 `Cline` and never varies it,
   // so Orca sees identity but no status transitions (STA-3906).
-  cline: { names: ['cline'], executableSuffix: true }
+  cline: { names: ['cline'], executableSuffix: true },
+  // Observed in the #11643 repro: a live TRAE CN session's pane title is the bare
+  // launcher name `traecli` — the same string Orca launches and expects as the
+  // process (TUI_AGENT_CONFIG.trae) — with no decoration and no state transitions.
+  // No glyph or context vocabulary is declared because trae.cn's installer is region
+  // locked, so nothing beyond that one frame has been observed (STA-3048).
+  trae: { names: ['traecli'], executableSuffix: true }
 }
 
 const IDENTITY_FRAME_RES = new Map<TuiAgent, RegExp>(
