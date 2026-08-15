@@ -1229,17 +1229,12 @@ function buildMirroredAgentStatusPatch(
             providerSession:
               existing.providerSession ??
               (hostIdentityPredatesCurrentTurn ? undefined : entry.providerSession),
-            // Why: hook-only content, same class as providerSession — the byte
-            // pipeline never sees a Stop event, and setAgentStatus writes
-            // `payload.lastAssistantMessage` straight through, so each OSC write
-            // blanks it. Keeping the client entry wholesale left remote agent rows
-            // with a permanently empty message line (#12906). Only the host frame
-            // can add one, so falling back to `existing` retains what an earlier
-            // frame already delivered instead of blanking on a host that stopped
-            // publishing it.
-            lastAssistantMessage: hostIdentityPredatesCurrentTurn
-              ? existing.lastAssistantMessage
-              : (entry.lastAssistantMessage ?? existing.lastAssistantMessage)
+            // Why: hook-only content the byte pipeline can never see, and every OSC
+            // write blanks it, so a fenced pane's message line stayed empty forever
+            // (#12906). Host-first unlike providerSession: only the host can mint one.
+            lastAssistantMessage:
+              (hostIdentityPredatesCurrentTurn ? undefined : entry.lastAssistantMessage) ??
+              existing.lastAssistantMessage
           }
         : entry
     nextByPaneKey.set(entry.paneKey, nextEntry)
