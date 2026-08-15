@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow'
 import type { TerminalLayoutSnapshot, TerminalTab } from '../../../../shared/terminal-tab-types'
 import { useAppStore } from '../../store'
 import {
-  canWatcherCoverParkedTerminalTab,
   disposeParkedTerminalWatchersForWorktree,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
@@ -47,7 +46,6 @@ function getWatcherSynchronizationKey(args: {
   assignmentsKey: string
   parkedTabIds: ReadonlySet<string>
   activationDeferredMountTabIds?: ReadonlySet<string> | null
-  coveragePolicyKey?: string
   reconciliationKey: string
 }): string {
   return JSON.stringify([
@@ -56,7 +54,6 @@ function getWatcherSynchronizationKey(args: {
     args.assignmentsKey,
     Array.from(args.parkedTabIds),
     Array.from(args.activationDeferredMountTabIds ?? []).sort(),
-    args.coveragePolicyKey ?? '',
     args.reconciliationKey
   ])
 }
@@ -104,8 +101,6 @@ export function useParkedTerminalWatcherSynchronization(args: {
   assignmentsKey: string
   parkedTabIds: ReadonlySet<string>
   activationDeferredMountTabIds?: ReadonlySet<string> | null
-  coveragePolicyKey?: string
-  onActivationDeferredWatcherHandoffFailed?: (tabId: string) => void
 }): void {
   const {
     worktreeId,
@@ -113,9 +108,7 @@ export function useParkedTerminalWatcherSynchronization(args: {
     inputsKey,
     assignmentsKey,
     parkedTabIds,
-    activationDeferredMountTabIds,
-    coveragePolicyKey,
-    onActivationDeferredWatcherHandoffFailed
+    activationDeferredMountTabIds
   } = args
   const reconciliationStoreInputs = useAppStore(
     useShallow((state) =>
@@ -145,24 +138,10 @@ export function useParkedTerminalWatcherSynchronization(args: {
     if (synchronizationKeyRef.current === synchronizationKey) {
       return
     }
-    const rejectedDeferredTabIds = new Set<string>()
-    for (const terminalTab of terminalTabs) {
-      if (
-        activationDeferredMountTabIds?.has(terminalTab.id) &&
-        parkedTabIds.has(terminalTab.id) &&
-        !canWatcherCoverParkedTerminalTab(worktreeId, terminalTab)
-      ) {
-        rejectedDeferredTabIds.add(terminalTab.id)
-      }
-    }
-    const coveredParkedTabIds =
-      rejectedDeferredTabIds.size === 0
-        ? parkedTabIds
-        : new Set([...parkedTabIds].filter((tabId) => !rejectedDeferredTabIds.has(tabId)))
     syncParkedTerminalTabWatchers({
       worktreeId,
       tabs: terminalTabs,
-      parkedTabIds: coveredParkedTabIds,
+      parkedTabIds,
       // Why: activation-deferred tabs have no prior pane-owned title slot.
       restoreTitleOnStartTabIds: activationDeferredMountTabIds ?? undefined
     })
@@ -173,18 +152,12 @@ export function useParkedTerminalWatcherSynchronization(args: {
       assignmentsKey,
       parkedTabIds,
       activationDeferredMountTabIds,
-      coveragePolicyKey,
       reconciliationKey: getWatcherReconciliationKey(terminalTabs, reconciliationStoreInputs)
     })
-    for (const tabId of rejectedDeferredTabIds) {
-      onActivationDeferredWatcherHandoffFailed?.(tabId)
-    }
   }, [
     activationDeferredMountTabIds,
     assignmentsKey,
-    coveragePolicyKey,
     inputsKey,
-    onActivationDeferredWatcherHandoffFailed,
     parkedTabIds,
     reconciliationStoreInputs,
     synchronizationKey,

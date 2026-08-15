@@ -829,22 +829,6 @@ function Terminal(): React.JSX.Element | null {
   const activationDeferredMountTabIdsByWorktreeRef = useRef(new Map<string, ReadonlySet<string>>())
   // Why: run the cold-activation deferral decision once per activation transition, not on every re-render.
   const lastActivationWorktreeIdRef = useRef<string | null>(null)
-  const revealRejectedActivationDeferredTab = useCallback(
-    (worktreeId: string, tabId: string): void => {
-      if (!activationDeferredMountTabIdsByWorktreeRef.current.get(worktreeId)?.has(tabId)) {
-        return
-      }
-      revealActivationDeferredTabs({
-        restrictions: backgroundMountTabIdsByWorktreeRef.current,
-        deferredMountTabIdsByWorktree: activationDeferredMountTabIdsByWorktreeRef.current,
-        worktreeId,
-        allTabIds: (useAppStore.getState().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id),
-        immediateTabIds: new Set([tabId])
-      })
-      setBackgroundMountRevision((revision) => revision + 1)
-    },
-    []
-  )
   useEffect(() => {
     const timers = measurableBackgroundWorktreeTimersRef.current
     const closeDialogDebounceTimers = closeDialogDebounceTimersRef.current
@@ -1454,20 +1438,16 @@ function Terminal(): React.JSX.Element | null {
         deferredTabIds =
           activationDeferredMountTabIdsByWorktreeRef.current.get(workspace.id) ?? null
         for (const tab of tabs) {
-          if (!deferredTabIds?.has(tab.id) || parkedTabIds.has(tab.id)) {
-            continue
-          }
-          const activityTerminalPortal = findActivityTerminalPortal(activityTerminalPortals, {
-            worktreeId: workspace.id,
-            tabId: tab.id
-          })
-          if (activityTerminalPortal) {
-            continue
-          }
-          if (canWatcherCoverParkedTerminalTab(workspace.id, tab)) {
+          if (
+            deferredTabIds?.has(tab.id) &&
+            !parkedTabIds.has(tab.id) &&
+            canWatcherCoverParkedTerminalTab(workspace.id, tab) &&
+            !findActivityTerminalPortal(activityTerminalPortals, {
+              worktreeId: workspace.id,
+              tabId: tab.id
+            })
+          ) {
             parkedTabIds.add(tab.id)
-          } else {
-            revealRejectedActivationDeferredTab(workspace.id, tab.id)
           }
         }
       }
@@ -1492,12 +1472,9 @@ function Terminal(): React.JSX.Element | null {
     groupsByWorktree,
     effectiveParkedTerminalWorktreeIds,
     pendingStartupByTabId,
-    pairedRuntimeParkingEnvironmentIds,
     renderedActiveWorktreeId,
-    revealRejectedActivationDeferredTab,
     tabsByWorktree,
     terminalParkingEnabled,
-    terminalSshParkingEnabled,
     terminalTitleSnapshotAuthorityEnabled,
     workspaceSessionReady,
     workspaceSurfaces
@@ -2560,7 +2537,6 @@ function Terminal(): React.JSX.Element | null {
                   activationDeferredMountTabIds={
                     activationDeferredMountTabIdsByWorktreeRef.current.get(workspace.id) ?? null
                   }
-                  onActivationDeferredWatcherHandoffFailed={revealRejectedActivationDeferredTab}
                 />
               )
             })}
@@ -2821,8 +2797,7 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   isForceParked,
   activityTerminalPortals,
   backgroundMountTabIds,
-  activationDeferredMountTabIds,
-  onActivationDeferredWatcherHandoffFailed
+  activationDeferredMountTabIds
 }: {
   worktreeId: string
   worktreePath: string
@@ -2835,17 +2810,12 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   activityTerminalPortals: ActivityTerminalPortalTarget[]
   backgroundMountTabIds: ReadonlySet<string> | null
   activationDeferredMountTabIds: ReadonlySet<string> | null
-  onActivationDeferredWatcherHandoffFailed: (worktreeId: string, tabId: string) => void
 }): React.JSX.Element {
   const browserPageIds = useWorktreeBrowserPageIds(worktreeId)
   const hasAutomationVisibleBrowser = useBrowserAutomationVisibilityForAny(browserPageIds)
   const hasMobileDrivenBrowser = useBrowserMobileDriverForAny(browserPageIds)
   const shouldKeepPaintable =
     shouldMeasureHiddenWorktree || hasAutomationVisibleBrowser || hasMobileDrivenBrowser
-  const revealRejectedActivationDeferredTab = useCallback(
-    (tabId: string) => onActivationDeferredWatcherHandoffFailed(worktreeId, tabId),
-    [onActivationDeferredWatcherHandoffFailed, worktreeId]
-  )
 
   return (
     <div
@@ -2876,7 +2846,6 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
         activityTerminalPortals={activityTerminalPortals}
         backgroundMountTabIds={backgroundMountTabIds}
         activationDeferredMountTabIds={activationDeferredMountTabIds}
-        onActivationDeferredWatcherHandoffFailed={revealRejectedActivationDeferredTab}
       />
       {/* Why: once eligible, retain slot DOM so hidden worktrees keep their Electron guests alive (STA-3228). */}
       <RetainedBrowserPaneOverlayLayer

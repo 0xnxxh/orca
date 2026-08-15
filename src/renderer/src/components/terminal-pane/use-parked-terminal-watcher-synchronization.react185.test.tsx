@@ -18,8 +18,6 @@ const harness = vi.hoisted(() => ({
   syncCalls: 0,
   disposeCalls: 0,
   reconciliationPtyReads: 0,
-  coverageAllowed: true,
-  handoffFailures: [] as string[],
   watchedPtyIds: new Set<string>()
 }))
 
@@ -36,7 +34,6 @@ vi.mock('../../store', async () => {
 vi.mock('./terminal-parked-tab-watchers', async () => {
   const { useAppStore } = await import('../../store')
   return {
-    canWatcherCoverParkedTerminalTab: () => harness.coverageAllowed,
     disposeParkedTerminalWatchersForWorktree: () => {
       harness.disposeCalls += 1
       harness.watchedPtyIds.clear()
@@ -130,22 +127,6 @@ function UnparkedWatcherSynchronizationHarness({
   return null
 }
 
-function DeferredWatcherSynchronizationHarness({ policyKey }: { policyKey: string }): null {
-  useParkedTerminalWatcherSynchronization({
-    worktreeId: WORKTREE_ID,
-    terminalTabs,
-    inputsKey: JSON.stringify([[TAB_ID, FIRST_PTY_ID, null]]),
-    assignmentsKey: JSON.stringify([[TAB_ID, 'group-1', false]]),
-    parkedTabIds,
-    activationDeferredMountTabIds: parkedTabIds,
-    coveragePolicyKey: policyKey,
-    onActivationDeferredWatcherHandoffFailed: (tabId) => {
-      harness.handoffFailures.push(tabId)
-    }
-  })
-  return null
-}
-
 describe('parked terminal watcher synchronization', () => {
   let container: HTMLDivElement
   let root: Root | undefined
@@ -154,8 +135,6 @@ describe('parked terminal watcher synchronization', () => {
     harness.syncCalls = 0
     harness.disposeCalls = 0
     harness.reconciliationPtyReads = 0
-    harness.coverageAllowed = true
-    harness.handoffFailures.length = 0
     harness.watchedPtyIds.clear()
     useAppStore.setState({
       ptyIdsByTabId: { [TAB_ID]: [FIRST_PTY_ID, OLD_SECOND_PTY_ID] },
@@ -230,23 +209,6 @@ describe('parked terminal watcher synchronization', () => {
       root?.render(<WatcherSynchronizationHarness />)
     })
     expect(harness.syncCalls).toBe(4)
-  })
-
-  it('rejects an uncovered deferred handoff without giving watchers ownership', () => {
-    harness.coverageAllowed = false
-    root = createRoot(container)
-    act(() => {
-      root?.render(<DeferredWatcherSynchronizationHarness policyKey="policy-a" />)
-    })
-
-    expect(harness.handoffFailures).toEqual([TAB_ID])
-    expect(harness.watchedPtyIds.size).toBe(0)
-
-    harness.coverageAllowed = true
-    act(() => {
-      root?.render(<DeferredWatcherSynchronizationHarness policyKey="policy-b" />)
-    })
-    expect(harness.watchedPtyIds).toEqual(new Set([FIRST_PTY_ID, OLD_SECOND_PTY_ID]))
   })
 
   it('does not scan unparked worktrees on an unrelated store write', () => {
