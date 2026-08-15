@@ -3040,7 +3040,7 @@ function TerminalPane(
       />
       {effectiveChatViewMode && chatPane?.container
         ? createPortal(
-            <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 bg-background">
+            <div className="native-chat-pane-shell absolute inset-0 z-10 flex min-h-0 min-w-0 bg-background">
               <NativeChatView
                 terminalTabId={tabId}
                 isVisible={isRendererVisible}
