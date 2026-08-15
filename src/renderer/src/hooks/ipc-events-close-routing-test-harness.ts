@@ -11,7 +11,11 @@ export type CloseFloatingItemListener = (payload: { sourceId: string }) => void
 export type SelectFloatingIndexListener = (payload: { index: number }) => void
 export type CloseTerminalListener = (data: { tabId: string; paneRuntimeId?: number | null }) => void
 export type CloseSessionTabListener = (data: { tabId: string; worktreeId: string }) => void
-export type TerminalTabCloseRequestListener = (data: { requestId: string; tabId: string }) => void
+export type TerminalTabCloseRequestListener = (data: {
+  requestId: string
+  tabId: string
+  localPtyTeardownOwnedExternally?: boolean
+}) => void
 
 export async function useIpcEventsForCloseRouting({
   closeActiveTabListenerRef,
