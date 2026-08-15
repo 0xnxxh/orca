@@ -68,7 +68,7 @@ async function openTerminalTab(page: Page): Promise<void> {
 test.describe('SSH reconnect pane restore', () => {
   test.skip(!RUN_DOCKER_SSH, 'Set ORCA_E2E_SSH_DOCKER=1 to run the dockerized SSH relay tests')
 
-  test('restores pane content on reconnect and still opens a usable new tab', async ({
+  test('restores shell scrollback, a full-screen frame, and a usable new tab across a reconnect', async ({
     orcaPage
   }, testInfo) => {
     test.slow()
@@ -112,6 +112,23 @@ test.describe('SSH reconnect pane restore', () => {
       // And it must be a FRESH shell, not a repaint of the old pane's history.
       const freshContent = await getTerminalContent(orcaPage, 8000)
       expect(freshContent).not.toContain(marker)
+
+      // A FULL-SCREEN app is the third case, and the one a byte tail cannot serve: a tail can begin
+      // mid-escape and misses the alt-screen enter and absolute positioning that built the frame, so
+      // replaying it paints fragments. `top` is used because it is present on any Linux image and
+      // repaints on a fixed interval, so a coherent frame after the reconnect is unambiguous.
+      await execInTerminal(orcaPage, freshPtyId, 'top -b -n 1 > /dev/null; top')
+      await waitForTerminalOutput(orcaPage, 'load average', 30_000, 8000)
+
+      await reconnectDockerSshRelayTarget(orcaPage, target.targetId)
+      await waitForActiveTerminalManager(orcaPage, 60_000)
+      await waitForActivePanePtyId(orcaPage, 60_000)
+
+      // The header only survives as a whole if a grid was repainted; a tail that lost the frame
+      // start shows rows without it.
+      await waitForTerminalOutput(orcaPage, 'load average', 60_000, 8000)
+      const tuiContent = await getTerminalContent(orcaPage, 8000)
+      expect(tuiContent).toContain('PID')
 
       // The title is the cheap signal the reported bug showed: it only stays generic when the shell
       // never printed a prompt for Orca to read one from.
