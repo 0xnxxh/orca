@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import type {
+  AgentType,
   NativeChatBlock,
-  NativeChatMessage,
-  AgentType
+  NativeChatMessage
 } from '../../../../shared/native-chat-types'
 import {
   readNativeChatTranscriptTail,
@@ -11,6 +11,7 @@ import {
   type SubscribeNativeChatTranscriptArgs
 } from '../../../native-chat/transcript-watch'
 import { defineMethod, defineStreamingMethod, type RpcAnyMethod, type RpcContext } from '../core'
+import { projectNativeChatRpcImageSourceMessage } from './native-chat-image-source-projection'
 import { sanitizeNativeChatRpcImageBlock } from './native-chat-rpc-image-block'
 
 // Why: native chat renders an agent's own transcript (Claude/Codex JSONL). The
@@ -173,7 +174,9 @@ function sanitizeAppendForClient(
   messages: readonly NativeChatMessage[],
   clientKind: RpcContext['clientKind']
 ): NativeChatMessage[] {
-  return messages.map((message) => sanitizeMessage(message, clientKind))
+  return messages.flatMap((message) =>
+    projectNativeChatRpcImageSourceMessage(sanitizeMessage(message, clientKind))
+  )
 }
 
 /** Window a transcript to its most recent `limit` messages so a long session
@@ -197,7 +200,9 @@ function windowForClient(
   limit = MOBILE_NATIVE_CHAT_DEFAULT_WINDOW
 ): NativeChatMessage[] {
   const windowed = windowTranscript(messages, limit)
-  return windowed.map((message) => sanitizeMessage(message, clientKind))
+  return windowed.flatMap((message) =>
+    projectNativeChatRpcImageSourceMessage(sanitizeMessage(message, clientKind))
+  )
 }
 
 export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [

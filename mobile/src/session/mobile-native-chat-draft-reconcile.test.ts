@@ -255,4 +255,32 @@ describe('mobile native chat image preview reconciliation', () => {
       ])
     ).toEqual({ [sessionKey]: { prompt: ['file:///a.jpg'] } })
   })
+
+  it.each([
+    ['source before prompt', ['sources', 'prompt']],
+    ['prompt before source', ['prompt', 'sources']]
+  ])('moves a multi-source preview only with marker parity: %s', (_label, order) => {
+    const sessionKey = 'host\0worktree\0tab\0session'
+    const previous = {
+      [sessionKey]: { sources: ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg'] }
+    }
+    const byId = {
+      sources: {
+        ...userText('sources', 'unused'),
+        blocks: [
+          { type: 'text' as const, text: '[Image: source: /tmp/a.png]' },
+          { type: 'text' as const, text: '[Image: source: C:\\Users\\me\\b.png]' },
+          { type: 'text' as const, text: '[Image: source: /ssh/workspace/c.png]' }
+        ]
+      },
+      prompt: userText('prompt', '[Image #1] [Image #2] [Image #3]')
+    }
+    const orderedMessages = () => order.map((id) => byId[id as keyof typeof byId])
+
+    expect(migrateImagePreviewMessageIds(previous, sessionKey, orderedMessages())).toEqual({
+      [sessionKey]: { prompt: ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg'] }
+    })
+    byId.prompt = userText('prompt', '[Image #1]')
+    expect(migrateImagePreviewMessageIds(previous, sessionKey, orderedMessages())).toBe(previous)
+  })
 })

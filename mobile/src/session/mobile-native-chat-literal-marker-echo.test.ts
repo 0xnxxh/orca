@@ -28,6 +28,17 @@ function userTextMessage(id: string, text: string): NativeChatMessage {
   }
 }
 
+function multiImageSource(): NativeChatMessage {
+  return {
+    ...userTextMessage('sources', 'unused'),
+    blocks: [
+      { type: 'text', text: '[Image: source: /tmp/a.png]' },
+      { type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' },
+      { type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }
+    ]
+  }
+}
+
 describe('mobile literal image-marker turns', () => {
   let updateRenderer: (messages: NativeChatMessage[]) => void = () => {}
   let unmountRenderer = (): void => {}
@@ -238,6 +249,30 @@ describe('mobile literal image-marker turns', () => {
       ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg']
     ])
   })
+
+  it.each([
+    ['source before prompt', [multiImageSource(), userTextMessage('prompt', '[Image #1]')]],
+    ['prompt before source', [userTextMessage('prompt', '[Image #1]'), multiImageSource()]]
+  ])(
+    'does not duplicate previews on a mismatched multi-source record: %s',
+    async (_label, messages) => {
+      await mount()
+      send('', ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg'])
+      await transcript([multiImageSource()])
+      await transcript(messages)
+
+      expect(state?.imagePreviewsByMessageId).toEqual({
+        sources: ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg']
+      })
+      const rendered = rows(messages)
+      expect(rendered).toHaveLength(2)
+      expect(rendered.flatMap(rowImages)).toEqual([
+        'file:///a.jpg',
+        'file:///b.jpg',
+        'file:///c.jpg'
+      ])
+    }
+  )
 
   it('reconciles rapid equal captions in separate image-count namespaces', async () => {
     await mount()

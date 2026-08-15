@@ -1,7 +1,6 @@
 import { isImageRefBlock, type NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
   countImagePromptMarkers,
-  hasImagePromptMarker,
   isImageSourceUserTurn,
   nativeChatUserMessageImageEvidenceCount,
   nativeChatUserMessageMatchText,
@@ -108,29 +107,46 @@ export function mergeLandedImagePreviewEchoes(
   return next
 }
 
-function imagePreviewReplacementMessageId(
-  messages: readonly NativeChatMessage[],
-  sourceIndex: number
-): string | null {
-  const source = messages[sourceIndex]
-  if (!source || !isImageSourceUserTurn(source)) {
-    return null
+function imagePreviewReplacementIds(
+  messages: readonly NativeChatMessage[]
+): ReadonlyMap<string, string> {
+  const replacements = new Map<string, string>()
+  for (let index = 0; index < messages.length; index++) {
+    const source = messages[index]
+    if (!source || !isImageSourceUserTurn(source)) {
+      continue
+    }
+    let afterSourceIndex = index
+    let sourceCount = 0
+    while (afterSourceIndex < messages.length) {
+      const candidate = messages[afterSourceIndex]
+      if (!candidate || candidate.source !== source.source || !isImageSourceUserTurn(candidate)) {
+        break
+      }
+      sourceCount += candidate.blocks.length
+      afterSourceIndex++
+    }
+    const prompt = [messages[index - 1], messages[afterSourceIndex]].find(
+      (candidate) =>
+        candidate?.role === 'user' &&
+        candidate.source === source.source &&
+        countImagePromptMarkers(candidate) === sourceCount
+    )
+    if (prompt) {
+      for (let sourceIndex = index; sourceIndex < afterSourceIndex; sourceIndex++) {
+        const sourceId = messages[sourceIndex]?.id
+        if (sourceId) {
+          replacements.set(sourceId, prompt.id)
+        }
+      }
+    }
+    index = afterSourceIndex - 1
   }
-  let nextIndex = sourceIndex + 1
-  while (
-    messages[nextIndex]?.source === source.source &&
-    isImageSourceUserTurn(messages[nextIndex]!)
-  ) {
-    nextIndex++
-  }
-  const prompt = messages[nextIndex]
-  return prompt?.role === 'user' && prompt.source === source.source && hasImagePromptMarker(prompt)
-    ? prompt.id
-    : null
+  return replacements
 }
 
-/** Moves previews forward when a progressive source-only transcript frame later
- *  folds into the marker-bearing prompt with a different authoritative id. */
+/** Moves previews when a progressive source-only frame later folds into its
+ *  marker-bearing prompt with a different authoritative id. */
 export function migrateImagePreviewMessageIds(
   previous: Record<string, Record<string, string[]>>,
   sessionKey: string,
@@ -140,14 +156,10 @@ export function migrateImagePreviewMessageIds(
   if (!sessionPreviews) {
     return previous
   }
-  const messageIndexById = new Map(messages.map((message, index) => [message.id, index]))
+  const replacementIdBySourceId = imagePreviewReplacementIds(messages)
   let nextSession: Record<string, string[]> | null = null
   for (const [messageId, images] of Object.entries(sessionPreviews)) {
-    const sourceIndex = messageIndexById.get(messageId)
-    if (sourceIndex === undefined) {
-      continue
-    }
-    const replacementId = imagePreviewReplacementMessageId(messages, sourceIndex)
+    const replacementId = replacementIdBySourceId.get(messageId)
     if (!replacementId) {
       continue
     }

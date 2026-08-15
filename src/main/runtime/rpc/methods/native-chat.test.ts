@@ -103,6 +103,34 @@ function makeTextMessage(text: string): NativeChatMessage {
   return { ...makeMessage(''), blocks: [{ type: 'text', text }] }
 }
 
+function makeMultiImageSource(): NativeChatMessage {
+  return {
+    ...makeTextMessage('unused'),
+    id: 'source-row',
+    role: 'user',
+    blocks: [
+      { type: 'text', text: '[Image: source: /tmp/a.png]' },
+      { type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' },
+      { type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }
+    ]
+  }
+}
+
+const legacyImageSourceProjection = [
+  {
+    id: 'source-row',
+    blocks: [{ type: 'text', text: '[Image: source: /tmp/a.png]' }]
+  },
+  {
+    id: 'source-row:image-source:1',
+    blocks: [{ type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' }]
+  },
+  {
+    id: 'source-row:image-source:2',
+    blocks: [{ type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }]
+  }
+]
+
 function readSessionHandler(): (params: unknown, ctx: RpcContext) => Promise<unknown> {
   const method = NATIVE_CHAT_METHODS.find((m) => m.name === 'nativeChat.readSession')
   if (!method) {
@@ -413,9 +441,44 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
     expect(messages[0].id).toBe('m-20')
     expect(result).toMatchObject({ hasMore: true, beforeOffset: 123 })
   })
+
+  it('projects new-host multi-source reads into old-client single-block rows', async () => {
+    cachedResult.value = { messages: [makeMultiImageSource()] }
+
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+
+    expect((result as { messages: NativeChatMessage[] }).messages).toMatchObject(
+      legacyImageSourceProjection
+    )
+  })
 })
 
 describe('nativeChat.subscribe initial snapshot', () => {
+  it('keeps old-client source rows compatible across snapshot, replacement, and append', async () => {
+    watcher.watching = true
+    watcher.args = null
+    const emitted: unknown[] = []
+    await subscribeHandler()(
+      { agent: 'claude', sessionId: 's' },
+      streamingContext('mobile'),
+      (value) => emitted.push(value)
+    )
+
+    const callbacks = activeWatcherArgs()
+    const messages = [makeMultiImageSource()]
+    callbacks.onInitialSnapshot?.(messages, false, 123)
+    callbacks.onReplace?.(messages, false, 123)
+    callbacks.onAppend(messages)
+
+    expect(emitted).toHaveLength(3)
+    for (const frame of emitted as { messages: NativeChatMessage[] }[]) {
+      expect(frame.messages).toMatchObject(legacyImageSourceProjection)
+    }
+  })
+
   it('preserves long assistant text across mobile stream frame types', async () => {
     watcher.watching = true
     watcher.args = null
