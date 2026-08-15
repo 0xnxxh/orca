@@ -1003,6 +1003,9 @@ async function referenceStatusFrameLines(
 }
 
 const TEST_WINDOW_ID = 1
+// The inventory refresh forwards its own budget so a relay cannot outlive it (STA-517).
+// These assertions are about which provider scope was asked, so the deadline stays loose.
+const LIST_PROVIDER_DEADLINE = expect.objectContaining({ deadlineMs: expect.any(Number) })
 const TEST_REPO_ID = 'repo-1'
 const TEST_REPO_PATH = '/tmp/repo'
 const TEST_WORKTREE_PATH = '/tmp/worktree-a'
@@ -20214,7 +20217,7 @@ describe('OrcaRuntimeService', () => {
       paneKey: makePaneKey('tab-agent', HEADLESS_LEAF_ID)
     })
     expect(listProcesses).toHaveBeenCalledTimes(inventoryCount + 1)
-    expect(listProcesses).toHaveBeenLastCalledWith(null)
+    expect(listProcesses).toHaveBeenLastCalledWith(null, LIST_PROVIDER_DEADLINE)
     expect(
       (await runtime.listTerminals()).terminals.find((terminal) => terminal.ptyId === 'pty-agent')
     ).toMatchObject({
@@ -20224,7 +20227,7 @@ describe('OrcaRuntimeService', () => {
       leafId: HEADLESS_LEAF_ID
     })
     expect(listProcesses).toHaveBeenCalledTimes(inventoryCount + 2)
-    expect(listProcesses).toHaveBeenLastCalledWith(undefined)
+    expect(listProcesses).toHaveBeenLastCalledWith(undefined, LIST_PROVIDER_DEADLINE)
     await expect(
       runtime.adoptTerminalOrphans({
         worktree: `id:${TEST_WORKTREE_ID}`,
@@ -21490,7 +21493,7 @@ describe('OrcaRuntimeService', () => {
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
     expect(getSession().sleepingAgentSessionsByPaneKey?.[secondWorkerPaneKey]).toBeUndefined()
     expect(listProcesses).toHaveBeenCalledTimes(3)
-    expect(listProcesses).toHaveBeenCalledWith(null)
+    expect(listProcesses).toHaveBeenCalledWith(null, LIST_PROVIDER_DEADLINE)
     expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([
       expect.objectContaining({ id: 'legacy-worker-two', ptyId: 'pty-exited-two' })
     ])
@@ -21605,7 +21608,7 @@ describe('OrcaRuntimeService', () => {
       await vi.advanceTimersByTimeAsync(1_000)
 
       expect(listProcesses).toHaveBeenCalledTimes(4)
-      expect(listProcesses.mock.calls).toEqual([[null], [null], [null], [null]])
+      expect(listProcesses.mock.calls.map((call) => call[0])).toEqual([null, null, null, null])
       expect(hasPty).not.toHaveBeenCalled()
       expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([
         expect.objectContaining({ id: 'legacy-worker', ptyId: 'pty-inventory-unavailable' })
@@ -21796,7 +21799,7 @@ describe('OrcaRuntimeService', () => {
       deferredDispatchIds: ['dispatch-missing', 'dispatch-ambiguous']
     })
     expect(listProcesses).toHaveBeenCalledOnce()
-    expect(listProcesses).toHaveBeenCalledWith(null)
+    expect(listProcesses).toHaveBeenCalledWith(null, LIST_PROVIDER_DEADLINE)
     for (const { name, leafId } of cases.slice(0, 2)) {
       expect(
         getSession().sleepingAgentSessionsByPaneKey?.[`legacy-${name}:${leafId}`]
@@ -21906,7 +21909,7 @@ describe('OrcaRuntimeService', () => {
     )
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
     expect(listProcesses).toHaveBeenCalledTimes(3)
-    expect(listProcesses).toHaveBeenCalledWith(null)
+    expect(listProcesses).toHaveBeenCalledWith(null, LIST_PROVIDER_DEADLINE)
     expect(revealTerminalSession).toHaveBeenCalledWith(TEST_FOLDER_WORKSPACE_KEY, {
       ptyId: 'pty-folder-legacy',
       title: 'Folder worker',
@@ -22048,7 +22051,7 @@ describe('OrcaRuntimeService', () => {
     expect(getWorkspaceSession).toHaveBeenCalledWith(`ssh:${connectionId}`)
     expect(setWorkspaceSession).toHaveBeenCalledWith(expect.any(Object), `ssh:${connectionId}`)
     expect(listProcesses).toHaveBeenCalledTimes(3)
-    expect(listProcesses).toHaveBeenCalledWith(connectionId)
+    expect(listProcesses).toHaveBeenCalledWith(connectionId, LIST_PROVIDER_DEADLINE)
     expect(sshSession.tabsByWorktree[TEST_FOLDER_WORKSPACE_KEY]).toContainEqual(
       expect.objectContaining({
         id: 'legacy-ssh-folder-worker',
@@ -22277,7 +22280,7 @@ describe('OrcaRuntimeService', () => {
         exitedDispatchIds: [],
         deferredDispatchIds: []
       })
-      expect(listProcesses).toHaveBeenLastCalledWith(connectionId)
+      expect(listProcesses).toHaveBeenLastCalledWith(connectionId, LIST_PROVIDER_DEADLINE)
     } finally {
       unregisterSshGitProvider(connectionId)
     }
@@ -22414,7 +22417,7 @@ describe('OrcaRuntimeService', () => {
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
     expect(revealTerminalSession).toHaveBeenCalledOnce()
     expect(listProcesses).toHaveBeenCalledTimes(5)
-    expect(listProcesses.mock.calls).toEqual([[null], [null], [null], [null], [null]])
+    expect(listProcesses.mock.calls.map((call) => call[0])).toEqual([null, null, null, null, null])
   })
 
   it('restores orphan pane and group topology without replacing a newer host-owned tab', async () => {
