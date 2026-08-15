@@ -1,11 +1,13 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { useAppStore } from '@/store'
 import {
   collectTerminalProviderSnapshotPtyIds,
+  getTerminalProviderSnapshotCapabilityRevision,
+  subscribeTerminalProviderSnapshotCapability,
   startTerminalProviderSnapshotCapabilitySynchronization
 } from './terminal-provider-snapshot-capability'
 
-export function useTerminalProviderSnapshotCapability(enabled: boolean): void {
+export function useTerminalProviderSnapshotCapability(enabled: boolean): number {
   const tabsByWorktree = useAppStore((state) => state.tabsByWorktree)
   const ptyIdsByTabId = useAppStore((state) => state.ptyIdsByTabId)
   const pendingReconnectPtyIdByTabId = useAppStore((state) => state.pendingReconnectPtyIdByTabId)
@@ -20,19 +22,21 @@ export function useTerminalProviderSnapshotCapability(enabled: boolean): void {
   // and only a change to one of the four collected maps can alter the id set.
   const boundPtyIdsKey = useMemo(
     () =>
-      collectTerminalProviderSnapshotPtyIds({
-        tabsByWorktree,
-        ptyIdsByTabId,
-        pendingReconnectPtyIdByTabId,
-        terminalLayoutsByTabId
-      })
-        .sort()
-        .join('\n'),
+      JSON.stringify(
+        collectTerminalProviderSnapshotPtyIds({
+          tabsByWorktree,
+          ptyIdsByTabId,
+          pendingReconnectPtyIdByTabId,
+          terminalLayoutsByTabId
+        }).sort()
+      ),
     [tabsByWorktree, ptyIdsByTabId, pendingReconnectPtyIdByTabId, terminalLayoutsByTabId]
   )
-  const boundPtyIds = useMemo(
-    () => (boundPtyIdsKey.length === 0 ? [] : boundPtyIdsKey.split('\n')),
-    [boundPtyIdsKey]
+  const boundPtyIds = useMemo(() => JSON.parse(boundPtyIdsKey) as string[], [boundPtyIdsKey])
+  const capabilityRevision = useSyncExternalStore(
+    subscribeTerminalProviderSnapshotCapability,
+    getTerminalProviderSnapshotCapabilityRevision,
+    getTerminalProviderSnapshotCapabilityRevision
   )
 
   useEffect(() => {
@@ -42,4 +46,6 @@ export function useTerminalProviderSnapshotCapability(enabled: boolean): void {
     }
     return startTerminalProviderSnapshotCapabilitySynchronization(boundPtyIds)
   }, [boundPtyIds, enabled])
+
+  return capabilityRevision
 }

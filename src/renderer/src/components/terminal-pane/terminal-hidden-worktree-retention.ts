@@ -106,8 +106,9 @@ export function countEvictionExemptTabRoutes(
       case 'capability-unknown':
         counts.capabilityUnknown += 1
         break
-      default:
+      case null:
         counts.splitPane += 1
+        break
     }
   }
   return counts

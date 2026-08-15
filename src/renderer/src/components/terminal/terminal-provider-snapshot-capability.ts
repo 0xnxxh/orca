@@ -26,6 +26,24 @@ const CAPABILITY_RESOLUTION_TIMEOUT_MS = 1_000
 let lastSynchronizedLivePtyIds: readonly string[] | null = null
 let earliestUnknownCapabilityRetryAtMs = Number.POSITIVE_INFINITY
 let synchronizationGeneration = 0
+let capabilityRevision = 0
+const capabilityRevisionListeners = new Set<() => void>()
+
+function publishCapabilityChange(): void {
+  capabilityRevision += 1
+  for (const listener of capabilityRevisionListeners) {
+    listener()
+  }
+}
+
+export function subscribeTerminalProviderSnapshotCapability(listener: () => void): () => void {
+  capabilityRevisionListeners.add(listener)
+  return () => capabilityRevisionListeners.delete(listener)
+}
+
+export function getTerminalProviderSnapshotCapabilityRevision(): number {
+  return capabilityRevision
+}
 
 export function collectTerminalProviderSnapshotPtyIds(
   state: SnapshotCapabilityBindingState
@@ -120,8 +138,10 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
   const generation = ++synchronizationGeneration
   lastSynchronizedLivePtyIds = livePtyIds
   const live = new Set(livePtyIds.filter((id) => id.length > 0))
+  let capabilityChanged = false
   for (const cachedId of authoritativeSnapshotByPtyId.keys()) {
     if (!live.has(cachedId)) {
+      capabilityChanged ||= authoritativeSnapshotByPtyId.get(cachedId) === true
       authoritativeSnapshotByPtyId.delete(cachedId)
     }
   }
@@ -143,6 +163,9 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
       backOffUnknownCapability(id, nowMs)
     }
     refreshEarliestUnknownCapabilityRetry()
+    if (capabilityChanged) {
+      publishCapabilityChange()
+    }
     return unknownCapabilityRetryDelayMs(nowMs)
   }
   for (let offset = 0; offset < missing.length; offset += 512) {
@@ -156,6 +179,9 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
         // pass may leave unknowns behind with nobody scheduled to re-ask (the
         // startup refresh ignores its return value). Re-checking immediately
         // is cheap — the early-outs above collapse it when nothing is pending.
+        if (capabilityChanged) {
+          publishCapabilityChange()
+        }
         return 0
       }
       // Why: unknown capability must keep the pane mounted. Do not cache the
@@ -168,6 +194,9 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     if (generation !== synchronizationGeneration) {
       // Why 0: see the catch above — a superseded pass must keep its caller's
       // timer chain alive, or the 5-minute re-ask dies with it.
+      if (capabilityChanged) {
+        publishCapabilityChange()
+      }
       return 0
     }
     if (!resolved) {
@@ -180,6 +209,8 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     for (const id of batch) {
       const authoritative = resolvedById.get(id)
       if (typeof authoritative === 'boolean') {
+        capabilityChanged ||=
+          (authoritativeSnapshotByPtyId.get(id) === true) !== (authoritative === true)
         authoritativeSnapshotByPtyId.set(id, authoritative)
         unknownCapabilityRetryAtByPtyId.delete(id)
         unknownCapabilityAttemptsByPtyId.delete(id)
@@ -189,6 +220,9 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     }
   }
   refreshEarliestUnknownCapabilityRetry()
+  if (capabilityChanged) {
+    publishCapabilityChange()
+  }
   return unknownCapabilityRetryDelayMs(observedAtMs === undefined ? Date.now() : nowMs)
 }
 
@@ -197,12 +231,17 @@ export async function refreshTerminalProviderSnapshotCapabilities(
   resolveCapabilities?: SnapshotCapabilityResolver
 ): Promise<number | null> {
   lastSynchronizedLivePtyIds = null
+  let capabilityChanged = false
   for (const id of livePtyIds) {
+    capabilityChanged ||= authoritativeSnapshotByPtyId.get(id) === true
     authoritativeSnapshotByPtyId.delete(id)
     unknownCapabilityRetryAtByPtyId.delete(id)
     unknownCapabilityAttemptsByPtyId.delete(id)
   }
   refreshEarliestUnknownCapabilityRetry()
+  if (capabilityChanged) {
+    publishCapabilityChange()
+  }
   return synchronizeTerminalProviderSnapshotCapabilities(livePtyIds, resolveCapabilities)
 }
 
@@ -229,10 +268,16 @@ export function terminalProviderHasAuthoritativeSnapshot(ptyId: string): boolean
 }
 
 export function clearTerminalProviderSnapshotCapabilities(): void {
+  const capabilityChanged = [...authoritativeSnapshotByPtyId.values()].some(
+    (authoritative) => authoritative
+  )
   authoritativeSnapshotByPtyId.clear()
   unknownCapabilityRetryAtByPtyId.clear()
   unknownCapabilityAttemptsByPtyId.clear()
   lastSynchronizedLivePtyIds = null
   earliestUnknownCapabilityRetryAtMs = Number.POSITIVE_INFINITY
   synchronizationGeneration += 1
+  if (capabilityChanged) {
+    publishCapabilityChange()
+  }
 }

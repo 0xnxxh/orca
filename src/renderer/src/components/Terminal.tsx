@@ -423,7 +423,9 @@ function Terminal(): React.JSX.Element | null {
         : [],
     [renderedActiveWorktreeId, tabsByWorktree]
   )
-  useTerminalProviderSnapshotCapability(workspaceSessionReady && hydrationSucceeded)
+  const terminalProviderSnapshotCapabilityRevision = useTerminalProviderSnapshotCapability(
+    workspaceSessionReady && hydrationSucceeded
+  )
 
   // Why: TabBar portals into the titlebar (target created by App.tsx) so tabs share the "Orca" title row.
   const titlebarTabsTarget = document.getElementById('titlebar-tabs')
@@ -1109,7 +1111,6 @@ function Terminal(): React.JSX.Element | null {
             reason: `exemptTabs=${forceParkedTabs.length} ${formatEvictionExemptRouteCounts(exemptRouteCounts)}`
           })
           recordRendererCrashBreadcrumb('terminal_force_park_freed_no_panes', {
-            worktreeId,
             exemptTabs: forceParkedTabs.length,
             ...exemptRouteCounts
           })
@@ -1180,6 +1181,7 @@ function Terminal(): React.JSX.Element | null {
     tabsByWorktree,
     terminalParkingEnabled,
     terminalParkingRevision,
+    terminalProviderSnapshotCapabilityRevision,
     terminalRetentionBudgetEnabled,
     terminalSshParkingEnabled,
     workspaceSurfaces

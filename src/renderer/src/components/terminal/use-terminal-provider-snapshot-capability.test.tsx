@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import {
@@ -99,6 +101,20 @@ describe('useTerminalProviderSnapshotCapability', () => {
     hook.unmount()
   })
 
+  it('preserves newline-bearing folder-workspace pty ids in the memo key', async () => {
+    const newlinePtyId = 'repo::folder\nname@@pty-1'
+    storeState.tabsByWorktree = {
+      'repo::folder\nname': [{ id: 'tab-1', ptyId: newlinePtyId }]
+    }
+    storeState.ptyIdsByTabId = { 'tab-1': [newlinePtyId] }
+    resolveCapabilities.mockResolvedValue([{ id: newlinePtyId, authoritative: true }])
+
+    const hook = renderHook(() => useTerminalProviderSnapshotCapability(true))
+
+    await waitFor(() => expect(resolveCapabilities).toHaveBeenCalledWith([newlinePtyId]))
+    hook.unmount()
+  })
+
   // Why per-map: every dep of the collect-key memo is individually
   // load-bearing, and exhaustive-deps is only a warn in this repo — a dropped
   // dep silently freezes the key for exactly that map's changes.
@@ -166,6 +182,7 @@ describe('useTerminalProviderSnapshotCapability', () => {
       .mockResolvedValueOnce([{ id: 'ssh:target@@pty-1', authoritative: null }])
       .mockResolvedValueOnce([{ id: 'ssh:target@@pty-1', authoritative: true }])
     const hook = renderHook(() => useTerminalProviderSnapshotCapability(true))
+    const initialRevision = hook.result.current
     await vi.advanceTimersByTimeAsync(0)
     expect(resolveCapabilities).toHaveBeenCalledOnce()
 
@@ -173,7 +190,21 @@ describe('useTerminalProviderSnapshotCapability', () => {
 
     expect(resolveCapabilities).toHaveBeenCalledTimes(2)
     expect(terminalProviderHasAuthoritativeSnapshot('ssh:target@@pty-1')).toBe(true)
+    expect(hook.result.current).toBeGreaterThan(initialRevision)
     hook.unmount()
+  })
+
+  // Why source-pinned: the hook test cannot prove the quiet Terminal parking effect consumes the external revision.
+  it('invalidates the Terminal parking pass when a capability verdict changes', () => {
+    const terminalSource = readFileSync(join(__dirname, '../Terminal.tsx'), 'utf8')
+    const parkingEffectStart = terminalSource.indexOf('// Worktree cold-park policy:')
+    const parkingEffectEnd = terminalSource.indexOf('// Why here: downloads', parkingEffectStart)
+
+    expect(parkingEffectStart).toBeGreaterThan(-1)
+    expect(parkingEffectEnd).toBeGreaterThan(parkingEffectStart)
+    expect(terminalSource.slice(parkingEffectStart, parkingEffectEnd)).toContain(
+      'terminalProviderSnapshotCapabilityRevision'
+    )
   })
 
   it('cancels an unknown-capability retry when the hook unmounts', async () => {
