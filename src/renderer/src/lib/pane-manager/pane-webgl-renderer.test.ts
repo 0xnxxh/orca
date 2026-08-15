@@ -4,6 +4,7 @@ import type { ManagedPaneInternal } from './pane-manager-types'
 import {
   attachWebgl,
   clearTerminalWebglAttachBackoff,
+  disposeWebgl,
   resetTerminalWebglSuggestion,
   resetWebglTextureAtlas
 } from './pane-webgl-renderer'
@@ -24,7 +25,7 @@ function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneIntern
       loadAddon: vi.fn(options.loadAddon)
     } as never,
     container: {} as never,
-    xtermContainer: {} as never,
+    xtermContainer: { dataset: {} } as never,
     linkTooltip: {} as never,
     terminalGpuAcceleration: 'on',
     gpuRenderingEnabled: true,
@@ -93,6 +94,16 @@ describe('terminal WebGL addon lifecycle', () => {
 
     expect(disposeSpy).toHaveBeenCalledTimes(1)
     expect(pane.webglAddon).toBeNull()
+  })
+
+  it('tracks the active renderer for WebGL padding compositing', () => {
+    const pane = createPane()
+
+    attachWebgl(pane)
+    expect(pane.xtermContainer.dataset.terminalRenderer).toBe('webgl')
+
+    disposeWebgl(pane)
+    expect(pane.xtermContainer.dataset.terminalRenderer).toBe('dom')
   })
 
   it('disposes the previous addon before attaching a replacement', () => {

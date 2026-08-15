@@ -89,6 +89,7 @@ export function disposeWebgl(
   options?: { refreshDimensions?: boolean }
 ): void {
   cancelPendingWebglRefresh(pane)
+  markPaneTerminalRenderer(pane, 'dom')
   if (!pane.webglAddon) {
     return
   }
@@ -260,6 +261,7 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
     })
     pane.terminal.loadAddon(addon)
     pane.webglAddon = addon
+    markPaneTerminalRenderer(pane, 'webgl')
     refreshTerminalAfterWebglAttach(pane)
   } catch (err) {
     if (pane.terminalGpuAcceleration === 'auto') {
@@ -276,5 +278,11 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
       /* ignore — a half-constructed addon may throw on dispose */
     }
     pane.webglAddon = null
+  }
+}
+
+function markPaneTerminalRenderer(pane: ManagedPaneInternal, renderer: 'dom' | 'webgl'): void {
+  if (pane.xtermContainer.dataset) {
+    pane.xtermContainer.dataset.terminalRenderer = renderer
   }
 }

@@ -44,6 +44,19 @@
   padding-left: var(--pane-padding-x, 4px);
 }
 
+/* WebGL paints the grid background once beyond the viewport background. Match
+   that layer in the padding bands so translucent terminals stay uniform. */
+.xterm-container[data-terminal-renderer='webgl'] .xterm::before {
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  border-color: var(--orca-terminal-pane-background, transparent);
+  border-style: solid;
+  border-width: var(--pane-padding-y, 4px) var(--pane-padding-x, 4px);
+}
+
 .pane-manager-root .xterm-viewport {
   /* Why: xterm/VS Code keep the scrollbar gutter stable. `auto` lets Linux
      DOM scrollbars appear/disappear, which can feed resize/reflow jitter. */
