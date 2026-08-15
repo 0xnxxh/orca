@@ -24,6 +24,10 @@ let suggestedRendererType: 'dom' | undefined
 type ReleasableWebglContext = {
   getExtension(name: 'WEBGL_lose_context'): WEBGL_lose_context | null
   isContextLost?: () => boolean
+  blendFuncSeparate?: (srcRgb: number, dstRgb: number, srcAlpha: number, dstAlpha: number) => void
+  readonly SRC_ALPHA: number
+  readonly ONE_MINUS_SRC_ALPHA: number
+  readonly ONE: number
 }
 
 type XtermWebglAddonInternals = {
@@ -260,6 +264,7 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
       disposeWebgl(pane, { refreshDimensions: true })
     })
     pane.terminal.loadAddon(addon)
+    normalizeWebglAlphaBlending(addon)
     pane.webglAddon = addon
     markPaneTerminalRenderer(pane, 'webgl')
     refreshTerminalAfterWebglAttach(pane)
@@ -279,6 +284,12 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
     }
     pane.webglAddon = null
   }
+}
+
+function normalizeWebglAlphaBlending(webglAddon: WebglAddon): void {
+  const gl = (webglAddon as unknown as XtermWebglAddonInternals)._renderer?._gl
+  // xterm's shared blendFunc squares destination alpha. Standard source-over keeps colored translucent backgrounds pixel-identical to CSS.
+  gl?.blendFuncSeparate?.(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 }
 
 function markPaneTerminalRenderer(pane: ManagedPaneInternal, renderer: 'dom' | 'webgl'): void {

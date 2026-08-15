@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import {
   disposePaneTerminalBackgroundObserver,
-  observePaneTerminalBackground,
-  squareCssColorAlpha
+  observePaneTerminalBackground
 } from './pane-background-compositing'
 
 const observers: { callback: MutationCallback; disconnect: ReturnType<typeof vi.fn> }[] = []
@@ -29,11 +28,6 @@ afterEach(() => {
 })
 
 describe('terminal padding background compositing', () => {
-  it('squares translucent alpha for the WebGL canvas layer', () => {
-    expect(squareCssColorAlpha('rgba(12, 34, 56, 0.5)')).toBe('rgba(12, 34, 56, 0.25)')
-    expect(squareCssColorAlpha('rgb(12, 34, 56)')).toBe('rgba(12, 34, 56, 1)')
-  })
-
   it('tracks live xterm background changes and releases the observer', () => {
     const terminalElement = { style: { backgroundColor: 'rgba(0, 0, 0, 0.5)' } }
     const setProperty = vi.fn()
@@ -49,16 +43,12 @@ describe('terminal padding background compositing', () => {
       '--orca-terminal-live-background',
       'rgba(0, 0, 0, 0.5)'
     )
-    expect(setProperty).toHaveBeenCalledWith(
-      '--orca-terminal-webgl-background',
-      'rgba(0, 0, 0, 0.25)'
-    )
 
     terminalElement.style.backgroundColor = 'rgb(255, 0, 0)'
     observers[0]?.callback([], observers[0] as unknown as MutationObserver)
     expect(setProperty).toHaveBeenLastCalledWith(
-      '--orca-terminal-webgl-background',
-      'rgba(255, 0, 0, 1)'
+      '--orca-terminal-live-background',
+      'rgb(255, 0, 0)'
     )
 
     disposePaneTerminalBackgroundObserver(pane)

@@ -36,7 +36,7 @@ describe('terminal container geometry', () => {
       /\.xterm-container \.xterm::before\s*{[^}]*border-color:\s*var\(--orca-terminal-live-background, transparent\);/s
     )
     expect(terminalCss).toMatch(
-      /\.xterm-container\[data-terminal-renderer='webgl'\] \.xterm::after\s*{[^}]*border-color:\s*var\(--orca-terminal-webgl-background, transparent\);/s
+      /\.xterm-container\[data-terminal-renderer='webgl'\] \.xterm::after\s*{[^}]*border-color:\s*var\(--orca-terminal-live-background, transparent\);/s
     )
   })
 })

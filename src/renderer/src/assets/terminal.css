@@ -61,10 +61,9 @@
   border-color: var(--orca-terminal-live-background, transparent);
 }
 
-/* WebGL blends the same translucent color into its transparent canvas, which
-   contributes alpha² beyond the DOM renderer's layers. */
+/* WebGL adds one source-over background layer beyond the DOM renderer. */
 .xterm-container[data-terminal-renderer='webgl'] .xterm::after {
-  border-color: var(--orca-terminal-webgl-background, transparent);
+  border-color: var(--orca-terminal-live-background, transparent);
 }
 
 .pane-manager-root .xterm-viewport {

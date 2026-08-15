@@ -12,7 +12,7 @@ import { notifyPaneFitSucceeded } from './pane-fit-webgl-attach-signal'
 import { safeFit } from './pane-fit'
 import { disposePane } from './pane-lifecycle'
 
-function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneInternal {
+function createPane(options: { loadAddon?: (addon: unknown) => void } = {}): ManagedPaneInternal {
   const leafId = '22222222-2222-4222-8222-222222222222' as never
   return {
     id: 1,
@@ -104,6 +104,25 @@ describe('terminal WebGL addon lifecycle', () => {
 
     disposeWebgl(pane)
     expect(pane.xtermContainer.dataset.terminalRenderer).toBe('dom')
+  })
+
+  it('uses source-over alpha blending for colored translucent backgrounds', () => {
+    const blendFuncSeparate = vi.fn()
+    const gl = {
+      SRC_ALPHA: 1,
+      ONE_MINUS_SRC_ALPHA: 2,
+      ONE: 3,
+      blendFuncSeparate
+    }
+    const pane = createPane({
+      loadAddon: (addon) => {
+        ;(addon as { _renderer: { _gl: typeof gl } })._renderer = { _gl: gl }
+      }
+    })
+
+    attachWebgl(pane)
+
+    expect(blendFuncSeparate).toHaveBeenCalledWith(1, 2, 3, 2)
   })
 
   it('disposes the previous addon before attaching a replacement', () => {
