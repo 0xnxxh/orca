@@ -43,7 +43,8 @@ vi.mock('node:fs', async (importOriginal) => {
 })
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-const { getMacDaemonTccAttributionHealth } = await import('./daemon-health')
+const { getMacDaemonTccAttributionHealth, isDaemonStaleForCurrentBundle } =
+  await import('./daemon-health')
 
 describe('macOS daemon TCC attribution main-thread cost', () => {
   let dir: string
@@ -89,6 +90,43 @@ describe('macOS daemon TCC attribution main-thread cost', () => {
       })
     )
   }
+
+  it('deduplicates bundle-staleness identity inspection and invalidates by generation', async () => {
+    writePidRecord('1.2.2')
+
+    await expect(
+      Promise.all([
+        isDaemonStaleForCurrentBundle(dir, socketPath, tokenPath, '1.2.3'),
+        isDaemonStaleForCurrentBundle(dir, socketPath, tokenPath, '1.2.3')
+      ])
+    ).resolves.toEqual([true, true])
+    await expect(isDaemonStaleForCurrentBundle(dir, socketPath, tokenPath, '1.2.3')).resolves.toBe(
+      true
+    )
+    expect(execFileMock).toHaveBeenCalledTimes(1)
+
+    writePidRecord('1.2.3')
+    await expect(isDaemonStaleForCurrentBundle(dir, socketPath, tokenPath, '1.2.3')).resolves.toBe(
+      false
+    )
+    expect(execFileMock).toHaveBeenCalledTimes(2)
+    expect(execFileSyncMock).not.toHaveBeenCalled()
+  })
+
+  it('retries an indeterminate bundle-staleness identity inspection', async () => {
+    writePidRecord('1.2.2')
+    psError.value = new Error('ps unavailable')
+    await expect(isDaemonStaleForCurrentBundle(dir, socketPath, tokenPath, '1.2.3')).resolves.toBe(
+      false
+    )
+
+    psError.value = null
+    await expect(isDaemonStaleForCurrentBundle(dir, socketPath, tokenPath, '1.2.3')).resolves.toBe(
+      true
+    )
+    expect(execFileMock).toHaveBeenCalledTimes(2)
+    expect(execFileSyncMock).not.toHaveBeenCalled()
+  })
 
   it('deduplicates identity inspection by daemon generation without a synchronous spawn', async () => {
     writePidRecord('1.2.2')

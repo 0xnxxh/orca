@@ -671,6 +671,11 @@ async function readVerifiedDaemonPid(
   return parsedPid
 }
 
+let cachedDaemonBundleStaleness: {
+  key: string
+  pending: Promise<boolean | null>
+} | null = null
+
 export async function isDaemonStaleForCurrentBundle(
   runtimeDir: string,
   socketPath: string,
@@ -678,19 +683,56 @@ export async function isDaemonStaleForCurrentBundle(
   currentAppVersion: string,
   protocolVersion = PROTOCOL_VERSION
 ): Promise<boolean> {
-  const parsedPid = await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath, protocolVersion)
-  if (!parsedPid) {
-    return false
+  let cacheKey: string | null = null
+  try {
+    cacheKey = JSON.stringify([
+      runtimeDir,
+      socketPath,
+      tokenPath,
+      currentAppVersion,
+      protocolVersion,
+      readFileSync(getDaemonPidPath(runtimeDir, protocolVersion), 'utf8')
+    ])
+  } catch {
+    // Retry the verified read below so a transient PID-file race does not become sticky.
   }
 
-  if (parsedPid.appVersion !== null) {
-    return parsedPid.appVersion !== currentAppVersion
+  if (cacheKey && cachedDaemonBundleStaleness?.key === cacheKey) {
+    return (await cachedDaemonBundleStaleness.pending) ?? false
   }
 
-  // Why: older packaged daemons do not carry a reliable build-generation
-  // marker. Replacing them once prevents archive-preserved mtimes from
-  // reusing stale native modules across the first metadata-aware upgrade.
-  return true
+  const pending = (async (): Promise<boolean | null> => {
+    const parsedPid = await readVerifiedDaemonPid(
+      runtimeDir,
+      socketPath,
+      tokenPath,
+      protocolVersion
+    )
+    if (!parsedPid) {
+      return null
+    }
+
+    if (parsedPid.appVersion !== null) {
+      return parsedPid.appVersion !== currentAppVersion
+    }
+
+    // Why: older packaged daemons do not carry a reliable build-generation
+    // marker. Replacing them once prevents archive-preserved mtimes from
+    // reusing stale native modules across the first metadata-aware upgrade.
+    return true
+  })()
+  if (cacheKey) {
+    cachedDaemonBundleStaleness = { key: cacheKey, pending }
+  }
+  const stale = await pending
+  if (
+    stale === null &&
+    cachedDaemonBundleStaleness?.key === cacheKey &&
+    cachedDaemonBundleStaleness.pending === pending
+  ) {
+    cachedDaemonBundleStaleness = null
+  }
+  return stale ?? false
 }
 
 // 'severed': macOS can no longer resolve the daemon's TCC responsible process, so
