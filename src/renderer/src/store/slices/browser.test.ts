@@ -868,6 +868,10 @@ describe('createBrowserSlice runtime guard', () => {
       .getState()
       .importCookiesFromBrowser('windows-profile', 'chrome', 'Default')
     await vi.waitFor(() => expect(resolveImport).toBeDefined())
+    // Why (STA-4300): this client declares it can report partitionSkippedCookies, and the host
+    // refuses to skip a cookie for a client that cannot. Dropping the flag makes the host treat a
+    // current client as legacy and fail imports it should serve, so keep this pinned even if the
+    // host-switching assertions around it are rewritten.
     expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
       selector: 'windows-2',
       method: 'browser.profileImportFromBrowser',
