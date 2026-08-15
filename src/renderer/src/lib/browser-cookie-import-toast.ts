@@ -47,7 +47,7 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
                 '{{value0}} cookies could not be decrypted because the system keyring was unavailable. Unlock your login keyring (or install a Secret Service provider such as gnome-keyring) and import again.',
                 { value0: warning.failedCookies }
               )
-        default:
+        case 'unknown':
           return translate(
             'auto.lib.browser.cookie.import.toast.undecryptableUnknown',
             '{{value0}} cookies could not be decrypted and were skipped. Close the source browser completely and try the import again.',
