@@ -125,6 +125,45 @@ describe('crash breadcrumb store', () => {
     vi.useRealTimers()
   })
 
+  it('expires the coalescing window after a backward wall-clock step', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-20T12:00:00.000Z'))
+    const hit = (): { suppressedSinceLast: number } | undefined =>
+      recordCoalescedCrashBreadcrumb({
+        name: 'agent_state_changed',
+        coalesceKey: 'agent:claude:working',
+        minIntervalMs: 30_000
+      })
+
+    hit()
+    vi.advanceTimersByTime(10_000)
+    expect(hit()).toBeUndefined()
+    vi.setSystemTime(new Date('2025-05-20T12:00:00.000Z'))
+    vi.advanceTimersByTime(20_000)
+
+    expect(hit()).toEqual({ suppressedSinceLast: 1 })
+    expect(getCrashBreadcrumbSnapshot()).toHaveLength(2)
+  })
+
+  it('does not collapse the coalescing window after a forward wall-clock step', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-20T12:00:00.000Z'))
+    const hit = (): { suppressedSinceLast: number } | undefined =>
+      recordCoalescedCrashBreadcrumb({
+        name: 'agent_state_changed',
+        coalesceKey: 'agent:claude:working',
+        minIntervalMs: 30_000
+      })
+
+    hit()
+    vi.advanceTimersByTime(10_000)
+    vi.setSystemTime(new Date('2027-05-20T12:00:00.000Z'))
+
+    expect(hit()).toBeUndefined()
+    vi.advanceTimersByTime(20_000)
+    expect(hit()).toEqual({ suppressedSinceLast: 1 })
+  })
+
   it('folds data-less repeats into the emitted breadcrumb', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-20T12:00:00.000Z'))

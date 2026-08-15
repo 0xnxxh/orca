@@ -13,10 +13,13 @@ const MAX_RETAINED_BREADCRUMBS = 4
 // Bound the coalesce map the same way ProcessGoneDedupe bounds its key map.
 const MAX_COALESCE_KEYS = 128
 
+// Why: wall-clock corrections must not stretch or collapse suppression windows.
+const monotonicNow = (): number => performance.now()
+
 type CoalescedBreadcrumbState = {
   /** Name needed to materialize unresolved repeats if the owned crumb is orphaned. */
   name: string
-  recordedAt: number
+  windowStartedAtMs: number
   suppressed: number
   /** Count the crumb was emitted claiming (the previous window's repeats). */
   carried: number
@@ -89,9 +92,9 @@ export function recordCoalescedCrashBreadcrumb({
   coalesceKey: string
   minIntervalMs: number
 }): { suppressedSinceLast: number } | undefined {
-  const now = Date.now()
+  const now = monotonicNow()
   const previous = coalescedBreadcrumbs.get(coalesceKey)
-  if (previous && now - previous.recordedAt < minIntervalMs) {
+  if (previous && now - previous.windowStartedAtMs < minIntervalMs) {
     previous.suppressed += 1
     // Stash the newest payload for the entry this key already owns: the burst
     // still costs exactly one ring slot, but the retained crumb ends up
@@ -102,11 +105,7 @@ export function recordCoalescedCrashBreadcrumb({
     // on every suppressed hit of a 1459/min crash loop; the snapshot resolves it
     // once instead, on the rare path that actually reads breadcrumbs.
     previous.pending = data
-    // Re-anchor recency without touching recordedAt: a suppressed key is the
-    // hottest key in the map, but only the emit path below moves position, so
-    // a continuously-suppressed key would keep its original slot and be first
-    // out under high-cardinality churn. recordedAt stays put so the suppression
-    // window still expires on schedule instead of renewing on every hit.
+    // A hot key stays LRU-recent without renewing its fixed suppression window.
     coalescedBreadcrumbs.delete(coalesceKey)
     coalescedBreadcrumbs.set(coalesceKey, previous)
     return undefined
@@ -117,7 +116,7 @@ export function recordCoalescedCrashBreadcrumb({
   // recency so only genuinely idle keys are evicted. Resolve first: an expiring
   // key is about to lose its only handle on the ring entry it owns.
   for (const [key, entry] of coalescedBreadcrumbs) {
-    if (now - entry.recordedAt >= minIntervalMs) {
+    if (now - entry.windowStartedAtMs >= minIntervalMs) {
       // Why the key check: this key is about to emit a fresh crumb carrying
       // `suppressedSinceLast`, so folding the same events into its old slot
       // too would report one burst twice.
@@ -134,7 +133,7 @@ export function recordCoalescedCrashBreadcrumb({
   const suppressedSinceLast = previous ? previous.suppressed - previous.resolved : 0
   const state: CoalescedBreadcrumbState = {
     name,
-    recordedAt: now,
+    windowStartedAtMs: now,
     suppressed: 0,
     carried: suppressedSinceLast,
     resolved: 0
