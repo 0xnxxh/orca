@@ -5,6 +5,7 @@ import {
 } from '../shared/ephemeral-vm-recipe-runner'
 import {
   armEphemeralVmDestroyDeadline,
+  EPHEMERAL_VM_DESTROY_DEADLINE_MS,
   getEphemeralVmDestroyDeadlineError,
   getEphemeralVmDestroyDeadlineMs
 } from '../shared/ephemeral-vm-destroy-deadline'
@@ -13,9 +14,8 @@ export async function runEphemeralVmDoctorCleanup(
   args: EphemeralVmRecipeCleanupArgs
 ): Promise<EphemeralVmRecipeCleanupResult> {
   const deadlineController = new AbortController()
-  const disarmDeadline = armEphemeralVmDestroyDeadline(deadlineController, {
-    keepProcessAlive: true
-  })
+  const disarmDeadline = armEphemeralVmDestroyDeadline(deadlineController)
+  const keepAlive = setInterval(() => undefined, EPHEMERAL_VM_DESTROY_DEADLINE_MS)
   try {
     const cleanup = await runEphemeralVmRecipeCleanup({
       ...args,
@@ -30,6 +30,7 @@ export async function runEphemeralVmDoctorCleanup(
           error: getEphemeralVmDestroyDeadlineError(deadlineMs, cleanup.terminationFailed)
         }
   } finally {
+    clearInterval(keepAlive)
     disarmDeadline()
   }
 }

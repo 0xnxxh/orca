@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -225,6 +225,85 @@ test('vm doctor waits for a closed destroy shell process group', () => {
     if (isProcessAlive(descendantPid)) {
       process.kill(descendantPid, 'SIGKILL')
     }
+    rmSync(repoPath, { recursive: true, force: true })
+  }
+})
+
+test('vm doctor reports its deadline after the provider tree stops', () => {
+  test.skip(process.platform === 'win32', 'POSIX process-group ownership')
+  const repoPath = mkdtempSync(path.join(tmpdir(), 'orca-vm-doctor-deadline-'))
+  const startPath = path.join(repoPath, 'start.js')
+  const destroyPath = path.join(repoPath, 'destroy.js')
+  const preloadPath = path.join(repoPath, 'short-deadline.cjs')
+  try {
+    const pairingCode = encodePairingOffer({
+      v: PAIRING_OFFER_VERSION,
+      endpoint: 'ws://sandbox.example.com:6767',
+      deviceToken: 'token',
+      publicKeyB64: 'public-key'
+    })
+    writeFileSync(
+      startPath,
+      `console.log(${JSON.stringify(JSON.stringify({ schemaVersion: 1, pairingCode, projectRoot: '/workspace/repo' }))})`
+    )
+    writeFileSync(destroyPath, "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)")
+    writeFileSync(
+      preloadPath,
+      [
+        'const realSetTimeout = global.setTimeout',
+        'const realKill = process.kill.bind(process)',
+        'let forcedAt = 0',
+        'global.setTimeout = (callback, delay, ...args) =>',
+        '  realSetTimeout(callback, delay === 295000 ? 50 : delay, ...args)',
+        'process.kill = (pid, signal) => {',
+        "  if (pid < 0 && signal === 'SIGKILL') forcedAt = Date.now()",
+        '  if (pid < 0 && signal === 0 && forcedAt && Date.now() - forcedAt < 200) return true',
+        '  return realKill(pid, signal)',
+        '}'
+      ].join('\n')
+    )
+    writeFileSync(
+      path.join(repoPath, 'orca.yaml'),
+      [
+        'environmentRecipes:',
+        '  - id: cloud-sandbox',
+        '    name: Cloud Sandbox',
+        `    create: ${JSON.stringify(`${process.execPath} ${startPath}`)}`,
+        `    destroy: ${JSON.stringify(`${process.execPath} ${destroyPath}`)}`
+      ].join('\n')
+    )
+
+    const execution = spawnSync(
+      process.execPath,
+      [
+        '--require',
+        preloadPath,
+        path.join(process.cwd(), 'out', 'cli', 'index.js'),
+        'vm',
+        'recipe',
+        'doctor',
+        'cloud-sandbox',
+        '--repo-path',
+        repoPath,
+        '--provision',
+        '--json'
+      ],
+      { encoding: 'utf8', timeout: 5_000 }
+    )
+    const result = JSON.parse(execution.stdout) as {
+      ok: boolean
+      checks: { id: string; status: string; message: string }[]
+    }
+    expect(execution.status).toBe(1)
+    expect(result.ok).toBe(false)
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        id: 'recipe.destroy.run',
+        status: 'fail',
+        message: expect.stringContaining('5-minute deadline')
+      })
+    )
+  } finally {
     rmSync(repoPath, { recursive: true, force: true })
   }
 })

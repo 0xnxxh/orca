@@ -8,10 +8,7 @@ type DestroyDeadlineReason = {
   deadlineMs: number
 }
 
-export function armEphemeralVmDestroyDeadline(
-  controller: AbortController,
-  options?: { keepProcessAlive?: boolean }
-): () => void {
+export function armEphemeralVmDestroyDeadline(controller: AbortController): () => void {
   const processDeadlineMs =
     EPHEMERAL_VM_DESTROY_DEADLINE_MS - RECIPE_PROCESS_TREE_TERMINATION_TIMEOUT_MS
   const timer = setTimeout(() => {
@@ -21,9 +18,7 @@ export function armEphemeralVmDestroyDeadline(
       deadlineMs: EPHEMERAL_VM_DESTROY_DEADLINE_MS
     } satisfies DestroyDeadlineReason)
   }, processDeadlineMs)
-  if (!options?.keepProcessAlive) {
-    timer.unref()
-  }
+  timer.unref()
   return () => clearTimeout(timer)
 }
 
