@@ -92,15 +92,14 @@ export function useSidebarWorktreeSortOrder(args: {
 
   // Why a latching ref: a live signal makes Smart authoritative for the session, even after that activity ends.
   const sessionHasHadLiveSmartSignal = useRef(false)
-  // Why a ref alongside the memo: telemetry effects need the last attention map without re-reading store state.
-  const lastAttentionByWorktreeRef = useRef<Map<string, WorktreeAttention> | null>(null)
 
-  const recomputedSortedIds = useMemo(() => {
+  const recomputedSort = useMemo(() => {
     const state = useAppStore.getState()
     const nonArchivedWorktrees = getAllWorktreesFromState(state).filter(
       (worktree) => !worktree.isArchived
     )
     const now = Date.now()
+    let detectedLiveSmartSignal = false
 
     // Why cold-start detection: agent-status hydrates async, so the warm comparator would collapse all to Class 4; keep the persisted order until a live signal appears.
     if (sortBy === 'smart' && !sessionHasHadLiveSmartSignal.current) {
@@ -112,13 +111,16 @@ export function useSidebarWorktreeSortOrder(args: {
         hasAnyLivePty ||
         hasFreshAttributedAgentStatus(state.agentStatusByPaneKey, now, state.tabsByWorktree)
       ) {
-        sessionHasHadLiveSmartSignal.current = true
+        detectedLiveSmartSignal = true
       } else {
         nonArchivedWorktrees.sort(
           (a, b) => b.sortOrder - a.sortOrder || compareWorktreeSortLabel(a, b)
         )
-        lastAttentionByWorktreeRef.current = null
-        return nonArchivedWorktrees.map((w) => w.id)
+        return {
+          sortedIds: nonArchivedWorktrees.map((w) => w.id),
+          attentionByWorktree: null,
+          detectedLiveSmartSignal: false
+        }
       }
     }
 
@@ -136,14 +138,24 @@ export function useSidebarWorktreeSortOrder(args: {
             state.terminalLayoutsByTabId
           )
         : new Map<string, WorktreeAttention>()
-    lastAttentionByWorktreeRef.current = sortBy === 'smart' ? attentionByWorktree : null
     nonArchivedWorktrees.sort(buildWorktreeComparator(sortBy, repoMap, now, attentionByWorktree))
-    return nonArchivedWorktrees.map((w) => w.id)
+    return {
+      sortedIds: nonArchivedWorktrees.map((w) => w.id),
+      attentionByWorktree: sortBy === 'smart' ? attentionByWorktree : null,
+      detectedLiveSmartSignal
+    }
     // debouncedSortEpoch is an intentional trigger not read in the memo; its change (debounced) signals a recompute.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSortEpoch, repoMap, sortBy])
   // Why: stable ID order prevents rank-only refreshes from echoing an unchanged snapshot.
-  const sortedIds = useReusedArrayIdentity(recomputedSortedIds)
+  const sortedIds = useReusedArrayIdentity(recomputedSort.sortedIds)
+
+  // Why after commit: a discarded render must not latch Smart onto a live signal that never committed.
+  useEffect(() => {
+    if (recomputedSort.detectedLiveSmartSignal) {
+      sessionHasHadLiveSmartSignal.current = true
+    }
+  }, [recomputedSort.detectedLiveSmartSignal])
 
   // Why a ref of prior class: fire class_1_promotion only on transitions into Class 1, not every recompute that stays there.
   const prevClassByWorktreeIdRef = useRef<Map<string, SmartClass>>(new Map())
@@ -151,7 +163,7 @@ export function useSidebarWorktreeSortOrder(args: {
   const hasObservedSmartOnceRef = useRef<boolean>(false)
 
   useEffect(() => {
-    const attention = lastAttentionByWorktreeRef.current
+    const attention = recomputedSort.attentionByWorktree
     if (sortBy !== 'smart' || !attention) {
       // Why reset: leaving Smart drops the prior-class map (and first-observation gate) so re-entry doesn't fire stale promotions.
       prevClassByWorktreeIdRef.current = new Map()
@@ -169,7 +181,7 @@ export function useSidebarWorktreeSortOrder(args: {
     }
     prevClassByWorktreeIdRef.current = next
     hasObservedSmartOnceRef.current = true
-  }, [sortBy, recomputedSortedIds])
+  }, [sortBy, recomputedSort.attentionByWorktree, recomputedSort.sortedIds])
 
   // Why retry on recomputation: Smart may activate before attention hydrates; fire once, then stay quiet until the user leaves Smart.
   const hasTrackedSmartDistributionRef = useRef(false)
@@ -178,13 +190,13 @@ export function useSidebarWorktreeSortOrder(args: {
       hasTrackedSmartDistributionRef.current = false
       return
     }
-    const attention = lastAttentionByWorktreeRef.current
+    const attention = recomputedSort.attentionByWorktree
     if (hasTrackedSmartDistributionRef.current || !attention || attention.size === 0) {
       return
     }
     trackSmartClassDistribution(attention)
     hasTrackedSmartDistributionRef.current = true
-  }, [sortBy, recomputedSortedIds])
+  }, [sortBy, recomputedSort.attentionByWorktree, recomputedSort.sortedIds])
 
   // Why fire on the transition: switching away from Smart is the signal; compare via ref so a round-trip doesn't double-fire.
   const prevSortByRef = useRef(sortBy)
