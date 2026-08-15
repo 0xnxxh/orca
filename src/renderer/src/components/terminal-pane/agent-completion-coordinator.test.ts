@@ -1373,6 +1373,7 @@ describe('agent completion coordinator', () => {
         state: 'working',
         prompt: 'review the PR',
         agentType: 'claude',
+        lastAssistantMessage: 'Review complete.',
         stateStartedAt: 2_000,
         turnCompletedAt: 2_500
       })

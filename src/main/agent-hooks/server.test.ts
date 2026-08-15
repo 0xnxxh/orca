@@ -8920,7 +8920,7 @@ describe('AgentHookServer ingestRemote', () => {
 })
 
 describe('AgentHookServer ingestTerminalStatus', () => {
-  it('preserves a hook turn stamp across an equivalent OSC repaint', () => {
+  it('preserves a hook turn stamp when an OSC repaint omits hook-only completion text', () => {
     const server = new AgentHookServer()
     const listener = vi.fn()
     server.setListener(listener)
@@ -8928,10 +8928,19 @@ describe('AgentHookServer ingestTerminalStatus', () => {
     server.ingestRemote(
       {
         paneKey: PANE,
+        payload: { state: 'working', prompt: 'review the PR', agentType: 'claude' }
+      },
+      'conn-1'
+    )
+    listener.mockClear()
+    server.ingestRemote(
+      {
+        paneKey: PANE,
         payload: {
           state: 'working',
           prompt: 'review the PR',
           agentType: 'claude',
+          lastAssistantMessage: 'Review complete.',
           turnCompletedAt: 1_700_000_005_000
         }
       },
@@ -8946,8 +8955,20 @@ describe('AgentHookServer ingestTerminalStatus', () => {
     expect(listener).toHaveBeenCalledOnce()
     expect(server.getStatusSnapshot()[0]).toMatchObject({
       state: 'working',
+      lastAssistantMessage: 'Review complete.',
       turnCompletedAt: 1_700_000_005_000
     })
+
+    server.ingestTerminalStatus({
+      paneKey: PANE,
+      connectionId: 'conn-1',
+      payload: { state: 'done', prompt: 'review the PR', agentType: 'claude' }
+    })
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ state: 'done' }) })
+    )
   })
 
   it('accepts an identical-prompt hook boundary after a stamped turn', () => {
