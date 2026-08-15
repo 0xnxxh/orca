@@ -220,6 +220,10 @@ describe('crash-reporting shared helpers', () => {
     expect(formatCrashReportText(report({ reason: 'launch-failed', exitCode: 18 }))).toContain(
       'Exit code: 18\n'
     )
+    // A clean exit(0) must not grow an "(exit status 0)" suffix.
+    expect(formatCrashReportText(report({ reason: 'crashed', exitCode: 0 }))).toContain(
+      'Exit code: 0\n'
+    )
     expect(formatCrashReportText(report({}))).toContain('Exit code: unknown')
   })
 
