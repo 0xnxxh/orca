@@ -29,6 +29,26 @@ function submission(index: number) {
 }
 
 describe('structured agent session reducer', () => {
+  it('does not offer older history after receiving a full snapshot', () => {
+    const restored = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, {
+      type: 'event',
+      event: {
+        type: 'snapshot',
+        sessionId: 'session-a',
+        fence: 1,
+        snapshot: {
+          sessionId: 'session-a',
+          cursor: { epoch: 'epoch-a', sequence: 84 },
+          items: Array.from({ length: 84 }, (_, index) => item(`item-${index}`, index + 1)),
+          submissions: []
+        }
+      }
+    })
+
+    expect(restored.items).toHaveLength(84)
+    expect(restored.hasOlder).toBe(false)
+  })
+
   it('does not let a stale focus refresh replace newer streamed state', () => {
     const streamed = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, {
       type: 'event',

@@ -54,7 +54,8 @@ function replaceSnapshot(
     fence,
     items: [...snapshot.items].sort((left, right) => left.sequence - right.sequence),
     submissions: snapshot.submissions,
-    hasOlder: snapshot.items.length >= 40,
+    // Snapshots contain the full reduced journal, unlike bounded history pages.
+    hasOlder: false,
     status: 'ready',
     handoff: handoff ?? null
   }
