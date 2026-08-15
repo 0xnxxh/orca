@@ -83,9 +83,12 @@ describe('PR test LoC summary', () => {
       pullNumber: 9,
       token: 'test-token',
       fetchImpl: async (url) => {
-        const page = pages[url]
+        // Why String(): fetchImpl defaults to global fetch, so `url` is typed
+        // RequestInfo | URL. Only the string form is a usable lookup key here.
+        const requestedUrl = String(url)
+        const page = pages[requestedUrl]
         if (page == null) {
-          throw new Error(`unexpected url ${url}`)
+          throw new Error(`unexpected url ${requestedUrl}`)
         }
         return {
           ok: true,
