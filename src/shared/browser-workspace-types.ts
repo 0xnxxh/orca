@@ -155,6 +155,7 @@ export type BrowserCookieImportSummary = {
         // here. Without this an undecryptable profile is reported as a successful empty import.
         code: 'cookies-undecryptable'
         failedCookies: number
+        otherFailedCookies?: number
         reason: 'app-bound-encryption' | 'linux-keyring-unavailable' | 'unknown'
       }
 }

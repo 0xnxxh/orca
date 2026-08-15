@@ -823,14 +823,13 @@ function chromiumTimestampToUnix(chromiumTs: bigint | number | string): number {
 
 // Why: each platform protects the Chromium key differently: macOS/Linux PBKDF2→AES-128-CBC, Windows DPAPI→AES-256-GCM.
 
-type EncryptionKeyResult = {
-  key: Buffer
-  mode: 'aes-128-cbc' | 'aes-256-gcm'
-  // Why: Linux v10 cookies use "peanuts" and v11 the keyring password; both keys are needed to decrypt the full set.
-  fallbackKey?: Buffer
-  // Why: no keyring means no v11 key at all, so v11 rows are undecryptable rather than merely wrong.
-  keyringUnavailable?: boolean
-}
+type EncryptionKeyResult =
+  | {
+      mode: 'aes-128-cbc'
+      keysByVersion: Partial<Record<'v10' | 'v11', Buffer>>
+      keyringUnavailable?: boolean
+    }
+  | { mode: 'aes-256-gcm'; key: Buffer }
 
 export type ChromiumCookieColumnInfo = {
   name: string
@@ -973,8 +972,10 @@ function getMacEncryptionKey(
       { encoding: 'utf-8', timeout: 30_000 }
     ).trim()
     return {
-      key: pbkdf2Sync(raw, PBKDF2_SALT, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, 'sha1'),
-      mode: 'aes-128-cbc'
+      mode: 'aes-128-cbc',
+      keysByVersion: {
+        v10: pbkdf2Sync(raw, PBKDF2_SALT, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, 'sha1')
+      }
     }
   } catch {
     return null
@@ -985,7 +986,8 @@ function getLinuxEncryptionKey(
   keychainService: string,
   keychainAccount: string
 ): EncryptionKeyResult | null {
-  // Why: v10 cookies use hardcoded "peanuts", v11 the keyring password; derive both so decrypt can pick by version prefix.
+  // Chromium uses v11 only with OS key storage; without it, Linux writes v10 with hardcoded
+  // "peanuts". Keep eligibility explicit because CBC cannot authenticate a wrong-key result.
   const v10Key = pbkdf2Sync('peanuts', PBKDF2_SALT, 1, PBKDF2_KEY_LENGTH, 'sha1')
 
   let keyringPassword = ''
@@ -1009,15 +1011,16 @@ function getLinuxEncryptionKey(
     }
   }
 
-  // Why: deriving a v11 key from an empty password yields a key that decrypts nothing, so every
-  // v11 row failed indistinguishably from a corrupt one. Hand back only the v10 key instead and
-  // let the caller report the keyring as the cause.
   if (!keyringPassword) {
-    return { key: v10Key, mode: 'aes-128-cbc', keyringUnavailable: true }
+    return {
+      mode: 'aes-128-cbc',
+      keysByVersion: { v10: v10Key },
+      keyringUnavailable: true
+    }
   }
 
   const v11Key = pbkdf2Sync(keyringPassword, PBKDF2_SALT, 1, PBKDF2_KEY_LENGTH, 'sha1')
-  return { key: v11Key, mode: 'aes-128-cbc', fallbackKey: v10Key }
+  return { mode: 'aes-128-cbc', keysByVersion: { v10: v10Key, v11: v11Key } }
 }
 
 function getWindowsEncryptionKey(browser: DetectedBrowser): EncryptionKeyResult | null {
@@ -1104,13 +1107,12 @@ function cookieEncryptionVersion(encryptedBuffer: Buffer): string | null {
 }
 
 // Why: Chrome/Edge 140+ on Windows prefix every cookie with `v20` (app-bound encryption), which
-// only the writing browser can unwrap. The prefix gate below is a FORMAT check, so v20 passes it
-// and fails inside AES with the v10 key — indistinguishable from corruption without this.
+// only the writing browser can unwrap. Classify it before decrypt so it is not folded into corruption.
 export function isAppBoundEncryptedCookie(encryptedBuffer: Buffer): boolean {
   return cookieEncryptionVersion(encryptedBuffer) === 'v20'
 }
 
-// Why: every caller must report the same cause, and the most specific one wins.
+// Why: a named cause must carry only its exact count; tied causes fall back to unknown.
 function buildUndecryptableWarning(counts: {
   decryptFailed: number
   appBoundFailed: number
@@ -1119,13 +1121,26 @@ function buildUndecryptableWarning(counts: {
   if (counts.decryptFailed === 0) {
     return undefined
   }
-  const reason =
-    counts.appBoundFailed > 0
-      ? 'app-bound-encryption'
-      : counts.keyringUnavailableFailed > 0
-        ? 'linux-keyring-unavailable'
-        : 'unknown'
-  return { code: 'cookies-undecryptable', failedCookies: counts.decryptFailed, reason }
+  const unknownFailed =
+    counts.decryptFailed - counts.appBoundFailed - counts.keyringUnavailableFailed
+  const rankedCauses = [
+    { reason: 'app-bound-encryption' as const, count: counts.appBoundFailed },
+    { reason: 'linux-keyring-unavailable' as const, count: counts.keyringUnavailableFailed },
+    { reason: 'unknown' as const, count: unknownFailed }
+  ].sort((left, right) => right.count - left.count)
+  const [dominant, runnerUp] = rankedCauses
+
+  if (dominant.reason === 'unknown' || dominant.count === runnerUp.count) {
+    return { code: 'cookies-undecryptable', failedCookies: counts.decryptFailed, reason: 'unknown' }
+  }
+
+  const otherFailedCookies = counts.decryptFailed - dominant.count
+  return {
+    code: 'cookies-undecryptable',
+    failedCookies: dominant.count,
+    reason: dominant.reason,
+    ...(otherFailedCookies > 0 ? { otherFailedCookies } : {})
+  }
 }
 
 function decryptCookieValueRaw(
@@ -1145,29 +1160,25 @@ function decryptCookieValueRaw(
   }
 
   // AES-128-CBC (macOS and Linux)
+  const key = version === 'v10' || version === 'v11' ? keyResult.keysByVersion[version] : undefined
+  if (!key) {
+    return null
+  }
+
   const ciphertext = encryptedBuffer.subarray(3)
   if (!ciphertext.length) {
-    return Buffer.alloc(0)
+    return null
   }
 
-  // Why: Linux v10 uses the "peanuts" key, v11 the keyring key; try primary then fallback (macOS uses one key).
-  const keysToTry =
-    version === 'v10' && keyResult.fallbackKey
-      ? [keyResult.fallbackKey, keyResult.key]
-      : [keyResult.key, ...(keyResult.fallbackKey ? [keyResult.fallbackKey] : [])]
-
-  for (const key of keysToTry) {
-    try {
-      const iv = Buffer.alloc(16, ' ')
-      const decipher = createDecipheriv('aes-128-cbc', key, iv)
-      decipher.setAutoPadding(true)
-      const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()])
-      return stripHmac(decrypted)
-    } catch {
-      continue
-    }
+  try {
+    const iv = Buffer.alloc(16, ' ')
+    const decipher = createDecipheriv('aes-128-cbc', key, iv)
+    decipher.setAutoPadding(true)
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+    return stripHmac(decrypted)
+  } catch {
+    return null
   }
-  return null
 }
 
 function decryptAes256Gcm(payload: Buffer, key: Buffer): Buffer | null {
@@ -1744,15 +1755,24 @@ export async function importCookiesFromBrowser(
 
       let decryptedValue: Buffer
       if (encBuf && encBuf.length > 0) {
-        const raw = sourceKey ? decryptCookieValueRaw(encBuf, sourceKey) : null
+        const version = cookieEncryptionVersion(encBuf)
+        const appBoundIneligible = version === 'v20'
+        const keyringIneligible =
+          version === 'v11' &&
+          sourceKey?.mode === 'aes-128-cbc' &&
+          sourceKey.keyringUnavailable === true
+        const raw =
+          sourceKey && !appBoundIneligible && !keyringIneligible
+            ? decryptCookieValueRaw(encBuf, sourceKey)
+            : null
         if (!raw) {
           // Why: once decrypt returns null every failure looks identical, so attribute the cause
           // here while the version prefix is still in hand. Without this an undecryptable profile
           // is indistinguishable from an empty one and reports success.
           decryptFailed++
-          if (isAppBoundEncryptedCookie(encBuf)) {
+          if (appBoundIneligible) {
             appBoundFailed++
-          } else if (sourceKey?.keyringUnavailable && cookieEncryptionVersion(encBuf) === 'v11') {
+          } else if (keyringIneligible) {
             keyringUnavailableFailed++
           }
           skipped++

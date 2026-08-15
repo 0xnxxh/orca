@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as NodeCrypto from 'node:crypto'
 import type * as NodeFs from 'node:fs'
 
 const {
   appGetPathMock,
+  createDecipherivMock,
   execFileSyncMock,
   sessionFromPartitionMock,
   dialogShowOpenDialogMock,
@@ -10,6 +12,7 @@ const {
   clearPendingCookieImportMock
 } = vi.hoisted(() => ({
   appGetPathMock: vi.fn(),
+  createDecipherivMock: vi.fn(),
   execFileSyncMock: vi.fn(),
   sessionFromPartitionMock: vi.fn(),
   dialogShowOpenDialogMock: vi.fn(),
@@ -17,6 +20,11 @@ const {
   clearPendingCookieImportMock: vi.fn()
 }))
 
+vi.mock('node:crypto', async (importOriginal) => {
+  const original = await importOriginal<typeof NodeCrypto>()
+  createDecipherivMock.mockImplementation(original.createDecipheriv)
+  return { ...original, createDecipheriv: createDecipherivMock }
+})
 vi.mock('./browser-session-registry', () => ({
   browserSessionRegistry: {
     setPendingCookieImport: setPendingCookieImportMock,
@@ -110,11 +118,16 @@ describe('importCookiesFromBrowser — undecryptable cookies', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  function seedProfile(encryptedValue: Buffer): string {
+  function seedProfile(...encryptedValues: Buffer[]): string {
     const sourceCookiesPath = join(tmpDir, 'Chrome', 'Default', 'Network', 'Cookies')
-    createChromiumCookieTestDatabase(sourceCookiesPath, [
-      { name: 'sid', value: '', encryptedValue }
-    ]).close()
+    createChromiumCookieTestDatabase(
+      sourceCookiesPath,
+      encryptedValues.map((encryptedValue, index) => ({
+        name: `sid-${index}`,
+        value: '',
+        encryptedValue
+      }))
+    ).close()
     createChromiumCookieTestDatabase(
       join(tmpDir, 'userData', 'Partitions', 'test', 'Network', 'Cookies'),
       []
@@ -122,30 +135,54 @@ describe('importCookiesFromBrowser — undecryptable cookies', () => {
     return sourceCookiesPath
   }
 
-  it('reports the v11 cookies it could not decrypt instead of an empty success', async () => {
+  it('does not attempt v11 CBC decryption without a keyring, even with valid wrong-key padding', async () => {
     const sourceCookiesPath = seedProfile(
-      encryptLinuxChromiumCookie('secret', 'real-keyring-password', 'v11')
+      encryptLinuxChromiumCookie('wrong-key-garbage', 'peanuts', 'v11')
     )
 
     const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
 
+    expect(createDecipherivMock).not.toHaveBeenCalled()
     expect(result.ok).toBe(true)
     if (!result.ok) {
       return
     }
     expect(result.summary.importedCookies).toBe(0)
-    // Why: before the fix a key derived from the empty password decrypted nothing, and this
-    // branch returned with no warning at all — a green "Imported 0 cookies" toast.
     expect(result.summary.warning).toEqual({
       code: 'cookies-undecryptable',
       failedCookies: 1,
       reason: 'linux-keyring-unavailable'
     })
+    expect(cookiesSetMock).not.toHaveBeenCalled()
   })
 
+  it.each(['v10', 'v99'])(
+    'rejects a prefix-only %s CBC row before importing it',
+    async (prefix) => {
+      const sourceCookiesPath = seedProfile(Buffer.from(prefix))
+
+      const result = await importCookiesFromBrowser(
+        chromeBrowser(sourceCookiesPath),
+        'persist:test'
+      )
+
+      expect(createDecipherivMock).not.toHaveBeenCalled()
+      expect(result.ok).toBe(true)
+      if (!result.ok) {
+        return
+      }
+      expect(result.summary.importedCookies).toBe(0)
+      expect(result.summary.warning).toEqual({
+        code: 'cookies-undecryptable',
+        failedCookies: 1,
+        reason: 'unknown'
+      })
+      expect(cookiesSetMock).not.toHaveBeenCalled()
+    }
+  )
+
   it('reports Windows app-bound (v20) cookies rather than an empty success', async () => {
-    // Why: Chrome/Edge 140+ prefix every row with v20, which only the writing browser can unwrap.
-    // The version gate is a format check, so v20 reaches AES and fails like corruption.
+    // Why: Chrome/Edge 140+ v20 rows can only be unwrapped by the writing browser.
     const sourceCookiesPath = seedProfile(
       Buffer.concat([Buffer.from('v20'), Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])])
     )
@@ -173,12 +210,50 @@ describe('importCookiesFromBrowser — undecryptable cookies', () => {
     if (!result.ok) {
       return
     }
-    // Why: Chrome falls back to the "peanuts" key precisely when no keyring exists, so failing
-    // the whole import would break the profiles that still work today.
+    // Mutation guard: replacing the keyring-unavailable branch with `return null` must break v10.
     expect(result.summary.importedCookies).toBe(1)
     expect(result.summary.warning).toBeUndefined()
     expect(cookiesSetMock).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'sid', value: 'v10-value' })
+      expect.objectContaining({ name: 'sid-0', value: 'v10-value' })
     )
+  })
+
+  it('uses an unknown warning when app-bound and corrupt failures are tied', async () => {
+    const sourceCookiesPath = seedProfile(
+      Buffer.concat([Buffer.from('v20'), Buffer.from([1, 2, 3, 4])]),
+      Buffer.from('v99-corrupt')
+    )
+
+    const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.summary.warning).toEqual({
+      code: 'cookies-undecryptable',
+      failedCookies: 2,
+      reason: 'unknown'
+    })
+  })
+
+  it('reports a dominant app-bound cause with its exact count and the remainder', async () => {
+    const appBoundValues = Array.from({ length: 200 }, () =>
+      Buffer.concat([Buffer.from('v20'), Buffer.from([1, 2, 3, 4])])
+    )
+    const sourceCookiesPath = seedProfile(...appBoundValues, Buffer.from('v99-corrupt'))
+
+    const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.summary.warning).toEqual({
+      code: 'cookies-undecryptable',
+      failedCookies: 200,
+      otherFailedCookies: 1,
+      reason: 'app-bound-encryption'
+    })
   })
 })

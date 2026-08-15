@@ -24,17 +24,29 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
     case 'cookies-undecryptable':
       switch (warning.reason) {
         case 'app-bound-encryption':
-          return translate(
-            'auto.lib.browser.cookie.import.toast.undecryptableAppBound',
-            '{{value0}} cookies could not be decrypted because this browser encrypts them so only it can read them (app-bound encryption). Importing from this browser is not supported on this version.',
-            { value0: warning.failedCookies }
-          )
+          return warning.otherFailedCookies
+            ? translate(
+                'auto.lib.browser.cookie.import.toast.undecryptableAppBoundMixed',
+                "Orca cannot decrypt {{value0}} of this browser's cookies because they use app-bound encryption; {{value1}} more could not be decrypted for another reason. You can import cookies from a file using “From File…”.",
+                { value0: warning.failedCookies, value1: warning.otherFailedCookies }
+              )
+            : translate(
+                'auto.lib.browser.cookie.import.toast.undecryptableAppBound',
+                "Orca cannot decrypt {{value0}} of this browser's cookies because they use app-bound encryption. You can import cookies from a file using “From File…”.",
+                { value0: warning.failedCookies }
+              )
         case 'linux-keyring-unavailable':
-          return translate(
-            'auto.lib.browser.cookie.import.toast.undecryptableKeyring',
-            '{{value0}} cookies could not be decrypted because the system keyring was unavailable. Unlock your login keyring (or install a Secret Service provider such as gnome-keyring) and import again.',
-            { value0: warning.failedCookies }
-          )
+          return warning.otherFailedCookies
+            ? translate(
+                'auto.lib.browser.cookie.import.toast.undecryptableKeyringMixed',
+                '{{value0}} cookies could not be decrypted because the system keyring was unavailable; {{value1}} more could not be decrypted for another reason. Unlock your login keyring (or install a Secret Service provider such as gnome-keyring) and import again.',
+                { value0: warning.failedCookies, value1: warning.otherFailedCookies }
+              )
+            : translate(
+                'auto.lib.browser.cookie.import.toast.undecryptableKeyring',
+                '{{value0}} cookies could not be decrypted because the system keyring was unavailable. Unlock your login keyring (or install a Secret Service provider such as gnome-keyring) and import again.',
+                { value0: warning.failedCookies }
+              )
         default:
           return translate(
             'auto.lib.browser.cookie.import.toast.undecryptableUnknown',
