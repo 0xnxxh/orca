@@ -898,14 +898,24 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
       })
     )
 
+    // Why not optional-call: a skipped setter would leave the empty-query Recent section standing
+    // and the assertions below would pass without the query path ever running.
+    const applyQuery = setCommandQuery
+    if (!applyQuery) {
+      throw new Error('CommandInput never installed a query setter')
+    }
     await act(async () => {
-      setCommandQuery?.('Alpha')
+      applyQuery('Alpha')
     })
     await flushEffects()
 
     // Why: searching for a tab is exactly when its status matters — the pip must survive the query.
     expect(getTabRowIds()).toContain('tab-alpha')
-    expect(testContainer.querySelector('[title="Working"]')).not.toBeNull()
+    expect(getTabRowIds()).not.toContain('tab-beta')
+    const alphaRow = testContainer.querySelector<HTMLElement>(
+      '[data-command-item="workspace-tab:tab-alpha"]'
+    )
+    expect(alphaRow?.querySelector('[title="Working"]')).not.toBeNull()
   })
 
   it('keeps create-worktree below the matches it would otherwise outrank', async () => {
