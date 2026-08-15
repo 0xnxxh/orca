@@ -9,6 +9,7 @@ export type MobileNativeChatStreamFrame = {
   beforeOffset?: number
   error?: string
   message?: string
+  imageSourceCapability?: unknown
 }
 
 export type AppliedMobileNativeChatFrame =

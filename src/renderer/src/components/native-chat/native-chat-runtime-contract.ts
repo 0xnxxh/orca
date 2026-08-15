@@ -3,6 +3,7 @@ import type {
   NativeChatReadSessionResult
 } from '../../../../preload/api-types'
 import type { NativeChatTurnLifecycle } from '../../../../shared/native-chat-types'
+import { normalizeNativeChatImageSourceWireMessages } from '../../../../shared/native-chat-image-source-wire'
 
 export const RUNTIME_NATIVE_CHAT_READ_ERROR = "Couldn't read agent chat from the remote runtime."
 
@@ -46,7 +47,10 @@ export function parseRuntimeNativeChatReadSessionResult(
   if (Array.isArray(record.messages)) {
     const lifecycle = parseRuntimeNativeChatTurnLifecycle(record.lifecycle)
     return {
-      messages: record.messages as NativeChatAppendedMessages,
+      messages: normalizeNativeChatImageSourceWireMessages(
+        record.messages as NativeChatAppendedMessages,
+        record.imageSourceCapability
+      ),
       ...(lifecycle ? { lifecycle } : {})
     }
   }

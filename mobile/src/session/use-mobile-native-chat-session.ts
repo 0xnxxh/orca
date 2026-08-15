@@ -5,6 +5,8 @@ import {
 } from '../../../src/shared/native-chat-transcript-retention'
 import { createNativeChatMerger, replaceList } from '../../../src/shared/native-chat-merge'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { normalizeNativeChatImageSourceWireMessages } from '../../../src/shared/native-chat-image-source-wire'
+import { NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY } from '../../../src/shared/protocol-version'
 import { buildNativeChatSubscriptionId } from '../../../src/shared/native-chat-stream-unsubscribe'
 import type { RpcClient } from '../transport/rpc-client'
 import {
@@ -38,7 +40,12 @@ const PAGE = 60
 const MAX_MESSAGES = 2000
 
 type ReadSessionResult =
-  | { messages: NativeChatMessage[]; hasMore?: boolean; beforeOffset?: number }
+  | {
+      messages: NativeChatMessage[]
+      hasMore?: boolean
+      beforeOffset?: number
+      imageSourceCapability?: unknown
+    }
   | { error: string }
 /** Subscribe to an agent's native-chat transcript over the paired connection.
  *  Reads a small recent window for a fast first paint, tails it for live turns,
@@ -145,13 +152,23 @@ export function useMobileNativeChatSession(args: {
         sessionId,
         limit: limitRef.current,
         subscriptionId: buildNativeChatSubscriptionId(agent, sessionId),
+        imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
         ...(transcriptPath ? { transcriptPath } : {})
       },
       (raw) => {
         if (cancelled) {
           return
         }
-        const frame = raw as MobileNativeChatStreamFrame
+        const rawFrame = raw as MobileNativeChatStreamFrame
+        const frame = Array.isArray(rawFrame.messages)
+          ? {
+              ...rawFrame,
+              messages: normalizeNativeChatImageSourceWireMessages(
+                rawFrame.messages,
+                rawFrame.imageSourceCapability
+              )
+            }
+          : rawFrame
         const applied = applyMobileNativeChatStreamFrame({
           merger: mergerRef.current,
           frame,
@@ -232,6 +249,7 @@ export function useMobileNativeChatSession(args: {
           sessionId,
           limit: beforeOffset === null ? nextLimit : pageLimit,
           ...(beforeOffset === null ? {} : { beforeOffset }),
+          imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
           ...(transcriptPath ? { transcriptPath } : {})
         })
         if (!response.ok) {
@@ -241,6 +259,10 @@ export function useMobileNativeChatSession(args: {
         if ('error' in result) {
           return
         }
+        const resultMessages = normalizeNativeChatImageSourceWireMessages(
+          result.messages,
+          result.imageSourceCapability
+        )
         // Drop a stale resolve from a session that swapped underneath us.
         if (
           sessionIdRef.current !== requestSessionId ||
@@ -251,13 +273,13 @@ export function useMobileNativeChatSession(args: {
         limitRef.current = nextLimit
         if (beforeOffset !== null && result.beforeOffset != null) {
           beforeOffsetRef.current = result.beforeOffset
-          setList([...result.messages, ...mergerRef.current.list])
+          setList([...resultMessages, ...mergerRef.current.list])
           setHasMore(
             nextLimit < MAX_MESSAGES && (result.hasMore ?? result.messages.length >= pageLimit)
           )
         } else {
           // Older runtimes ignore the cursor and return the growing tail.
-          setList(result.messages)
+          setList(resultMessages)
           setHasMore(result.messages.length >= nextLimit)
         }
       } finally {

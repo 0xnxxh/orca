@@ -6,6 +6,8 @@ import {
   type RuntimeClientTarget
 } from '@/runtime/runtime-rpc-client'
 import { isRuntimeCompatBlockError } from '@/runtime/runtime-protocol-compat'
+import { normalizeNativeChatImageSourceWireMessages } from '../../../../shared/native-chat-image-source-wire'
+import { NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import {
   parseRuntimeNativeChatReadSessionResult,
   parseRuntimeNativeChatTurnLifecycle,
@@ -57,7 +59,13 @@ function createRuntimeNativeChatTransport(environmentId: string): NativeChatSess
         const result = await callRuntimeRpc<unknown>(
           target,
           'nativeChat.readSession',
-          { agent, sessionId, limit, transcriptPath },
+          {
+            agent,
+            sessionId,
+            limit,
+            transcriptPath,
+            imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
+          },
           { timeoutMs: 15_000 }
         )
         return parseRuntimeNativeChatReadSessionResult(result)
@@ -105,7 +113,14 @@ function createRuntimeNativeChatTransport(environmentId: string): NativeChatSess
             {
               selector: environmentId,
               method: 'nativeChat.subscribe',
-              params: { subscriptionId, agent, sessionId, transcriptPath, limit },
+              params: {
+                subscriptionId,
+                agent,
+                sessionId,
+                transcriptPath,
+                limit,
+                imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
+              },
               timeoutMs: 15_000
             },
             {
@@ -134,6 +149,7 @@ function createRuntimeNativeChatTransport(environmentId: string): NativeChatSess
                   hasMore?: boolean
                   error?: string
                   lifecycle?: unknown
+                  imageSourceCapability?: unknown
                 }
                 const lifecycle = parseRuntimeNativeChatTurnLifecycle(frame?.lifecycle)
                 if (
@@ -142,11 +158,15 @@ function createRuntimeNativeChatTransport(environmentId: string): NativeChatSess
                     frame?.type === 'replacement') &&
                   Array.isArray(frame.messages)
                 ) {
+                  const messages = normalizeNativeChatImageSourceWireMessages(
+                    frame.messages,
+                    frame.imageSourceCapability
+                  )
                   if (!receivedInitial) {
                     receivedInitial = true
                     onFrame({
                       type: 'snapshot',
-                      messages: frame.messages,
+                      messages,
                       hasMore: frame.hasMore ?? frame.messages.length >= (limit ?? 300),
                       ...(frame.error ? { error: frame.error } : {}),
                       ...(lifecycle ? { lifecycle } : {})
@@ -154,7 +174,7 @@ function createRuntimeNativeChatTransport(environmentId: string): NativeChatSess
                   } else if (frame.type === 'snapshot') {
                     onFrame({
                       type: 'snapshot',
-                      messages: frame.messages,
+                      messages,
                       hasMore: frame.hasMore ?? false,
                       ...(frame.error ? { error: frame.error } : {}),
                       ...(lifecycle ? { lifecycle } : {})
@@ -164,13 +184,13 @@ function createRuntimeNativeChatTransport(environmentId: string): NativeChatSess
                       frame.type === 'replacement'
                         ? {
                             type: 'replacement',
-                            messages: frame.messages,
+                            messages,
                             hasMore: frame.hasMore ?? false,
                             ...(lifecycle ? { lifecycle } : {})
                           }
                         : {
                             type: 'appended',
-                            messages: frame.messages,
+                            messages,
                             ...(lifecycle ? { lifecycle } : {})
                           }
                     )

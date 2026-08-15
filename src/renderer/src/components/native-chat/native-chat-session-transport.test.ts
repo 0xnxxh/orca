@@ -6,6 +6,7 @@ import {
   RuntimeRpcCallError
 } from '@/runtime/runtime-rpc-client'
 import { RUNTIME_COMPAT_BLOCK_CODE } from '@/runtime/runtime-protocol-compat'
+import { NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import {
   getNativeChatSessionTransport,
   RUNTIME_NATIVE_CHAT_RECONNECT_MS,
@@ -76,7 +77,13 @@ describe('getNativeChatSessionTransport — selection', () => {
     expect(runtimeEnvironmentsCall).toHaveBeenCalledWith({
       selector: ENV,
       method: 'nativeChat.readSession',
-      params: { agent: 'claude', sessionId: 'sess-1', limit: 40, transcriptPath: '/t/path' },
+      params: {
+        agent: 'claude',
+        sessionId: 'sess-1',
+        limit: 40,
+        transcriptPath: '/t/path',
+        imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
+      },
       timeoutMs: 15_000
     })
     expect(nativeChatReadSession).not.toHaveBeenCalled()
@@ -117,6 +124,41 @@ describe('getNativeChatSessionTransport — selection', () => {
       messages: [message('interrupted')],
       lifecycle
     })
+  })
+
+  it('uses v1.4.183 marker fallback for reads from an unnegotiated host', async () => {
+    markRuntimeEnvironmentCompatible(ENV)
+    const prompt = {
+      ...message('legacy-prompt'),
+      role: 'user' as const,
+      blocks: [{ type: 'text' as const, text: '[Image #1] describe this' }]
+    }
+    runtimeEnvironmentsCall.mockResolvedValueOnce(okEnvelope({ messages: [prompt] }))
+
+    const result = await getNativeChatSessionTransport(ENV).readSession('claude', 'sess-legacy')
+
+    expect(result).toMatchObject({
+      messages: [{ id: 'legacy-prompt', blocks: [{ type: 'text', text: 'describe this' }] }]
+    })
+  })
+
+  it('preserves literal markers when the host confirms native projection', async () => {
+    markRuntimeEnvironmentCompatible(ENV)
+    const prompt = {
+      ...message('native-prompt'),
+      role: 'user' as const,
+      blocks: [{ type: 'text' as const, text: '[Image #1] describe this' }]
+    }
+    runtimeEnvironmentsCall.mockResolvedValueOnce(
+      okEnvelope({
+        messages: [prompt],
+        imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
+      })
+    )
+
+    const result = await getNativeChatSessionTransport(ENV).readSession('claude', 'sess-native')
+
+    expect(result).toMatchObject({ messages: [prompt] })
   })
 
   it('keeps lifecycle metadata whose timestamp is omitted, normalizing it to null', async () => {
@@ -204,6 +246,33 @@ describe('runtime subscribe', () => {
       messages: [message('m-replacement')],
       hasMore: true
     })
+  })
+
+  it('applies the released fallback on unnegotiated snapshot, replacement, and append frames', async () => {
+    markRuntimeEnvironmentCompatible(ENV)
+    const { deliver } = stubSubscribe()
+    const onFrame = vi.fn()
+    const prompt = {
+      ...message('legacy-prompt'),
+      role: 'user' as const,
+      blocks: [{ type: 'text' as const, text: '[Image #1] describe this' }]
+    }
+
+    getNativeChatSessionTransport(ENV).subscribe(
+      { subscriptionId: 's-legacy', agent: 'claude', sessionId: 'sess-legacy' },
+      onFrame
+    )
+    await Promise.resolve()
+    deliver({ type: 'snapshot', messages: [prompt] })
+    deliver({ type: 'replacement', messages: [prompt] })
+    deliver({ type: 'appended', messages: [prompt] })
+
+    expect(onFrame).toHaveBeenCalledTimes(3)
+    for (const [frame] of onFrame.mock.calls) {
+      expect(frame.messages).toMatchObject([
+        { id: 'legacy-prompt', blocks: [{ type: 'text', text: 'describe this' }] }
+      ])
+    }
   })
 
   it('validates lifecycle metadata on runtime stream frames', async () => {

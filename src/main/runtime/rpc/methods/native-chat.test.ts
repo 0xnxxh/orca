@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../../shared/native-chat-types'
 import type { RpcContext } from '../core'
+import { normalizeLegacyNativeChatImageTranscriptMessages } from '../../../../shared/native-chat-legacy-image-transcript'
+import {
+  NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
+  RUNTIME_CAPABILITIES
+} from '../../../../shared/protocol-version'
 
 // Stub the bounded tail reader so the handler returns a deterministic transcript with
 // one oversized tool-result block; the test then asserts clip behavior per client.
@@ -116,6 +121,15 @@ function makeMultiImageSource(): NativeChatMessage {
   }
 }
 
+function makeMultiImagePrompt(): NativeChatMessage {
+  return {
+    ...makeTextMessage('unused'),
+    id: 'prompt-row',
+    role: 'user',
+    blocks: [{ type: 'text', text: '[Image #1] [Image #2] [Image #3] compare these' }]
+  }
+}
+
 const legacyImageSourceProjection = [
   {
     id: 'source-row',
@@ -128,6 +142,14 @@ const legacyImageSourceProjection = [
   {
     id: 'source-row:image-source:2',
     blocks: [{ type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }]
+  }
+]
+
+const legacyImageTurnProjection = [
+  ...legacyImageSourceProjection,
+  {
+    id: 'prompt-row',
+    blocks: [{ type: 'text', text: '[Image #1] [Image #2] [Image #3] compare these' }]
   }
 ]
 
@@ -185,6 +207,10 @@ function activeWatcherArgs(): NonNullable<typeof watcher.args> {
 }
 
 describe('nativeChat.readSession clientKind truncation gating', () => {
+  it('advertises the negotiated image-source representation', () => {
+    expect(RUNTIME_CAPABILITIES).toContain(NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY)
+  })
+
   it('passes request cancellation to transcript resolution', async () => {
     const controller = new AbortController()
     const context = { ...ctxWith('runtime'), signal: controller.signal }
@@ -454,10 +480,62 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
       legacyImageSourceProjection
     )
   })
+
+  it.each([
+    ['prompt-first', [makeMultiImagePrompt(), makeMultiImageSource()]],
+    ['source-first', [makeMultiImageSource(), makeMultiImagePrompt()]]
+  ])('makes %s reads fold as one v1.4.183 image turn', async (_label, messages) => {
+    cachedResult.value = { messages }
+
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('runtime')
+    )
+    const projected = (result as { messages: NativeChatMessage[] }).messages
+    const normalized = normalizeLegacyNativeChatImageTranscriptMessages(projected)
+
+    expect(projected.map((message) => message.id)).toEqual([
+      'source-row',
+      'source-row:image-source:1',
+      'source-row:image-source:2',
+      'prompt-row'
+    ])
+    expect(normalized).toHaveLength(1)
+    expect(normalized[0]).toMatchObject({
+      id: 'prompt-row',
+      blocks: [
+        { type: 'image-ref', path: '/tmp/a.png' },
+        { type: 'image-ref', path: 'C:\\Users\\me\\b.png' },
+        { type: 'image-ref', path: '/ssh/workspace/c.png' },
+        { type: 'text', text: 'compare these' }
+      ]
+    })
+  })
+
+  it('publishes native ordering only when the client offers the capability', async () => {
+    cachedResult.value = { messages: [makeMultiImagePrompt(), makeMultiImageSource()] }
+
+    const result = await readSessionHandler()(
+      {
+        agent: 'claude',
+        sessionId: 's',
+        imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
+      },
+      ctxWith('runtime')
+    )
+
+    expect(result).toMatchObject({
+      imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
+      messages: [
+        { id: 'prompt-row', blocks: [{ type: 'text' }] },
+        { id: 'source-row', blocks: [{ type: 'text' }, { type: 'text' }, { type: 'text' }] }
+      ]
+    })
+  })
 })
 
 describe('nativeChat.subscribe initial snapshot', () => {
-  it('keeps old-client source rows compatible across snapshot, replacement, and append', async () => {
+  it('keeps prompt-first old-client turns compatible across snapshot, replacement, and append', async () => {
     watcher.watching = true
     watcher.args = null
     const emitted: unknown[] = []
@@ -468,15 +546,41 @@ describe('nativeChat.subscribe initial snapshot', () => {
     )
 
     const callbacks = activeWatcherArgs()
-    const messages = [makeMultiImageSource()]
+    const messages = [makeMultiImagePrompt(), makeMultiImageSource()]
     callbacks.onInitialSnapshot?.(messages, false, 123)
     callbacks.onReplace?.(messages, false, 123)
     callbacks.onAppend(messages)
 
     expect(emitted).toHaveLength(3)
     for (const frame of emitted as { messages: NativeChatMessage[] }[]) {
-      expect(frame.messages).toMatchObject(legacyImageSourceProjection)
+      expect(frame.messages).toMatchObject(legacyImageTurnProjection)
+      expect(normalizeLegacyNativeChatImageTranscriptMessages(frame.messages)).toHaveLength(1)
     }
+  })
+
+  it('reorders prompt-first legacy appends even across incremental-reader batches', async () => {
+    watcher.watching = true
+    watcher.args = null
+    const emitted: unknown[] = []
+    await subscribeHandler()(
+      { agent: 'claude', sessionId: 's' },
+      streamingContext('mobile'),
+      (value) => emitted.push(value)
+    )
+
+    const callbacks = activeWatcherArgs()
+    callbacks.onAppend([makeMultiImagePrompt()])
+    expect(emitted).toEqual([])
+    callbacks.onAppend([makeMultiImageSource()])
+
+    const frame = emitted[0] as { messages: NativeChatMessage[] }
+    expect(frame.messages.map((message) => message.id)).toEqual([
+      'source-row',
+      'source-row:image-source:1',
+      'source-row:image-source:2',
+      'prompt-row'
+    ])
+    expect(normalizeLegacyNativeChatImageTranscriptMessages(frame.messages)).toHaveLength(1)
   })
 
   it('preserves long assistant text across mobile stream frame types', async () => {

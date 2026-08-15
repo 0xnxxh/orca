@@ -160,6 +160,8 @@ import {
 } from '@/components/native-chat/native-chat-runtime-contract'
 import { createWebFileMutationMethods } from './web-file-mutation-methods'
 import { mergeWorkspaceCleanupUIState } from '../../../shared/workspace-cleanup-ui-state'
+import { normalizeNativeChatImageSourceWireMessages } from '../../../shared/native-chat-image-source-wire'
+import { NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
 
 const SETTINGS_STORAGE_KEY = 'orca.web.settings.v1'
 const UI_STORAGE_KEY = 'orca.web.ui.v1'
@@ -1276,7 +1278,8 @@ function createNativeChatApi(): NativeChatApi {
           agent,
           sessionId,
           limit,
-          transcriptPath
+          transcriptPath,
+          imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
         })
       ),
     subscribe: (args, onFrame) => {
@@ -1305,7 +1308,8 @@ function createNativeChatApi(): NativeChatApi {
             sessionId: args.sessionId,
             subscriptionId: args.subscriptionId,
             transcriptPath: args.transcriptPath,
-            limit: args.limit
+            limit: args.limit,
+            imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
           },
           {
             onResponse: (response) => {
@@ -1330,6 +1334,7 @@ function createNativeChatApi(): NativeChatApi {
                 hasMore?: boolean
                 error?: string
                 lifecycle?: unknown
+                imageSourceCapability?: unknown
               }
               const lifecycle = parseRuntimeNativeChatTurnLifecycle(result?.lifecycle)
               if (
@@ -1338,11 +1343,15 @@ function createNativeChatApi(): NativeChatApi {
                   result?.type === 'replacement') &&
                 Array.isArray(result.messages)
               ) {
+                const messages = normalizeNativeChatImageSourceWireMessages(
+                  result.messages,
+                  result.imageSourceCapability
+                )
                 if (!receivedInitial) {
                   receivedInitial = true
                   onFrame({
                     type: 'snapshot',
-                    messages: result.messages,
+                    messages,
                     hasMore: result.hasMore ?? result.messages.length >= (args.limit ?? 300),
                     ...(result.error ? { error: result.error } : {}),
                     ...(lifecycle ? { lifecycle } : {})
@@ -1350,7 +1359,7 @@ function createNativeChatApi(): NativeChatApi {
                 } else if (result.type === 'snapshot') {
                   onFrame({
                     type: 'snapshot',
-                    messages: result.messages,
+                    messages,
                     hasMore: result.hasMore ?? false,
                     ...(result.error ? { error: result.error } : {}),
                     ...(lifecycle ? { lifecycle } : {})
@@ -1360,13 +1369,13 @@ function createNativeChatApi(): NativeChatApi {
                     result.type === 'replacement'
                       ? {
                           type: 'replacement',
-                          messages: result.messages,
+                          messages,
                           hasMore: result.hasMore ?? false,
                           ...(lifecycle ? { lifecycle } : {})
                         }
                       : {
                           type: 'appended',
-                          messages: result.messages,
+                          messages,
                           ...(lifecycle ? { lifecycle } : {})
                         }
                   )

@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY } from '../../../src/shared/protocol-version'
 import type { RpcClient } from '../transport/rpc-client'
 import {
   useMobileNativeChatSession,
@@ -48,6 +49,60 @@ describe('useMobileNativeChatSession', () => {
       renderer = create(createElement(Harness, { client }))
     })
   }
+
+  it('offers native image sources and falls back to v1.4.183 semantics when unconfirmed', async () => {
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: [
+          {
+            ...message('legacy-prompt'),
+            role: 'user',
+            blocks: [{ type: 'text', text: '[Image #1] describe this' }]
+          }
+        ],
+        hasMore: false
+      })
+      return () => {}
+    })
+
+    await mount({ subscribe } as unknown as RpcClient)
+
+    expect(subscribe).toHaveBeenCalledWith(
+      'nativeChat.subscribe',
+      expect.objectContaining({
+        imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
+      }),
+      expect.any(Function)
+    )
+    expect(state?.messages).toMatchObject([
+      { id: 'legacy-prompt', blocks: [{ type: 'text', text: 'describe this' }] }
+    ])
+  })
+
+  it('preserves literal markers after the host confirms native projection', async () => {
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: [
+          {
+            ...message('native-prompt'),
+            role: 'user',
+            blocks: [{ type: 'text', text: '[Image #1] describe this' }]
+          }
+        ],
+        hasMore: false,
+        imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY
+      })
+      return () => {}
+    })
+
+    await mount({ subscribe } as unknown as RpcClient)
+
+    expect(state?.messages).toMatchObject([
+      { id: 'native-prompt', blocks: [{ type: 'text', text: '[Image #1] describe this' }] }
+    ])
+  })
 
   it('drops an older-page response captured before transcript replacement', async () => {
     let resolveEarlier: (response: unknown) => void = () => {}
@@ -160,6 +215,7 @@ describe('useMobileNativeChatSession', () => {
       expect(sendRequest).toHaveBeenLastCalledWith('nativeChat.readSession', {
         agent: 'claude',
         sessionId: 'session',
+        imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
         limit: 60,
         beforeOffset: 500
       })
@@ -239,6 +295,7 @@ describe('useMobileNativeChatSession', () => {
     expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
       agent: 'claude',
       sessionId: 'session',
+      imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
       limit: 100
     })
   })
@@ -299,6 +356,7 @@ describe('useMobileNativeChatSession', () => {
     expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
       agent: 'claude',
       sessionId: 'session',
+      imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
       limit: 100
     })
   })
@@ -420,6 +478,7 @@ describe('useMobileNativeChatSession', () => {
     expect(sendRequest).toHaveBeenLastCalledWith('nativeChat.readSession', {
       agent: 'claude',
       sessionId: 'session',
+      imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY,
       limit: 100
     })
     expect(state?.messages.map((entry) => entry.id)).toEqual(['fresh-growing-tail'])
