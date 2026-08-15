@@ -97,6 +97,36 @@ describe('selected completed agent resume', () => {
     expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[record.paneKey]).toBe(record)
   })
 
+  it('does not force a second session while selected-pane hibernation is still killing its PTY', () => {
+    const record = makeCompletedRecord({
+      paneKey: makePaneKey('tab-1', LEAF_ID),
+      tabId: 'tab-1'
+    })
+    useAppStore.setState({
+      activeWorktreeId: 'wt-1',
+      tabsByWorktree: { 'wt-1': [makeTerminalTab('tab-1')] },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          root: { type: 'leaf', leafId: LEAF_ID },
+          activeLeafId: LEAF_ID,
+          expandedLeafId: null,
+          ptyIdsByLeafId: { [LEAF_ID]: 'pty-1' }
+        }
+      },
+      sleepingAgentSessionsByPaneKey: { [record.paneKey]: record }
+    } as never)
+
+    const launched = resumeSleepingAgentSessionsForWorktree('wt-1', {
+      resumeCompletedPaneKey: record.paneKey,
+      forceFreshSelectedCompletion: true
+    })
+
+    expect(launched).toBe(0)
+    expect(useAppStore.getState().tabsByWorktree['wt-1']).toHaveLength(1)
+    expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[record.paneKey]).toBe(record)
+  })
+
   it('does not duplicate a selected provider session that is already active', () => {
     const record = makeCompletedRecord()
     useAppStore.setState({

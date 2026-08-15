@@ -7,6 +7,7 @@ import { AGENT_STATUS_STALE_AFTER_MS } from '../../../shared/agent-status-types'
 import {
   getProviderSessionClaimKey,
   isPassiveCompletedHibernationEvidence,
+  recordPaneHasLivePty,
   recordPaneIsOwnedByPreservedPane
 } from './sleeping-agent-pane-ownership'
 import {
@@ -220,7 +221,9 @@ export function resumeSleepingAgentSessionsForWorktree(
         record,
         validWorktreeRecords,
         currentState,
-        options?.forceFreshSelectedCompletion ? record.paneKey : undefined
+        options?.forceFreshSelectedCompletion && !recordPaneHasLivePty(record, currentState)
+          ? record.paneKey
+          : undefined
       )
       if (preservedOwner) {
         if (preservedOwner !== record) {

@@ -105,6 +105,23 @@ function stablePaneHasLivePty(
   return layout?.root?.type === 'leaf' && layout.root.leafId === leafId
 }
 
+export function recordPaneHasLivePty(
+  record: SleepingAgentSessionRecord,
+  state: AppStoreState
+): boolean {
+  const stable = parsePaneKey(record.paneKey)
+  if (!stable || (record.tabId && record.tabId !== stable.tabId)) {
+    return false
+  }
+  const tabId = record.tabId ?? stable.tabId
+  return stablePaneHasLivePty(
+    tabId,
+    stable.leafId,
+    state.ptyIdsByTabId,
+    state.terminalLayoutsByTabId[tabId]
+  )
+}
+
 function paneWillConnectOnActivation(
   worktreeId: string,
   tabId: string,
@@ -142,14 +159,7 @@ export function recordPaneIsOwnedByPreservedPane(
     }
     // Why: a pane with a live PTY owns its running session regardless of which
     // pane reconnects on activation; forking it would duplicate the session.
-    if (
-      stablePaneHasLivePty(
-        tabId,
-        stable.leafId,
-        state.ptyIdsByTabId,
-        state.terminalLayoutsByTabId[tabId]
-      )
-    ) {
+    if (recordPaneHasLivePty(record, state)) {
       return true
     }
     // Why: active sessions rely on pane-level cold restore. A preserved leaf
