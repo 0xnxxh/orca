@@ -51,7 +51,8 @@ function nativeChatUserMessageContentKeys(message: NativeChatMessage): readonly 
   }
   const keys = new Set<string>()
   const matchText = nativeChatUserMessageMatchText(message) ?? ''
-  if (matchText) {
+  const hasImageRefs = message.blocks.some(isImageRefBlock)
+  if (matchText && !hasImageRefs) {
     keys.add(nativeChatTextContentKey(matchText, 0))
   }
   const imageCount = nativeChatUserMessageImageEvidenceCount(message)
@@ -110,7 +111,9 @@ export function advancedNativeChatUserTexts(
   const waiting: string[] = []
   for (const message of messages) {
     if (message.role === 'user') {
-      const text = nativeChatUserMessageMatchText(message)
+      const text = message.blocks.some(isImageRefBlock)
+        ? null
+        : nativeChatUserMessageMatchText(message)
       if (text) {
         waiting.push(text)
       }
@@ -128,7 +131,9 @@ export function matchingNativeChatUserTexts(
 ): readonly string[] {
   const texts: string[] = []
   for (const message of messages) {
-    const text = nativeChatUserMessageMatchText(message)
+    const text = message.blocks.some(isImageRefBlock)
+      ? null
+      : nativeChatUserMessageMatchText(message)
     if (text) {
       texts.push(text)
     }

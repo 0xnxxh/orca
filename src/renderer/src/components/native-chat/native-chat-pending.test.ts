@@ -116,7 +116,7 @@ describe('prunePendingSends', () => {
       ]
     }
     const next = prunePendingSends(
-      [pendingOf('p1', 'what do you see')],
+      [{ ...pendingOf('p1', 'what do you see'), imagePaths: ['/tmp/a.png'] }],
       [prompt, assistantMessage('m2', 'an image')]
     )
 
@@ -468,7 +468,7 @@ describe('launchPromptAsMessage', () => {
     ).toBeNull()
   })
 
-  it('uses pending-send normalization for large multiline generated prompts', () => {
+  it('does not strip literal markers from launch-prompt identity', () => {
     const prompt = [
       '[Image #1] Resolve the failing checks:',
       '',
@@ -488,17 +488,17 @@ describe('launchPromptAsMessage', () => {
       { ...assistantMessage('a1', 'I will fix it'), timestamp: 44 }
     ]
 
-    expect(
-      shouldPruneLaunchPrompt(
-        {
-          tabId: 'tab-1',
-          agent: 'codex',
-          text: prompt,
-          createdAt: 42
-        },
-        transcript
-      )
-    ).toBe(true)
+    const entry = { tabId: 'tab-1', agent: 'codex' as const, text: prompt, createdAt: 42 }
+
+    expect(launchPromptAsMessage(entry, transcript)).not.toBeNull()
+    expect(shouldPruneLaunchPrompt(entry, transcript)).toBe(false)
+
+    const exact = [
+      { ...userMessage('u1', prompt), timestamp: 43 },
+      { ...assistantMessage('a1', 'I will fix it'), timestamp: 44 }
+    ]
+    expect(launchPromptAsMessage(entry, exact)).toBeNull()
+    expect(shouldPruneLaunchPrompt(entry, exact)).toBe(true)
   })
 
   it('keeps the launch prompt until the transcript advances past the user turn', () => {

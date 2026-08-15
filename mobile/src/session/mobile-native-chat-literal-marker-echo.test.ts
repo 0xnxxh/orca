@@ -130,6 +130,18 @@ describe('mobile literal image-marker turns', () => {
     expect(rows(exact).map(rowText)).toEqual(['keep [Image #1] literal'])
   })
 
+  it('does not let an attached-image send shift a markerless send ordinal', async () => {
+    await mount()
+    send('keep [Image #1] literal', ['file:///a.jpg'])
+    send('keep literal')
+
+    const messages = [userTextMessage('plain', 'keep literal')]
+    await transcript(messages)
+
+    expect(rows(messages).map(rowText)).toEqual(['keep literal', 'keep [Image #1] literal'])
+    expect(rows(messages).map(rowImages)).toEqual([[], ['file:///a.jpg']])
+  })
+
   it('holds every preview on the optimistic echo until the marker echo covers them all', async () => {
     await mount()
     send('', ['file:///a.jpg', 'file:///b.jpg'])

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
+  countUserTextOccurrences,
   findLandedImagePreviewEchoes,
   findLandedUnconfirmedSends,
   migrateImagePreviewMessageIds,
@@ -89,6 +90,35 @@ describe('mobile native chat image preview reconciliation', () => {
     ).toEqual([unconfirmed])
   })
 
+  it('does not treat literal marker text as a markerless unknown-ack echo', () => {
+    const unconfirmed: UnconfirmedSend = {
+      draftKey: 'draft',
+      pendingKey: 'pending-key',
+      text: 'keep literal',
+      normalizedText: 'keep literal',
+      imageCount: 0,
+      baselineTailMessageId: null,
+      deadline: null
+    }
+
+    expect(
+      findLandedUnconfirmedSends([userText('wrong', 'keep [Image #1] literal')], [unconfirmed])
+    ).toEqual([])
+    expect(findLandedUnconfirmedSends([userText('right', 'keep literal')], [unconfirmed])).toEqual([
+      unconfirmed
+    ])
+  })
+
+  it('keeps no-image occurrence baselines separate from attached-image turns', () => {
+    const messages = [
+      userText('source', '[Image: source: /tmp/a.png]'),
+      userText('prompt', 'keep [Image #1] literal')
+    ]
+
+    expect(countUserTextOccurrences(messages, 'keep literal')).toBe(0)
+    expect(countUserTextOccurrences(messages, 'keep literal', 1)).toBe(1)
+  })
+
   it('reconciles multiple transcript text blocks with desktop separators', () => {
     const prompt: NativeChatMessage = {
       ...userText('prompt', 'unused'),
@@ -110,6 +140,15 @@ describe('mobile native chat image preview reconciliation', () => {
       findLandedImagePreviewEchoes(
         [userText('prompt', '[Image #1]')],
         [pending('pending', ['file:///a.jpg'])]
+      )
+    ).toEqual([{ pendingId: 'pending', messageId: 'prompt', images: ['file:///a.jpg'] }])
+  })
+
+  it('hands a captioned preview to a marker-only compatibility echo', () => {
+    expect(
+      findLandedImagePreviewEchoes(
+        [userText('prompt', 'look [Image #1] here')],
+        [{ ...pending('pending', ['file:///a.jpg']), text: 'look here' }]
       )
     ).toEqual([{ pendingId: 'pending', messageId: 'prompt', images: ['file:///a.jpg'] }])
   })

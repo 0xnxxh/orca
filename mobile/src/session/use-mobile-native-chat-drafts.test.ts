@@ -219,7 +219,7 @@ describe('useMobileNativeChatDrafts', () => {
         createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
       )
     )
-    const origin = state?.captureSendOrigin('')
+    const origin = state?.captureSendOrigin('', ['file:///a.jpg'])
     act(() => {
       if (origin) {
         state?.acceptSend(origin, '', ['file:///a.jpg'])
@@ -265,7 +265,7 @@ describe('useMobileNativeChatDrafts', () => {
       )
     )
     const textOrigin = state?.captureSendOrigin('ping')
-    const imageOrigin = state?.captureSendOrigin('')
+    const imageOrigin = state?.captureSendOrigin('', ['file:///a.jpg'])
     act(() => {
       if (textOrigin && imageOrigin) {
         state?.acceptSend(textOrigin, 'ping')
@@ -308,7 +308,7 @@ describe('useMobileNativeChatDrafts', () => {
         createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
       )
     )
-    const origin = state?.captureSendOrigin('look at this')
+    const origin = state?.captureSendOrigin('look at this', ['file:///a.jpg'])
     act(() => {
       if (origin) {
         state?.acceptSend(origin, 'look at this', ['file:///a.jpg'])
@@ -341,7 +341,7 @@ describe('useMobileNativeChatDrafts', () => {
         createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
       )
     )
-    const origin = state?.captureSendOrigin('look at this')
+    const origin = state?.captureSendOrigin('look at this', ['file:///a.jpg'])
     act(() => {
       if (origin) {
         state?.acceptSend(origin, 'look at this', ['file:///a.jpg'])
@@ -367,7 +367,7 @@ describe('useMobileNativeChatDrafts', () => {
 
   it('hands a marker-only image preview to the authoritative user bubble', async () => {
     await mount('a')
-    const origin = state?.captureSendOrigin('')
+    const origin = state?.captureSendOrigin('', ['file:///a.jpg'])
     act(() => {
       if (origin) {
         state?.acceptSend(origin, '', ['file:///a.jpg'])
@@ -475,7 +475,7 @@ describe('useMobileNativeChatDrafts', () => {
         )
       )
       // Image-only send: empty text, so it can only reconcile against a new user turn.
-      const origin = state?.captureSendOrigin('')
+      const origin = state?.captureSendOrigin('', ['file:///a.jpg'])
       const onUnconfirmed = vi.fn()
       act(() => {
         if (origin) {
@@ -492,7 +492,7 @@ describe('useMobileNativeChatDrafts', () => {
           })
         )
       )
-      // ...but the user's own turn landing does, so the deadline never warns.
+      // ...but the user's own image turn landing does, so the deadline never warns.
       await act(async () =>
         renderer?.update(
           createElement(Harness, {
@@ -500,7 +500,7 @@ describe('useMobileNativeChatDrafts', () => {
             messages: [
               assistantTextMessage('a1', 'hi'),
               assistantTextMessage('a2', 'ok'),
-              userTextMessage('u1', '')
+              userTextMessage('u1', '[Image #1]')
             ]
           })
         )
@@ -519,7 +519,7 @@ describe('useMobileNativeChatDrafts', () => {
         createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
       )
     )
-    const origin = state?.captureSendOrigin('')
+    const origin = state?.captureSendOrigin('', ['file:///a.jpg'])
     act(() => {
       if (origin) {
         state?.acceptSend(origin, '', ['file:///a.jpg'])
@@ -768,7 +768,7 @@ describe('useMobileNativeChatDrafts', () => {
     const images = ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg']
     act(() => state?.setComposerText('look'))
 
-    const origin = state?.captureSendOrigin('look')
+    const origin = state?.captureSendOrigin('look', images)
     expect(origin).toMatchObject({ pendingKey: null })
     act(() => {
       if (origin) {

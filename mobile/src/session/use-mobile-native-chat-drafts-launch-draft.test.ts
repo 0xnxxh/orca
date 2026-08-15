@@ -129,7 +129,7 @@ describe('useMobileNativeChatDrafts launch draft', () => {
       renderer?.update(
         createElement(Harness, {
           tabId: 'a',
-          messages: [userTextMessage('m1', '[Image #1]')],
+          messages: [userTextMessage('m1', 'keep [Image #1] literal')],
           launchDraft: 'issue link'
         })
       )
@@ -149,7 +149,7 @@ describe('useMobileNativeChatDrafts launch draft', () => {
       renderer?.update(
         createElement(Harness, {
           tabId: 'a',
-          messages: [userTextMessage('m1', '[Image #1]')],
+          messages: [userTextMessage('m1', 'keep [Image #1] literal')],
           launchDraft: 'issue link'
         })
       )
