@@ -146,7 +146,11 @@ export function sendNativeChatMessage(
         if (isCancelled()) {
           return
         }
-        sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
+        // Why trimmed (here and on every other draft body): the optimistic echo
+        // matches on the trimmed draft while the PTY got the raw one, so a lost
+        // Enter that glues two rapid sends onto one line leaves a separator the
+        // echo matcher cannot reproduce — both bubbles stay pinned (#14262).
+        sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text.trim()))
         // Schedule from the actual body write: an overdue clear-confirm callback
         // must not collapse the required body-to-Enter gap after a renderer stall.
         delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
@@ -209,7 +213,7 @@ export async function sendNativeChatMessageVerified(
   const bodyAccepted = await sendRuntimePtyInputVerified(
     settings,
     ptyId,
-    buildNativeChatPasteBytes(text)
+    buildNativeChatPasteBytes(text.trim())
   )
   if (!bodyAccepted || signal?.aborted || !(await waitForNativeChatSubmit(signal))) {
     return false
@@ -303,7 +307,7 @@ export function sendNativeChatMessageWithImageAttachments(
         }
         if (trimmedText.length > 0) {
           delay(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS, () => {
-            sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
+            sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(trimmedText))
             delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
               sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
               markSubmitted()

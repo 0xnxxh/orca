@@ -58,6 +58,31 @@ describe('sendNativeChatMessage', () => {
     expect(handle.settleAfterMs).toBe(NATIVE_CHAT_SUBMIT_DELAY_MS)
   })
 
+  it('trims the draft so a glued pair carries no separator the echo cannot match', async () => {
+    sendNativeChatMessage(SETTINGS, PTY, 'tell me a joke ')
+    sendNativeChatMessage(SETTINGS, PTY, ' continue')
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS)
+
+    // If the first Enter is lost both bodies land on one input line, so the row
+    // must read "tell me a jokecontinue" — the text prunePendingSends matches.
+    expectWriteOrder(sendRuntimePtyInput.mock.calls, [
+      NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
+      buildNativeChatPasteBytes('tell me a joke'),
+      NATIVE_CHAT_SUBMIT,
+      NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
+      buildNativeChatPasteBytes('continue')
+    ])
+  })
+
+  it('keeps bracketed-paste framing for a multi-line draft with a trailing newline', () => {
+    sendNativeChatMessage(SETTINGS, PTY, 'first line\nsecond line\n')
+
+    expectWriteOrder(sendRuntimePtyInput.mock.calls, [
+      NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
+      buildNativeChatPasteBytes('first line\nsecond line')
+    ])
+  })
+
   it('does not fire Enter before the proven 500ms gap (busy-agent safety)', () => {
     sendNativeChatMessage(SETTINGS, PTY, 'hi')
     // A short gap would fire Enter while a busy Codex has not yet landed the
@@ -352,6 +377,19 @@ describe('sendNativeChatMessageWithImageAttachments', () => {
     vi.advanceTimersByTime(NATIVE_CHAT_SUBMIT_DELAY_MS)
     expect(sendRuntimePtyInput).toHaveBeenLastCalledWith(SETTINGS, PTY, NATIVE_CHAT_SUBMIT)
     expect(sendRuntimePtyInput).toHaveBeenCalledTimes(4)
+  })
+
+  it('trims the prompt text written after the image paste', () => {
+    sendNativeChatMessageWithImageAttachments(SETTINGS, PTY, ' what do you see? ', [
+      '/tmp/orca-paste-image.png'
+    ])
+    vi.advanceTimersByTime(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS)
+
+    expect(sendRuntimePtyInput).toHaveBeenLastCalledWith(
+      SETTINGS,
+      PTY,
+      buildNativeChatPasteBytes('what do you see?')
+    )
   })
 
   it('waits the normal submit gap for an attachment-only send', () => {
