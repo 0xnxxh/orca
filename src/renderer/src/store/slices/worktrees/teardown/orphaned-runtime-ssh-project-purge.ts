@@ -9,7 +9,8 @@ export async function purgeOrphanedRuntimeSshProjects(
   if (destroyedSshTargetIds.length === 0) {
     return
   }
-  const destroyedTargetIds = new Set(destroyedSshTargetIds)
+  // Drop blanks so a repo with no connectionId never matches below.
+  const destroyedTargetIds = new Set(destroyedSshTargetIds.filter((id) => id !== ''))
   const destroyedHostIds = new Set<ExecutionHostId>(
     destroyedSshTargetIds.map((id) => toSshExecutionHostId(id))
   )

@@ -43,6 +43,12 @@ export function createForceDeletePreservedBranch(
       if ((options?.hostId || options?.runtimeEnvironmentId) && !retainedTarget) {
         throw new Error(`No preserved branch cleanup is pending for "${branchName}".`)
       }
+      // Ambiguous route: deleting against the active runtime could hit the wrong host's branch.
+      if (!retainedTarget && matchingRetainedTargets.length > 1) {
+        throw new Error(
+          `Multiple preserved branch cleanups are pending for "${branchName}"; specify the host.`
+        )
+      }
       const cleanupHostId = options?.hostId ?? retainedTarget?.cleanup.hostId
       // Why: the removed row no longer records its nested HUB owner, so retain the deletion-time route.
       const target =
