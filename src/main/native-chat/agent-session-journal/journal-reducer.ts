@@ -13,7 +13,11 @@ import type {
   AgentJournalSnapshot,
   AgentJournalSubmission
 } from '../../../shared/agent-session-journal-types'
-import { agentJournalSubmissionKey } from '../../../shared/agent-session-journal-item-key'
+import {
+  agentJournalSubmissionKey,
+  parseAgentJournalItemKey
+} from '../../../shared/agent-session-journal-item-key'
+import { structuredAgentSessionPayloadFingerprint } from '../../../shared/structured-agent-session-mutation'
 import type { JournalRow } from './journal-row-schema'
 
 export type JournalReducerState = {
@@ -55,7 +59,7 @@ export function applyJournalRow(state: JournalReducerState, row: JournalRow): vo
     return
   }
   if (row.kind === 'item') {
-    const itemId = resolveItemId(state, row.itemId)
+    const itemId = resolveJournalItemId(state, row.itemId, row.body)
     upsertItem(state, itemId, row.revision, {
       itemId,
       revision: row.revision,
@@ -75,6 +79,47 @@ export function applyJournalRow(state: JournalReducerState, row: JournalRow): vo
     return
   }
   applyDispatch(state, row)
+}
+
+export function resolveJournalItemId(
+  state: JournalReducerState,
+  itemId: string,
+  body?: AgentJournalRenderItem['body']
+): string {
+  const aliased = state.aliases.get(itemId)
+  if (aliased) {
+    return aliased
+  }
+  const identity = parseAgentJournalItemKey(itemId)
+  if (
+    !body ||
+    body.kind !== 'message' ||
+    body.role !== 'user' ||
+    !identity ||
+    identity.provider === 'orca'
+  ) {
+    return itemId
+  }
+  const fingerprint = structuredAgentSessionPayloadFingerprint({
+    method: 'agentSession.send',
+    sessionId: state.sessionId,
+    fields: { body }
+  })
+  // Exact payload plus queue order preserves repeated identical sends one-for-one.
+  const submission = [...state.submissions.values()]
+    .sort((left, right) => left.submittedAt - right.submittedAt)
+    .find((candidate) => {
+      if (candidate.dispatchState === 'rejected' || candidate.payloadFingerprint !== fingerprint) {
+        return false
+      }
+      return state.items.get(agentJournalSubmissionKey(candidate.clientMessageId))?.revision === 0
+    })
+  if (!submission) {
+    return itemId
+  }
+  const submissionId = agentJournalSubmissionKey(submission.clientMessageId)
+  state.aliases.set(itemId, submissionId)
+  return submissionId
 }
 
 function resolveItemId(state: JournalReducerState, itemId: string): string {

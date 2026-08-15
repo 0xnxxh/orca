@@ -6,9 +6,11 @@ import { agentJournalSubmissionKey } from '../../../shared/agent-session-journal
 import type {
   AgentJournalItemBody,
   AgentJournalItemIdentity,
+  AgentJournalMessageItem,
   AgentSessionJournalIdentity
 } from '../../../shared/agent-session-journal-types'
 import { AGENT_SESSION_HISTORY_MAX_LIMIT } from '../../../shared/agent-session-wire'
+import { structuredAgentSessionPayloadFingerprint } from '../../../shared/structured-agent-session-mutation'
 import {
   openAgentSessionJournal,
   type AgentSessionJournal
@@ -243,5 +245,53 @@ describe('projectJournalBatch', () => {
     }
     expect(projected.batch.removedItemIds).toHaveLength(1)
     expect(projected.batch.items).toHaveLength(0)
+  })
+
+  it('publishes a mismatched provider echo under its submission slot', async () => {
+    const message: AgentJournalMessageItem = {
+      kind: 'message',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'queued follow-up' }]
+    }
+    await journal.appendSubmission({
+      clientMessageId: 'client-follow-up',
+      payloadFingerprint: structuredAgentSessionPayloadFingerprint({
+        method: 'agentSession.send',
+        sessionId: IDENTITY.sessionId,
+        fields: { body: message }
+      }),
+      body: message,
+      fence: 1
+    })
+    const cursor = journal.cursor()
+    await journal.resolveDispatch({
+      clientMessageId: 'client-follow-up',
+      state: 'accepted',
+      providerIdentity: {
+        provider: 'codex',
+        threadId: 'thread-1',
+        turnId: 'predicted',
+        ordinal: 0
+      },
+      fence: 1
+    })
+    await journal.appendItem(
+      { provider: 'codex', threadId: 'thread-1', turnId: 'root-turn', ordinal: 2 },
+      message,
+      { fence: 1 }
+    )
+
+    const page = readAgentSessionHistory(journal, {
+      sessionId: IDENTITY.sessionId,
+      direction: 'after',
+      cursor
+    })
+    if (!page.ok) {
+      throw new Error(`expected a page, got reset ${page.reset}`)
+    }
+    expect(page.page.items).toMatchObject([
+      { itemId: agentJournalSubmissionKey('client-follow-up'), revision: 1 }
+    ])
+    expect(page.page.removedItemIds).toEqual([])
   })
 })

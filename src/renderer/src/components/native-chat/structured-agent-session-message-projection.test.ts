@@ -6,8 +6,6 @@ import type {
 import { createStructuredAgentSessionOutboxEntry } from '../../../../shared/structured-agent-session-outbox'
 import { projectStructuredAgentSessionMessages } from './structured-agent-session-message-projection'
 
-const SEND_COUNT = 8
-
 function submission(index: number): AgentJournalSubmission {
   return {
     clientMessageId: `client-${index}`,
@@ -32,8 +30,8 @@ function item(index: number): AgentJournalRenderItem {
 }
 
 describe('structured agent session message projection', () => {
-  it('renders N rapid accepted sends once when journal and optimistic updates interleave', () => {
-    const outbox = Array.from({ length: SEND_COUNT }, (_, index) =>
+  it.each([5, 10])('renders %i rapid accepted desktop sends exactly once', (sendCount) => {
+    const outbox = Array.from({ length: sendCount }, (_, index) =>
       createStructuredAgentSessionOutboxEntry({
         clientMessageId: `client-${index}`,
         sessionId: 'session-1',
@@ -43,14 +41,14 @@ describe('structured agent session message projection', () => {
       })
     )
     const messages = projectStructuredAgentSessionMessages(
-      Array.from({ length: SEND_COUNT }, (_, index) => item(index)),
+      Array.from({ length: sendCount }, (_, index) => item(index)),
       outbox,
-      Array.from({ length: SEND_COUNT }, (_, index) => submission(SEND_COUNT - index - 1))
+      Array.from({ length: sendCount }, (_, index) => submission(sendCount - index - 1))
     )
 
-    expect(messages).toHaveLength(SEND_COUNT)
+    expect(messages.filter((message) => message.role === 'user')).toHaveLength(sendCount)
     expect(messages.map((message) => message.id)).toEqual(
-      Array.from({ length: SEND_COUNT }, (_, index) => `journal-${index}`)
+      Array.from({ length: sendCount }, (_, index) => `journal-${index}`)
     )
   })
 

@@ -12,7 +12,6 @@ import type {
   AgentJournalItemBody,
   AgentJournalItemIdentity,
   AgentJournalMessageItem,
-  AgentJournalResetReason,
   AgentJournalSnapshot,
   AgentJournalSubmission,
   AgentSessionJournalIdentity
@@ -24,13 +23,20 @@ import { resolveJournalResume, type JournalResume } from './journal-cursor'
 import { publishNewEpoch } from './journal-epoch-rollover'
 import { appendJournalRows, ensureJournalDir } from './journal-log-file'
 import { loadJournal } from './journal-open'
-import { DEFAULT_JOURNAL_PAYLOAD_LIMITS, type JournalPayloadLimits } from './journal-payload-bounds'
+import { DEFAULT_JOURNAL_PAYLOAD_LIMITS } from './journal-payload-bounds'
 import {
   applyJournalRow,
   createJournalReducerState,
   renderJournalState,
+  resolveJournalItemId,
   type JournalReducerState
 } from './journal-reducer'
+import type {
+  AgentSessionJournalOptions,
+  JournalAppendResult,
+  JournalReadSince,
+  ResolveDispatchInput
+} from './journal-store-contracts'
 import {
   journalRowByteLength,
   type AgentJournalEpochReason,
@@ -43,35 +49,6 @@ import {
 } from './journal-write-guards'
 
 export { AgentSessionJournalError } from './journal-write-guards'
-
-export type AgentSessionJournalOptions = {
-  identity: AgentSessionJournalIdentity
-  journalDir: string
-  limits?: JournalPayloadLimits
-  compaction?: JournalCompactionPolicy
-  now?: () => number
-  mintEpoch?: () => string
-}
-
-export type JournalReadSince =
-  | { ok: true; rows: JournalRow[]; cursor: AgentJournalCursor }
-  | { ok: false; reset: AgentJournalResetReason }
-
-export type ResolveDispatchInput = {
-  clientMessageId: string
-  fence: number
-  /** Set when crash reconciliation, not the live dispatch, settled this. */
-  recovered?: true
-} & (
-  | { state: 'accepted'; providerIdentity: AgentJournalItemIdentity }
-  | { state: 'rejected' | 'unknown'; reason?: string | null }
-)
-
-export type JournalAppendResult = {
-  cursor: AgentJournalCursor
-  itemId: string
-  revision: number
-}
 
 export async function openAgentSessionJournal(
   options: AgentSessionJournalOptions
@@ -169,6 +146,9 @@ export class AgentSessionJournal {
     return this.state.receipts.get(clientMessageId) ?? null
   }
 
+  canonicalItemId(itemId: string): string {
+    return resolveJournalItemId(this.state, itemId)
+  }
   readSince(cursor: AgentJournalCursor): JournalReadSince {
     const resume = this.resume(cursor)
     if (!resume.ok) {

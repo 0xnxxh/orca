@@ -40,6 +40,28 @@ const OUTBOX: MobileStructuredOutboxEntry = {
 }
 
 describe('mobile structured session timeline', () => {
+  it.each([5, 10])('renders %i authoritative mobile sends exactly once', (sendCount) => {
+    const items = Array.from(
+      { length: sendCount },
+      (_, index): AgentJournalRenderItem => ({
+        itemId: `orca:client-${index}`,
+        revision: 1,
+        sequence: index + 1,
+        observedAt: index + 1,
+        body: {
+          kind: 'message',
+          role: 'user',
+          blocks: [{ type: 'text', text: `RAPID_${index + 1}` }]
+        }
+      })
+    )
+
+    const rows = buildMobileStructuredTimeline(items, [])
+    expect(
+      rows.filter((row) => row.kind === 'message' && row.message.role === 'user')
+    ).toHaveLength(sendCount)
+  })
+
   it('keeps pending prompts as cards and unknown sends as their original bubble', () => {
     const rows = buildMobileStructuredTimeline([APPROVAL], [OUTBOX])
 

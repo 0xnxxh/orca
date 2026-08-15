@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { agentJournalSubmissionKey } from '../../../shared/agent-session-journal-item-key'
 import type { AgentJournalMessageItem } from '../../../shared/agent-session-journal-types'
+import { structuredAgentSessionPayloadFingerprint } from '../../../shared/structured-agent-session-mutation'
 import {
   applyJournalRow,
   createJournalReducerState,
@@ -14,6 +15,18 @@ const EPOCH = 'epoch-1'
 
 function text(value: string): AgentJournalMessageItem {
   return { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text: value }] }
+}
+
+function userText(value: string): AgentJournalMessageItem {
+  return { kind: 'message', role: 'user', blocks: [{ type: 'text', text: value }] }
+}
+
+function sendFingerprint(body: AgentJournalMessageItem): string {
+  return structuredAgentSessionPayloadFingerprint({
+    method: 'agentSession.send',
+    sessionId: 'session-1',
+    fields: { body }
+  })
 }
 
 function base(seq: number): { v: number; epoch: string; seq: number; fence: number; ts: number } {
@@ -177,6 +190,91 @@ describe('submission and dispatch state machine', () => {
     expect(items[0]?.sequence).toBe(1)
     expect(items[0]?.revision).toBe(1)
   })
+
+  it('adopts a provider echo that arrives before dispatch settles', () => {
+    const body = userText('early echo')
+    const state = fold([
+      {
+        kind: 'submission',
+        clientMessageId: 'early-client',
+        payloadFingerprint: sendFingerprint(body),
+        providerHandle: { kind: 'codex', threadId: 'thread-1' },
+        body,
+        ...base(1)
+      },
+      {
+        kind: 'item',
+        itemId: 'codex:thread-1:root-turn:2',
+        revision: 1,
+        body,
+        ...base(2)
+      },
+      {
+        kind: 'dispatch',
+        clientMessageId: 'early-client',
+        state: 'accepted',
+        providerItemId: 'codex:thread-1:predicted-turn:0',
+        reason: null,
+        ...base(3)
+      }
+    ])
+
+    expect(renderJournalState(state).items).toMatchObject([
+      { itemId: agentJournalSubmissionKey('early-client'), revision: 1, sequence: 1 }
+    ])
+  })
+
+  it.each([5, 10])(
+    'reconciles %i rapid sends across an interleaved cancel when Codex reuses the root turn',
+    (count) => {
+      const rows: JournalRow[] = []
+      for (let index = 0; index < count; index += 1) {
+        const body = userText(`RAPID_${index + 1}`)
+        rows.push(
+          {
+            kind: 'submission',
+            clientMessageId: `client-${index}`,
+            payloadFingerprint: sendFingerprint(body),
+            providerHandle: { kind: 'codex', threadId: 'thread-1' },
+            body,
+            ...base(rows.length + 1)
+          },
+          {
+            kind: 'dispatch',
+            clientMessageId: `client-${index}`,
+            state: 'accepted',
+            providerItemId: `codex:thread-1:predicted-turn-${index}:0`,
+            reason: null,
+            ...base(rows.length + 2)
+          }
+        )
+      }
+      rows.push({
+        kind: 'item',
+        itemId: 'orca:cancel-between-sends',
+        revision: 1,
+        body: { kind: 'status', text: 'Cancelled an earlier turn.' },
+        ...base(rows.length + 1)
+      })
+      for (let index = 0; index < count; index += 1) {
+        rows.push({
+          kind: 'item',
+          itemId: `codex:thread-1:root-turn:${index}`,
+          revision: 1,
+          body: userText(`RAPID_${index + 1}`),
+          ...base(rows.length + 1)
+        })
+      }
+
+      const messages = renderJournalState(fold(rows)).items.filter(
+        (item) => item.body.kind === 'message' && item.body.role === 'user'
+      )
+      expect(messages).toHaveLength(count)
+      expect(messages.map((item) => item.itemId)).toEqual(
+        Array.from({ length: count }, (_, index) => agentJournalSubmissionKey(`client-${index}`))
+      )
+    }
+  )
 
   it('treats rejected as terminal', () => {
     const state = fold([

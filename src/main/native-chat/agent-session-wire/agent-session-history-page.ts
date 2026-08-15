@@ -91,7 +91,12 @@ function readForward(
     return { ok: false, reset: since.reset, snapshot }
   }
   const rows = since.rows.slice(0, limit)
-  const projected = projectJournalBatch({ rows, snapshot, afterSequence: cursor.sequence })
+  const projected = projectJournalBatch({
+    rows,
+    snapshot,
+    afterSequence: cursor.sequence,
+    canonicalItemId: (itemId) => journal.canonicalItemId(itemId)
+  })
   if (!projected.ok) {
     return { ok: false, reset: projected.reset, snapshot }
   }
