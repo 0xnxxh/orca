@@ -15,10 +15,11 @@ import {
   isAgentSessionOperationRow,
   type AgentSessionOperationRow
 } from '../../shared/agent-session-operation-ledger'
-import { isAgentSessionRecord, type AgentSessionRecord } from '../../shared/agent-session-record'
+import type { AgentSessionRecord } from '../../shared/agent-session-record'
+import { loadAgentSessionRecord } from '../../shared/agent-session-record-load'
 import { durableWriteTempPath, writeFileDurable } from '../durable-file-write'
 
-export const AGENT_SESSION_STORE_SCHEMA_VERSION = 1 as const
+export const AGENT_SESSION_STORE_SCHEMA_VERSION = 2 as const
 
 export const AGENT_SESSION_STORE_FILE_NAME = 'agent-sessions.json'
 
@@ -30,8 +31,8 @@ export type AgentSessionStoreState = {
   records: Map<string, AgentSessionRecord>
   operations: Map<string, AgentSessionOperationRow>
   retiredClaimKeys: RetiredAgentSessionClaimKey[]
-  /** Rows this build cannot validate, kept verbatim so a rollback cannot delete another host's work. */
-  unreadableRecords: Map<string, unknown>
+  /** Rows this build cannot validate, kept with a durable refusal reason. */
+  unreadableRecords: Map<string, { reason: string; raw: unknown }>
 }
 
 export type LoadedAgentSessionStore = {
@@ -41,6 +42,8 @@ export type LoadedAgentSessionStore = {
   readOnly: boolean
   /** True when the primary file was unusable and the previous committed copy was used. */
   recoveredFromBackup: boolean
+  /** True when a legacy row or store needs a durable current-schema rewrite. */
+  needsRewrite: boolean
 }
 
 export function agentSessionStorePath(directory: string): string {
@@ -70,7 +73,10 @@ export function agentSessionStoreRevision(state: AgentSessionStoreState): string
     .digest('hex')
 }
 
-function parseState(raw: string, hostId: string): { state: AgentSessionStoreState } | null {
+function parseState(
+  raw: string,
+  hostId: string
+): { state: AgentSessionStoreState; needsRewrite: boolean } | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -86,6 +92,7 @@ function parseState(raw: string, hostId: string): { state: AgentSessionStoreStat
     records?: unknown
     operations?: unknown
     retiredClaimKeys?: unknown
+    unusableRecords?: unknown
   }
   if (
     !Number.isSafeInteger(file.schemaVersion) ||
@@ -97,29 +104,60 @@ function parseState(raw: string, hostId: string): { state: AgentSessionStoreStat
   const schemaVersion = file.schemaVersion as number
   if (
     schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION &&
-    (typeof file.records !== 'object' ||
-      file.records === null ||
-      Array.isArray(file.records) ||
-      typeof file.operations !== 'object' ||
+    (typeof file.records !== 'object' || file.records === null || Array.isArray(file.records))
+  ) {
+    return null
+  }
+  if (
+    schemaVersion === AGENT_SESSION_STORE_SCHEMA_VERSION &&
+    (typeof file.operations !== 'object' ||
       file.operations === null ||
       Array.isArray(file.operations) ||
-      (schemaVersion === AGENT_SESSION_STORE_SCHEMA_VERSION &&
-        !Array.isArray(file.retiredClaimKeys)))
+      !Array.isArray(file.retiredClaimKeys) ||
+      typeof file.unusableRecords !== 'object' ||
+      file.unusableRecords === null ||
+      Array.isArray(file.unusableRecords))
   ) {
     return null
   }
   const state = emptyState(hostId)
-  state.schemaVersion = schemaVersion
+  state.schemaVersion =
+    schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION
+      ? AGENT_SESSION_STORE_SCHEMA_VERSION
+      : schemaVersion
   state.hostId = file.hostId
+  let needsRewrite = schemaVersion < AGENT_SESSION_STORE_SCHEMA_VERSION
   if (typeof file.records === 'object' && file.records !== null) {
     for (const [sessionId, value] of Object.entries(file.records)) {
-      if (isAgentSessionRecord(value) && value.sessionId === sessionId) {
-        state.records.set(sessionId, value)
+      const loaded = loadAgentSessionRecord(value)
+      if (loaded.status !== 'unusable' && loaded.record.sessionId === sessionId) {
+        state.records.set(sessionId, loaded.record)
+        needsRewrite ||= loaded.status === 'upgraded'
       } else {
-        // Why: a record this build cannot read must not silently vanish, and must never be
-        // granted a writer; keep it and refuse ownership for that session id.
-        state.unreadableRecords.set(sessionId, value)
+        state.unreadableRecords.set(sessionId, {
+          reason: loaded.status === 'unusable' ? loaded.reason : 'record_key_session_id_mismatch',
+          raw: value
+        })
+        needsRewrite ||= schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION
       }
+    }
+  }
+  if (typeof file.unusableRecords === 'object' && file.unusableRecords !== null) {
+    for (const [sessionId, value] of Object.entries(file.unusableRecords)) {
+      if (typeof value !== 'object' || value === null) {
+        if (schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION) {
+          return null
+        }
+        continue
+      }
+      const unusable = value as { reason?: unknown; raw?: unknown }
+      if (typeof unusable.reason !== 'string' || unusable.reason.length === 0) {
+        if (schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION) {
+          return null
+        }
+        continue
+      }
+      state.unreadableRecords.set(sessionId, { reason: unusable.reason, raw: unusable.raw })
     }
   }
   if (typeof file.operations === 'object' && file.operations !== null) {
@@ -157,7 +195,7 @@ function parseState(raw: string, hostId: string): { state: AgentSessionStoreStat
       state.retiredClaimKeys.push({ keyId: key.keyId, retiredAt: key.retiredAt as number })
     }
   }
-  return { state }
+  return { state, needsRewrite }
 }
 
 export async function loadAgentSessionStore(
@@ -187,7 +225,8 @@ export async function loadAgentSessionStore(
       state: parsed.state,
       storeFound: true,
       readOnly: parsed.state.schemaVersion > AGENT_SESSION_STORE_SCHEMA_VERSION,
-      recoveredFromBackup
+      recoveredFromBackup,
+      needsRewrite: parsed.needsRewrite
     }
   }
   if (unusableStoreFound) {
@@ -197,15 +236,13 @@ export async function loadAgentSessionStore(
     state: emptyState(hostId),
     storeFound: false,
     readOnly: false,
-    recoveredFromBackup: false
+    recoveredFromBackup: false,
+    needsRewrite: false
   }
 }
 
 function serializeState(state: AgentSessionStoreState): string {
   const records: Record<string, unknown> = Object.create(null)
-  for (const [sessionId, value] of state.unreadableRecords) {
-    records[sessionId] = value
-  }
   for (const [sessionId, record] of state.records) {
     records[sessionId] = record
   }
@@ -214,7 +251,8 @@ function serializeState(state: AgentSessionStoreState): string {
     hostId: state.hostId,
     records,
     operations: Object.fromEntries(state.operations),
-    retiredClaimKeys: state.retiredClaimKeys
+    retiredClaimKeys: state.retiredClaimKeys,
+    unusableRecords: Object.fromEntries(state.unreadableRecords)
   })
 }
 

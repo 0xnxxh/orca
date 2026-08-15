@@ -5,7 +5,8 @@ import {
   agentSessionStoreRevision,
   loadAgentSessionStore,
   saveAgentSessionStore,
-  type AgentSessionStoreState
+  type AgentSessionStoreState,
+  type LoadedAgentSessionStore
 } from './agent-session-record-store-file'
 import { withAgentSessionStoreTransactionLock } from './agent-session-store-transaction-lock'
 
@@ -34,11 +35,13 @@ function agentSessionStoreStateChanged(
   state: AgentSessionStoreState,
   records: ReadonlyMap<string, AgentSessionRecord>,
   operations: ReadonlyMap<string, AgentSessionOperationRow>,
-  retiredClaimKeys: AgentSessionStoreState['retiredClaimKeys']
+  retiredClaimKeys: AgentSessionStoreState['retiredClaimKeys'],
+  unreadableRecords: AgentSessionStoreState['unreadableRecords']
 ): boolean {
   return (
     !mapEntriesMatch(state.records, records) ||
     !mapEntriesMatch(state.operations, operations) ||
+    !mapEntriesMatch(state.unreadableRecords, unreadableRecords) ||
     state.retiredClaimKeys.length !== retiredClaimKeys.length ||
     state.retiredClaimKeys.some((entry, index) => entry !== retiredClaimKeys[index])
   )
@@ -55,9 +58,28 @@ export class AgentSessionStoreTransactionQueue {
     readonly recoveredFromBackup: boolean,
     private diskStoreFound: boolean,
     public state: AgentSessionStoreState,
-    private diskRevision: string
+    private diskRevision: string,
+    private needsRewrite: boolean
   ) {
     this.diskRecoveredFromBackup = recoveredFromBackup
+  }
+
+  static fromLoadedStore(
+    filePath: string,
+    hostId: string,
+    loaded: LoadedAgentSessionStore,
+    diskRevision: string
+  ): AgentSessionStoreTransactionQueue {
+    return new AgentSessionStoreTransactionQueue(
+      filePath,
+      hostId,
+      loaded.readOnly,
+      loaded.recoveredFromBackup,
+      loaded.storeFound,
+      loaded.state,
+      diskRevision,
+      loaded.needsRewrite
+    )
   }
 
   transact<T>(apply: () => T): Promise<T> {
@@ -74,9 +96,19 @@ export class AgentSessionStoreTransactionQueue {
         const records = new Map(this.state.records)
         const operations = new Map(this.state.operations)
         const retiredClaimKeys = [...this.state.retiredClaimKeys]
+        const unreadableRecords = new Map(this.state.unreadableRecords)
         try {
           const result = apply()
-          if (!agentSessionStoreStateChanged(this.state, records, operations, retiredClaimKeys)) {
+          if (
+            !this.needsRewrite &&
+            !agentSessionStoreStateChanged(
+              this.state,
+              records,
+              operations,
+              retiredClaimKeys,
+              unreadableRecords
+            )
+          ) {
             return result
           }
           await saveAgentSessionStore(this.filePath, this.state, {
@@ -86,17 +118,23 @@ export class AgentSessionStoreTransactionQueue {
           this.diskRevision = agentSessionStoreRevision(this.state)
           this.diskRecoveredFromBackup = false
           this.diskStoreFound = true
+          this.needsRewrite = false
           return result
         } catch (error) {
           this.state.records = records
           this.state.operations = operations
           this.state.retiredClaimKeys = retiredClaimKeys
+          this.state.unreadableRecords = unreadableRecords
           throw error
         }
       })
     )
     this.queue = run.catch(() => {})
     return run
+  }
+
+  persistLoadedMigration(): Promise<void> {
+    return this.transact(() => undefined)
   }
 
   private async refreshExternallyChangedState(): Promise<void> {
@@ -108,6 +146,7 @@ export class AgentSessionStoreTransactionQueue {
     const diskRevision = agentSessionStoreRevision(loaded.state)
     this.diskRecoveredFromBackup = loaded.recoveredFromBackup
     if (diskRevision === this.diskRevision) {
+      this.needsRewrite ||= loaded.needsRewrite
       return
     }
     if (loaded.readOnly) {
@@ -116,6 +155,7 @@ export class AgentSessionStoreTransactionQueue {
     markLoadedLeasesUnreconciled(loaded.state)
     this.state = loaded.state
     this.diskRevision = diskRevision
+    this.needsRewrite = loaded.needsRewrite
   }
 }
 

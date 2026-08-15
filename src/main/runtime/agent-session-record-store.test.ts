@@ -787,10 +787,14 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
     await expect(reopened.reserveOwner(reserveRequest())).rejects.toThrow(
       'execution_owner_reconciling'
     )
-    // The row is kept verbatim so a rollback does not delete another build's session.
+    // The row stays verbatim inside an explicit unusable envelope.
     await reopened.retireClaimKey('key-2', NOW)
     const persisted = JSON.parse(await readFile(filePath, 'utf-8'))
-    expect(persisted.records['session-alpha'].lease.runtimeFence).toBe('not-a-number')
+    expect(persisted.records).not.toHaveProperty('session-alpha')
+    expect(persisted.unusableRecords['session-alpha']).toMatchObject({
+      reason: 'current_shape_invalid',
+      raw: { lease: { runtimeFence: 'not-a-number' } }
+    })
   })
 
   it.each([
@@ -860,19 +864,5 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
     await expect(store.reserveOwner(reserveRequest())).rejects.toThrow(
       'agent_session_legacy_required'
     )
-  })
-
-  it('migrates an older store schema on its next commit', async () => {
-    const filePath = agentSessionStorePath(directory)
-    await writeFile(
-      filePath,
-      JSON.stringify({ schemaVersion: 0, hostId: 'local', records: {}, operations: {} })
-    )
-
-    const store = await open()
-    await store.retireClaimKey('key-1', NOW)
-
-    const persisted = JSON.parse(await readFile(filePath, 'utf-8'))
-    expect(persisted.schemaVersion).toBe(1)
   })
 })

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentSessionRecord } from '../../shared/agent-session-record'
+import {
+  AGENT_SESSION_RECORD_SCHEMA_VERSION,
+  type AgentSessionRecord
+} from '../../shared/agent-session-record'
 import { adjudicateRestartedAgentSessionHandoff } from './agent-session-restart-handoff-adjudication'
 
 const NOW = 1_800_000_000_000
 
 function record(stage: 'preparing' | 'new-owner-proving'): AgentSessionRecord {
   return {
-    schemaVersion: 1,
+    schemaVersion: AGENT_SESSION_RECORD_SCHEMA_VERSION,
     sessionId: 'session-restart',
     location: {
       executionHostId: 'local',
