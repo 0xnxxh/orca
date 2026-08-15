@@ -282,16 +282,28 @@ vi.mock('net', () => ({ connect: netConnectMock }))
 
 vi.mock('./daemon-health', () => ({
   checkDaemonHealth: checkDaemonHealthMock,
-  getDaemonCommandLine: getDaemonCommandLineMock,
-  getDaemonLaunchIdentity: getDaemonLaunchIdentityMock,
   getMacDaemonSystemResolverHealth: getMacDaemonSystemResolverHealthMock,
-  getMacDaemonTccAttributionHealth: getMacDaemonTccAttributionHealthMock,
-  healthCheckDaemon: healthCheckDaemonMock,
-  isDaemonStaleForCurrentBundle: isDaemonStaleForCurrentBundleMock,
-  killStaleDaemon: killStaleDaemonMock,
-  getProcessStartedAtMs: getProcessStartedAtMsMock,
-  parseDaemonPidFile: parseDaemonPidFileMock
+  healthCheckDaemon: healthCheckDaemonMock
 }))
+
+vi.mock('./daemon-pid-identity', () => ({
+  getDaemonCommandLine: getDaemonCommandLineMock
+}))
+
+vi.mock('./daemon-bundle-identity', () => ({
+  getDaemonLaunchIdentity: getDaemonLaunchIdentityMock,
+  isDaemonStaleForCurrentBundle: isDaemonStaleForCurrentBundleMock
+}))
+
+vi.mock('./mac-daemon-tcc-attribution', () => ({
+  getMacDaemonTccAttributionHealth: getMacDaemonTccAttributionHealthMock
+}))
+
+vi.mock('./stale-daemon-kill', () => ({ killStaleDaemon: killStaleDaemonMock }))
+
+vi.mock('./os-process-identity', () => ({ getProcessStartedAtMs: getProcessStartedAtMsMock }))
+
+vi.mock('./daemon-pid-record', () => ({ parseDaemonPidFile: parseDaemonPidFileMock }))
 
 vi.mock('./client', () => ({ DaemonClient: daemonClientMock }))
 

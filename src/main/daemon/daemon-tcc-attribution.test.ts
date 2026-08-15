@@ -4,11 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getDaemonPidPath, serializeDaemonPidFile } from './daemon-spawner'
-import {
-  getMacDaemonTccAttributionHealth,
-  getProcessStartedAtMs,
-  parseDaemonPidFile
-} from './daemon-health'
+import { getMacDaemonTccAttributionHealth } from './mac-daemon-tcc-attribution'
+import { getProcessStartedAtMs } from './os-process-identity'
+import { parseDaemonPidFile } from './daemon-pid-record'
 
 // Real-process harness (same shape as daemon-bundle-staleness.test.ts): the health
 // check only trusts a pid record whose process is verifiably the daemon, so these

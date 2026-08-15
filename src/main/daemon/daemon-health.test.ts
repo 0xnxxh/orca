@@ -11,17 +11,19 @@ import type { SocketProbeOutcome } from './daemon-endpoint-probe'
 import {
   checkDaemonHealth,
   E2E_FORCE_DAEMON_HEALTH_UNREACHABLE_ENV,
+  healthCheckDaemon
+} from './daemon-health'
+import { killStaleDaemon } from './stale-daemon-kill'
+import { parseDaemonPidFile } from './daemon-pid-record'
+import {
   getProcessStartedAtMs,
-  healthCheckDaemon,
-  killStaleDaemon,
   parseLinuxBootTimeSeconds,
   parseLinuxProcStartTicks,
-  parseDaemonPidFile,
   parseWindowsProcessIdentityJson,
   startTimeMatches,
   startTimesWithinTolerance
-} from './daemon-health'
-import type { SubprocessHandle } from './session'
+} from './os-process-identity'
+import type { SubprocessHandle } from './session-subprocess-handle'
 
 function createMockSubprocess(): SubprocessHandle {
   return {

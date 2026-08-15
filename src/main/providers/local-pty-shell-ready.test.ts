@@ -6,11 +6,12 @@ import { join, dirname } from 'node:path'
 import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import type * as pty from 'node-pty'
 import type * as LocalPtyShellReadyModule from './local-pty-shell-ready'
+import { writeStartupCommandWhenShellReady } from './local-pty-shell-ready'
+import { createShellReadyScanState, scanForShellReady } from '../shell-ready-marker-scanner'
 import {
-  createShellReadyScanState,
-  scanForShellReady,
-  writeStartupCommandWhenShellReady
-} from './local-pty-shell-ready'
+  getBashShellReadyRcfileContent,
+  getZshShellReadyRcfileContent
+} from './shell-ready-wrapper-rcfiles'
 
 // Why: can't import electron (bundled into the plain-node daemon-entry fork), so tests set the wrapper root via ORCA_USER_DATA_PATH instead of mocking app.
 function setTestUserDataPath(path: string): void {
@@ -511,8 +512,7 @@ describePosix('local PTY shell-ready launch config', () => {
   })
 
   it('writes wrappers without restoring Pi/OMP homes after user startup files', async () => {
-    const { getBashShellReadyRcfileContent, getShellReadyLaunchConfig } =
-      await importFreshLocalPtyShellReady()
+    const { getShellReadyLaunchConfig } = await importFreshLocalPtyShellReady()
 
     getShellReadyLaunchConfig('/bin/zsh')
 
@@ -558,9 +558,6 @@ describePosix('local PTY shell-ready launch config', () => {
 
   // Why: issue #2422 — without OSC 133 C/D markers, bash sessions kept the worktree spinner "working" ~30min after the agent exited.
   it('emits OSC 133 C/D markers in the bash wrapper so agent exit cleanup fires', async () => {
-    const { getBashShellReadyRcfileContent, getZshShellReadyRcfileContent } =
-      await importFreshLocalPtyShellReady()
-
     const bashRc = getBashShellReadyRcfileContent()
     const zshRc = getZshShellReadyRcfileContent()
 
@@ -579,8 +576,6 @@ describePosix('local PTY shell-ready launch config', () => {
   })
 
   itWithBash('runs the bash wrapper without fake C/D markers before the first prompt', async () => {
-    const { getBashShellReadyRcfileContent } = await importFreshLocalPtyShellReady()
-
     const output = runInteractiveBashRcfile(getBashShellReadyRcfileContent(), userDataPath)
 
     expectBashOsc133Lifecycle(output)
@@ -589,7 +584,6 @@ describePosix('local PTY shell-ready launch config', () => {
   itWithBash(
     'preserves prompt hooks and existing DEBUG traps without fake command markers',
     async () => {
-      const { getBashShellReadyRcfileContent } = await importFreshLocalPtyShellReady()
       writeFileSync(
         join(userDataPath, '.bash_profile'),
         [
@@ -607,7 +601,6 @@ describePosix('local PTY shell-ready launch config', () => {
   )
 
   itWithBash('normalizes array PROMPT_COMMAND hooks so bash 3.2 still runs cleanup', async () => {
-    const { getBashShellReadyRcfileContent } = await importFreshLocalPtyShellReady()
     writeFileSync(
       join(userDataPath, '.bash_profile'),
       'PROMPT_COMMAND=(\'AFTER_ARRAY_PROMPT=1; printf "PROMPT_ARRAY\\n"\')\n'

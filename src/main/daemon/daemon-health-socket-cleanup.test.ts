@@ -10,7 +10,8 @@ const { netConnectMock } = vi.hoisted(() => ({
 
 vi.mock('net', () => ({ connect: netConnectMock }))
 
-import { healthCheckDaemon, killStaleDaemon } from './daemon-health'
+import { healthCheckDaemon } from './daemon-health'
+import { killStaleDaemon } from './stale-daemon-kill'
 
 class FakeSocket extends EventEmitter {
   destroy = vi.fn()

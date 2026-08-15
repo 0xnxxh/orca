@@ -6,7 +6,8 @@ import {
   escapeWslShCommandForWindows,
   quotePosixShell
 } from '../../shared/wsl-login-shell-command'
-import { ensureShellReadyWrappersAt, getMarkerlessShellLaunchConfig } from './local-pty-shell-ready'
+import { getMarkerlessShellLaunchConfig } from './local-pty-shell-ready'
+import { ensureShellReadyWrappersAt } from './shell-ready-wrapper-writer'
 import {
   encodePowerShellCommand,
   getPowerShellOsc133Bootstrap

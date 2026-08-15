@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import { parseLinuxBootTimeSeconds, parseLinuxProcStartTicks } from './daemon-health'
+import { parseLinuxBootTimeSeconds, parseLinuxProcStartTicks } from './os-process-identity'
 import type {
   LinuxStatEvidence,
   ProcessSignalEvidence,

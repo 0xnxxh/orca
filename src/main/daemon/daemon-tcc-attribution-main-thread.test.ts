@@ -43,7 +43,7 @@ vi.mock('node:fs', async (importOriginal) => {
 })
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-const { getMacDaemonTccAttributionHealth } = await import('./daemon-health')
+const { getMacDaemonTccAttributionHealth } = await import('./mac-daemon-tcc-attribution')
 
 describe('macOS daemon TCC attribution main-thread cost', () => {
   let dir: string

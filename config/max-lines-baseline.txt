@@ -46,8 +46,6 @@ inline src/main/codex/config-toml-trust.ts
 inline src/main/codex/hook-service.test.ts
 inline src/main/codex/hook-service.ts
 inline src/main/copilot/hook-service.ts
-inline src/main/daemon/client.ts
-inline src/main/daemon/daemon-health.ts
 inline src/main/daemon/daemon-init.test.ts
 inline src/main/daemon/daemon-init.ts
 inline src/main/daemon/daemon-pty-adapter.test.ts
@@ -55,8 +53,6 @@ inline src/main/daemon/daemon-pty-adapter.ts
 inline src/main/daemon/daemon-server.ts
 inline src/main/daemon/pty-subprocess.test.ts
 inline src/main/daemon/pty-subprocess.ts
-inline src/main/daemon/session.ts
-inline src/main/daemon/shell-ready.ts
 inline src/main/git/remove-worktree.test.ts
 inline src/main/git/repo.ts
 inline src/main/git/runner.ts
@@ -124,7 +120,6 @@ inline src/main/project-groups/nested-repo-discovery.ts
 inline src/main/providers/local-pty-provider.test.ts
 inline src/main/providers/local-pty-provider.ts
 inline src/main/providers/local-pty-shell-ready.test.ts
-inline src/main/providers/local-pty-shell-ready.ts
 inline src/main/providers/ssh-git-provider.test.ts
 inline src/main/providers/ssh-git-provider.ts
 inline src/main/rate-limits/claude-fetcher.test.ts
@@ -139,11 +134,7 @@ inline src/main/runtime/orca-runtime-files.ts
 inline src/main/runtime/orca-runtime-git.ts
 inline src/main/runtime/orca-runtime.test.ts
 inline src/main/runtime/orca-runtime.ts
-inline src/main/runtime/orchestration/coordinator.ts
 inline src/main/runtime/orchestration/db.ts
-inline src/main/runtime/rpc/methods/files.ts
-inline src/main/runtime/rpc/methods/git.ts
-inline src/main/runtime/rpc/methods/github.ts
 inline src/main/runtime/rpc/methods/orchestration.test.ts
 inline src/main/runtime/rpc/methods/orchestration.ts
 inline src/main/runtime/rpc/methods/terminal.ts

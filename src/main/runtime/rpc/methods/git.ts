@@ -1,23 +1,12 @@
-/* eslint-disable max-lines -- Why: this table is the runtime git RPC contract; splitting it would make method coverage harder to audit. */
 import { defineMethod, type RpcMethod } from '../core'
-import { remoteRpcContentBudget } from '../../../../shared/remote-rpc-content-budget'
-import type { GlobalSettings } from '../../../../shared/global-settings-types'
-import type { ResolvedSourceControlAiGenerationParams } from '../../../../shared/source-control-ai'
+import { GIT_DIFF_COMPARE_METHODS } from './git-diff-compare-methods'
+import { GIT_SOURCE_CONTROL_AI_METHODS } from './git-source-control-ai-methods'
+import { GIT_STAGE_DISCARD_METHODS } from './git-stage-discard-methods'
 import {
-  GitBranchCompare,
-  GitBranchDiff,
-  GitBulkPaths,
   GitCheckIgnored,
   GitCheckout,
   GitCommit,
-  GitCommitCompare,
-  GitCommitDiff,
-  GitDiscoverCommitMessageModels,
-  GitDiff,
-  GitFilePath,
   GitForkSync,
-  GitGenerateCommitMessage,
-  GitGeneratePullRequestFields,
   GitHistory,
   GitPush,
   GitRebaseFromBase,
@@ -28,65 +17,6 @@ import {
   GitTargetedRemote,
   WorktreeSelector
 } from './git-params'
-
-// Why: clientKind is set only for WebSocket-transported requests, so desktop-local and in-process
-// callers keep uncapped full-fidelity diffs.
-function remoteDiffContentBudget(
-  clientKind: 'mobile' | 'runtime' | undefined,
-  requestId: string | undefined
-): number | undefined {
-  return clientKind && requestId ? remoteRpcContentBudget(requestId) : undefined
-}
-
-type CommitMessageGenerationOverride = {
-  commitMessageAi?: GlobalSettings['commitMessageAi']
-  sourceControlAi?: GlobalSettings['sourceControlAi']
-  sourceControlAiResolvedParams?: ResolvedSourceControlAiGenerationParams
-  agentCmdOverrides?: GlobalSettings['agentCmdOverrides']
-  commitMessageDiscoveryHostKey?: string
-}
-
-// Why: generateCommitMessage and generatePullRequestFields share the same optional
-// override fields; returning undefined when none are set keeps the no-override call path.
-function buildCommitMessageGenerationOverride(params: {
-  commitMessageAi?: unknown
-  sourceControlAi?: unknown
-  sourceControlAiResolvedParams?: unknown
-  agentCmdOverrides?: unknown
-  commitMessageDiscoveryHostKey?: string
-}): CommitMessageGenerationOverride | undefined {
-  if (
-    params.commitMessageAi === undefined &&
-    params.sourceControlAi === undefined &&
-    params.sourceControlAiResolvedParams === undefined &&
-    params.agentCmdOverrides === undefined &&
-    params.commitMessageDiscoveryHostKey === undefined
-  ) {
-    return undefined
-  }
-  return {
-    ...(params.commitMessageAi !== undefined
-      ? { commitMessageAi: params.commitMessageAi as GlobalSettings['commitMessageAi'] }
-      : {}),
-    ...(params.sourceControlAi !== undefined
-      ? { sourceControlAi: params.sourceControlAi as GlobalSettings['sourceControlAi'] }
-      : {}),
-    ...(params.sourceControlAiResolvedParams !== undefined
-      ? {
-          sourceControlAiResolvedParams:
-            params.sourceControlAiResolvedParams as ResolvedSourceControlAiGenerationParams
-        }
-      : {}),
-    ...(params.agentCmdOverrides !== undefined
-      ? {
-          agentCmdOverrides: params.agentCmdOverrides as GlobalSettings['agentCmdOverrides']
-        }
-      : {}),
-    ...(params.commitMessageDiscoveryHostKey !== undefined
-      ? { commitMessageDiscoveryHostKey: params.commitMessageDiscoveryHostKey }
-      : {})
-  }
-}
 
 export const GIT_METHODS: RpcMethod[] = [
   defineMethod({
@@ -165,30 +95,7 @@ export const GIT_METHODS: RpcMethod[] = [
     params: WorktreeSelector,
     handler: async (params, { runtime }) => runtime.listRuntimeGitLocalBranches(params.worktree)
   }),
-  defineMethod({
-    name: 'git.diff',
-    params: GitDiff,
-    handler: async (params, { runtime, clientKind, requestId }) =>
-      runtime.getRuntimeGitDiff(
-        params.worktree,
-        params.filePath,
-        params.staged,
-        params.compareAgainstHead,
-        remoteDiffContentBudget(clientKind, requestId)
-      )
-  }),
-  defineMethod({
-    name: 'git.branchCompare',
-    params: GitBranchCompare,
-    handler: async (params, { runtime }) =>
-      runtime.getRuntimeGitBranchCompare(params.worktree, params.baseRef)
-  }),
-  defineMethod({
-    name: 'git.commitCompare',
-    params: GitCommitCompare,
-    handler: async (params, { runtime }) =>
-      runtime.getRuntimeGitCommitCompare(params.worktree, params.commitId)
-  }),
+  ...GIT_DIFF_COMPARE_METHODS,
   defineMethod({
     name: 'git.upstreamStatus',
     params: GitTargetedRemote,
@@ -245,130 +152,13 @@ export const GIT_METHODS: RpcMethod[] = [
       )
   }),
   defineMethod({
-    name: 'git.branchDiff',
-    params: GitBranchDiff,
-    handler: async (params, { runtime, clientKind, requestId }) =>
-      runtime.getRuntimeGitBranchDiff(
-        params.worktree,
-        params.compare,
-        params.filePath,
-        params.oldPath,
-        remoteDiffContentBudget(clientKind, requestId)
-      )
-  }),
-  defineMethod({
-    name: 'git.commitDiff',
-    params: GitCommitDiff,
-    handler: async (params, { runtime, clientKind, requestId }) =>
-      runtime.getRuntimeGitCommitDiff(
-        params.worktree,
-        {
-          commitOid: params.commitOid,
-          parentOid: params.parentOid,
-          filePath: params.filePath,
-          oldPath: params.oldPath
-        },
-        remoteDiffContentBudget(clientKind, requestId)
-      )
-  }),
-  defineMethod({
     name: 'git.commit',
     params: GitCommit,
     handler: async (params, { runtime }) =>
       runtime.commitRuntimeGit(params.worktree, params.message)
   }),
-  defineMethod({
-    name: 'git.generateCommitMessage',
-    params: GitGenerateCommitMessage,
-    handler: async (params, { runtime }) => {
-      const override = buildCommitMessageGenerationOverride(params)
-      if (override === undefined) {
-        return runtime.generateRuntimeCommitMessage(params.worktree)
-      }
-      return runtime.generateRuntimeCommitMessage(params.worktree, override)
-    }
-  }),
-  defineMethod({
-    name: 'git.discoverCommitMessageModels',
-    params: GitDiscoverCommitMessageModels,
-    handler: async (params, { runtime }) =>
-      runtime.discoverRuntimeCommitMessageModels(
-        params.worktree,
-        params.agentId,
-        params.agentCmdOverrides !== undefined
-          ? {
-              agentCmdOverrides: params.agentCmdOverrides as GlobalSettings['agentCmdOverrides']
-            }
-          : {}
-      )
-  }),
-  defineMethod({
-    name: 'git.cancelGenerateCommitMessage',
-    params: WorktreeSelector,
-    handler: async (params, { runtime }) =>
-      runtime.cancelRuntimeGenerateCommitMessage(params.worktree)
-  }),
-  defineMethod({
-    name: 'git.generatePullRequestFields',
-    params: GitGeneratePullRequestFields,
-    handler: async (params, { runtime }) => {
-      const input = {
-        base: params.base,
-        title: params.title,
-        body: params.body,
-        draft: params.draft,
-        provider: params.provider,
-        useTemplate: params.useTemplate
-      }
-      const override = buildCommitMessageGenerationOverride(params)
-      if (override === undefined) {
-        return runtime.generateRuntimePullRequestFields(params.worktree, input)
-      }
-      return runtime.generateRuntimePullRequestFields(params.worktree, input, override)
-    }
-  }),
-  defineMethod({
-    name: 'git.cancelGeneratePullRequestFields',
-    params: WorktreeSelector,
-    handler: async (params, { runtime }) =>
-      runtime.cancelRuntimeGeneratePullRequestFields(params.worktree)
-  }),
-  defineMethod({
-    name: 'git.stage',
-    params: GitFilePath,
-    handler: async (params, { runtime }) =>
-      runtime.stageRuntimeGitPath(params.worktree, params.filePath)
-  }),
-  defineMethod({
-    name: 'git.bulkStage',
-    params: GitBulkPaths,
-    handler: async (params, { runtime }) =>
-      runtime.bulkStageRuntimeGitPaths(params.worktree, params.filePaths)
-  }),
-  defineMethod({
-    name: 'git.unstage',
-    params: GitFilePath,
-    handler: async (params, { runtime }) =>
-      runtime.unstageRuntimeGitPath(params.worktree, params.filePath)
-  }),
-  defineMethod({
-    name: 'git.bulkUnstage',
-    params: GitBulkPaths,
-    handler: async (params, { runtime }) =>
-      runtime.bulkUnstageRuntimeGitPaths(params.worktree, params.filePaths)
-  }),
-  defineMethod({
-    name: 'git.discard',
-    params: GitFilePath,
-    handler: async (params, { runtime }) =>
-      runtime.discardRuntimeGitPath(params.worktree, params.filePath)
-  }),
-  defineMethod({
-    name: 'git.bulkDiscard',
-    params: GitBulkPaths,
-    handler: async (params, { runtime }) =>
-      runtime.bulkDiscardRuntimeGitPaths(params.worktree, params.filePaths)
-  }),
+  ...GIT_SOURCE_CONTROL_AI_METHODS,
+  ...GIT_STAGE_DISCARD_METHODS,
   defineMethod({
     name: 'git.remoteFileUrl',
     params: GitRemoteFileUrl,

@@ -4,12 +4,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { DaemonClient } from './client'
 import { DAEMON_ENDPOINT_LOST_MESSAGE } from './daemon-endpoint-ownership'
-import {
-  getMacDaemonSystemResolverHealth,
-  getMacDaemonTccAttributionHealth,
-  parseDaemonPidFile,
-  type ParsedDaemonPid
-} from './daemon-health'
+import { getMacDaemonSystemResolverHealth } from './daemon-health'
+import { getMacDaemonTccAttributionHealth } from './mac-daemon-tcc-attribution'
+import { parseDaemonPidFile, type ParsedDaemonPid } from './daemon-pid-record'
 import {
   HistoryManager,
   type HistoryCheckpointResult,
@@ -19,7 +16,7 @@ import { HistoryReader, type ColdRestoreInfo } from './history-reader'
 import { getRecoveredHistorySeedSegments } from './terminal-history-seed-segments'
 import { mintPtySessionId, parsePtySessionId } from './pty-session-id'
 import { supportsPtyStartupBarrier } from './shell-ready'
-import { CODEX_SHELL_READY_TIMEOUT_MS } from './session'
+import { CODEX_SHELL_READY_TIMEOUT_MS } from './session-shell-ready-barrier'
 import {
   CLEAN_DISCONNECT_PROTOCOL_VERSION,
   COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,

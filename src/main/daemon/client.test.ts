@@ -6,7 +6,9 @@ import { join } from 'node:path'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { DaemonClient } from './client'
 import { encodeNdjson, NDJSON_MAX_LINE_BYTES, NdjsonLineTooLongError } from './ndjson'
+import { PROTOCOL_VERSION } from './types'
 import type { HelloMessage, DaemonRequest, DaemonEvent } from './types'
+import { sendDaemonHello } from './daemon-client-hello-handshake'
 import { getDaemonSocketPath } from './daemon-spawner'
 
 function createTestDir(): string {
@@ -297,18 +299,14 @@ describe('DaemonClient', () => {
       const socket = new EventEmitter() as Socket
       socket.write = write as unknown as Socket['write']
       socket.destroy = destroy as unknown as Socket['destroy']
-      const sendHello = (
-        client as unknown as {
-          sendHello(
-            socket: Socket,
-            token: string,
-            role: 'control' | 'stream',
-            timeoutMs: number
-          ): Promise<void>
-        }
-      ).sendHello.bind(client)
-
-      const promise = sendHello(socket, 'test-token-123', 'control', 5000)
+      const promise = sendDaemonHello({
+        socket,
+        token: 'test-token-123',
+        role: 'control',
+        clientId: 'client-1',
+        protocolVersion: PROTOCOL_VERSION,
+        timeoutMs: 5000
+      })
       const rejection = expect(promise).rejects.toThrow('Hello response timed out')
       await vi.advanceTimersByTimeAsync(5000)
 

@@ -16,10 +16,11 @@ import { DaemonServer } from './daemon-server'
 import { HeadlessEmulator } from './headless-emulator'
 import { getHistorySessionDirName } from './history-paths'
 import type { HistoryReader } from './history-reader'
-import type { SubprocessHandle } from './session'
+import type { SubprocessHandle } from './session-subprocess-handle'
 import type { PendingOutputRecord } from './types'
 import type { DaemonFileLog } from './daemon-file-log'
 import type * as DaemonHealthModule from './daemon-health'
+import type * as MacDaemonTccAttributionModule from './mac-daemon-tcc-attribution'
 import { getDaemonSocketPath, serializeDaemonPidFile } from './daemon-spawner'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS } from './terminal-history-seed-chunks'
@@ -41,7 +42,14 @@ vi.mock('./daemon-health', async (importOriginal) => {
   const actual = await importOriginal<typeof DaemonHealthModule>()
   return {
     ...actual,
-    getMacDaemonSystemResolverHealth: getMacDaemonSystemResolverHealthMock,
+    getMacDaemonSystemResolverHealth: getMacDaemonSystemResolverHealthMock
+  }
+})
+
+vi.mock('./mac-daemon-tcc-attribution', async (importOriginal) => {
+  const actual = await importOriginal<typeof MacDaemonTccAttributionModule>()
+  return {
+    ...actual,
     getMacDaemonTccAttributionHealth: getMacDaemonTccAttributionHealthMock
   }
 })

@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { OrchestrationDb } from './db'
 import { reconcileLifecycleMessage } from './lifecycle-reconciliation'
-import {
-  Coordinator,
-  DISPATCH_STALE_THRESHOLD,
-  parseAllowStaleBaseFromSpec,
-  type CoordinatorRuntime
-} from './coordinator'
+import { Coordinator } from './coordinator'
+import { DISPATCH_STALE_THRESHOLD, parseAllowStaleBaseFromSpec } from './coordinator-task-dispatch'
+import type { CoordinatorRuntime } from './coordinator-runtime-port'
 
 type DriftResult = {
   base: string

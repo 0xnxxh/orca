@@ -2,7 +2,7 @@ import process from 'node:process'
 import { writeFileSync } from 'node:fs'
 import { startDaemon, type DaemonHandle } from '../../../src/main/daemon/daemon-main'
 import { serializeDaemonPidFile } from '../../../src/main/daemon/daemon-spawner'
-import type { SubprocessHandle } from '../../../src/main/daemon/session'
+import type { SubprocessHandle } from '../../../src/main/daemon/session-subprocess-handle'
 
 type FixtureArgs = {
   protocolVersion: number
