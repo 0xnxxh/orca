@@ -107,8 +107,11 @@ function isProcessRunning(pid: number | null | undefined): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
+    const failure = error as NodeJS.ErrnoException | null
     // Why: only ESRCH proves the pid is gone; EPERM means a foreign owner holds
-    // it (same rule as runtime-metadata-ownership-watch).
-    return (error as NodeJS.ErrnoException | null)?.code !== 'ESRCH'
+    // it (same rule as runtime-metadata-ownership-watch). A pid the OS will not
+    // accept at all — a corrupt non-integer in metadata — throws without an
+    // errno and is no evidence of an owner.
+    return typeof failure?.errno === 'number' && failure.code !== 'ESRCH'
   }
 }

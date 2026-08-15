@@ -91,12 +91,13 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
     return userDataPath
   }
 
-  function throwFromKill(code: string): void {
+  function throwFromKill(code: string, errno: number): void {
     // Why: a real pid would make the branch environment-dependent — as root, or
     // in a container, a "foreign" pid answers normally and the test passes
-    // without ever reaching the errno it claims to cover.
+    // without ever reaching the errno it claims to cover. The errno matters:
+    // Node attaches one to syscall failures and none to argument rejections.
     vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw Object.assign(new Error(code), { code })
+      throw Object.assign(new Error(code), { code, errno })
     })
   }
 
@@ -104,7 +105,7 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
     // Why: EPERM means the pid exists but belongs to another user (a root
     // supervisor, or a serve under a different account). Reading that as "dead"
     // would let `orca serve` spawn a duplicate against an owned profile.
-    throwFromKill('EPERM')
+    throwFromKill('EPERM', -1)
 
     const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-eperm-', 4242))
 
@@ -112,10 +113,20 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
     expect(status.result.runtime.state).toBe('starting')
   })
 
+  it('does not read a pid the OS rejects outright as a live owner', async () => {
+    // Why: process.kill throws a TypeError with no errno for a non-integer pid,
+    // and "not ESRCH" alone would call that alive — a corrupt metadata file
+    // would then refuse `orca serve` on this profile with nothing running.
+    const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-badpid-', 1.5))
+
+    expect(status.result.app).toMatchObject({ running: false, pid: null })
+    expect(status.result.runtime.state).toBe('stale_bootstrap')
+  })
+
   it('still reports a runtime whose pid is gone as stale', async () => {
     // Why: only ESRCH proves death — without this the widened rule could call
     // every dead profile "starting" and refuse serve forever.
-    throwFromKill('ESRCH')
+    throwFromKill('ESRCH', -3)
 
     const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-esrch-', 4242))
 
