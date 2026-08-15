@@ -595,11 +595,8 @@ describe('remote runtime terminal multiplex ACK gate', () => {
     })
     expect(onSubscribed).toHaveBeenCalledTimes(1)
 
-    // Why nothing at all: this replaced the previous rule, which read an empty
-    // payload as an authoritative blank and cleared on it. An empty payload is
-    // the host failing to describe the pane, not proof the pane is empty, and
-    // applying it only blanks a terminal the user can still read.
-    const snapshotCallsBeforeEmpty = onSnapshot.mock.calls.length
+    // A successful empty snapshot authoritatively clears only the visible
+    // screen; unavailable replies carry an explicit wire reason instead.
     injectSnapshot(
       {
         kind: 'scrollback',
@@ -610,7 +607,9 @@ describe('remote runtime terminal multiplex ACK gate', () => {
       },
       ''
     )
-    expect(onSnapshot).toHaveBeenCalledTimes(snapshotCallsBeforeEmpty)
+    expect(onSnapshot).toHaveBeenLastCalledWith('\x1b[2J\x1b[H', {
+      pendingEscapeTailAnsi: undefined
+    })
     expect(onSubscribed).toHaveBeenCalledTimes(1)
 
     stream.close()

@@ -876,6 +876,7 @@ class RemoteRuntimeTerminalMultiplexer {
       const info = stream.snapshotInfo
       const pendingRequest = stream.pendingSnapshotRequest
       const snapshotApplied = !stream.snapshotOverflowed && info?.truncated !== true
+      const recoverySnapshotApplied = snapshotApplied && info?.unavailable === undefined
       const matchesPendingRequest =
         target === 'request' &&
         pendingRequest &&
@@ -903,31 +904,13 @@ class RemoteRuntimeTerminalMultiplexer {
             seq: info?.seq,
             kittyKeyboardFlags: info?.kittyKeyboardFlags
           })
-        } else if (target === 'recovery') {
-          // Why the screen only, never `\x1b[3J`: that erases xterm's scrollback,
-          // and every payload reaching this branch is screen-only by
-          // construction — the ack-recovery emit serializes with
-          // `scrollbackRows: 0`, and the untagged resync request carries no
-          // scrollback either. Erasing history the frame cannot put back is
-          // silent data loss. A payload that DOES carry scrollback arrives
-          // tagged, and the request branch above never clears.
-          // Why not an empty repaint: with no payload there is nothing to put
-          // on screen, so applying one only blanks a pane the host could not
-          // describe. A mid-escape tail still has to replay so the next live
-          // chunk completes it instead of rendering literally (#7329).
-          if (data) {
-            stream.callbacks.onSnapshot(`\x1b[2J\x1b[H${data}`, {
-              pendingEscapeTailAnsi: info?.pendingEscapeTailAnsi,
-              seq: info?.seq,
-              kittyKeyboardFlags: info?.kittyKeyboardFlags
-            })
-          } else if (info?.pendingEscapeTailAnsi) {
-            stream.callbacks.onSnapshot('', {
-              pendingEscapeTailAnsi: info.pendingEscapeTailAnsi,
-              seq: info?.seq,
-              kittyKeyboardFlags: info?.kittyKeyboardFlags
-            })
-          }
+        } else if (target === 'recovery' && recoverySnapshotApplied) {
+          // Untagged resync and ACK-overflow replies are screen-only; preserve client scrollback.
+          stream.callbacks.onSnapshot(`\x1b[2J\x1b[H${data ?? ''}`, {
+            pendingEscapeTailAnsi: info?.pendingEscapeTailAnsi,
+            seq: info?.seq,
+            kittyKeyboardFlags: info?.kittyKeyboardFlags
+          })
         }
       } else if (matchesPendingRequest) {
         pendingRequest.resolve({
@@ -948,7 +931,7 @@ class RemoteRuntimeTerminalMultiplexer {
       } else if (target === 'recovery') {
         // Why: only an applied recovery is authoritative; retaining the prior
         // high-water after a discarded snapshot keeps the gap detectable.
-        if (snapshotApplied) {
+        if (recoverySnapshotApplied) {
           clearResyncTimer(stream)
           stream.expectedSeq = typeof info?.seq === 'number' ? info.seq : undefined
           stream.commandProbeBaselineSeq = undefined

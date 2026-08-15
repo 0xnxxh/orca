@@ -47,6 +47,9 @@ class FakeMultiplexServer {
   truncateNextRecoverySnapshot = false
   dropNextRecoverySnapshotEnd = false
   holdNextRecoverySnapshot = false
+  emptyNextRecoverySnapshot = false
+  unavailableNextRecoverySnapshot = false
+  pendingEscapeTailAnsiNextRecoverySnapshot: string | undefined
   snapshotRequests: (number | undefined)[] = []
   private heldManualRequestId: number | null = null
   private snapshotData = 'INITIAL'
@@ -79,6 +82,26 @@ class FakeMultiplexServer {
       // Resync request: the server serializes the *current* buffer, so recovery
       // includes everything the client missed.
       this.snapshotData = 'RECOVERED'
+      const recoveryOptions: {
+        unavailable?: 'no-serializable-buffer'
+        pendingEscapeTailAnsi?: string
+      } = {}
+      if (typeof payload?.requestId !== 'number' && this.emptyNextRecoverySnapshot) {
+        this.emptyNextRecoverySnapshot = false
+        this.snapshotData = ''
+      }
+      if (typeof payload?.requestId !== 'number' && this.unavailableNextRecoverySnapshot) {
+        this.unavailableNextRecoverySnapshot = false
+        this.snapshotData = ''
+        recoveryOptions.unavailable = 'no-serializable-buffer'
+      }
+      if (
+        typeof payload?.requestId !== 'number' &&
+        this.pendingEscapeTailAnsiNextRecoverySnapshot !== undefined
+      ) {
+        recoveryOptions.pendingEscapeTailAnsi = this.pendingEscapeTailAnsiNextRecoverySnapshot
+        this.pendingEscapeTailAnsiNextRecoverySnapshot = undefined
+      }
       if (typeof payload?.requestId !== 'number' && this.holdNextRecoverySnapshot) {
         // The reply's binary frames were all dropped under backpressure.
         this.holdNextRecoverySnapshot = false
@@ -94,7 +117,7 @@ class FakeMultiplexServer {
         this.sendSnapshot(undefined, { omitEnd: true })
         return
       }
-      this.sendSnapshot(payload?.requestId)
+      this.sendSnapshot(payload?.requestId, recoveryOptions)
     }
   }
 
@@ -104,7 +127,12 @@ class FakeMultiplexServer {
 
   private sendSnapshot(
     requestId?: number,
-    options?: { truncated?: boolean; omitEnd?: boolean }
+    options?: {
+      truncated?: boolean
+      omitEnd?: boolean
+      unavailable?: 'no-serializable-buffer'
+      pendingEscapeTailAnsi?: string
+    }
   ): void {
     this.send(
       TerminalStreamOpcode.SnapshotStart,
@@ -113,7 +141,9 @@ class FakeMultiplexServer {
         rows: 24,
         seq: options?.truncated ? undefined : this.cursorUnits,
         requestId,
-        truncated: options?.truncated
+        truncated: options?.truncated,
+        unavailable: options?.unavailable,
+        pendingEscapeTailAnsi: options?.pendingEscapeTailAnsi
       }),
       0
     )
@@ -208,11 +238,13 @@ describe('remote terminal frame-drop resync', () => {
     data: string[]
     metas: { seq?: number; rawLength?: number; transformed?: boolean }[]
     snapshots: string[]
+    snapshotMetas: { pendingEscapeTailAnsi?: string; seq?: number }[]
     stream: RemoteRuntimeMultiplexedTerminal
   }> {
     const data: string[] = []
     const metas: { seq?: number; rawLength?: number; transformed?: boolean }[] = []
     const snapshots: string[] = []
+    const snapshotMetas: { pendingEscapeTailAnsi?: string; seq?: number }[] = []
     const multiplexer = getRemoteRuntimeTerminalMultiplexer('env-1')
     const stream = await multiplexer.subscribeTerminal({
       terminal: 'terminal-1',
@@ -222,13 +254,16 @@ describe('remote terminal frame-drop resync', () => {
           data.push(chunk)
           metas.push(meta ?? {})
         },
-        onSnapshot: (chunk) => snapshots.push(chunk)
+        onSnapshot: (chunk, meta) => {
+          snapshots.push(chunk)
+          snapshotMetas.push(meta ?? {})
+        }
       }
     })
     // Let the initial snapshot round-trip settle.
     await Promise.resolve()
     await Promise.resolve()
-    return { data, metas, snapshots, stream }
+    return { data, metas, snapshots, snapshotMetas, stream }
   }
 
   it('detects a dropped Output frame via the seq gap and resyncs', async () => {
@@ -253,6 +288,78 @@ describe('remote terminal frame-drop resync', () => {
     server.replaySnapshotCoveredOutput('ccc')
     server.output('ddd')
     expect(data).toEqual(['aaa', 'ddd'])
+  })
+
+  it('applies an authoritative empty recovery while preserving scrollback', async () => {
+    const { Terminal } = await import('@xterm/headless')
+    const { data, snapshots } = await subscribeClient()
+    server.emptyNextRecoverySnapshot = true
+
+    server.output('aaa')
+    server.dropNextOutput = true
+    server.output('bbb')
+    server.output('ccc')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(snapshots).toEqual(['INITIAL', RECOVERY_SCREEN_CLEAR])
+    expect(snapshots[1]).not.toContain('\x1b[3J')
+
+    const terminal = new Terminal({ cols: 20, rows: 2, scrollback: 100 })
+    const write = (text: string): Promise<void> =>
+      new Promise((resolve) => terminal.write(text, resolve))
+    await write('history-1\r\nhistory-2\r\nvisible')
+    const baseYBeforeRecovery = terminal.buffer.active.baseY
+    await write(snapshots[1])
+    expect(baseYBeforeRecovery).toBeGreaterThan(0)
+    expect(terminal.buffer.active.baseY).toBe(baseYBeforeRecovery)
+    expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe('history-1')
+    terminal.dispose()
+
+    server.output('ddd')
+    expect(data).toEqual(['aaa', 'ddd'])
+  })
+
+  it('retries an explicitly unavailable recovery without repainting or accepting output', async () => {
+    vi.useFakeTimers()
+    try {
+      const { data, snapshots } = await subscribeClient()
+      server.unavailableNextRecoverySnapshot = true
+
+      server.output('aaa')
+      server.dropNextOutput = true
+      server.output('bbb')
+      server.output('ccc')
+      server.output('ddd')
+
+      expect(server.snapshotRequests).toEqual([undefined])
+      expect(snapshots).toEqual(['INITIAL'])
+      expect(data).toEqual(['aaa'])
+
+      await vi.advanceTimersByTimeAsync(500)
+      expect(server.snapshotRequests).toEqual([undefined, undefined])
+      expect(snapshots).toEqual(['INITIAL', `${RECOVERY_SCREEN_CLEAR}RECOVERED`])
+
+      server.output('eee')
+      expect(data).toEqual(['aaa', 'eee'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('replays a pending escape tail after clearing an empty recovered screen', async () => {
+    const { snapshots, snapshotMetas } = await subscribeClient()
+    server.emptyNextRecoverySnapshot = true
+    server.pendingEscapeTailAnsiNextRecoverySnapshot = '\x1b[38;5'
+
+    server.dropNextOutput = true
+    server.output('dropped')
+    server.output('gap')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(snapshots).toEqual(['INITIAL', RECOVERY_SCREEN_CLEAR])
+    expect(snapshotMetas[1]).toMatchObject({ pendingEscapeTailAnsi: '\x1b[38;5' })
   })
 
   it('retries a truncated recovery on a backoff without accepting output across the gap', async () => {
