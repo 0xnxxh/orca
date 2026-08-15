@@ -3765,11 +3765,20 @@ export class OrchestrationDb {
     mailboxHandle: string,
     runId: string,
     directHandle: string,
-    throughSequence?: number
+    throughSequence?: number,
+    preserveActiveDispatchOwnership = false
   ): MailboxRoutingPage {
     this.db.exec('BEGIN IMMEDIATE')
     try {
       const throughClause = throughSequence === undefined ? '' : ' AND sequence <= ?'
+      const dispatchOwnershipClause = preserveActiveDispatchOwnership
+        ? ` AND NOT EXISTS (
+             SELECT 1 FROM dispatch_contexts
+             WHERE dispatch_contexts.run_id = messages.run_id
+               AND dispatch_contexts.assignee_handle = messages.to_handle
+               AND dispatch_contexts.status IN ('pending', 'dispatched')
+           )`
+        : ''
       const params: (string | number)[] = [runId, directHandle]
       if (throughSequence !== undefined) {
         params.push(throughSequence)
@@ -3779,7 +3788,7 @@ export class OrchestrationDb {
         .prepare(
           `SELECT id, type FROM messages
            WHERE run_id = ? AND to_handle = ? AND read = 0
-             AND delivery_contract = 'current_delivery'${throughClause}
+             AND delivery_contract = 'current_delivery'${throughClause}${dispatchOwnershipClause}
            ORDER BY sequence LIMIT ?`
         )
         .all(...params) as {
@@ -3794,7 +3803,7 @@ export class OrchestrationDb {
       const placeholders = page.map(() => '?').join(',')
       const result = this.db
         .prepare(
-          `UPDATE messages SET to_handle = ?
+          `UPDATE messages INDEXED BY idx_messages_id SET to_handle = ?
            WHERE run_id = ? AND to_handle = ? AND read = 0
              AND delivery_contract = 'current_delivery' AND id IN (${placeholders})`
         )
@@ -3832,7 +3841,7 @@ export class OrchestrationDb {
     directHandle: string,
     throughSequence?: number
   ): MailboxRoutingPage {
-    return this.routeDirectMessagePage(`run:${runId}`, runId, directHandle, throughSequence)
+    return this.routeDirectMessagePage(`run:${runId}`, runId, directHandle, throughSequence, true)
   }
 
   routeUnreadDirectMessagesToDispatchMailbox(
@@ -3882,7 +3891,7 @@ export class OrchestrationDb {
       const placeholders = page.map(() => '?').join(',')
       const result = this.db
         .prepare(
-          `UPDATE messages SET to_handle = ?
+          `UPDATE messages INDEXED BY idx_messages_id SET to_handle = ?
            WHERE run_id = ? AND to_handle = ? AND read = 0
              AND delivery_contract = 'current_delivery'
              AND id IN (${placeholders})`
@@ -4047,7 +4056,7 @@ export class OrchestrationDb {
         const placeholders = ids.map(() => '?').join(',')
         this.db
           .prepare(
-            `UPDATE messages SET to_handle = ?
+            `UPDATE messages INDEXED BY idx_messages_id SET to_handle = ?
              WHERE to_handle = ? AND read = 0 AND delivered_at IS NULL
                AND delivery_contract = 'current_delivery' AND id IN (${placeholders})`
           )
@@ -4079,23 +4088,6 @@ export class OrchestrationDb {
         )
         .all(directHandle) as { type: MessageType }[]
     ).map((row) => row.type)
-  }
-
-  areUndeliveredUnreadMessages(toHandle: string, ids: string[]): boolean {
-    let matched = 0
-    for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
-      const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
-      const placeholders = batch.map(() => '?').join(',')
-      const row = this.db
-        .prepare(
-          `SELECT COUNT(*) AS count FROM messages INDEXED BY idx_messages_id
-           WHERE to_handle = ? AND read = 0 AND delivered_at IS NULL
-             AND delivery_contract = 'current_delivery' AND id IN (${placeholders})`
-        )
-        .get(toHandle, ...batch) as { count: number }
-      matched += row.count
-    }
-    return matched === ids.length
   }
 
   areUnreadMessages(toHandle: string, ids: string[]): boolean {

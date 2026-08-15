@@ -450,4 +450,106 @@ describe('orchestration detached mailbox routing', () => {
     expect(db.getMessageById(message.id)?.to_handle).toBe(TERMINAL_HANDLE)
     db.close()
   })
+
+  it('does not route active Dispatch mail through a paged Run check', () => {
+    const db = createDatabase('orca-mailbox-paged-coordinator-dispatch-overlap-')
+    const run = db.createRun({
+      objective: 'Paged coordinator and Dispatch overlap',
+      coordinatorHandle: TERMINAL_HANDLE,
+      coordinatorPaneKey: PANE_KEY
+    })
+    const task = db.createTask({ spec: 'Same-handle worker', runId: run.id })
+    const dispatch = db.createDispatchContext(task.id, TERMINAL_HANDLE, PANE_KEY)
+    const message = db.insertMessage({
+      from: 'term_sender',
+      to: TERMINAL_HANDLE,
+      subject: 'Dispatch-owned paged mail',
+      type: 'dispatch',
+      runId: run.id,
+      deliveryContract: 'current_delivery'
+    })
+
+    expect(db.routeUnreadDirectMessagesToRunMailbox(run.id, TERMINAL_HANDLE)).toMatchObject({
+      routedCount: 0,
+      hasMore: false
+    })
+    expect(db.getMessageById(message.id)?.to_handle).toBe(TERMINAL_HANDLE)
+    expect(
+      db.routeUnreadDirectMessagesToDispatchMailbox(dispatch.id, run.id, TERMINAL_HANDLE)
+    ).toMatchObject({ routedCount: 1, hasMore: false })
+    expect(db.getMessageById(message.id)?.to_handle).toBe(`dispatch:${dispatch.id}`)
+    db.close()
+  })
+
+  it('uses primary-key lookups for bounded routing updates', () => {
+    const db = createDatabase('orca-mailbox-bounded-routing-indexes-')
+    const sqlite = sqliteFor(db)
+    const run = db.createRun({
+      objective: 'Bounded routing indexes',
+      coordinatorHandle: TERMINAL_HANDLE,
+      coordinatorPaneKey: PANE_KEY
+    })
+    const directMessage = db.insertMessage({
+      from: 'term_sender',
+      to: TERMINAL_HANDLE,
+      subject: 'Direct Run mail',
+      type: 'status',
+      runId: run.id,
+      deliveryContract: 'current_delivery'
+    })
+    sqlite
+      .prepare('UPDATE messages SET to_handle = ? WHERE id = ?')
+      .run(TERMINAL_HANDLE, directMessage.id)
+    const task = db.createTask({ spec: 'Dispatch migration', runId: run.id })
+    const dispatch = db.createDispatchContext(task.id, 'term_dispatch', PANE_KEY)
+    db.insertMessage({
+      from: 'term_sender',
+      to: `dispatch:${dispatch.id}`,
+      subject: 'Dispatch mailbox mail',
+      type: 'status',
+      runId: run.id,
+      deliveryContract: 'current_delivery'
+    })
+    const foreignHandle = 'term_foreign_bounded_routing'
+    const foreignRun = db.createRun({
+      objective: 'Foreign routing index',
+      coordinatorHandle: foreignHandle,
+      coordinatorPaneKey:
+        '55555555-5555-4555-8555-555555555555:66666666-6666-4666-8666-666666666666'
+    })
+    const foreignMessage = db.insertMessage({
+      from: 'term_sender',
+      to: foreignHandle,
+      subject: 'Foreign direct mail',
+      type: 'status',
+      runId: foreignRun.id,
+      deliveryContract: 'current_delivery'
+    })
+    sqlite
+      .prepare('UPDATE messages SET to_handle = ? WHERE id = ?')
+      .run(foreignHandle, foreignMessage.id)
+    const prepare = vi.spyOn(sqlite, 'prepare')
+
+    db.routeUnreadDirectMessagesToRunMailbox(run.id, TERMINAL_HANDLE)
+    db.routeUnreadDispatchMailboxToRunMailbox(dispatch.id, run.id)
+    db.routeForeignDirectMessagesToOwnedMailboxes(foreignHandle)
+
+    const updateSql = [
+      ...new Set(
+        prepare.mock.calls
+          .map(([sql]) => sql)
+          .filter((sql) => sql.includes('UPDATE messages') && sql.includes('id IN'))
+      )
+    ]
+    expect(updateSql).toHaveLength(3)
+    for (const sql of updateSql) {
+      expect(sql).toContain('INDEXED BY idx_messages_id')
+      const parameters = Array.from({ length: sql.split('?').length - 1 }, () => 'probe')
+      const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...parameters) as {
+        detail: string
+      }[]
+      expect(plan.map((row) => row.detail).join(' ')).toContain('idx_messages_id')
+    }
+    db.close()
+  })
 })
