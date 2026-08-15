@@ -38,7 +38,9 @@ export function probeRuntimeListener(
     // endpoint, so it is no proof the profile is free. Capped because this is the launch path.
     const timer = setTimeout(() => settle('unproven'), timeoutMs)
     socket.once('connect', () => settle('accepting'))
-    socket.once('error', (error: NodeJS.ErrnoException) => {
+    // Why: `on`, not `once` — a socket destroyed mid-connect can emit again, and a
+    // second error with no listener left would take down the CLI.
+    socket.on('error', (error: NodeJS.ErrnoException) => {
       settle(NOT_LISTENING_CODES.has(error.code ?? '') ? 'not-listening' : 'unproven')
     })
   })
