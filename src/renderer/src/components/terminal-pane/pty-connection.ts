@@ -7968,6 +7968,13 @@ export function connectPanePty(
       return true
     }
 
+    // A reconnect remounts the pane (tab.generation is its React key), so like a park it always
+    // paints into a terminal that holds nothing. directSshRetryAttempt is exactly that mount:
+    // it is only set when a pending or live SSH pane retry matches this connection AND this tab
+    // generation.
+    const isSshReconnectRemount = Boolean(directSshRetryAttempt)
+    const paintsIntoEmptyTerminal = mountFollowsTerminalPark || isSshReconnectRemount
+
     let parkedSshSnapshotPrefetch: {
       ptyId: string
       fetch: () => Promise<PtyBufferSnapshot | null>
@@ -7978,7 +7985,13 @@ export function connectPanePty(
     ): (() => Promise<PtyBufferSnapshot | null>) =>
       memoizeSshReattachModelSnapshotProbe(async (): Promise<PtyBufferSnapshot | null> => {
         const sshParkingEnabled = useAppStore.getState().settings?.terminalSshViewParking !== false
-        if (!shouldFetchSshReattachModelSnapshot({ ptyId, sshParkingEnabled })) {
+        if (
+          !shouldFetchSshReattachModelSnapshot({
+            ptyId,
+            sshParkingEnabled,
+            isSshReconnectRemount
+          })
+        ) {
           return null
         }
         const snapshot = await resolveSshReattachModelSnapshotWithTimeout(
@@ -7987,8 +8000,12 @@ export function connectPanePty(
           })
         )
         return snapshot &&
-          decideSshReattachPaintSource({ ptyId, sshParkingEnabled, snapshot }) ===
-            'main-model-snapshot'
+          decideSshReattachPaintSource({
+            ptyId,
+            sshParkingEnabled,
+            isSshReconnectRemount,
+            snapshot
+          }) === 'main-model-snapshot'
           ? snapshot
           : null
       })
@@ -8002,11 +8019,14 @@ export function connectPanePty(
       return parkedSshSnapshotPrefetch.fetch
     }
 
-    const prepaintParkedSshSnapshot = (ptyId: string | null): void => {
+    // Renamed from prepaintParkedSshSnapshot: parking is no longer the only mount that needs it.
+    // A reconnect remount arrives with an empty terminal for the same reason a park does, and only
+    // a grid snapshot restores a full-screen application — see decideSshReattachPaintSource.
+    const prepaintSshModelSnapshot = (ptyId: string | null): void => {
       const parsedPtyId = ptyId ? parseAppSshPtyId(ptyId) : null
       if (
         !ptyId ||
-        !mountFollowsTerminalPark ||
+        !paintsIntoEmptyTerminal ||
         parsedPtyId?.connectionId !== connectionId ||
         !capturedDirectSshRetryLeaseMatches()
       ) {
@@ -8015,7 +8035,7 @@ export function connectPanePty(
       const capturedGeneration = authoritativeReattachGeneration
       const isCurrent = (): boolean =>
         !disposed &&
-        mountFollowsTerminalPark &&
+        paintsIntoEmptyTerminal &&
         authoritativeReattachGeneration === capturedGeneration &&
         capturedDirectSshRetryLeaseMatches()
       const fetchSnapshot = getSshMainModelSnapshotProbe(ptyId)
@@ -8584,7 +8604,7 @@ export function connectPanePty(
       const legacyWorkerOwnsPane = isLegacyWorkerAutomaticResumeBlocked()
       if (gate.enterDeferredFlow && (!legacyWorkerOwnsPane || !gate.sshConnected)) {
         // Paint main's parked model while SSH recovery continues off the render path.
-        prepaintParkedSshSnapshot(pendingSessionId)
+        prepaintSshModelSnapshot(pendingSessionId)
         void (async () => {
           // Why: for a passphrase target with no cached credential, don't auto-fire ssh.connect — a prompt popping just from focusing a tab / Cmd+J would surprise the user.
           // Wait for a user-initiated connect first; no-passphrase targets return false here and auto-connect as before.
@@ -8947,7 +8967,7 @@ export function connectPanePty(
     if (deferredReattachSessionId) {
       allowInitialIdleCacheSeed = true
       recordPtyConnectDiagnostic(`pane=${pane.id} -> REATTACH ${deferredReattachSessionId}`)
-      prepaintParkedSshSnapshot(deferredReattachSessionId)
+      prepaintSshModelSnapshot(deferredReattachSessionId)
 
       // Why: pre-signal (declare) before the reattach connect so the cooperation gate suppresses the daemon seed for this paneKey; Electron preserves IPC order.
       // See docs/mobile-prefer-renderer-scrollback.md (Renderer-side prerequisite requirement #4).

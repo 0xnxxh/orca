@@ -48,6 +48,40 @@ describe('shouldFetchSshReattachModelSnapshot', () => {
       shouldFetchSshReattachModelSnapshot({ ptyId: LOCAL_PTY_ID, sshParkingEnabled: true })
     ).toBe(false)
   })
+
+  // A reconnect remount paints into an empty terminal exactly as a park does, and main keeps its
+  // model regardless of the parking setting — so turning view parking off must not strand a
+  // reconnect on the relay byte tail, which cannot rebuild a full-screen app.
+  it('fetches for a reconnect remount even with SSH parking disabled', () => {
+    expect(
+      shouldFetchSshReattachModelSnapshot({
+        ptyId: SSH_PTY_ID,
+        sshParkingEnabled: false,
+        isSshReconnectRemount: true
+      })
+    ).toBe(true)
+  })
+
+  // The pty gate is independent of the reason: a local pty has no relay and no SSH model.
+  it('still refuses a non-SSH pty on a reconnect remount', () => {
+    expect(
+      shouldFetchSshReattachModelSnapshot({
+        ptyId: LOCAL_PTY_ID,
+        sshParkingEnabled: false,
+        isSshReconnectRemount: true
+      })
+    ).toBe(false)
+  })
+
+  it('is unchanged for an ordinary mount that is neither parked nor reconnecting', () => {
+    expect(
+      shouldFetchSshReattachModelSnapshot({
+        ptyId: SSH_PTY_ID,
+        sshParkingEnabled: false,
+        isSshReconnectRemount: false
+      })
+    ).toBe(false)
+  })
 })
 
 describe('memoizeSshReattachModelSnapshotProbe', () => {
@@ -153,5 +187,67 @@ describe('decideSshReattachPaintSource', () => {
         snapshot: headless
       })
     ).toBe('relay-replay')
+  })
+
+  describe('a reconnect remount', () => {
+    // The defect this closes: a reconnect disposes the pane's xterm (tab.generation is its React
+    // key), so the pane repaints from the relay byte tail — which cannot rebuild an alt-screen app.
+    // Claude Code came back as fragments of a frame until the user resized it.
+    it('paints from the main model even with SSH parking disabled', () => {
+      expect(
+        decideSshReattachPaintSource({
+          ptyId: SSH_PTY_ID,
+          sshParkingEnabled: false,
+          isSshReconnectRemount: true,
+          snapshot: headless
+        })
+      ).toBe('main-model-snapshot')
+    })
+
+    // Every safety gate below the eligibility check still applies — widening WHY the model is
+    // trusted must not widen WHAT is trusted, or a reconnect paints a blank pane.
+    it.each([
+      ['a null snapshot', null],
+      ['a renderer-sourced snapshot', { data: 'screen', source: 'renderer' as const }],
+      ['a sourceless snapshot', { data: 'screen' }],
+      ['an empty headless snapshot', { data: '', source: 'headless' as const }],
+      [
+        'a headless snapshot holding only a dangling escape',
+        { data: '', source: 'headless' as const, pendingEscapeTailAnsi: '\u001b[' }
+      ]
+    ])('still degrades to relay replay for %s', (_label, snapshot) => {
+      expect(
+        decideSshReattachPaintSource({
+          ptyId: SSH_PTY_ID,
+          sshParkingEnabled: false,
+          isSshReconnectRemount: true,
+          snapshot
+        })
+      ).toBe('relay-replay')
+    })
+
+    // An alt-screen app can carry all its content in scrollback with an empty screen frame; that is
+    // the shape a TUI reconnect actually produces, so it must not read as empty.
+    it('accepts a snapshot whose content is entirely scrollback', () => {
+      expect(
+        decideSshReattachPaintSource({
+          ptyId: SSH_PTY_ID,
+          sshParkingEnabled: false,
+          isSshReconnectRemount: true,
+          snapshot: { data: '', source: 'headless', scrollbackAnsi: 'history' }
+        })
+      ).toBe('main-model-snapshot')
+    })
+
+    it('still refuses a non-SSH pty', () => {
+      expect(
+        decideSshReattachPaintSource({
+          ptyId: LOCAL_PTY_ID,
+          sshParkingEnabled: false,
+          isSshReconnectRemount: true,
+          snapshot: headless
+        })
+      ).toBe('relay-replay')
+    })
   })
 })
