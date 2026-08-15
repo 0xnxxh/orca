@@ -52,13 +52,16 @@ export function appendMobileNativeChatPending(
   const earlierOutstanding = current.filter(
     (pending) =>
       pendingMatchText(pending) === origin.normalizedText &&
+      (pending.images?.length ?? 0) >= origin.imageCount &&
       pending.expectedOccurrence > origin.baselineOccurrences
   ).length
   // An image send whose caption is only markers still reconciles by image
   // ordinal, matching how `captureSendOrigin` normalized it.
   const expectedImageEchoOrdinal =
     current.filter(
-      (pending) => pending.images?.length && normalizeNativeChatUserText(pending.text) === ''
+      (pending) =>
+        (pending.images?.length ?? 0) >= origin.imageCount &&
+        normalizeNativeChatUserText(pending.text) === ''
     ).length + 1
   return {
     ...previous,

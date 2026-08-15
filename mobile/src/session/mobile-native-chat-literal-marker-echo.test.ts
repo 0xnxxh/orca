@@ -198,4 +198,46 @@ describe('mobile literal image-marker turns', () => {
       ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg']
     ])
   })
+
+  it('reconciles rapid equal captions in separate image-count namespaces', async () => {
+    await mount()
+    send('compare', ['file:///a.jpg'])
+    send('compare', ['file:///b.jpg', 'file:///c.jpg', 'file:///d.jpg'])
+
+    const messages = [
+      userTextMessage('source-a', '[Image: source: /tmp/a.png]'),
+      userTextMessage('prompt-a', 'compare [Image #1]'),
+      userTextMessage('source-b', '[Image: source: /tmp/b.png]'),
+      userTextMessage('source-c', '[Image: source: /tmp/c.png]'),
+      userTextMessage('source-d', '[Image: source: /tmp/d.png]'),
+      userTextMessage('prompt-b', 'compare [Image #1] [Image #2] [Image #3]')
+    ]
+    await transcript(messages)
+
+    const rendered = rows(messages)
+    expect(rendered).toHaveLength(2)
+    expect(rendered.map(rowImages)).toEqual([
+      ['file:///a.jpg'],
+      ['file:///b.jpg', 'file:///c.jpg', 'file:///d.jpg']
+    ])
+  })
+
+  it('reconciles rapid captionless sends in separate image-count namespaces', async () => {
+    await mount()
+    send('', ['file:///a.jpg'])
+    send('', ['file:///b.jpg', 'file:///c.jpg', 'file:///d.jpg'])
+
+    const messages = [
+      userTextMessage('prompt-a', '[Image #1]'),
+      userTextMessage('prompt-b', '[Image #1] [Image #2] [Image #3]')
+    ]
+    await transcript(messages)
+
+    const rendered = rows(messages)
+    expect(rendered).toHaveLength(2)
+    expect(rendered.map(rowImages)).toEqual([
+      ['file:///a.jpg'],
+      ['file:///b.jpg', 'file:///c.jpg', 'file:///d.jpg']
+    ])
+  })
 })
