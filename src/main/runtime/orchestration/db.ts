@@ -346,6 +346,7 @@ export class OrchestrationDb {
     this.db.pragma('busy_timeout = 5000')
     this.createTables()
     this.migrate()
+    this.repairRequiredLookupIndexes()
     this.createCoordinatorMailRoutingTrigger()
     this.rememberCurrentRunCoordinatorHandles()
     hardenOrchestrationDatabaseFiles(dbPath)
@@ -1476,6 +1477,60 @@ export class OrchestrationDb {
   private hasColumn(table: string, column: string): boolean {
     const rows = this.db.pragma(`table_info(${table})`) as { name: string }[]
     return rows.some((r) => r.name === column)
+  }
+
+  private repairRequiredLookupIndexes(): void {
+    if ((this.db.pragma('user_version', { simple: true }) as number) !== SCHEMA_VERSION) {
+      return
+    }
+    const dispatchReady = this.hasRequiredLookupIndex(
+      'dispatch_contexts',
+      'idx_dispatch_task',
+      'task_id'
+    )
+    const releaseReady = this.hasRequiredLookupIndex(
+      'worker_terminal_resources',
+      'idx_worker_terminal_resources_release',
+      'release_state'
+    )
+    if (dispatchReady && releaseReady) {
+      return
+    }
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.repairRequiredLookupIndex('dispatch_contexts', 'idx_dispatch_task', 'task_id')
+      this.repairRequiredLookupIndex(
+        'worker_terminal_resources',
+        'idx_worker_terminal_resources_release',
+        'release_state'
+      )
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  private hasRequiredLookupIndex(table: string, indexName: string, leadingColumn: string): boolean {
+    const index = (
+      this.db.pragma(`index_list(${table})`) as {
+        name: string
+        partial: number
+        unique: number
+      }[]
+    ).find((row) => row.name === indexName)
+    const hasLeadingColumn = (
+      this.db.pragma(`index_info(${indexName})`) as { seqno: number; name: string | null }[]
+    ).some((row) => row.seqno === 0 && row.name === leadingColumn)
+    return index?.partial === 0 && index.unique === 0 && hasLeadingColumn
+  }
+
+  private repairRequiredLookupIndex(table: string, indexName: string, leadingColumn: string): void {
+    if (this.hasRequiredLookupIndex(table, indexName, leadingColumn)) {
+      return
+    }
+    this.db.exec(`DROP INDEX IF EXISTS ${indexName}`)
+    this.db.exec(`CREATE INDEX ${indexName} ON ${table}(${leadingColumn})`)
   }
 
   private createMailboxDeliveryIndexesIfPossible(): void {

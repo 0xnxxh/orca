@@ -13953,6 +13953,9 @@ export class OrcaRuntimeService {
     } else {
       this.retirePtyAgentLaunchAuthority(ptyId)
     }
+    const recoveredLegacyWorkerHandle = this.legacyWorkerRecoveredPtys.has(ptyId)
+      ? this.handleByPtyId.get(ptyId)
+      : undefined
     const incarnationId =
       exitIncarnationId ??
       pty?.incarnationId ??
@@ -14098,6 +14101,10 @@ export class OrcaRuntimeService {
       this.retireMobileSessionSurfacesForPty(ptyId, incarnationId, exactSurfaces)
     }
 
+    if (!preservesAbnormalSshSurface && recoveredLegacyWorkerHandle) {
+      this.failActiveDispatchForHandle(recoveredLegacyWorkerHandle, exitCode, true)
+    }
+
     for (const leaf of this.getLeavesForPty(ptyId)) {
       this.detachedPreAllocatedLeaves.delete(ptyId)
       leaf.connected = false
@@ -14105,7 +14112,7 @@ export class OrcaRuntimeService {
       leaf.lastExitCode = exitCode
       leaf.lastAgentStatusObservedLive = false
       this.resolveExitWaiters(leaf)
-      if (!preservesAbnormalSshSurface) {
+      if (!preservesAbnormalSshSurface && !recoveredLegacyWorkerHandle) {
         this.failActiveDispatchOnExit(leaf, exitCode)
       }
     }
@@ -15719,29 +15726,38 @@ export class OrcaRuntimeService {
   // next poll cycle. This catches agent crashes and unexpected exits within
   // milliseconds. The task is set back to 'pending' so it can be re-dispatched.
   private failActiveDispatchOnExit(leaf: RuntimeLeafRecord, exitCode: number): void {
-    if (!this._orchestrationDb) {
-      return
-    }
-
     const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
     if (!handle) {
       return
     }
+    this.failActiveDispatchForHandle(handle, exitCode, false)
+  }
 
-    const dispatch = this._orchestrationDb.getActiveDispatchForTerminal(handle)
+  private failActiveDispatchForHandle(
+    handle: string,
+    exitCode: number,
+    requireReadiness: boolean
+  ): void {
+    const orchestrationDb =
+      this._orchestrationDb ?? (requireReadiness ? this.getOrchestrationDb() : null)
+    if (!orchestrationDb) {
+      return
+    }
+
+    const dispatch = orchestrationDb.getActiveDispatchForTerminal(handle)
     if (!dispatch) {
       return
     }
 
     const errorContext = `Agent exited with code ${exitCode}`
-    this._orchestrationDb.failDispatch(dispatch.id, errorContext)
+    orchestrationDb.failDispatch(dispatch.id, errorContext)
 
     // Why: create an escalation message so the coordinator is notified about
     // the unexpected exit on its next check cycle, even if the circuit breaker
     // hasn't tripped yet.
-    const run = this._orchestrationDb.getActiveCoordinatorRun()
+    const run = orchestrationDb.getActiveCoordinatorRun()
     if (run) {
-      this._orchestrationDb.insertMessage({
+      orchestrationDb.insertMessage({
         from: handle,
         to: run.coordinator_handle,
         subject: `Agent exited unexpectedly (code ${exitCode})`,

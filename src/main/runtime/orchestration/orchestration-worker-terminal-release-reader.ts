@@ -4,9 +4,22 @@ import SyncDatabase from '../../sqlite/sync-database'
 const RELEASE_INDEX = 'idx_worker_terminal_resources_release'
 
 function hasReleaseIndex(db: SyncDatabase): boolean {
-  return Boolean(
-    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(RELEASE_INDEX)
-  )
+  const index = (
+    db.prepare('PRAGMA index_list(worker_terminal_resources)').all() as {
+      name?: string
+      partial?: number
+      unique?: number
+    }[]
+  ).find((row) => row.name === RELEASE_INDEX)
+  if (!index || index.partial !== 0 || index.unique !== 0) {
+    return false
+  }
+  return (
+    db.prepare(`PRAGMA index_info(${RELEASE_INDEX})`).all() as {
+      seqno?: number
+      name?: string
+    }[]
+  ).some((row) => row.seqno === 0 && row.name === 'release_state')
 }
 
 function hasReleaseStateColumn(db: SyncDatabase): boolean {

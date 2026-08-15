@@ -21198,6 +21198,126 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('opens readiness when a passively recovered active worker exits', async () => {
+    const workerPaneKey = `legacy-live-exit:${HEADLESS_LEAF_ID}`
+    const incarnationId = '36363636-3636-4636-8636-363636363636'
+    const session: WorkspaceSessionState = {
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [TEST_WORKTREE_ID]: [] },
+      sleepingAgentSessionsByPaneKey: {
+        [workerPaneKey]: {
+          paneKey: workerPaneKey,
+          tabId: 'legacy-live-exit',
+          worktreeId: TEST_WORKTREE_ID,
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'legacy-live-exit-session' },
+          prompt: 'continue',
+          state: 'working',
+          capturedAt: 1,
+          updatedAt: 1,
+          origin: 'live'
+        }
+      }
+    }
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(session)
+    const tempRoot = await mkdtemp(join(tmpdir(), 'orca-live-worker-exit-'))
+    const dbPath = join(tempRoot, 'orchestration.db')
+    const fixtureDb = new OrchestrationDb(dbPath)
+    let fixtureOpen = true
+    let runtimeDb: OrchestrationDb | null = null
+    try {
+      const task = fixtureDb.createTask({ spec: 'recover then observe exit' })
+      const started = fixtureDb.createStartingWorkerDispatch({
+        taskId: task.id,
+        startOptions: { topology: 'current', agent: 'codex' }
+      })
+      fixtureDb.prepareStartingWorkerAuthority({
+        dispatchId: started.dispatch.id,
+        handle: 'term_live_exit',
+        paneKey: workerPaneKey,
+        processIncarnation: `pty-live-exit:${incarnationId}`,
+        worktreeId: TEST_WORKTREE_ID,
+        setupState: 'not_applicable',
+        effects: []
+      })
+      fixtureDb.markWorkerDispatchReady(started.dispatch.id)
+      fixtureDb.close()
+      fixtureOpen = false
+      const raw = new SyncDatabase(dbPath)
+      for (const name of [
+        'idx_messages_undelivered_direct_run',
+        'idx_messages_unread_current_inbox',
+        'idx_messages_unread_current_inbox_type',
+        'idx_messages_unread_current_run_type'
+      ]) {
+        raw.exec(`DROP INDEX ${name}`)
+      }
+      raw.close()
+      const runtime = new OrcaRuntimeService(
+        {
+          ...runtimeStore,
+          flushPendingOrThrowAsync: vi.fn().mockResolvedValue(undefined)
+        } as never,
+        undefined,
+        { canRecoverPersistentLocalPtys: () => true, getOrchestrationDbPath: () => dbPath }
+      )
+      runtime.setPtyController({
+        write: vi.fn(() => true),
+        kill: vi.fn(() => true),
+        getForegroundProcess: async () => null,
+        hasPty: (ptyId) => ptyId === 'pty-live-exit',
+        listProcesses: async () => [
+          {
+            id: 'pty-live-exit',
+            incarnationId,
+            terminalHandle: 'term_live_exit',
+            title: 'Recovered worker',
+            cwd: TEST_WORKTREE_PATH,
+            worktreeId: TEST_WORKTREE_ID,
+            wslDistro: null
+          }
+        ]
+      })
+
+      await expect(runtime.reconcileLegacyWorkerTerminals()).resolves.toMatchObject({
+        adoptedDispatchIds: [started.dispatch.id],
+        exitedDispatchIds: [],
+        deferredDispatchIds: []
+      })
+      expect(
+        (runtime as unknown as { _orchestrationDb: OrchestrationDb | null })._orchestrationDb
+      ).toBeNull()
+      const recoveryInternals = runtime as unknown as {
+        handleByPtyId: Map<string, string>
+        legacyWorkerRecoveredPtys: Set<string>
+        leaves: Map<string, { ptyId: string | null }>
+      }
+      expect(recoveryInternals.legacyWorkerRecoveredPtys.has('pty-live-exit')).toBe(true)
+      expect(recoveryInternals.handleByPtyId.get('pty-live-exit')).toBe('term_live_exit')
+      expect(
+        [...recoveryInternals.leaves.values()].some(({ ptyId }) => ptyId === 'pty-live-exit')
+      ).toBe(false)
+
+      runtime.onPtyExit('pty-live-exit', 17, incarnationId)
+
+      runtimeDb = runtime.getOrchestrationDb()
+      expect(runtimeDb.getDispatchContextById(started.dispatch.id)).toMatchObject({
+        status: 'failed',
+        failure_count: 1
+      })
+      expect(runtimeDb.getTask(task.id)?.status).toBe('ready')
+      expect(
+        (runtime as unknown as { _orchestrationDb: OrchestrationDb | null })._orchestrationDb
+      ).toBe(runtimeDb)
+    } finally {
+      if (fixtureOpen) {
+        fixtureDb.close()
+      }
+      runtimeDb?.close()
+      await rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('waits for durability before retry settles a resolution already present in memory', async () => {
     const workerPaneKey = `legacy-missing-retry:${HEADLESS_LEAF_ID}`
     const incarnationId = '34343434-3434-4434-8434-343434343434'
