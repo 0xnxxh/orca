@@ -7968,18 +7968,7 @@ export function connectPanePty(
       return true
     }
 
-    // A reconnect remounts the pane (tab.generation is its React key), so like a park it always
-    // paints into a terminal that holds nothing. directSshRetryAttempt is exactly that mount:
-    // it is only set when a pending or live SSH pane retry matches this connection AND this tab
-    // generation.
-    const isSshReconnectRemount = Boolean(directSshRetryAttempt)
-    // MUTABLE, and consumed with mountFollowsTerminalPark below. A const here is a bug: the payload
-    // path clears mountFollowsTerminalPark after the first reattach so a later in-place reconnect on
-    // the SAME mount cannot repaint, and a snapshot written then lands on a terminal that already
-    // has live content. Reading a frozen copy reintroduced exactly that.
-    let paintsIntoEmptyTerminal = mountFollowsTerminalPark || isSshReconnectRemount
-
-    let sshModelSnapshotPrefetch: {
+    let parkedSshSnapshotPrefetch: {
       ptyId: string
       fetch: () => Promise<PtyBufferSnapshot | null>
     } | null = null
@@ -7989,13 +7978,7 @@ export function connectPanePty(
     ): (() => Promise<PtyBufferSnapshot | null>) =>
       memoizeSshReattachModelSnapshotProbe(async (): Promise<PtyBufferSnapshot | null> => {
         const sshParkingEnabled = useAppStore.getState().settings?.terminalSshViewParking !== false
-        if (
-          !shouldFetchSshReattachModelSnapshot({
-            ptyId,
-            sshParkingEnabled,
-            isSshReconnectRemount
-          })
-        ) {
+        if (!shouldFetchSshReattachModelSnapshot({ ptyId, sshParkingEnabled })) {
           return null
         }
         const snapshot = await resolveSshReattachModelSnapshotWithTimeout(
@@ -8004,12 +7987,8 @@ export function connectPanePty(
           })
         )
         return snapshot &&
-          decideSshReattachPaintSource({
-            ptyId,
-            sshParkingEnabled,
-            isSshReconnectRemount,
-            snapshot
-          }) === 'main-model-snapshot'
+          decideSshReattachPaintSource({ ptyId, sshParkingEnabled, snapshot }) ===
+            'main-model-snapshot'
           ? snapshot
           : null
       })
@@ -8017,20 +7996,17 @@ export function connectPanePty(
     const getSshMainModelSnapshotProbe = (
       ptyId: string
     ): (() => Promise<PtyBufferSnapshot | null>) => {
-      if (sshModelSnapshotPrefetch?.ptyId !== ptyId) {
-        sshModelSnapshotPrefetch = { ptyId, fetch: createSshMainModelSnapshotProbe(ptyId) }
+      if (parkedSshSnapshotPrefetch?.ptyId !== ptyId) {
+        parkedSshSnapshotPrefetch = { ptyId, fetch: createSshMainModelSnapshotProbe(ptyId) }
       }
-      return sshModelSnapshotPrefetch.fetch
+      return parkedSshSnapshotPrefetch.fetch
     }
 
-    // Renamed from prepaintParkedSshSnapshot: parking is no longer the only mount that needs it.
-    // A reconnect remount arrives with an empty terminal for the same reason a park does, and only
-    // a grid snapshot restores a full-screen application — see decideSshReattachPaintSource.
-    const prepaintSshModelSnapshot = (ptyId: string | null): void => {
+    const prepaintParkedSshSnapshot = (ptyId: string | null): void => {
       const parsedPtyId = ptyId ? parseAppSshPtyId(ptyId) : null
       if (
         !ptyId ||
-        !paintsIntoEmptyTerminal ||
+        !mountFollowsTerminalPark ||
         parsedPtyId?.connectionId !== connectionId ||
         !capturedDirectSshRetryLeaseMatches()
       ) {
@@ -8039,7 +8015,7 @@ export function connectPanePty(
       const capturedGeneration = authoritativeReattachGeneration
       const isCurrent = (): boolean =>
         !disposed &&
-        paintsIntoEmptyTerminal &&
+        mountFollowsTerminalPark &&
         authoritativeReattachGeneration === capturedGeneration &&
         capturedDirectSshRetryLeaseMatches()
       const fetchSnapshot = getSshMainModelSnapshotProbe(ptyId)
@@ -8234,9 +8210,6 @@ export function connectPanePty(
         mountFollowsTerminalPark &&
         (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))
       mountFollowsTerminalPark = false
-      // Consumed together: the prepaint's own guard reads this, and both reasons a mount paints into
-      // an empty terminal are spent by the first reattach.
-      paintsIntoEmptyTerminal = false
       // Why: ordinary parking destroys xterm. Rebuild from the authoritative
       // host snapshot before releasing queued live bytes; null falls back to
       // the subscribe screen without keeping the old xterm mounted.
@@ -8611,7 +8584,7 @@ export function connectPanePty(
       const legacyWorkerOwnsPane = isLegacyWorkerAutomaticResumeBlocked()
       if (gate.enterDeferredFlow && (!legacyWorkerOwnsPane || !gate.sshConnected)) {
         // Paint main's parked model while SSH recovery continues off the render path.
-        prepaintSshModelSnapshot(pendingSessionId)
+        prepaintParkedSshSnapshot(pendingSessionId)
         void (async () => {
           // Why: for a passphrase target with no cached credential, don't auto-fire ssh.connect — a prompt popping just from focusing a tab / Cmd+J would surprise the user.
           // Wait for a user-initiated connect first; no-passphrase targets return false here and auto-connect as before.
@@ -8974,7 +8947,7 @@ export function connectPanePty(
     if (deferredReattachSessionId) {
       allowInitialIdleCacheSeed = true
       recordPtyConnectDiagnostic(`pane=${pane.id} -> REATTACH ${deferredReattachSessionId}`)
-      prepaintSshModelSnapshot(deferredReattachSessionId)
+      prepaintParkedSshSnapshot(deferredReattachSessionId)
 
       // Why: pre-signal (declare) before the reattach connect so the cooperation gate suppresses the daemon seed for this paneKey; Electron preserves IPC order.
       // See docs/mobile-prefer-renderer-scrollback.md (Renderer-side prerequisite requirement #4).
