@@ -24,6 +24,8 @@ export type SubscribeNativeChatTranscriptArgs = ResolveSessionFileOptions & {
     lifecycle?: NativeChatTurnLifecycle
   ) => void
   initialLimit?: number
+  /** Reproduce released Claude decoding before transcript windowing. */
+  omitClaudeImageSourceMetadata?: boolean
   filePath?: string
   debounceMs?: number
   /** Test-only override for the production resolve-poll backoff. */

@@ -13,6 +13,19 @@ function decodeMeta(content: unknown) {
   )
 }
 
+function decodeLegacy(content: unknown, isMeta: boolean) {
+  return decodeClaudeTranscriptLine(
+    JSON.stringify({
+      type: 'user',
+      uuid: isMeta ? 'meta-row' : 'literal-row',
+      ...(isMeta ? { isMeta: true } : {}),
+      message: { role: 'user', content }
+    }),
+    'fallback',
+    false
+  )
+}
+
 describe('decodeClaudeTranscriptLine', () => {
   it('retains an exact image-source meta record for downstream folding', () => {
     expect(decodeMeta('[Image: source: /tmp/a.png]')).toMatchObject({
@@ -35,6 +48,18 @@ describe('decodeClaudeTranscriptLine', () => {
         { type: 'text', text: '[Image: source: C:\\Users\\me\\b.png]' },
         { type: 'text', text: '[Image: source: /ssh/workspace/c.png]' }
       ]
+    })
+  })
+
+  it('reproduces the released projection without dropping literal user text', () => {
+    const marker = '[Image: source: /tmp/a.png]'
+    const sources = [marker, '[Image: source: C:\\Users\\me\\b.png]']
+
+    expect(decodeLegacy(marker, true)).toBeNull()
+    expect(decodeLegacy(sources, true)).toBeNull()
+    expect(decodeLegacy(marker, false)).toMatchObject({
+      id: 'literal-row',
+      blocks: [{ type: 'text', text: marker }]
     })
   })
 

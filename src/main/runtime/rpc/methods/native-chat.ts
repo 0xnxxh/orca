@@ -8,10 +8,6 @@ import {
   type SubscribeNativeChatTranscriptArgs
 } from '../../../native-chat/transcript-watch'
 import { defineMethod, defineStreamingMethod, type RpcAnyMethod, type RpcContext } from '../core'
-import {
-  createNativeChatLegacyAppendProjector,
-  projectNativeChatLegacyImageSourceMessages
-} from './native-chat-image-source-projection'
 import { sanitizeNativeChatRpcMessage } from './native-chat-rpc-message-sanitizer'
 
 // Why: native chat renders an agent's own transcript (Claude/Codex JSONL). The
@@ -70,11 +66,9 @@ const MOBILE_NATIVE_CHAT_DEFAULT_WINDOW = 40
 const MOBILE_NATIVE_CHAT_MAX_WINDOW = 2000
 function sanitizeAppendForClient(
   messages: readonly NativeChatMessage[],
-  clientKind: RpcContext['clientKind'],
-  nativeImageSources: boolean
+  clientKind: RpcContext['clientKind']
 ): NativeChatMessage[] {
-  const sanitized = messages.map((message) => sanitizeNativeChatRpcMessage(message, clientKind))
-  return nativeImageSources ? sanitized : projectNativeChatLegacyImageSourceMessages(sanitized)
+  return messages.map((message) => sanitizeNativeChatRpcMessage(message, clientKind))
 }
 
 /** Window a transcript to its most recent `limit` messages so a long session
@@ -95,10 +89,9 @@ function windowTranscript(
 function windowForClient(
   messages: readonly NativeChatMessage[],
   clientKind: RpcContext['clientKind'],
-  nativeImageSources: boolean,
   limit = MOBILE_NATIVE_CHAT_DEFAULT_WINDOW
 ): NativeChatMessage[] {
-  return sanitizeAppendForClient(windowTranscript(messages, limit), clientKind, nativeImageSources)
+  return sanitizeAppendForClient(windowTranscript(messages, limit), clientKind)
 }
 
 export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
@@ -115,13 +108,14 @@ export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
           sessionId: params.sessionId,
           transcriptPath: params.transcriptPath,
           limit,
-          beforeOffset: params.beforeOffset
+          beforeOffset: params.beforeOffset,
+          omitClaudeImageSourceMetadata: !nativeImageSources
         },
         signal
       )
       return 'messages' in result
         ? {
-            messages: windowForClient(result.messages, clientKind, nativeImageSources, limit),
+            messages: windowForClient(result.messages, clientKind, limit),
             hasMore: result.hasMore,
             beforeOffset: result.beforeOffset,
             ...(nativeImageSources
@@ -157,18 +151,6 @@ export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
       const imageSourceNegotiation = nativeImageSources
         ? { imageSourceCapability: NATIVE_CHAT_IMAGE_SOURCE_RUNTIME_CAPABILITY }
         : {}
-      const legacyAppendProjector = nativeImageSources
-        ? null
-        : createNativeChatLegacyAppendProjector((messages, lifecycle) => {
-            if (!closed) {
-              emit({
-                type: 'appended',
-                messages,
-                ...imageSourceNegotiation,
-                ...(lifecycle ? { lifecycle } : {})
-              })
-            }
-          })
       const cleanup = (): void => {
         if (closed) {
           return
@@ -176,7 +158,6 @@ export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
         closed = true
         signal?.removeEventListener('abort', handleAbort)
         setupController.abort()
-        legacyAppendProjector?.close()
         unsubscribe()
         emit({ type: 'end' })
       }
@@ -197,16 +178,16 @@ export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
         sessionId: params.sessionId,
         transcriptPath: params.transcriptPath,
         initialLimit: limit,
+        omitClaudeImageSourceMetadata: !nativeImageSources,
         onInitialSnapshot: (messages, hasMore, beforeOffset, error, lifecycle) => {
           if (closed) {
             return
           }
-          legacyAppendProjector?.reset()
           // Forward an initial-drain error so a watching client's first frame carries it
           // instead of stranding the view at 'loading' when the read keeps throwing.
           emit({
             type: 'snapshot',
-            messages: windowForClient(messages, clientKind, nativeImageSources, limit),
+            messages: windowForClient(messages, clientKind, limit),
             hasMore,
             beforeOffset,
             ...imageSourceNegotiation,
@@ -218,10 +199,9 @@ export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
           if (closed) {
             return
           }
-          legacyAppendProjector?.reset()
           emit({
             type: 'replacement',
-            messages: windowForClient(messages, clientKind, nativeImageSources, limit),
+            messages: windowForClient(messages, clientKind, limit),
             hasMore,
             beforeOffset,
             ...imageSourceNegotiation,
@@ -232,12 +212,8 @@ export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
           if (closed) {
             return
           }
-          const sanitized = messages.map((message) =>
-            sanitizeNativeChatRpcMessage(message, clientKind)
-          )
-          if (legacyAppendProjector) {
-            legacyAppendProjector.push(sanitized, lifecycle)
-          } else {
+          const sanitized = sanitizeAppendForClient(messages, clientKind)
+          if (sanitized.length > 0 || lifecycle) {
             emit({
               type: 'appended',
               messages: sanitized,

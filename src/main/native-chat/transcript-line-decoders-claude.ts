@@ -18,7 +18,8 @@ import { claudeInterruptedMessageId } from './transcript-turn-markers'
 
 export function decodeClaudeTranscriptLine(
   line: string,
-  fallbackId: string
+  fallbackId: string,
+  retainImageSourceMetadata = true
 ): NativeChatMessage | null {
   const record = parseJsonObject(line)
   if (!record) {
@@ -52,7 +53,7 @@ export function decodeClaudeTranscriptLine(
     role === 'user' &&
     (record.isMeta === true || record.isSynthetic === true || record.isCompactSummary === true)
   const blocks = isInjectedUserTurn
-    ? isImageSourceRecord(decodedBlocks)
+    ? retainImageSourceMetadata && isImageSourceRecord(decodedBlocks)
       ? decodedBlocks
       : decodedBlocks.filter((block) => block.type === 'tool-result')
     : decodedBlocks

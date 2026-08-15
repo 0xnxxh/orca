@@ -30,10 +30,15 @@ const TAIL_CHUNK_BYTES = 64 * 1024
 
 export type NativeChatLineDecoder = (line: string, fallbackId: string) => NativeChatMessage | null
 
-export function nativeChatLineDecoderForAgent(agent: AgentType): NativeChatLineDecoder | null {
+export function nativeChatLineDecoderForAgent(
+  agent: AgentType,
+  omitClaudeImageSourceMetadata = false
+): NativeChatLineDecoder | null {
   const transcriptAgent = resolveNativeChatTranscriptAgent(agent)
   if (transcriptAgent === 'claude') {
-    return decodeClaudeTranscriptLine
+    return omitClaudeImageSourceMetadata
+      ? (line, fallbackId) => decodeClaudeTranscriptLine(line, fallbackId, false)
+      : decodeClaudeTranscriptLine
   }
   if (transcriptAgent === 'codex') {
     return decodeCodexTranscriptLine
@@ -247,6 +252,7 @@ export async function readNativeChatTranscriptTail(
     filePath?: string
     limit: number
     beforeOffset?: number
+    omitClaudeImageSourceMetadata?: boolean
   },
   signal?: AbortSignal
 ): Promise<
@@ -258,7 +264,7 @@ export async function readNativeChatTranscriptTail(
     }
   | { error: string; notFound?: true }
 > {
-  const decode = nativeChatLineDecoderForAgent(args.agent)
+  const decode = nativeChatLineDecoderForAgent(args.agent, args.omitClaudeImageSourceMetadata)
   const decodeLifecycle = nativeChatTurnLifecycleDecoderForAgent(args.agent)
   if (!decode) {
     return { error: 'Transcript unavailable' }

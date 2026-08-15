@@ -251,6 +251,69 @@ describe('readNativeChatTranscript (claude)', () => {
     ])
   })
 
+  it.each([
+    ['prompt-first', ['prompt', 'source']],
+    ['source-first', ['source', 'prompt']]
+  ])('keeps a %s legacy tail and its older-page cursor turn-atomic', async (_label, order) => {
+    const records = {
+      older: {
+        type: 'assistant',
+        uuid: 'older',
+        message: { role: 'assistant', content: 'earlier answer' }
+      },
+      prompt: {
+        type: 'user',
+        uuid: 'prompt',
+        message: { role: 'user', content: '[Image #1] describe this' }
+      },
+      source: {
+        type: 'user',
+        uuid: 'source',
+        isMeta: true,
+        message: { role: 'user', content: '[Image: source: /ssh/workspace/private.png]' }
+      }
+    }
+    const filePath = await writeFixture('orca-native-chat-legacy-images-', [
+      records.older,
+      ...order.map((id) => records[id as 'prompt' | 'source'])
+    ])
+
+    const newest = await readNativeChatTranscriptTail({
+      agent: 'claude',
+      sessionId: 'sess',
+      filePath,
+      limit: 1,
+      omitClaudeImageSourceMetadata: true
+    })
+    if ('error' in newest) {
+      throw new Error(newest.error)
+    }
+    const older = await readNativeChatTranscriptTail({
+      agent: 'claude',
+      sessionId: 'sess',
+      filePath,
+      limit: 1,
+      beforeOffset: newest.beforeOffset,
+      omitClaudeImageSourceMetadata: true
+    })
+    const native = await readNativeChatTranscriptTail({
+      agent: 'claude',
+      sessionId: 'sess',
+      filePath,
+      limit: 2
+    })
+    if ('error' in native) {
+      throw new Error(native.error)
+    }
+
+    expect(newest).toMatchObject({ messages: [{ id: 'prompt' }], hasMore: true })
+    expect(older).toMatchObject({ messages: [{ id: 'older' }], hasMore: false })
+    expect(native.messages.map((message) => message.id)).toEqual(order)
+    expect(native.messages.find((message) => message.id === 'source')).toMatchObject({
+      blocks: [{ type: 'text', text: '[Image: source: /ssh/workspace/private.png]' }]
+    })
+  })
+
   it('marks thinking-only assistant content as a reasoning surface', async () => {
     const filePath = await writeFixture('orca-native-chat-claude-think-', [
       {
