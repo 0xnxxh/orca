@@ -3047,6 +3047,7 @@ const api = {
     suspendWorkspace: (args) => ipcRenderer.invoke('ephemeralVm:suspendWorkspace', args),
     resumeWorkspace: (args) => ipcRenderer.invoke('ephemeralVm:resumeWorkspace', args),
     cleanup: (args) => ipcRenderer.invoke('ephemeralVm:cleanup', args),
+    stopCleanup: (args) => ipcRenderer.invoke('ephemeralVm:stopCleanup', args),
     getCleanupCommand: (args) => ipcRenderer.invoke('ephemeralVm:getCleanupCommand', args)
   } satisfies PreloadApi['ephemeralVm'],
 
