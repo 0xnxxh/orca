@@ -22366,7 +22366,9 @@ describe('OrcaRuntimeService', () => {
         }
       ]
     } as unknown as OrchestrationDb)
-    const listProcesses = vi.fn(async () => [
+    // Declares the scope parameter so mock.calls keeps it — the runtime passes a deadline
+    // alongside it, and a bare `async () =>` would type the call tuple as empty.
+    const listProcesses = vi.fn(async (_connectionId?: string | null) => [
       {
         id: 'pty-wsl-legacy',
         incarnationId,

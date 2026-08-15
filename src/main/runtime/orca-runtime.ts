@@ -1908,7 +1908,6 @@ type RuntimePtyController = {
     processes: PtyProcessInfo[]
     hostIds: ExecutionHostId[]
   }>
-
   serializeBuffer?(
     ptyId: string,
     opts?: { scrollbackRows?: number; altScreenForcesZeroRows?: boolean }
