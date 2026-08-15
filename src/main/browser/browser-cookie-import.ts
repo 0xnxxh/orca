@@ -523,7 +523,7 @@ function normalizeSameSite(raw: unknown): 'unspecified' | 'no_restriction' | 'la
   return 'unspecified'
 }
 
-// Why: cookies.set() needs a url to scope the cookie; derive it from domain + secure flag.
+// Why: a cookie identity needs a url to scope it; derive it from domain + secure flag.
 function deriveUrl(domain: string, secure: boolean): string | null {
   const normalizedDomain = normalizeCookieDomain(domain)
   if (!normalizedDomain) {
