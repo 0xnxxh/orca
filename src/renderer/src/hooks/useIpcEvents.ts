@@ -1,5 +1,4 @@
 /* oxlint-disable max-lines -- Why: this App-level IPC bridge intentionally keeps the renderer's main-process event contract in one place so shortcut, runtime, updater, and agent-status wiring do not drift across files. */
-import { refitAndRefreshAllTerminalPanes } from '@/lib/pane-manager/pane-manager-registry'
 import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { useAppStore } from '../store'
@@ -707,17 +706,8 @@ export function useIpcEvents(): void {
         directSshTerminalActions().invalidateStaleDirectSshTargetPtyBindings?.(authority) ?? 0,
       retryTargetPanes: (authority) =>
         directSshTerminalActions().retryDirectSshTargetPanes?.(authority) ?? 0,
-      finalizeHydratedTerminalPanes: (authority) => {
-        const retried = directSshTerminalActions().retryDirectSshTargetPanes?.(authority) ?? 0
-        // Why: reattach restores the pane's buffer but not its painted frame. xterm only repaints
-        // on a write or a resize, and a reconnect produces neither for a pane that was already
-        // sized — so the panes come back blank until something forces a relayout, which is why
-        // resizing a split or toggling the sidebar "fixes" it. Same settled-frame refit the
-        // desktop-restore path uses; rAF alone is too early while panes are still remounting.
-        requestAnimationFrame(refitAndRefreshAllTerminalPanes)
-        window.setTimeout(refitAndRefreshAllTerminalPanes, 100)
-        return retried
-      },
+      finalizeHydratedTerminalPanes: (authority) =>
+        directSshTerminalActions().retryDirectSshTargetPanes?.(authority) ?? 0,
       correctUnboundTerminalPanes: (authority) =>
         directSshTerminalActions().retryDirectSshTargetPanes?.(authority) ?? 0,
       syncRemoteWorkspaceAfterConnect: (token) =>

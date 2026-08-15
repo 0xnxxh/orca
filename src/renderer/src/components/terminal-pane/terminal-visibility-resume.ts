@@ -16,7 +16,6 @@ import {
 import { focusActivePane } from './pane-helpers'
 import { scheduleTabRevealWebglAtlasRecovery } from './terminal-webgl-atlas-recovery'
 import { flushDeferredPaneMetricOptionsIfMeasurable } from '@/lib/pane-manager/pane-fit'
-import { consumeDeferredPaneManagerRepaint } from '@/lib/pane-manager/pane-hidden-repaint-deferral'
 import { repairPaneWebglCanvasDprMismatch } from '@/lib/pane-manager/terminal-canvas-dpr-repair'
 
 const VISIBLE_RESUME_FLUSH_CHARS = 256 * 1024
@@ -68,10 +67,6 @@ export function resumeTerminalVisibility({
     resetTerminalLinkifierHoverState(pane.terminal)
   }
   syncTerminalViewportIntents(manager)
-  // Why: a repaint that arrived while this manager was hidden (SSH reconnect,
-  // desktop restore) could neither fit nor paint then; consume it on both paths
-  // so the heavy resume, which always fits, does not leave it armed.
-  const hadDeferredRepaint = consumeDeferredPaneManagerRepaint(manager)
   // Why: WebGL resume can disturb xterm's viewport bookkeeping before the
   // post-resume fit runs. Capture numeric viewport positions first; the
   // restore path avoids content matching so duplicate agent log lines do
@@ -95,13 +90,9 @@ export function resumeTerminalVisibility({
       requestLightTabBacklogRecovery(manager)
       // Why: reveal is the lifecycle boundary that owns hidden renderer repair.
       scheduleTabRevealWebglAtlasRecovery()
-      if (flushedDeferredMetrics || hadDeferredRepaint) {
+      if (flushedDeferredMetrics) {
         // Why: the light path normally skips fitting, but flushed metrics changed
-        // cell size — refit so cols/rows match before the overlay settles. A
-        // repaint parked while hidden needs the same fit: it is the only reveal
-        // step that reflows a grid an SSH reattach left diverged and releases the
-        // reattach grid push parked on a measurable fit. fitRevealedPane still
-        // leaves an already-correct grid alone, so this cannot reflow-garble.
+        // cell size — refit so cols/rows match before the overlay settles.
         manager.fitAllRevealedPanes()
       }
       if (isActive) {
