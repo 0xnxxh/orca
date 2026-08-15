@@ -1,12 +1,15 @@
-import type { WorktreeSlice } from '../../worktree-helpers'
+import type {
+  DirectSshWorktreeFetchOptions,
+  WorktreeFetchOptions,
+  WorktreeSlice
+} from '../../worktree-helpers'
 import type { WorktreeSliceGet, WorktreeSliceSet } from './worktree-slice-types'
 import {
   LOCAL_EXECUTION_HOST_ID,
+  getRepoExecutionHostId,
   parseExecutionHostId
 } from '../../../../../../shared/execution-host'
-import { getRepoExecutionHostId } from '../../../../../../shared/execution-host'
 import { findRepoForHost } from '../../repo-host-identity'
-import type { DirectSshWorktreeFetchOptions, WorktreeFetchOptions } from '../../worktree-helpers'
 import { getCurrentDirectSshAuthority } from './direct-ssh-authority'
 import { listDetectedWorktreesForRepoCoalesced } from './detected-worktree-refresh'
 import { staleDetectedWorktreeProviderResult } from './detected-worktree-refresh-admission'
