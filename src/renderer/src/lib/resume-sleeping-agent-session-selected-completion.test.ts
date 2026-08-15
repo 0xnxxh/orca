@@ -59,6 +59,7 @@ describe('selected completed agent resume', () => {
     } as never)
 
     const launched = resumeSleepingAgentSessionsForWorktree('wt-1', {
+      executionHostId: 'local',
       resumeCompletedPaneKey: selected.paneKey
     })
 

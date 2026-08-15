@@ -4,6 +4,7 @@ import {
   type SleepingAgentSessionRecord
 } from '../../../shared/agent-session-resume'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../../shared/agent-status-types'
+import { toSshExecutionHostId } from '../../../shared/execution-host'
 import {
   getProviderSessionClaimKey,
   isPassiveCompletedHibernationEvidence,
@@ -33,7 +34,10 @@ function clearPassiveCompletedRecordsForClaimKey(
   }
 }
 
-function getCurrentPaneOwnedClaimKeys(records: readonly SleepingAgentSessionRecord[]): Set<string> {
+function getCurrentPaneOwnedClaimKeys(
+  records: readonly SleepingAgentSessionRecord[],
+  ownershipRecords: readonly SleepingAgentSessionRecord[]
+): Set<string> {
   const state = useAppStore.getState()
   const keys = new Set<string>()
   for (const record of records) {
@@ -44,7 +48,7 @@ function getCurrentPaneOwnedClaimKeys(records: readonly SleepingAgentSessionReco
     ) {
       continue
     }
-    if (recordPaneIsOwnedByPreservedPane(record, state)) {
+    if (recordPaneIsOwnedByPreservedPane(record, state, ownershipRecords)) {
       keys.add(getProviderSessionClaimKey(record))
     }
   }
@@ -83,7 +87,7 @@ function getPreservedPassiveClaimOwner(
         state.sleepingAgentSessionsByPaneKey[candidate.paneKey] === candidate &&
         isPassiveCompletedHibernationEvidence(candidate) &&
         getProviderSessionClaimKey(candidate) === claimKey &&
-        recordPaneIsOwnedByPreservedPane(candidate, state)
+        recordPaneIsOwnedByPreservedPane(candidate, state, records)
     ) ?? null
   )
 }
@@ -161,13 +165,32 @@ function isInvalidWorktreeActivationRecord(record: SleepingAgentSessionRecord): 
   )
 }
 
+function recordMatchesExecutionHost(
+  record: SleepingAgentSessionRecord,
+  options: ResumeSleepingAgentSessionsOptions | undefined
+): boolean {
+  const executionHostId = options?.executionHostId
+  if (!executionHostId) {
+    return true
+  }
+  if (record.executionHostId) {
+    return record.executionHostId === executionHostId
+  }
+  if (record.connectionId?.trim()) {
+    return toSshExecutionHostId(record.connectionId) === executionHostId
+  }
+  return options?.resumeCompletedPaneKey === record.paneKey
+}
+
 export function resumeSleepingAgentSessionsForWorktree(
   worktreeId: string,
   options?: ResumeSleepingAgentSessionsOptions
 ): number {
   const state = useAppStore.getState()
   const worktreeRecords = Object.values(state.sleepingAgentSessionsByPaneKey)
-    .filter((record) => record.worktreeId === worktreeId)
+    .filter(
+      (record) => record.worktreeId === worktreeId && recordMatchesExecutionHost(record, options)
+    )
     .sort((a, b) => a.capturedAt - b.capturedAt || a.updatedAt - b.updatedAt)
   const validWorktreeRecords = worktreeRecords.filter(
     (record) => !isInvalidWorktreeActivationRecord(record)
@@ -199,7 +222,7 @@ export function resumeSleepingAgentSessionsForWorktree(
       state.clearSleepingAgentSession(record.paneKey)
       continue
     }
-    const isPaneOwned = recordPaneIsOwnedByPreservedPane(record, currentState)
+    const isPaneOwned = recordPaneIsOwnedByPreservedPane(record, currentState, validWorktreeRecords)
     if (isPassiveCompletedHibernationEvidence(record)) {
       const explicitlySelected = options?.resumeCompletedPaneKey === record.paneKey
       // Why: completed-agent hibernation stays passive unless the user opened
@@ -244,7 +267,10 @@ export function resumeSleepingAgentSessionsForWorktree(
       state.clearSleepingAgentSession(record.paneKey)
       continue
     }
-    const paneOwnedClaimKeys = getCurrentPaneOwnedClaimKeys(activeWorktreeRecords)
+    const paneOwnedClaimKeys = getCurrentPaneOwnedClaimKeys(
+      activeWorktreeRecords,
+      validWorktreeRecords
+    )
     if (paneOwnedClaimKeys.has(claimKey)) {
       if (!isPaneOwned) {
         state.clearSleepingAgentSession(record.paneKey)
