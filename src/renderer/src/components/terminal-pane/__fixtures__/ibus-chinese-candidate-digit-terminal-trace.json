@@ -1,0 +1,483 @@
+{
+  "recordedFrom": "Ubuntu 24.04 X11, Electron 40 renderer, ibus-daemon 1.5.29 via GTK_IM_MODULE=ibus, keys driven with xdotool",
+  "captures": [
+    {
+      "name": "ibus-table-cangjie5-single-char-digit",
+      "engine": "table:cangjie5",
+      "gesture": "type \"a\", press 1",
+      "committed": "日",
+      "onData": ["日"],
+      "dom": [
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "KeyA",
+          "keyCode": 229,
+          "value": "日你好月星你你好한 韓寒",
+          "selectionStart": 12,
+          "selectionEnd": 12
+        },
+        {
+          "type": "compositionstart",
+          "data": "",
+          "value": "日你好月星你你好한 韓寒",
+          "selectionStart": 12,
+          "selectionEnd": 12
+        },
+        {
+          "type": "compositionupdate",
+          "data": "日",
+          "value": "日你好月星你你好한 韓寒",
+          "selectionStart": 12,
+          "selectionEnd": 12
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "日",
+          "value": "日你好月星你你好한 韓寒",
+          "selectionStart": 12,
+          "selectionEnd": 12
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "日",
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 13,
+          "selectionEnd": 13
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "keyCode": 65,
+          "isComposing": true,
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 13,
+          "selectionEnd": 13
+        },
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "Digit1",
+          "keyCode": 229,
+          "isComposing": true,
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 13,
+          "selectionEnd": 13
+        },
+        {
+          "type": "compositionupdate",
+          "data": "日",
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 12,
+          "selectionEnd": 13
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "日",
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 12,
+          "selectionEnd": 13
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "日",
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 13,
+          "selectionEnd": 13
+        },
+        {
+          "type": "compositionend",
+          "data": "日",
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 13,
+          "selectionEnd": 13
+        },
+        {
+          "type": "keyup",
+          "key": "1",
+          "code": "Digit1",
+          "keyCode": 49,
+          "value": "日你好月星你你好한 韓寒日",
+          "selectionStart": 13,
+          "selectionEnd": 13
+        }
+      ]
+    },
+    {
+      "name": "ibus-hangul-hanja-single-char-digit",
+      "engine": "hangul",
+      "gesture": "type \"gks\", press F9, press 1",
+      "committed": "韓",
+      "onData": ["韓"],
+      "dom": [
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "KeyG",
+          "keyCode": 229,
+          "value": "日你好月星你你好한 ",
+          "selectionStart": 10,
+          "selectionEnd": 10
+        },
+        {
+          "type": "compositionstart",
+          "data": "",
+          "value": "日你好月星你你好한 ",
+          "selectionStart": 10,
+          "selectionEnd": 10
+        },
+        {
+          "type": "compositionupdate",
+          "data": "ㅎ",
+          "value": "日你好月星你你好한 ",
+          "selectionStart": 10,
+          "selectionEnd": 10
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "ㅎ",
+          "value": "日你好月星你你好한 ",
+          "selectionStart": 10,
+          "selectionEnd": 10
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "ㅎ",
+          "value": "日你好月星你你好한 ㅎ",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keyup",
+          "key": "g",
+          "code": "KeyG",
+          "keyCode": 71,
+          "isComposing": true,
+          "value": "日你好月星你你好한 ㅎ",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "KeyK",
+          "keyCode": 229,
+          "isComposing": true,
+          "value": "日你好月星你你好한 ㅎ",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "compositionupdate",
+          "data": "하",
+          "value": "日你好月星你你好한 ㅎ",
+          "selectionStart": 10,
+          "selectionEnd": 11
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "하",
+          "value": "日你好月星你你好한 ㅎ",
+          "selectionStart": 10,
+          "selectionEnd": 11
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "하",
+          "value": "日你好月星你你好한 하",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keyup",
+          "key": "k",
+          "code": "KeyK",
+          "keyCode": 75,
+          "isComposing": true,
+          "value": "日你好月星你你好한 하",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "KeyS",
+          "keyCode": 229,
+          "isComposing": true,
+          "value": "日你好月星你你好한 하",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "compositionupdate",
+          "data": "한",
+          "value": "日你好月星你你好한 하",
+          "selectionStart": 10,
+          "selectionEnd": 11
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "한",
+          "value": "日你好月星你你好한 하",
+          "selectionStart": 10,
+          "selectionEnd": 11
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "한",
+          "value": "日你好月星你你好한 한",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keyup",
+          "key": "s",
+          "code": "KeyS",
+          "keyCode": 83,
+          "isComposing": true,
+          "value": "日你好月星你你好한 한",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keyup",
+          "key": "F9",
+          "code": "F9",
+          "keyCode": 120,
+          "isComposing": true,
+          "value": "日你好月星你你好한 한",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "Digit1",
+          "keyCode": 229,
+          "isComposing": true,
+          "value": "日你好月星你你好한 한",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "compositionupdate",
+          "data": "韓",
+          "value": "日你好月星你你好한 한",
+          "selectionStart": 10,
+          "selectionEnd": 11
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "韓",
+          "value": "日你好月星你你好한 한",
+          "selectionStart": 10,
+          "selectionEnd": 11
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "韓",
+          "value": "日你好月星你你好한 韓",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "compositionend",
+          "data": "韓",
+          "value": "日你好月星你你好한 韓",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        },
+        {
+          "type": "keyup",
+          "key": "1",
+          "code": "Digit1",
+          "keyCode": 49,
+          "value": "日你好月星你你好한 韓",
+          "selectionStart": 11,
+          "selectionEnd": 11
+        }
+      ]
+    },
+    {
+      "name": "ibus-two-char-digit",
+      "engine": "probe (scripted IBus engine)",
+      "gesture": "type \"ni\", press 2",
+      "committed": "你好",
+      "onData": ["你好"],
+      "dom": [
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "KeyN",
+          "keyCode": 229,
+          "value": "日",
+          "selectionStart": 1,
+          "selectionEnd": 1
+        },
+        {
+          "type": "compositionstart",
+          "data": "",
+          "value": "日",
+          "selectionStart": 1,
+          "selectionEnd": 1
+        },
+        {
+          "type": "compositionupdate",
+          "data": "n",
+          "value": "日",
+          "selectionStart": 1,
+          "selectionEnd": 1
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "n",
+          "value": "日",
+          "selectionStart": 1,
+          "selectionEnd": 1
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "n",
+          "value": "日n",
+          "selectionStart": 2,
+          "selectionEnd": 2
+        },
+        {
+          "type": "keyup",
+          "key": "n",
+          "code": "KeyN",
+          "keyCode": 78,
+          "isComposing": true,
+          "value": "日n",
+          "selectionStart": 2,
+          "selectionEnd": 2
+        },
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "KeyI",
+          "keyCode": 229,
+          "isComposing": true,
+          "value": "日n",
+          "selectionStart": 2,
+          "selectionEnd": 2
+        },
+        {
+          "type": "compositionupdate",
+          "data": "ni",
+          "value": "日n",
+          "selectionStart": 1,
+          "selectionEnd": 2
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "ni",
+          "value": "日n",
+          "selectionStart": 1,
+          "selectionEnd": 2
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "ni",
+          "value": "日ni",
+          "selectionStart": 3,
+          "selectionEnd": 3
+        },
+        {
+          "type": "keyup",
+          "key": "i",
+          "code": "KeyI",
+          "keyCode": 73,
+          "isComposing": true,
+          "value": "日ni",
+          "selectionStart": 3,
+          "selectionEnd": 3
+        },
+        {
+          "type": "keydown",
+          "key": "Process",
+          "code": "Digit2",
+          "keyCode": 229,
+          "isComposing": true,
+          "value": "日ni",
+          "selectionStart": 3,
+          "selectionEnd": 3
+        },
+        {
+          "type": "compositionupdate",
+          "data": "你好",
+          "value": "日ni",
+          "selectionStart": 1,
+          "selectionEnd": 3
+        },
+        {
+          "type": "beforeinput",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "你好",
+          "value": "日ni",
+          "selectionStart": 1,
+          "selectionEnd": 3
+        },
+        {
+          "type": "input",
+          "isComposing": true,
+          "inputType": "insertCompositionText",
+          "data": "你好",
+          "value": "日你好",
+          "selectionStart": 3,
+          "selectionEnd": 3
+        },
+        {
+          "type": "compositionend",
+          "data": "你好",
+          "value": "日你好",
+          "selectionStart": 3,
+          "selectionEnd": 3
+        },
+        {
+          "type": "keyup",
+          "key": "2",
+          "code": "Digit2",
+          "keyCode": 50,
+          "value": "日你好",
+          "selectionStart": 3,
+          "selectionEnd": 3
+        }
+      ]
+    }
+  ]
+}

@@ -94,6 +94,9 @@ import {
   resolveNonLatinControlChordInput
 } from './terminal-non-latin-control-chord'
 import { installTerminalImeCompositionTracker } from './terminal-ime-composition-tracker'
+import { installTerminalImeCandidateCommitWindow } from './terminal-ime-candidate-commit-window'
+import { hasPendingTerminalImeComposition } from './terminal-ime-composition-route'
+import { installTerminalImeKeydownRaceCommit } from './terminal-ime-keydown-race-commit'
 import { installTerminalImeLinuxCandidateState } from './terminal-ime-linux-candidate-state'
 import {
   armTerminalImePendingCandidateKeyRelease,
@@ -999,10 +1002,25 @@ export function useTerminalPaneLifecycle({
           ? installTerminalImeLinuxCandidateState(pane.terminal.element)
           : null
         const imeCompositionTracker = installTerminalImeCompositionTracker(pane.terminal.element)
+        const imeCandidateCommitWindow = isLinux
+          ? installTerminalImeCandidateCommitWindow({ terminalElement: pane.terminal.element })
+          : null
+        // Why: xterm drops an insertText commit that races the candidate key's own keydown.
+        const imeKeydownRaceCommit = isLinux
+          ? installTerminalImeKeydownRaceCommit({
+              terminalElement: pane.terminal.element,
+              sendInput: (data) => pane.terminal.input(data),
+              hasPendingComposition: () =>
+                imeCompositionTracker.isActive() ||
+                hasPendingTerminalImeComposition(pane.terminal.element)
+            })
+          : null
         imeCompositionDisposablesRef.current.set(pane.id, {
           dispose: () => {
             imeCompositionTracker.dispose()
             linuxImeCandidateState?.dispose()
+            imeCandidateCommitWindow?.dispose()
+            imeKeydownRaceCommit?.dispose()
           }
         })
         // Why: macOS commits an input source's substituted text through the input event alone, so printable keydowns must not reach xterm's encoder.
@@ -1023,9 +1041,11 @@ export function useTerminalPaneLifecycle({
           const linuxCandidateClassification = linuxImeCandidateState?.classifyKeyboardEvent(e) ?? {
             candidateDigitGuardActive: false
           }
-          /** Advances the fallback state after every terminal key event path. */
+          /** Advances the IME key-state trackers after every terminal key event path. */
           const observeLinuxCandidateEvent = (): void => {
             linuxImeCandidateState?.observeKeyboardEvent(e, linuxCandidateClassification)
+            imeCandidateCommitWindow?.observeKeyboardEvent(e)
+            imeKeydownRaceCommit?.observeKeyboardEvent(e)
           }
           const now = Date.now()
           const pendingCandidateReleaseGuardActive =
@@ -1033,7 +1053,7 @@ export function useTerminalPaneLifecycle({
               e,
               pendingTerminalImeCandidateKeyReleases,
               now
-            )
+            ) || imeCandidateCommitWindow?.shouldAbsorbKeyEvent(e, now) === true
           const imeKeyboardOptions = {
             compositionActive: imeCompositionTracker.isActive(),
             candidateKeyGuardActive:
