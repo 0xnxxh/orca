@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
-  countImageSourceTurnsAfter,
   countUserTextOccurrences,
   findLandedImagePreviewEchoes,
   findLandedUnconfirmedSends,
   mergeLandedImagePreviewEchoes,
   migrateImagePreviewMessageIds,
-  userTextOccurrenceCounts,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
+import { retireLandedMobileNativeChatPending } from './mobile-native-chat-pending-retirement'
 import {
   appendMobileNativeChatPending,
   combineMobileNativeChatPending,
@@ -146,10 +145,11 @@ export function useMobileNativeChatDrafts(args: {
           normalizedText,
           imageCount
         ),
-        baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null
+        baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null,
+        glueBaselineTrusted: !transcriptLoading
       }
     },
-    [draftKey, pendingKey]
+    [draftKey, pendingKey, transcriptLoading]
   )
 
   // Why: over relay the send RPC can take seconds (or lose only its ack), and a
@@ -300,19 +300,7 @@ export function useMobileNativeChatDrafts(args: {
     }
     setPendingBySession((previous) => {
       const current = previous[pendingKey] ?? []
-      const landedCounts = userTextOccurrenceCounts(messages)
-      // Image-only source-turn counts stay stable across reruns and ignore paginated history.
-      const next = current.filter((item) => {
-        // Keep image echoes until their local preview reaches the authoritative message.
-        if (item.images?.length) {
-          return !landedImagePendingIds.has(item.id)
-        }
-        return item.text.trim() === ''
-          ? countImageSourceTurnsAfter(messages, item.baselineTailMessageId) <
-              item.expectedOccurrence
-          : (landedCounts.get(nativeChatUserTextMatchText(item.text, false)) ?? 0) <
-              item.expectedOccurrence
-      })
+      const next = retireLandedMobileNativeChatPending(messages, current, landedImagePendingIds)
       if (next.length === current.length) {
         return previous
       }

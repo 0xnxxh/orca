@@ -9,6 +9,7 @@ import {
   normalizeImageTranscriptMessages,
   normalizedNativeChatUserMessageText
 } from './mobile-native-chat-image-transcript-markers'
+export { normalizeNativeChatUserText as normalizeReconcileText } from './mobile-native-chat-image-transcript-markers'
 
 /** An ack-lost ('unknown' outcome) send held until its transcript echo lands or
  *  the deadline surfaces the uncertainty. */
