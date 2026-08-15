@@ -42937,6 +42937,8 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService(runtimeStore as never, undefined, {
       getOrchestrationDbPath: () => dbPath
     })
+    const worktreesChanged = vi.fn()
+    runtime.setNotifier({ worktreesChanged } as never)
     const parentHandle = runtime.preAllocateHandleForPty('pty-passive-parent')
     const fixture = new OrchestrationDb(dbPath)
     const task = fixture.createTask({
@@ -42997,6 +42999,7 @@ describe('OrcaRuntimeService', () => {
         origin: 'orchestration'
       })
     )
+    worktreesChanged.mockClear()
     delete lineageById[childId]
     setWorktreeLineage.mockClear()
     const partialSchema = new SyncDatabase(dbPath)
@@ -43026,6 +43029,17 @@ describe('OrcaRuntimeService', () => {
     } finally {
       inspection.close()
     }
+
+    runtime.getOrchestrationDb()
+
+    await vi.waitFor(() => {
+      expect(setWorktreeLineage).toHaveBeenCalledWith(
+        childId,
+        expect.objectContaining({ parentWorktreeId: parentId, taskId: task.id })
+      )
+    })
+    expect(worktreesChanged).toHaveBeenCalledWith(TEST_REPO_ID)
+    expect(runtime.syncWindowGraph(1, { tabs: [], leaves: [] }).agentOrchestrationReady).toBe(true)
   })
 
   it('returns a setup launch payload for CLI-created worktrees when hooks are explicitly enabled', async () => {
