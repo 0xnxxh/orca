@@ -317,4 +317,45 @@ describe('legacy worker recovery reader', () => {
       ready.close()
     }
   })
+
+  it('does not open readiness for a future-schema release index', async () => {
+    const dbPath = tempDatabasePath()
+    const fixture = new OrchestrationDb(dbPath)
+    fixture.close()
+    const raw = new SyncDatabase(dbPath)
+    raw.exec('DROP INDEX idx_worker_terminal_resources_release')
+    raw.exec(
+      `CREATE INDEX idx_worker_terminal_resources_release
+       ON worker_terminal_resources(release_state COLLATE NOCASE)`
+    )
+    raw.pragma('user_version = 29')
+    const before = raw
+      .prepare(
+        'SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name'
+      )
+      .all()
+    raw.close()
+    const runtime = new OrcaRuntimeService(null, undefined, {
+      getOrchestrationDbPath: () => dbPath
+    })
+
+    await runtime.reconcileLegacyWorkerTerminals()
+
+    expect(
+      (runtime as unknown as { _orchestrationDb: OrchestrationDb | null })._orchestrationDb
+    ).toBeNull()
+    const inspection = new SyncDatabase(dbPath, { readonly: true, fileMustExist: true })
+    try {
+      expect(inspection.pragma('user_version', { simple: true })).toBe(29)
+      expect(
+        inspection
+          .prepare(
+            'SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name'
+          )
+          .all()
+      ).toEqual(before)
+    } finally {
+      inspection.close()
+    }
+  })
 })

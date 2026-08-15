@@ -23,11 +23,15 @@ function hasDispatchTaskIndex(db: SyncDatabase): boolean {
     return false
   }
   return (
-    db.prepare(`PRAGMA index_info(${DISPATCH_TASK_INDEX})`).all() as {
+    db.prepare(`PRAGMA index_xinfo(${DISPATCH_TASK_INDEX})`).all() as {
       seqno?: number
       name?: string
+      coll?: string
+      key?: number
     }[]
-  ).some((row) => row.seqno === 0 && row.name === 'task_id')
+  ).some(
+    (row) => row.seqno === 0 && row.name === 'task_id' && row.coll === 'BINARY' && row.key === 1
+  )
 }
 
 function hasDispatchTable(db: SyncDatabase): boolean {

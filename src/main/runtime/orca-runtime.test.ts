@@ -21225,8 +21225,18 @@ describe('OrcaRuntimeService', () => {
     const fixtureDb = new OrchestrationDb(dbPath)
     let fixtureOpen = true
     let runtimeDb: OrchestrationDb | null = null
+    let lockDb: SyncDatabase | null = null
     try {
-      const task = fixtureDb.createTask({ spec: 'recover then observe exit' })
+      const run = fixtureDb.createRun({
+        objective: 'recover exit',
+        coordinatorHandle: 'term_coord',
+        coordinatorPaneKey: `coord:${HEADLESS_LEAF_ID}`
+      })
+      fixtureDb.createCoordinatorRun({
+        spec: 'observe recovered worker exit',
+        coordinatorHandle: 'term_coord'
+      })
+      const task = fixtureDb.createTask({ spec: 'recover then observe exit', runId: run.id })
       const started = fixtureDb.createStartingWorkerDispatch({
         taskId: task.id,
         startOptions: { topology: 'current', agent: 'codex' }
@@ -21241,6 +21251,12 @@ describe('OrcaRuntimeService', () => {
         effects: []
       })
       fixtureDb.markWorkerDispatchReady(started.dispatch.id)
+      const pendingQuestion = fixtureDb.createQuestion({
+        runId: run.id,
+        dispatchId: started.dispatch.id,
+        askerHandle: 'term_live_exit',
+        question: 'Still running?'
+      })
       fixtureDb.close()
       fixtureOpen = false
       const raw = new SyncDatabase(dbPath)
@@ -21289,7 +21305,7 @@ describe('OrcaRuntimeService', () => {
       ).toBeNull()
       const recoveryInternals = runtime as unknown as {
         handleByPtyId: Map<string, string>
-        legacyWorkerRecoveredPtys: Set<string>
+        legacyWorkerRecoveredPtys: Map<string, unknown>
         leaves: Map<string, { ptyId: string | null }>
       }
       expect(recoveryInternals.legacyWorkerRecoveredPtys.has('pty-live-exit')).toBe(true)
@@ -21298,20 +21314,64 @@ describe('OrcaRuntimeService', () => {
         [...recoveryInternals.leaves.values()].some(({ ptyId }) => ptyId === 'pty-live-exit')
       ).toBe(false)
 
-      runtime.onPtyExit('pty-live-exit', 17, incarnationId)
+      lockDb = new SyncDatabase(dbPath)
+      lockDb.exec('BEGIN IMMEDIATE')
+      const rendererExitPublished = vi.fn()
+      const exitStartedAt = performance.now()
+      expect(() => {
+        runtime.onPtyExit('pty-live-exit', 17, incarnationId)
+        rendererExitPublished()
+      }).not.toThrow()
+      expect(performance.now() - exitStartedAt).toBeLessThan(100)
+      expect(rendererExitPublished).toHaveBeenCalledOnce()
+
+      expect(recoveryInternals.legacyWorkerRecoveredPtys.has('pty-live-exit')).toBe(false)
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      expect(
+        (runtime as unknown as { _orchestrationDb: OrchestrationDb | null })._orchestrationDb
+      ).toBeNull()
+      lockDb.exec('ROLLBACK')
+      lockDb.close()
+      lockDb = null
+      await vi.waitFor(() => {
+        expect(
+          (runtime as unknown as { _orchestrationDb: OrchestrationDb | null })._orchestrationDb
+        ).not.toBeNull()
+      })
 
       runtimeDb = runtime.getOrchestrationDb()
+      expect(
+        (
+          runtimeDb as unknown as {
+            db: SyncDatabase
+          }
+        ).db.pragma('busy_timeout', { simple: true })
+      ).toBe(5_000)
       expect(runtimeDb.getDispatchContextById(started.dispatch.id)).toMatchObject({
         status: 'failed',
         failure_count: 1
       })
       expect(runtimeDb.getTask(task.id)?.status).toBe('ready')
+      expect(runtimeDb.getWorkerDispatch(started.dispatch.id)?.state).toBe('abandoned')
+      expect(runtimeDb.getQuestion(pendingQuestion.message.id)?.status).toBe('closed')
+      expect(runtimeDb.getInbox()).toContainEqual(
+        expect.objectContaining({
+          from_handle: 'term_live_exit',
+          to_handle: 'term_coord',
+          type: 'escalation',
+          subject: 'Agent exited unexpectedly (code 17)'
+        })
+      )
       expect(
         (runtime as unknown as { _orchestrationDb: OrchestrationDb | null })._orchestrationDb
       ).toBe(runtimeDb)
     } finally {
       if (fixtureOpen) {
         fixtureDb.close()
+      }
+      if (lockDb) {
+        lockDb.exec('ROLLBACK')
+        lockDb.close()
       }
       runtimeDb?.close()
       await rm(tempRoot, { recursive: true, force: true })

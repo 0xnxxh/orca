@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import SyncDatabase from '../../sqlite/sync-database'
+import { ORCHESTRATION_SCHEMA_VERSION } from './orchestration-schema-version'
 
 const RELEASE_INDEX = 'idx_worker_terminal_resources_release'
 
@@ -15,11 +16,16 @@ function hasReleaseIndex(db: SyncDatabase): boolean {
     return false
   }
   return (
-    db.prepare(`PRAGMA index_info(${RELEASE_INDEX})`).all() as {
+    db.prepare(`PRAGMA index_xinfo(${RELEASE_INDEX})`).all() as {
       seqno?: number
       name?: string
+      coll?: string
+      key?: number
     }[]
-  ).some((row) => row.seqno === 0 && row.name === 'release_state')
+  ).some(
+    (row) =>
+      row.seqno === 0 && row.name === 'release_state' && row.coll === 'BINARY' && row.key === 1
+  )
 }
 
 function hasReleaseStateColumn(db: SyncDatabase): boolean {
@@ -39,6 +45,9 @@ export function requiresWorkerTerminalReleaseReadiness(dbPath: string): boolean 
   })
   try {
     db.pragma('query_only = ON')
+    if ((db.pragma('user_version', { simple: true }) as number) > ORCHESTRATION_SCHEMA_VERSION) {
+      return false
+    }
     if (!hasReleaseStateColumn(db)) {
       return false
     }

@@ -2094,6 +2094,13 @@ type LegacyWorkerTerminalRecoveryResolution = {
   resolution: 'adopted' | 'exited'
 }
 
+type RecoveredLegacyWorkerAuthority = Readonly<{
+  dispatchId: string
+  terminalHandle: string
+}>
+
+const RECOVERED_WORKER_EXIT_RETRY_DELAYS_MS = [0, 100, 500, 1_000, 2_500, 5_000, 10_000]
+
 export type OrchestrationCompatibilityCallerAuthority = Readonly<{
   hostScope: OrchestrationCompatibilityTerminalAuthority['hostScope']
   paneKey: string
@@ -3419,7 +3426,17 @@ export class OrcaRuntimeService {
     }
   >()
   private legacyWorkerTerminalReceiptEpochByPane = new Map<string, number>()
-  private legacyWorkerRecoveredPtys = new Set<string>()
+  private legacyWorkerRecoveredPtys = new Map<string, RecoveredLegacyWorkerAuthority>()
+  private recoveredWorkerExitReconciliations = new Map<
+    string,
+    {
+      authority: RecoveredLegacyWorkerAuthority
+      exitCode: number
+      attempt: number
+      reconciled: boolean
+      timer: ReturnType<typeof setTimeout> | null
+    }
+  >()
   private restoredOrchestrationAuthorityByPtyId = new Map<
     string,
     RestoredOrchestrationAuthorityReceipt
@@ -3997,9 +4014,9 @@ export class OrcaRuntimeService {
   // Why: lazy initialization — the DB path depends on Electron's userData
   // which may not be finalized until after app.ready. Also allows unit tests
   // to inject an in-memory DB without touching the filesystem.
-  getOrchestrationDb(): OrchestrationDb {
+  getOrchestrationDb(options?: { busyTimeoutMs?: number }): OrchestrationDb {
     if (!this._orchestrationDb) {
-      this._orchestrationDb = new OrchestrationDb(this.getOrchestrationDbPathFn())
+      this._orchestrationDb = new OrchestrationDb(this.getOrchestrationDbPathFn(), options)
       this.ensureOrchestrationFederationRelay()
       this.scheduleRestoredMessageRepoints()
       this.scheduleRequestedWorkerTerminalReleaseReconciliation()
@@ -4723,7 +4740,10 @@ export class OrcaRuntimeService {
         continue
       }
       if (resolution === 'adopted') {
-        this.legacyWorkerRecoveredPtys.add(candidate.ptyId)
+        this.legacyWorkerRecoveredPtys.set(candidate.ptyId, {
+          dispatchId: candidate.dispatchId,
+          terminalHandle: candidate.terminalHandle
+        })
         this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'adopted')
         adoptedDispatchIds.push(candidate.dispatchId)
         continue
@@ -13953,9 +13973,7 @@ export class OrcaRuntimeService {
     } else {
       this.retirePtyAgentLaunchAuthority(ptyId)
     }
-    const recoveredLegacyWorkerHandle = this.legacyWorkerRecoveredPtys.has(ptyId)
-      ? this.handleByPtyId.get(ptyId)
-      : undefined
+    const recoveredLegacyWorkerAuthority = this.legacyWorkerRecoveredPtys.get(ptyId)
     const incarnationId =
       exitIncarnationId ??
       pty?.incarnationId ??
@@ -14101,10 +14119,6 @@ export class OrcaRuntimeService {
       this.retireMobileSessionSurfacesForPty(ptyId, incarnationId, exactSurfaces)
     }
 
-    if (!preservesAbnormalSshSurface && recoveredLegacyWorkerHandle) {
-      this.failActiveDispatchForHandle(recoveredLegacyWorkerHandle, exitCode, true)
-    }
-
     for (const leaf of this.getLeavesForPty(ptyId)) {
       this.detachedPreAllocatedLeaves.delete(ptyId)
       leaf.connected = false
@@ -14112,11 +14126,14 @@ export class OrcaRuntimeService {
       leaf.lastExitCode = exitCode
       leaf.lastAgentStatusObservedLive = false
       this.resolveExitWaiters(leaf)
-      if (!preservesAbnormalSshSurface && !recoveredLegacyWorkerHandle) {
+      if (!preservesAbnormalSshSurface && !recoveredLegacyWorkerAuthority) {
         this.failActiveDispatchOnExit(leaf, exitCode)
       }
     }
     this.pruneDisconnectedPtyRecords()
+    if (!preservesAbnormalSshSurface && recoveredLegacyWorkerAuthority) {
+      this.scheduleRecoveredWorkerExitReconciliation(recoveredLegacyWorkerAuthority, exitCode)
+    }
   }
 
   // ─── Driver state (mobile-presence lock) ──────────────────────────
@@ -15769,6 +15786,95 @@ export class OrcaRuntimeService {
           handle
         })
       })
+    }
+  }
+
+  private scheduleRecoveredWorkerExitReconciliation(
+    authority: RecoveredLegacyWorkerAuthority,
+    exitCode: number
+  ): void {
+    if (this.recoveredWorkerExitReconciliations.has(authority.dispatchId)) {
+      return
+    }
+    const reconciliation = {
+      authority,
+      exitCode,
+      attempt: 0,
+      reconciled: false,
+      timer: null as ReturnType<typeof setTimeout> | null
+    }
+    this.recoveredWorkerExitReconciliations.set(authority.dispatchId, reconciliation)
+    this.armRecoveredWorkerExitReconciliation(reconciliation)
+  }
+
+  private armRecoveredWorkerExitReconciliation(reconciliation: {
+    authority: RecoveredLegacyWorkerAuthority
+    exitCode: number
+    attempt: number
+    reconciled: boolean
+    timer: ReturnType<typeof setTimeout> | null
+  }): void {
+    const delayMs = RECOVERED_WORKER_EXIT_RETRY_DELAYS_MS[reconciliation.attempt]
+    if (delayMs === undefined) {
+      this.recoveredWorkerExitReconciliations.delete(reconciliation.authority.dispatchId)
+      console.warn('[orchestration] recovered worker exit reconciliation exhausted', {
+        dispatchId: reconciliation.authority.dispatchId
+      })
+      return
+    }
+    reconciliation.attempt += 1
+    reconciliation.timer = setTimeout(() => {
+      reconciliation.timer = null
+      if (this.tryRecoveredWorkerExitReconciliation(reconciliation)) {
+        this.recoveredWorkerExitReconciliations.delete(reconciliation.authority.dispatchId)
+        return
+      }
+      this.armRecoveredWorkerExitReconciliation(reconciliation)
+    }, delayMs)
+    reconciliation.timer.unref?.()
+  }
+
+  private tryRecoveredWorkerExitReconciliation(reconciliation: {
+    authority: RecoveredLegacyWorkerAuthority
+    exitCode: number
+    reconciled: boolean
+  }): boolean {
+    const { authority, exitCode } = reconciliation
+    try {
+      const orchestrationDb = this._orchestrationDb ?? this.getOrchestrationDb({ busyTimeoutMs: 0 })
+      const dispatch = orchestrationDb.getDispatchContextById(authority.dispatchId)
+      if (!dispatch) {
+        return true
+      }
+      const errorContext = `Agent exited with code ${exitCode}`
+      if (!reconciliation.reconciled) {
+        orchestrationDb.reconcileMissingWorkerTerminal(authority.dispatchId, errorContext, {
+          busyTimeoutMs: 0
+        })
+        reconciliation.reconciled = true
+      }
+      const run = orchestrationDb.getActiveCoordinatorRun()
+      if (run) {
+        orchestrationDb.insertMessage({
+          from: authority.terminalHandle,
+          to: run.coordinator_handle,
+          subject: `Agent exited unexpectedly (code ${exitCode})`,
+          type: 'escalation',
+          priority: 'high',
+          payload: JSON.stringify({
+            taskId: dispatch.task_id,
+            exitCode,
+            handle: authority.terminalHandle
+          })
+        })
+      }
+      return true
+    } catch (error) {
+      console.warn('[orchestration] recovered worker exit reconciliation failed', {
+        dispatchId: authority.dispatchId,
+        error
+      })
+      return false
     }
   }
 

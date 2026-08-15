@@ -81,7 +81,8 @@ describe('orchestration task lineage reader', () => {
     [
       'partial',
       'CREATE INDEX idx_dispatch_task ON dispatch_contexts(task_id) WHERE assignee_handle IS NOT NULL;'
-    ]
+    ],
+    ['non-binary', 'CREATE INDEX idx_dispatch_task ON dispatch_contexts(task_id COLLATE NOCASE);']
   ])('defers lineage when the dispatch index is %s', (_case, indexSql) => {
     const dbPath = databasePath()
     const db = new SyncDatabase(dbPath)

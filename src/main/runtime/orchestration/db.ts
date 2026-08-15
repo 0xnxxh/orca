@@ -67,6 +67,7 @@ import {
   ensureMutationReceiptCapacity,
   migrateMutationReceiptCapacity
 } from './mutation-receipt-capacity'
+import { ORCHESTRATION_SCHEMA_VERSION } from './orchestration-schema-version'
 
 // Why: leaf UUID is the remint-stable pane identity (tab half changes on break-out); exact match covers legacy/unparseable keys.
 function isEquivalentPaneKey(a: string, b: string): boolean {
@@ -90,6 +91,7 @@ function parseWorkerTerminalPriorOwnerIds(value: string): string[] | null {
 }
 
 const MESSAGE_ID_UPDATE_BATCH_SIZE = 500
+const ORCHESTRATION_BUSY_TIMEOUT_MS = 5_000
 export const ORCHESTRATION_DELIVERY_BATCH_LIMIT = 50
 
 export type MailboxRoutingPage = {
@@ -313,8 +315,6 @@ type RunListCursor = {
 }
 
 // Schema versions: v2 'heartbeat'+last_heartbeat_at, v3 delivered_at, v4 task-creator terminal, v5 task_title/display_name, v6 pane identity, v7 lightweight Runs, v8 crash-safe Run deliveries, v9 durable question threads, v10 Dispatch capabilities, v11 durable mutation receipts, v12 composed worker state, v18 post-v6 version-skew repair, v19 adopted legacy Runs and compatibility receipts, v20 legacy question backfill, v21 legacy scheduler-loss provenance, v22 dispatch assignee lookup, v23 worker terminal resource ownership, v24 creator-incarnation authority, v25 active Dispatch handle lookup, v26 indexed mutation receipt capacity, v27 durable federation acknowledgments, v28 durable local mutation caller identity.
-const SCHEMA_VERSION = 28
-
 function hardenOrchestrationDatabaseFiles(dbPath: (string & {}) | ':memory:'): void {
   if (dbPath === ':memory:' || process.platform === 'win32') {
     // Why: Windows protects these files through Orca's current-user-only userData DACL; POSIX mode bits are inert there.
@@ -339,17 +339,30 @@ export class OrchestrationDb {
   private hasAnyDispatchContextsCache: boolean | undefined
   private localMutationCallerFingerprint: string | undefined
 
-  constructor(dbPath: (string & {}) | ':memory:') {
+  constructor(dbPath: (string & {}) | ':memory:', options?: { busyTimeoutMs?: number }) {
     this.db = new Database(dbPath)
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('synchronous = NORMAL')
-    this.db.pragma('busy_timeout = 5000')
-    this.createTables()
-    this.migrate()
-    this.repairRequiredLookupIndexes()
-    this.createCoordinatorMailRoutingTrigger()
-    this.rememberCurrentRunCoordinatorHandles()
-    hardenOrchestrationDatabaseFiles(dbPath)
+    try {
+      const storedSchemaVersion = this.db.pragma('user_version', { simple: true }) as number
+      if (storedSchemaVersion > ORCHESTRATION_SCHEMA_VERSION) {
+        throw new OrchestrationError(
+          'schema_version_unsupported',
+          `Orchestration schema ${storedSchemaVersion} is newer than supported version ${ORCHESTRATION_SCHEMA_VERSION}.`
+        )
+      }
+      this.db.pragma('journal_mode = WAL')
+      this.db.pragma('synchronous = NORMAL')
+      this.db.pragma(`busy_timeout = ${options?.busyTimeoutMs ?? ORCHESTRATION_BUSY_TIMEOUT_MS}`)
+      this.createTables()
+      this.migrate()
+      this.repairRequiredLookupIndexes()
+      this.createCoordinatorMailRoutingTrigger()
+      this.rememberCurrentRunCoordinatorHandles()
+      this.db.pragma(`busy_timeout = ${ORCHESTRATION_BUSY_TIMEOUT_MS}`)
+      hardenOrchestrationDatabaseFiles(dbPath)
+    } catch (error) {
+      this.db.close()
+      throw error
+    }
   }
 
   private createTables(): void {
@@ -695,9 +708,9 @@ export class OrchestrationDb {
     const current = resolveOrchestrationMigrationStartVersion(
       this.db,
       storedVersion,
-      SCHEMA_VERSION
+      ORCHESTRATION_SCHEMA_VERSION
     )
-    if (current >= SCHEMA_VERSION) {
+    if (current >= ORCHESTRATION_SCHEMA_VERSION) {
       return
     }
 
@@ -1098,7 +1111,7 @@ export class OrchestrationDb {
       `)
       this.createMailboxDeliveryIndexesIfPossible()
 
-      this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
+      this.db.pragma(`user_version = ${ORCHESTRATION_SCHEMA_VERSION}`)
       this.db.exec('COMMIT')
     } catch (err) {
       this.db.exec('ROLLBACK')
@@ -1480,7 +1493,9 @@ export class OrchestrationDb {
   }
 
   private repairRequiredLookupIndexes(): void {
-    if ((this.db.pragma('user_version', { simple: true }) as number) !== SCHEMA_VERSION) {
+    if (
+      (this.db.pragma('user_version', { simple: true }) as number) !== ORCHESTRATION_SCHEMA_VERSION
+    ) {
       return
     }
     const dispatchReady = this.hasRequiredLookupIndex(
@@ -1498,12 +1513,17 @@ export class OrchestrationDb {
     }
     this.db.exec('BEGIN IMMEDIATE')
     try {
-      this.repairRequiredLookupIndex('dispatch_contexts', 'idx_dispatch_task', 'task_id')
-      this.repairRequiredLookupIndex(
-        'worker_terminal_resources',
-        'idx_worker_terminal_resources_release',
-        'release_state'
-      )
+      if (
+        (this.db.pragma('user_version', { simple: true }) as number) ===
+        ORCHESTRATION_SCHEMA_VERSION
+      ) {
+        this.repairRequiredLookupIndex('dispatch_contexts', 'idx_dispatch_task', 'task_id')
+        this.repairRequiredLookupIndex(
+          'worker_terminal_resources',
+          'idx_worker_terminal_resources_release',
+          'release_state'
+        )
+      }
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -1520,8 +1540,16 @@ export class OrchestrationDb {
       }[]
     ).find((row) => row.name === indexName)
     const hasLeadingColumn = (
-      this.db.pragma(`index_info(${indexName})`) as { seqno: number; name: string | null }[]
-    ).some((row) => row.seqno === 0 && row.name === leadingColumn)
+      this.db.pragma(`index_xinfo(${indexName})`) as {
+        seqno: number
+        name: string | null
+        coll: string
+        key: number
+      }[]
+    ).some(
+      (row) =>
+        row.seqno === 0 && row.name === leadingColumn && row.coll === 'BINARY' && row.key === 1
+    )
     return index?.partial === 0 && index.unique === 0 && hasLeadingColumn
   }
 
@@ -5207,9 +5235,23 @@ export class OrchestrationDb {
       .all() as LegacyWorkerTerminalRecoveryRow[]
   }
 
-  reconcileMissingWorkerTerminal(dispatchId: string, reason: string): WorkerDispatchRow {
-    this.db.exec('BEGIN IMMEDIATE')
+  reconcileMissingWorkerTerminal(
+    dispatchId: string,
+    reason: string,
+    options?: { busyTimeoutMs?: number }
+  ): WorkerDispatchRow {
+    const busyTimeoutMs = options?.busyTimeoutMs
+    const previousBusyTimeout =
+      busyTimeoutMs === undefined
+        ? null
+        : (this.db.pragma('busy_timeout', { simple: true }) as number)
+    if (busyTimeoutMs !== undefined) {
+      this.db.pragma(`busy_timeout = ${busyTimeoutMs}`)
+    }
+    let transactionStarted = false
     try {
+      this.db.exec('BEGIN IMMEDIATE')
+      transactionStarted = true
       const dispatch = this.getDispatchContextById(dispatchId)
       const worker = this.getWorkerDispatch(dispatchId)
       if (!dispatch || !worker) {
@@ -5254,10 +5296,17 @@ export class OrchestrationDb {
         )
         .run(stopWasPending ? 'stopped' : 'abandoned', reason, dispatchId)
       this.db.exec('COMMIT')
+      transactionStarted = false
       return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
     } catch (error) {
-      this.db.exec('ROLLBACK')
+      if (transactionStarted) {
+        this.db.exec('ROLLBACK')
+      }
       throw error
+    } finally {
+      if (previousBusyTimeout !== null) {
+        this.db.pragma(`busy_timeout = ${previousBusyTimeout}`)
+      }
     }
   }
 

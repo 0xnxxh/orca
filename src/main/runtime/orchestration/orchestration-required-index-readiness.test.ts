@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import SyncDatabase from '../../sqlite/sync-database'
 import { OrchestrationDb } from './db'
 import { requiresWorkerTerminalReleaseReadiness } from './orchestration-worker-terminal-release-reader'
@@ -39,12 +39,17 @@ describe('orchestration required index readiness', () => {
         }[]
       ).find((row) => row.name === indexName)
       expect(index).toMatchObject({ partial: 0, unique: 0 })
+      expect(db.prepare(`PRAGMA index_xinfo(${indexName})`).all()).toContainEqual(
+        expect.objectContaining({ seqno: 0, name: leadingColumn, coll: 'BINARY', key: 1 })
+      )
       expect(
         db
-          .prepare(`PRAGMA index_info(${indexName})`)
-          .all()
-          .find((row) => (row as { seqno?: number }).seqno === 0)
-      ).toMatchObject({ name: leadingColumn })
+          .prepare(
+            `EXPLAIN QUERY PLAN SELECT 1 FROM ${table} INDEXED BY ${indexName}
+             WHERE ${leadingColumn} = ?`
+          )
+          .all('__probe__')
+      ).toContainEqual(expect.objectContaining({ detail: expect.stringContaining('SEARCH') }))
     } finally {
       db.close()
     }
@@ -63,6 +68,10 @@ describe('orchestration required index readiness', () => {
     [
       'unique',
       'CREATE UNIQUE INDEX idx_worker_terminal_resources_release ON worker_terminal_resources(release_state)'
+    ],
+    [
+      'non-binary',
+      'CREATE INDEX idx_worker_terminal_resources_release ON worker_terminal_resources(release_state COLLATE NOCASE)'
     ]
   ])('opens readiness and repairs a %s release index', (_case, replacementSql) => {
     const dbPath = createDatabase()
@@ -100,7 +109,8 @@ describe('orchestration required index readiness', () => {
       'wrong-leading-column',
       'CREATE INDEX idx_dispatch_task ON dispatch_contexts(assignee_handle, task_id)'
     ],
-    ['unique', 'CREATE UNIQUE INDEX idx_dispatch_task ON dispatch_contexts(task_id)']
+    ['unique', 'CREATE UNIQUE INDEX idx_dispatch_task ON dispatch_contexts(task_id)'],
+    ['non-binary', 'CREATE INDEX idx_dispatch_task ON dispatch_contexts(task_id COLLATE NOCASE)']
   ])('repairs a %s dispatch index at full readiness', (_case, replacementSql) => {
     const dbPath = createDatabase()
     const raw = new SyncDatabase(dbPath)
@@ -113,20 +123,107 @@ describe('orchestration required index readiness', () => {
     expectFullLeadingIndex(dbPath, 'dispatch_contexts', 'idx_dispatch_task', 'task_id')
   })
 
-  it('preserves a future schema index definition during downgrade', () => {
+  it('rejects a future schema without mutating its objects', () => {
+    const dbPath = createDatabase()
+    const raw = new SyncDatabase(dbPath)
+    raw.exec('DROP INDEX idx_dispatch_task')
+    raw.exec(`
+      CREATE INDEX idx_dispatch_task
+        ON dispatch_contexts(task_id) WHERE assignee_handle IS NOT NULL;
+      DROP TRIGGER trg_messages_route_coordinator_mail;
+      CREATE TRIGGER trg_messages_route_coordinator_mail
+        AFTER INSERT ON messages BEGIN SELECT NEW.sequence; END;
+    `)
+    raw.pragma('user_version = 29')
+    raw.close()
+    const before = readFileSync(dbPath)
+
+    expect(() => new OrchestrationDb(dbPath)).toThrow(
+      'Orchestration schema 29 is newer than supported version 28.'
+    )
+    expect(readFileSync(dbPath)).toEqual(before)
+    const inspection = new SyncDatabase(dbPath, { readonly: true, fileMustExist: true })
+    try {
+      expect(
+        inspection
+          .prepare('PRAGMA index_list(dispatch_contexts)')
+          .all()
+          .find((row) => (row as { name?: string }).name === 'idx_dispatch_task')
+      ).toMatchObject({ partial: 1 })
+      expect(
+        inspection
+          .prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+          .get('trg_messages_route_coordinator_mail')
+      ).toEqual({
+        sql: 'CREATE TRIGGER trg_messages_route_coordinator_mail\n        AFTER INSERT ON messages BEGIN SELECT NEW.sequence; END'
+      })
+      expect(inspection.pragma('user_version', { simple: true })).toBe(29)
+    } finally {
+      inspection.close()
+    }
+  })
+
+  it('defers malformed release indexes owned by a future schema', () => {
+    const dbPath = createDatabase()
+    const raw = new SyncDatabase(dbPath)
+    raw.exec('DROP INDEX idx_worker_terminal_resources_release')
+    raw.exec(
+      `CREATE INDEX idx_worker_terminal_resources_release
+       ON worker_terminal_resources(release_state COLLATE NOCASE)`
+    )
+    raw.pragma('user_version = 29')
+    const before = raw
+      .prepare(
+        'SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name'
+      )
+      .all()
+    raw.close()
+
+    expect(requiresWorkerTerminalReleaseReadiness(dbPath)).toBe(false)
+
+    const inspection = new SyncDatabase(dbPath, { readonly: true, fileMustExist: true })
+    try {
+      expect(inspection.pragma('user_version', { simple: true })).toBe(29)
+      expect(
+        inspection
+          .prepare(
+            'SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name'
+          )
+          .all()
+      ).toEqual(before)
+    } finally {
+      inspection.close()
+    }
+  })
+
+  it('rechecks the future schema fence after acquiring the repair lock', () => {
     const dbPath = createDatabase()
     const raw = new SyncDatabase(dbPath)
     raw.exec('DROP INDEX idx_dispatch_task')
     raw.exec(
       'CREATE INDEX idx_dispatch_task ON dispatch_contexts(task_id) WHERE assignee_handle IS NOT NULL'
     )
-    raw.pragma('user_version = 29')
     raw.close()
+    const originalExec = SyncDatabase.prototype.exec
+    let injectedFutureSchema = false
+    const execSpy = vi
+      .spyOn(SyncDatabase.prototype, 'exec')
+      .mockImplementation(function (this: SyncDatabase, sql) {
+        if (sql === 'BEGIN IMMEDIATE' && !injectedFutureSchema) {
+          injectedFutureSchema = true
+          const future = new SyncDatabase(dbPath)
+          future.pragma('user_version = 29')
+          future.close()
+        }
+        return originalExec.call(this, sql)
+      })
+    const raced = new OrchestrationDb(dbPath)
+    raced.close()
+    execSpy.mockRestore()
 
-    const downgraded = new OrchestrationDb(dbPath)
-    downgraded.close()
     const inspection = new SyncDatabase(dbPath, { readonly: true, fileMustExist: true })
     try {
+      expect(injectedFutureSchema).toBe(true)
       expect(
         inspection
           .prepare('PRAGMA index_list(dispatch_contexts)')
