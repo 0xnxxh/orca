@@ -10,6 +10,7 @@ import { setSystemMemoryInfoReaderForTest } from './gone-time-system-memory'
 
 type MetricFixture = {
   pid?: number
+  creationTime?: number
   type: string
   memory: { workingSetSize: number; peakWorkingSetSize?: number; privateBytes?: number }
 }
@@ -101,7 +102,7 @@ describe('process gone diagnostics', () => {
     })
   })
 
-  it('carries the dead renderer working set from the last pre-gone sample', () => {
+  it('mirrors the last whole-process sample before process gone', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000_000)
     appMetricsMock.mockReturnValue([
@@ -122,8 +123,10 @@ describe('process gone diagnostics', () => {
       processMetricsRendererCount: 0,
       processMetricsRendererWorkingSetMB: 0,
       processMetricsCrashedProcessAbsent: true,
-      // The crasher's last known size survives via the pre-gone sample.
+      // A single-renderer snapshot happens to equal that renderer's values,
+      // but the contract remains snapshot-wide rather than per-crasher.
       processMetricsPreGoneSampleAgeMs: 42_000,
+      processMetricsPreGoneCrashedProcessAttributionAmbiguous: true,
       processMetricsPreGoneRendererCount: 1,
       processMetricsPreGoneRendererWorkingSetMB: 4380,
       processMetricsPreGoneLargestPid: 15385,
@@ -282,45 +285,98 @@ describe('process gone diagnostics', () => {
     expect(details.processMetricsPreGoneRendererPrivateMB).toBe(2900)
   })
 
-  it('proves crasher absence when a webview guest keeps the renderer bucket alive', () => {
-    // The case that motivated the PR: webviewTag guests / the dashboard popout
-    // leave surviving renderers, so the bucket count never hits zero for a
-    // main-window crash — a sampled renderer pid missing from the live set is
-    // the proof instead.
+  it('keeps the pre-gone snapshot honest when a larger renderer survives', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000_000)
-    // Guest enumerated BEFORE the crasher: Largest must carry the crasher's
-    // individual working set, never the renderer bucket's running sum.
     appMetricsMock.mockReturnValue([
       { pid: 100, type: 'Browser', memory: { workingSetSize: 1024 * 431 } },
-      { pid: 102, type: 'Tab', memory: { workingSetSize: 1024 * 300 } },
-      { pid: 101, type: 'Tab', memory: { workingSetSize: 1024 * 4380 } }
+      {
+        pid: 101,
+        type: 'Tab',
+        memory: {
+          workingSetSize: 1024 * 300,
+          peakWorkingSetSize: 1024 * 500,
+          privateBytes: 1024 * 250
+        }
+      },
+      {
+        pid: 102,
+        type: 'Tab',
+        memory: {
+          workingSetSize: 1024 * 4380,
+          peakWorkingSetSize: 1024 * 5000,
+          privateBytes: 1024 * 4000
+        }
+      }
     ])
     samplePreGoneProcessMetrics()
 
     appMetricsMock.mockReturnValue([
       { pid: 100, type: 'Browser', memory: { workingSetSize: 1024 * 431 } },
-      { pid: 102, type: 'Tab', memory: { workingSetSize: 1024 * 300 } }
+      {
+        pid: 102,
+        type: 'Tab',
+        memory: {
+          workingSetSize: 1024 * 4380,
+          peakWorkingSetSize: 1024 * 5000,
+          privateBytes: 1024 * 4000
+        }
+      }
     ])
 
     const details = buildProcessGoneCrashDetails({}, 'renderer')
     expect(details).toMatchObject({
       processMetricsRendererCount: 1,
       processMetricsCrashedProcessAbsent: true,
-      // The live bucket carries the surviving guest only; the crasher's size
-      // reaches the record through the PreGone mirrors: the bucket total sums
-      // crasher + guest, while Largest names the crasher's own size.
-      processMetricsRendererWorkingSetMB: 300,
+      processMetricsRendererWorkingSetMB: 4380,
       processMetricsPreGoneRendererWorkingSetMB: 4680,
-      processMetricsPreGoneLargestPid: 101,
+      processMetricsPreGoneLargestPid: 102,
       processMetricsPreGoneLargestType: 'Tab',
-      processMetricsPreGoneLargestWorkingSetMB: 4380
+      processMetricsPreGoneLargestWorkingSetMB: 4380,
+      processMetricsPreGoneRendererPeakWorkingSetMB: 5000,
+      processMetricsPreGoneRendererPrivateMB: 4000,
+      processMetricsPreGoneCrashedProcessAttributionAmbiguous: true
     })
   })
 
+  it('uses creation time to distinguish a same-pid same-bucket replacement', () => {
+    appMetricsMock.mockReturnValue([
+      {
+        pid: 101,
+        creationTime: 1_000,
+        type: 'Tab',
+        memory: { workingSetSize: 1024 * 400 }
+      }
+    ])
+    samplePreGoneProcessMetrics()
+
+    appMetricsMock.mockReturnValue([
+      {
+        pid: 101,
+        creationTime: 1_000,
+        type: 'Tab',
+        memory: { workingSetSize: 1024 * 400 }
+      }
+    ])
+    expect(
+      buildProcessGoneCrashDetails({}, 'renderer').processMetricsCrashedProcessAbsent
+    ).toBeUndefined()
+
+    appMetricsMock.mockReturnValue([
+      {
+        pid: 101,
+        creationTime: 2_000,
+        type: 'Tab',
+        memory: { workingSetSize: 1024 * 400 }
+      }
+    ])
+    expect(buildProcessGoneCrashDetails({}, 'renderer').processMetricsCrashedProcessAbsent).toBe(
+      true
+    )
+  })
+
   it('proves absence when the OS recycles the sampled renderer pid into another bucket', () => {
-    // Pid reuse: the crasher's pid comes back as a NEW utility process inside
-    // the sweep window. A bare live-pid set would read the crasher as alive.
+    // A bare pid set would mistake the replacement Utility for the sampled Tab.
     appMetricsMock.mockReturnValue([
       { pid: 100, type: 'Browser', memory: { workingSetSize: 1024 * 400 } },
       { pid: 101, type: 'Tab', memory: { workingSetSize: 1024 * 4380 } },
@@ -424,7 +480,7 @@ describe('process gone diagnostics', () => {
     ])
     samplePreGoneProcessMetrics()
 
-    // First death: record #1 carries the true pre-death size.
+    // Record #1 carries the snapshot that still included the first renderer.
     appMetricsMock.mockReturnValue([
       { pid: 200, type: 'Browser', memory: { workingSetSize: 1024 * 400 } }
     ])
@@ -511,6 +567,7 @@ describe('process gone diagnostics', () => {
         processMetricsCount: 999,
         systemMemoryFreeMB: 999_999,
         processMetricsPreGoneRendererWorkingSetMB: 999_999,
+        processMetricsPreGoneCrashedProcessAttributionAmbiguous: false,
         processMetricsCrashedProcessAbsent: false
       },
       'renderer'
@@ -518,6 +575,7 @@ describe('process gone diagnostics', () => {
     expect(details.processMetricsCount).toBe(1)
     expect(details.systemMemoryFreeMB).toBe(500)
     expect(details.processMetricsPreGoneRendererWorkingSetMB).toBe(100)
+    expect(details.processMetricsPreGoneCrashedProcessAttributionAmbiguous).toBe(true)
     expect(details.processMetricsCrashedProcessAbsent).toBe(true)
   })
 

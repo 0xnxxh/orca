@@ -7,6 +7,7 @@ import { getSystemMemoryAtGoneDetails, memoryKBFieldMB } from './gone-time-syste
 
 type ProcessMetricLike = {
   pid?: unknown
+  creationTime?: unknown
   type?: unknown
   memory?: {
     workingSetSize?: unknown
@@ -126,43 +127,47 @@ export function collectProcessGoneMetricDetails(metrics: ProcessMetricLike[]): C
 
 type LiveProcessGoneMetrics = {
   details: CrashReportDetails
-  // null = metrics unreadable, so pid-level absence cannot be proven.
-  // Bucket per pid, not a bare pid set: a recycled pid living on as a
-  // different process type must still read as a vanished sampled process.
-  pidBuckets: Map<number, ProcessMetricBucketName> | null
+  identitiesByPid: Map<number, ProcessMetricIdentity> | null
+}
+
+type ProcessMetricIdentity = {
+  bucket: ProcessMetricBucketName
+  creationTime?: number
+}
+
+function processMetricIdentity(metric: ProcessMetricLike): ProcessMetricIdentity {
+  return {
+    bucket: metricTypeBucket(metric.type),
+    creationTime: safeFiniteNumber(metric.creationTime)
+  }
 }
 
 function getLiveProcessGoneMetrics(): LiveProcessGoneMetrics {
   try {
     const metrics = app.getAppMetrics()
-    const pidBuckets = new Map<number, ProcessMetricBucketName>()
+    const identitiesByPid = new Map<number, ProcessMetricIdentity>()
     for (const metric of metrics) {
       const pid = safeFiniteNumber(metric.pid)
       if (pid !== undefined) {
-        pidBuckets.set(pid, metricTypeBucket(metric.type))
+        identitiesByPid.set(pid, processMetricIdentity(metric))
       }
     }
-    return { details: collectProcessGoneMetricDetails(metrics), pidBuckets }
+    return { details: collectProcessGoneMetricDetails(metrics), identitiesByPid }
   } catch (error) {
     const errorName = error instanceof Error ? error.name : typeof error
-    return { details: { processMetricsError: errorName }, pidBuckets: null }
+    return { details: { processMetricsError: errorName }, identitiesByPid: null }
   }
 }
 
 // ─── Pre-gone metric sampling ───────────────────────────────────────
-// Why: process-gone fires after the crashed process left Chromium's registry,
-// so gone-time getAppMetrics() only sees survivors — field reports carried
-// processMetricsRendererCount=0 for every renderer death. A periodic sample
-// keeps the last pre-death working sets so the crasher's size survives it.
-// Staleness honesty: PreGone values are sample-time, not death-time — a
-// process that grew in the up-to-60s before death is understated, bounded
-// only by PreGoneSampleAgeMs and the lifetime peak fields.
+// Why: process-gone metrics see survivors only, so retain a recent whole-app
+// snapshot for comparison without pretending it identifies the crasher.
 
 export const PROCESS_METRICS_PRE_GONE_SAMPLE_INTERVAL_MS = 60_000
 
 type PreGoneSampledProcess = {
   pid: number
-  bucket: ProcessMetricBucketName
+  identity: ProcessMetricIdentity
 }
 
 type PreGoneProcessMetricsSample = {
@@ -181,7 +186,7 @@ function sampledProcessIdentities(metrics: ProcessMetricLike[]): PreGoneSampledP
     if (pid === undefined) {
       continue
     }
-    processes.push({ pid, bucket: metricTypeBucket(metric.type) })
+    processes.push({ pid, identity: processMetricIdentity(metric) })
   }
   return processes
 }
@@ -225,13 +230,33 @@ function preGoneSampleDetails(
   nowMs: number
 ): CrashReportDetails {
   const details: CrashReportDetails = {
-    processMetricsPreGoneSampleAgeMs: Math.max(0, nowMs - sample.sampledAtMs)
+    processMetricsPreGoneSampleAgeMs: Math.max(0, nowMs - sample.sampledAtMs),
+    // Why: Electron's gone events omit pid, so no snapshot row is attributable
+    // to the crasher even when only one same-type process was sampled.
+    processMetricsPreGoneCrashedProcessAttributionAmbiguous: true
   }
   for (const [key, value] of Object.entries(sample.details)) {
     details[`${PROCESS_METRICS_KEY_PREFIX}PreGone${key.slice(PROCESS_METRICS_KEY_PREFIX.length)}`] =
       value
   }
   return details
+}
+
+function sampledProcessIsGone(
+  sampled: PreGoneSampledProcess,
+  liveIdentitiesByPid: Map<number, ProcessMetricIdentity>
+): boolean {
+  const live = liveIdentitiesByPid.get(sampled.pid)
+  if (!live || live.bucket !== sampled.identity.bucket) {
+    return true
+  }
+  const sampledCreationTime = sampled.identity.creationTime
+  const liveCreationTime = live.creationTime
+  return (
+    sampledCreationTime !== undefined &&
+    liveCreationTime !== undefined &&
+    sampledCreationTime !== liveCreationTime
+  )
 }
 
 export function buildProcessGoneCrashDetails(
@@ -241,7 +266,8 @@ export function buildProcessGoneCrashDetails(
   const sanitizedDetails = sanitizeCrashReportDetails(details)
   // Why: low-JS-heap renderer kills can still be native/process memory pressure.
   // Capture Electron process buckets at process-gone time before recovery reloads.
-  const { details: liveMetricDetails, pidBuckets: livePidBuckets } = getLiveProcessGoneMetrics()
+  const { details: liveMetricDetails, identitiesByPid: liveIdentitiesByPid } =
+    getLiveProcessGoneMetrics()
   const crashDetails: CrashReportDetails = {
     ...sanitizedDetails,
     ...liveMetricDetails,
@@ -249,24 +275,19 @@ export function buildProcessGoneCrashDetails(
   }
   // Why: with the crasher gone, Largest names a survivor — flag that so the
   // live buckets are read as "everyone else", not as the crashed process.
-  // Same-bucket survivors are the norm (webview guests, the dashboard popout,
-  // origin-bar views), so a zero bucket count alone under-detects: a sampled
-  // same-bucket pid missing from the live set — including one the OS recycled
-  // into a different bucket — also proves absence. The proof is stateless and
-  // holds for every record of a crash loop. False negatives remain when the
-  // crasher was younger than the last sweep, or when its pid was recycled
-  // into a NEW same-bucket process inside the sweep window; a legitimately
-  // closed sampled process can still trip the flag if the crasher's own row
-  // somehow survives in the live enumeration.
+  // Same-bucket survivors are common, so use Electron's (pid, creationTime)
+  // identity to distinguish a missing sampled process from a recycled pid.
   const crashedBucket = metricTypeBucket(crashedProcessType)
   const crashedBucketCountKey = `${PROCESS_METRICS_KEY_PREFIX}${titleCaseBucket(crashedBucket)}Count`
-  const sampledSameBucketPidVanished = Boolean(
-    livePidBuckets &&
+  const sampledSameBucketProcessVanished = Boolean(
+    liveIdentitiesByPid &&
     preGoneSample?.processes.some(
-      (p) => p.bucket === crashedBucket && livePidBuckets.get(p.pid) !== p.bucket
+      (process) =>
+        process.identity.bucket === crashedBucket &&
+        sampledProcessIsGone(process, liveIdentitiesByPid)
     )
   )
-  if (liveMetricDetails[crashedBucketCountKey] === 0 || sampledSameBucketPidVanished) {
+  if (liveMetricDetails[crashedBucketCountKey] === 0 || sampledSameBucketProcessVanished) {
     crashDetails.processMetricsCrashedProcessAbsent = true
   }
   if (preGoneSample) {

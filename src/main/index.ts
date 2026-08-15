@@ -2850,8 +2850,8 @@ void app.whenReady().then(async () => {
       removeManagedAgentHooks()
     }
   }
-  // Why: process-gone metrics only see survivors; keep a fresh pre-death sample
-  // so a crashed process's last working set reaches its crash report.
+  // Why: process-gone metrics only see survivors; retain a recent whole-app
+  // snapshot for comparison in crash reports.
   startPreGoneProcessMetricsSampling()
   app.on('child-process-gone', (_event, details) => {
     recordProcessGoneCrash('child', details.type, details.reason, details.exitCode ?? null, {
