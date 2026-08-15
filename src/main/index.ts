@@ -340,6 +340,12 @@ import {
 import { LocalPtyProvider } from './providers/local-pty-provider'
 import { KeybindingService } from './keybindings/keybinding-service'
 import { applyElectronProxySettings } from './network/proxy-settings'
+import {
+  SYNTHETIC_PERMISSION_BELL,
+  buildSyntheticTerminalTitleFrame,
+  shouldDeferSyntheticPermissionBell
+} from '../shared/codex-attention-quiet-window'
+import { SyntheticPermissionBellDeferral } from './synthetic-permission-bell-deferral'
 import { preserveAgentAuthBeforeRestart } from './agent-auth-restart-preservation'
 import { CliInstaller } from './cli/cli-installer'
 import { installLinuxBareOrcaDispatcher } from './cli/linux-bare-orca-dispatcher'
@@ -1504,6 +1510,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
     setMigrationUnsupportedPtyListener(null)
     // Why: stop the spinner timer here — it would fire into destroyed webContents, and per-pane teardown may never run for restored-but-untorn panes.
     stopAllSyntheticTitleSpinners()
+    syntheticPermissionBellDeferral.cancelAll()
   })
   mainWindow = window
   window.on('show', resumeSyntheticTitleSpinnerTimer)
@@ -1583,6 +1590,17 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
         getDashboardPopoutWindow()?.webContents.send('agentStatus:set', statusEvent)
       }
       recordAgentStateCrashBreadcrumb(payload.agentType ?? 'unknown', payload.state)
+      // Why: a pause that resolved itself must drop its deferred BEL even when this event
+      // suppresses the synthetic title entirely (#13600).
+      if (
+        !shouldDeferSyntheticPermissionBell({
+          agentType: payload.agentType,
+          state: payload.state,
+          toolName: payload.toolName
+        })
+      ) {
+        syntheticPermissionBellDeferral.cancel(paneKey)
+      }
       // Why: native OSC titles miss some idle/permission frames, so inject hook-derived ones to keep the renderer title tracker in sync.
       const profile = getSyntheticAgentTitleProfile(payload.agentType)
       if (
@@ -1590,13 +1608,17 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
         shouldDriveSyntheticAgentTitleFromHook(payload.agentType, payload.state) &&
         !suppressSyntheticCodexAutoApprovalTitle
       ) {
-        driveSyntheticTitleFromHook(paneKey, payload.state, profile)
+        driveSyntheticTitleFromHook(paneKey, payload, profile)
       }
     }
   )
   agentHookServer.setPaneStatusClearListener((clear) => {
     if (mainWindow?.isDestroyed()) {
       return
+    }
+    // Why: the pane's status is gone, so its held-back permission BEL has nothing left to announce.
+    if ('paneKey' in clear) {
+      syntheticPermissionBellDeferral.cancel(clear.paneKey)
     }
     mainWindow?.webContents.send('agentStatus:clear', clear)
     getDashboardPopoutWindow()?.webContents.send('agentStatus:clear', clear)
@@ -1812,6 +1834,7 @@ const syntheticTitleSpinnerByPaneKey = new Map<
   SyntheticTitleSpinnerEntry<SyntheticAgentTitleProfile>
 >()
 let syntheticTitleSpinnerTimer: ReturnType<typeof setInterval> | null = null
+const syntheticPermissionBellDeferral = new SyntheticPermissionBellDeferral()
 
 type ServeOptions = {
   json: boolean
@@ -2051,9 +2074,10 @@ function resumeSyntheticTitleSpinnerTimer(): void {
 
 function driveSyntheticTitleFromHook(
   paneKey: string,
-  state: AgentStatusState,
+  status: { agentType?: string | null; state: AgentStatusState; toolName?: string },
   profile: SyntheticAgentTitleProfile
 ): void {
+  const { agentType, state, toolName } = status
   const ptyId = getPtyIdForPaneKey(paneKey)
   if (!ptyId) {
     return
@@ -2077,9 +2101,25 @@ function driveSyntheticTitleFromHook(
   stopSyntheticTitleSpinner(paneKey)
   const needsUserInput = state === 'blocked' || state === 'waiting'
   const label = needsUserInput ? profile.permissionLabel : profile.idleLabel
-  sendSyntheticTitle(ptyId, `\x1b]0;${label}\x07${needsUserInput ? '\x07' : ''}`, {
-    force: true
+  // Why: this fabricated BEL is Orca's own attention signal, so it must clear the same Codex
+  // quiet window the renderer applies to the OS notification — ringing it inline let an
+  // "Approve for me" pause raise "Attention requested" before the auto-reviewer replied (#13600).
+  const { frame, deferBell } = buildSyntheticTerminalTitleFrame({
+    agentType,
+    state,
+    toolName,
+    label
   })
+  sendSyntheticTitle(ptyId, frame, { force: true })
+  if (deferBell) {
+    syntheticPermissionBellDeferral.defer(paneKey, () => {
+      // Why: re-resolve the PTY — the pane can be torn down or re-bound inside the quiet window.
+      const livePtyId = getPtyIdForPaneKey(paneKey)
+      if (livePtyId) {
+        sendSyntheticTitle(livePtyId, SYNTHETIC_PERMISSION_BELL, { force: true })
+      }
+    })
+  }
 }
 
 function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
