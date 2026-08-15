@@ -117,6 +117,19 @@ describe('mobile literal image-marker turns', () => {
     expect(rows(messages).map(rowText)).toEqual(['keep [Image #1] literal'])
   })
 
+  it('does not let a markerless row retire marker-bearing literal text', async () => {
+    await mount()
+    send('keep [Image #1] literal')
+
+    const markerless = [userTextMessage('wrong', 'keep literal')]
+    await transcript(markerless)
+    expect(rows(markerless).map(rowText)).toEqual(['keep literal', 'keep [Image #1] literal'])
+
+    const exact = [userTextMessage('right', 'keep [Image #1] literal')]
+    await transcript(exact)
+    expect(rows(exact).map(rowText)).toEqual(['keep [Image #1] literal'])
+  })
+
   it('holds every preview on the optimistic echo until the marker echo covers them all', async () => {
     await mount()
     send('', ['file:///a.jpg', 'file:///b.jpg'])

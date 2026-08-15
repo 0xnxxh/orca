@@ -45,17 +45,12 @@ export function normalizeNativeChatUserText(text: string): string {
   return stripImagePromptMarker(text).trim().replace(/\s+/g, ' ')
 }
 
-/** Marker text that stripping would erase entirely is text the user typed
- *  literally — a real marker always rides on an image turn, which normalization
- *  has already folded away by the time echo matching runs. */
-function normalizeNativeChatUserTextWithLiteralFallback(text: string): string {
-  return normalizeNativeChatUserText(text) || text.trim().replace(/\s+/g, ' ')
+function normalizeLiteralNativeChatUserText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ')
 }
 
 export function nativeChatUserTextMatchText(text: string, hasImages: boolean): string {
-  return hasImages
-    ? normalizeNativeChatUserText(text)
-    : normalizeNativeChatUserTextWithLiteralFallback(text)
+  return hasImages ? normalizeNativeChatUserText(text) : normalizeLiteralNativeChatUserText(text)
 }
 
 function joinedUserText(message: NativeChatMessage): string {

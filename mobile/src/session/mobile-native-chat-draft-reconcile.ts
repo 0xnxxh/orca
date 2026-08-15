@@ -32,7 +32,7 @@ export function countUserTextOccurrences(
   imageCount = 0
 ): number {
   let count = 0
-  for (const message of messages) {
+  for (const message of normalizeImageTranscriptMessages(messages)) {
     if (
       nativeChatUserMessageMatchText(message) === text &&
       nativeChatUserMessageImageEvidenceCount(message) >= imageCount
@@ -41,19 +41,6 @@ export function countUserTextOccurrences(
     }
   }
   return count
-}
-
-export function userTextOccurrenceCounts(
-  messages: readonly NativeChatMessage[]
-): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const message of messages) {
-    const text = nativeChatUserMessageMatchText(message)
-    if (text) {
-      counts.set(text, (counts.get(text) ?? 0) + 1)
-    }
-  }
-  return counts
 }
 
 /** Number of `[Image: source: …]` echo turns strictly after `tailId` (or the
@@ -233,10 +220,13 @@ export function findLandedUnconfirmedSends(
   // captured tail prove new echoes. User turns are keyed by text; an image echo
   // (`[Image: source: …]` or no text) keys under '' so an empty-text send can
   // claim it.
-  const messageIndexById = new Map<string, number>()
+  const messageIndexById = new Map(messages.map((message, index) => [message.id, index]))
   const userMessagesByText = new Map<string, { id: string; index: number; imageCount: number }[]>()
-  for (const [index, message] of messages.entries()) {
-    messageIndexById.set(message.id, index)
+  for (const message of normalizeImageTranscriptMessages(messages)) {
+    const index = messageIndexById.get(message.id)
+    if (index === undefined) {
+      continue
+    }
     if (message.role !== 'user') {
       continue
     }

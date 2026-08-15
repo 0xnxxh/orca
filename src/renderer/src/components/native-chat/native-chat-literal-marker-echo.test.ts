@@ -76,6 +76,18 @@ describe('literal image-marker turns in native chat', () => {
     expect(renderedUserRows(transcript, pending).map(rowText)).toEqual(['keep [Image #1] literal'])
   })
 
+  it('does not let a markerless row hide marker-bearing literal text', () => {
+    const pending: NativeChatPendingSend[] = [
+      { id: 'p1', text: 'keep [Image #1] literal', sentAt: 100 }
+    ]
+    const transcript = [userMessage('m1', 'keep literal')]
+
+    expect(renderedUserRows(transcript, pending).map(rowText)).toEqual([
+      'keep literal',
+      'keep [Image #1] literal'
+    ])
+  })
+
   it('prunes the marker-only echo once the assistant answers it', () => {
     const pending: NativeChatPendingSend[] = [{ id: 'p1', text: '[Image #1]', sentAt: 100 }]
     const transcript = [userMessage('m1', '[Image #1]'), assistantMessage('m2', 'preserved')]

@@ -70,6 +70,25 @@ describe('mobile native chat image preview reconciliation', () => {
     ])
   })
 
+  it('does not treat markerless text as an unknown-ack literal marker echo', () => {
+    const unconfirmed: UnconfirmedSend = {
+      draftKey: 'draft',
+      pendingKey: 'pending-key',
+      text: 'keep [Image #1] literal',
+      normalizedText: 'keep [Image #1] literal',
+      imageCount: 0,
+      baselineTailMessageId: null,
+      deadline: null
+    }
+
+    expect(findLandedUnconfirmedSends([userText('wrong', 'keep literal')], [unconfirmed])).toEqual(
+      []
+    )
+    expect(
+      findLandedUnconfirmedSends([userText('right', 'keep [Image #1] literal')], [unconfirmed])
+    ).toEqual([unconfirmed])
+  })
+
   it('reconciles multiple transcript text blocks with desktop separators', () => {
     const prompt: NativeChatMessage = {
       ...userText('prompt', 'unused'),
