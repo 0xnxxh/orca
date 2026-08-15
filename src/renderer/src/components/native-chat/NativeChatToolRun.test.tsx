@@ -24,4 +24,28 @@ describe('NativeChatToolRun', () => {
     expect(screen.getByTitle('src/index.ts')).toHaveTextContent('src/index.ts')
     expect(screen.queryByTitle('{"file_path":"src/index.ts","offset":10}')).toBeNull()
   })
+
+  it('renders structured apply_patch changes as a reviewable diff instead of JSON', () => {
+    const blocks: NativeChatBlock[] = [
+      {
+        type: 'tool-call',
+        name: 'apply_patch',
+        input: {
+          changes: [
+            {
+              path: '/repo/src/app.ts',
+              kind: { type: 'update', move_path: null },
+              diff: '@@ -1 +1 @@\n-before\n+after'
+            }
+          ]
+        }
+      }
+    ]
+
+    const { container } = render(<NativeChatToolRun blocks={blocks} expandSignal />)
+
+    expect(screen.getByText('+after')).toBeInTheDocument()
+    expect(screen.getByText('-before')).toBeInTheDocument()
+    expect(container.querySelector('pre')).toBeNull()
+  })
 })
