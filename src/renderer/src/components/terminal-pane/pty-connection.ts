@@ -7979,7 +7979,7 @@ export function connectPanePty(
     // has live content. Reading a frozen copy reintroduced exactly that.
     let paintsIntoEmptyTerminal = mountFollowsTerminalPark || isSshReconnectRemount
 
-    let parkedSshSnapshotPrefetch: {
+    let sshModelSnapshotPrefetch: {
       ptyId: string
       fetch: () => Promise<PtyBufferSnapshot | null>
     } | null = null
@@ -8017,10 +8017,10 @@ export function connectPanePty(
     const getSshMainModelSnapshotProbe = (
       ptyId: string
     ): (() => Promise<PtyBufferSnapshot | null>) => {
-      if (parkedSshSnapshotPrefetch?.ptyId !== ptyId) {
-        parkedSshSnapshotPrefetch = { ptyId, fetch: createSshMainModelSnapshotProbe(ptyId) }
+      if (sshModelSnapshotPrefetch?.ptyId !== ptyId) {
+        sshModelSnapshotPrefetch = { ptyId, fetch: createSshMainModelSnapshotProbe(ptyId) }
       }
-      return parkedSshSnapshotPrefetch.fetch
+      return sshModelSnapshotPrefetch.fetch
     }
 
     // Renamed from prepaintParkedSshSnapshot: parking is no longer the only mount that needs it.
