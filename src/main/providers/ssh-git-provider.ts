@@ -151,7 +151,10 @@ export class SshGitProvider implements IGitProvider {
       worktreePath,
       options?.includeIgnored === true,
       options?.bypassEffectiveUpstreamNegativeCache === true,
-      options?.reuseLineStats === true
+      options?.reuseLineStats === true,
+      // Why: the result carries a total only for callers who asked, and only for
+      // this fork point, so a shared lease must never serve one to the other.
+      options?.branchLineTotalMergeBase ?? ''
     ])
     return this.statusReadLeaseOwner.lease(key, options?.signal, async (sharedSignal) => {
       return (await this.mux.request('git.status', request, {
