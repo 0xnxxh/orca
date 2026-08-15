@@ -633,10 +633,11 @@ async function importValidatedCookies(
     try {
       if (mode === 'replace-imported-domains') {
         try {
-          replaced = await replaceCookiesForImportedDomains(
-            cookieClearStore,
-            importableCookies.map((cookie) => cookie.domain)
-          )
+          // Why: a skipped cookie must not erase the existing session it never replaces.
+          const replacementDomains = importableCookies
+            .filter((cookie) => cookie.partition.status !== 'unreadable')
+            .map((cookie) => cookie.domain)
+          replaced = await replaceCookiesForImportedDomains(cookieClearStore, replacementDomains)
           diag(`  removed ${replaced.removed.length} existing cookies in imported domain scopes`)
         } catch (err) {
           diag(`  existing cookie replacement failed: ${summarizeCookieImportError(err)}`)
@@ -1638,6 +1639,7 @@ export async function importCookiesFromBrowser(
     let skipped = 0
     let integritySkipped = 0
     let nonTransplantableSkipped = 0
+    let partitionSkipped = 0
     let memoryLoaded = 0
     let memoryFailed = 0
     const domainSet = new Set<string>()
@@ -1721,14 +1723,12 @@ export async function importCookiesFromBrowser(
         continue
       }
 
-      const cleanDomain = domain.startsWith('.') ? domain.slice(1) : domain
-      domainSet.add(cleanDomain)
-
       const path = sourceRow.path as string
       const secure = sourceRow.is_secure === 1n
       const httpOnly = sourceRow.is_httponly === 1n
       const sameSite = chromiumSameSite(Number(sourceRow.samesite ?? 0))
       const expiresUtc = chromiumTimestampToUnix(sourceRow.expires_utc as bigint)
+      const partition = readChromiumRowPartition(sourceRow, sourceColumns)
       // Why: cookie values are raw bytes, not UTF-8; latin1 preserves 0x00–0xFF without lossy replacement.
       const value = decryptedValue.toString('latin1')
 
@@ -1742,9 +1742,17 @@ export async function importCookiesFromBrowser(
         httpOnly,
         sameSite,
         expirationDate: expiresUtc > 0 ? expiresUtc : undefined,
-        partition: readChromiumRowPartition(sourceRow, sourceColumns)
+        partition
       })
 
+      if (partition.status === 'unreadable') {
+        partitionSkipped++
+        skipped++
+        continue
+      }
+
+      const cleanDomain = domain.startsWith('.') ? domain.slice(1) : domain
+      domainSet.add(cleanDomain)
       if (insertStmt && targetColumnInfo) {
         try {
           const params = buildChromiumCookieInsertParams(
@@ -1766,7 +1774,7 @@ export async function importCookiesFromBrowser(
     )
     const googleCookiesSkipped = integritySkipped + nonTransplantableSkipped
 
-    if (decryptedCookies.length === 0) {
+    if (imported === 0) {
       closeStagingDb()
       discardStagingFile()
       return {
@@ -1777,6 +1785,7 @@ export async function importCookiesFromBrowser(
           importedCookies: 0,
           skippedCookies: skipped + integritySkipped + nonTransplantableSkipped,
           ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
+          ...(partitionSkipped > 0 ? { partitionSkippedCookies: partitionSkipped } : {}),
           domains: []
         }
       }
@@ -1800,7 +1809,6 @@ export async function importCookiesFromBrowser(
     // Why (STA-4300): one store spans the clear and the writes, so both halves of the import speak
     // the same CDP identities — cookies.set() cannot express the partition either one reads.
     const cookieClearStore = openCookieClearStore(targetSession)
-    let partitionSkipped = 0
     try {
       await withCookieClearLock(targetSession, () =>
         removeTransplantableCookies({
@@ -1831,11 +1839,7 @@ export async function importCookiesFromBrowser(
         log: diag
       })
       memoryLoaded = phase.importedCount
-      partitionSkipped = phase.partitionSkipped
-      // Why: an unreadable partition is a cookie this process must not write, so it joins the
-      // rejected set and rides the staged cold-start replay — which copies the source's own
-      // partition columns verbatim instead of reconstructing an identity we could not read.
-      memoryFailed += phase.writeRejected + phase.partitionSkipped
+      memoryFailed += phase.writeRejected
     } finally {
       cookieClearStore.dispose()
     }

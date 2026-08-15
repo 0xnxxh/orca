@@ -170,6 +170,44 @@ describe('validated import partition fidelity', () => {
     expect(result.ok && result.summary.skippedCookies).toBe(1)
     expect(result.ok && result.summary.domains).toEqual(['plain.example'])
   })
+
+  it('does not replace existing cookies for a domain whose only source cookie is skipped', async () => {
+    const remove = vi.fn().mockResolvedValue(undefined)
+    sessionFromPartitionMock.mockReturnValue({
+      cookies: {
+        get: vi.fn().mockResolvedValue([
+          {
+            name: 'existing-session',
+            value: 'still-valid',
+            domain: '.app.example',
+            path: '/',
+            secure: true,
+            httpOnly: true,
+            hostOnly: false,
+            session: true,
+            sameSite: 'lax'
+          }
+        ]),
+        remove,
+        set: unreachableCookieSet
+      }
+    })
+    const filePath = writeCookieFile([
+      {
+        domain: '.app.example',
+        name: 'chips-auth',
+        value: 'keep-me',
+        secure: true,
+        partitionKey: { topLevelSite: 'https://top.example' }
+      }
+    ])
+
+    const result = await importCookiesFromFile(filePath, 'persist:test')
+
+    expect(result.ok && result.summary.partitionSkippedCookies).toBe(1)
+    expect(cookieWriteMock).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+  })
 })
 
 describe('native Chromium import partition fidelity', () => {
@@ -242,10 +280,7 @@ describe('native Chromium import partition fidelity', () => {
     expect(result.ok && result.summary?.partitionSkippedCookies).toBeUndefined()
   })
 
-  // Why (STA-4300): a source schema with a partition site but no ancestor column cannot say which
-  // partition the cookie belongs to. Writing it unpartitioned is the downgrade this change ends, so
-  // it is skipped, counted, and left to the staged cold-start replay of the source's own columns.
-  it('skips a partitioned row the source schema cannot describe, and stages it instead', async () => {
+  it('never stages a partitioned row whose ancestor bit is unreadable', async () => {
     const sourceCookiesPath = join(tmpDir, 'Chrome', 'Default', 'Network', 'Cookies')
     mkdirSync(dirname(sourceCookiesPath), { recursive: true })
     const legacyDb = new DatabaseSync(sourceCookiesPath)
@@ -277,6 +312,7 @@ describe('native Chromium import partition fidelity', () => {
       join(tmpDir, 'userData', 'Partitions', 'test', 'Network', 'Cookies'),
       []
     ).close()
+    cookieWriteMock.mockRejectedValueOnce(new Error('plain cookie needs restart'))
 
     const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
 
@@ -285,7 +321,13 @@ describe('native Chromium import partition fidelity', () => {
     expect(cookieWriteMock).toHaveBeenCalledTimes(1)
     expect(cookieWriteMock.mock.calls[0][0].name).toBe('plain')
     expect(result.ok && result.summary?.partitionSkippedCookies).toBe(1)
-    // The staged replay carries the source's own partition columns, so it is registered for it.
-    expect(setPendingCookieImportMock).toHaveBeenCalled()
+    expect(result.ok && result.summary?.importedCookies).toBe(1)
+    expect(result.ok && result.summary?.skippedCookies).toBe(1)
+    expect(setPendingCookieImportMock).toHaveBeenCalledOnce()
+    const stagedPath = setPendingCookieImportMock.mock.calls[0][1] as string
+    const stagedDb = new DatabaseSync(stagedPath, { readOnly: true })
+    const stagedNames = stagedDb.prepare('SELECT name FROM cookies ORDER BY name').all()
+    stagedDb.close()
+    expect(stagedNames).toEqual([{ name: 'plain' }])
   })
 })
