@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
@@ -26,7 +26,9 @@ export function usePendingSidebarReveal(args: PendingSidebarRevealArgs): void {
   const pendingRevealRetryRef = useRef<{ worktreeId: string; count: number } | null>(null)
   const pendingRowRevealRetryRef = useRef<{ rowKey: string; count: number } | null>(null)
   const argsRef = useRef(args)
-  argsRef.current = args
+  useLayoutEffect(() => {
+    argsRef.current = args
+  })
 
   const {
     pendingRevealWorktree,

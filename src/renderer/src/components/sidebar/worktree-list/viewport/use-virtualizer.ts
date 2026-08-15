@@ -32,10 +32,6 @@ export function useWorktreeListVirtualizer(args: {
   suppressMeasurementAdjustmentUntilRef: React.MutableRefObject<number>
 }) {
   const { renderRows, firstHeaderIndex, scrollRef, scrollOffsetRef } = args
-  const renderRowsRef = useRef(renderRows)
-  renderRowsRef.current = renderRows
-  const firstHeaderIndexRef = useRef(firstHeaderIndex)
-  firstHeaderIndexRef.current = firstHeaderIndex
   const stickyHeaderIndexes = useMemo(() => getStickyHeaderIndexes(renderRows), [renderRows])
   const activeStickyHeaderIndexRef = useRef<number | null>(null)
   const activeStickyHostIndexRef = useRef<number | null>(null)
@@ -51,11 +47,14 @@ export function useWorktreeListVirtualizer(args: {
     },
     [renderRows]
   )
-  const getExpectedVirtualRowKey = useCallback((element: Element) => {
-    const index = getVirtualRowIndex(element)
-    const row = index === null ? undefined : renderRowsRef.current[index]
-    return row ? getRenderRowKey(row) : null
-  }, [])
+  const getExpectedVirtualRowKey = useCallback(
+    (element: Element) => {
+      const index = getVirtualRowIndex(element)
+      const row = index === null ? undefined : renderRows[index]
+      return row ? getRenderRowKey(row) : null
+    },
+    [renderRows]
+  )
   const isCurrentVirtualRowElement = useCallback(
     (element: Element) => {
       const expectedKey = getExpectedVirtualRowKey(element)
@@ -80,9 +79,9 @@ export function useWorktreeListVirtualizer(args: {
         return (
           measured?.size ??
           estimateRenderRowSize(
-            renderRowsRef.current,
+            renderRows,
             index ?? -1,
-            firstHeaderIndexRef.current,
+            firstHeaderIndex,
             activeStickyHeaderIndexRef.current
           )
         )
@@ -90,19 +89,18 @@ export function useWorktreeListVirtualizer(args: {
       const index = getVirtualRowIndex(element)
       if (
         index !== null &&
-        (renderRowsRef.current[index]?.type === 'header' ||
-          renderRowsRef.current[index]?.type === 'host-header')
+        (renderRows[index]?.type === 'header' || renderRows[index]?.type === 'host-header')
       ) {
         return estimateRenderRowSize(
-          renderRowsRef.current,
+          renderRows,
           index,
-          firstHeaderIndexRef.current,
+          firstHeaderIndex,
           activeStickyHeaderIndexRef.current
         )
       }
       return measureVirtualElementSize(element, entry, instance)
     },
-    [isCurrentVirtualRowElement]
+    [firstHeaderIndex, isCurrentVirtualRowElement, renderRows]
   )
 
   const virtualizer = useVirtualizer({
@@ -123,10 +121,10 @@ export function useWorktreeListVirtualizer(args: {
         return extractWorktreeVirtualRowIndexes({
           range,
           stickyHeaderIndexes,
-          rows: renderRowsRef.current
+          rows: renderRows
         })
       },
-      [stickyHeaderIndexes]
+      [renderRows, stickyHeaderIndexes]
     ),
     overscan: 10,
     gap: WORKTREE_SIDEBAR_VIRTUAL_ROW_GAP,
