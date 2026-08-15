@@ -17330,10 +17330,8 @@ describe('connectPanePty', () => {
       vi.mocked(pane.terminal.write).mockClear()
       const payload = `invalid-grid ${snapshotCols}x${snapshotRows}`
       capturedReplayCallback.current?.(payload, { snapshotCols, snapshotRows })
-      await vi.waitFor(() =>
-        expect(pane.terminal.write).toHaveBeenCalledWith(payload, expect.any(Function))
-      )
-      await flushAsyncTicks(4)
+      await flushAsyncTicks(24)
+      expect(pane.terminal.write).toHaveBeenCalledWith(payload, expect.any(Function))
       expect(pane.terminal.resize).not.toHaveBeenCalled()
     }
 
