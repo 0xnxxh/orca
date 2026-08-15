@@ -50,25 +50,32 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
     state = null
   })
 
-  function Harness({ messages }: { messages: NativeChatMessage[] }): null {
+  function Harness({
+    messages,
+    transcriptLoading = false
+  }: {
+    messages: NativeChatMessage[]
+    transcriptLoading?: boolean
+  }): null {
     state = useMobileNativeChatDrafts({
       hostId: 'host',
       worktreeId: 'worktree',
       tabId: 'tab',
       sessionId: 'session',
-      messages
+      messages,
+      transcriptLoading
     })
     return null
   }
 
-  async function mount(messages: NativeChatMessage[]): Promise<void> {
+  async function mount(messages: NativeChatMessage[], transcriptLoading = false): Promise<void> {
     await act(async () => {
-      renderer = create(createElement(Harness, { messages }))
+      renderer = create(createElement(Harness, { messages, transcriptLoading }))
     })
   }
 
-  async function update(messages: NativeChatMessage[]): Promise<void> {
-    await act(async () => renderer?.update(createElement(Harness, { messages })))
+  async function update(messages: NativeChatMessage[], transcriptLoading = false): Promise<void> {
+    await act(async () => renderer?.update(createElement(Harness, { messages, transcriptLoading })))
   }
 
   /** Two composer sends fired before either transcript echo lands. */
@@ -121,6 +128,16 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
     await update([...history])
     expect(state?.pending.map((item) => item.text)).toEqual(['fix the', 'bug'])
     expect(renderedPendingTexts(history, state)).toEqual(['fix the', 'bug'])
+  })
+
+  it('keeps both bubbles when history loads after their baseline was captured', async () => {
+    await mount([], true)
+    rapidSend('run the tests', 'again')
+
+    const loadedHistory = [userTurn('m1', 'run the tests again', 1000)]
+    await update(loadedHistory)
+    expect(state?.pending.map((item) => item.text)).toEqual(['run the tests', 'again'])
+    expect(renderedPendingTexts(loadedHistory, state)).toEqual(['run the tests', 'again'])
   })
 
   it('still retires each bubble on its own when the sends do not glue', async () => {

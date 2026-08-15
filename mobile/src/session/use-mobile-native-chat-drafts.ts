@@ -137,10 +137,11 @@ export function useMobileNativeChatDrafts(args: {
         pendingKey,
         normalizedText,
         baselineOccurrences: countUserTextOccurrences(messagesRef.current, normalizedText),
-        baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null
+        baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null,
+        glueBaselineTrusted: !transcriptLoading
       }
     },
-    [draftKey, pendingKey]
+    [draftKey, pendingKey, transcriptLoading]
   )
 
   // Why: over relay the send RPC can take seconds (or lose only its ack), and a

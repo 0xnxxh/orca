@@ -27,9 +27,10 @@ function pendingSend(
   id: string,
   text: string,
   tail: string | null,
-  expectedOccurrence = 1
+  expectedOccurrence = 1,
+  glueBaselineTrusted = true
 ): MobileNativeChatPendingMessage {
-  return { id, text, expectedOccurrence, baselineTailMessageId: tail }
+  return { id, text, expectedOccurrence, baselineTailMessageId: tail, glueBaselineTrusted }
 }
 
 function retiredIds(
@@ -173,6 +174,15 @@ describe('selectGluedPendingIds', () => {
     const messages = [userTurn('m1', 'one two', 5000)]
     const pending = [pendingSend('p1', 'one', null), pendingSend('p2', 'two', null)]
     expect(retiredIds(messages, pending)).toEqual(['p1', 'p2'])
+  })
+
+  it('does not trust history loaded after sends captured against a placeholder transcript', () => {
+    const messages = [userTurn('m1', 'one two', 1000)]
+    const pending = [
+      pendingSend('p1', 'one', null, 1, false),
+      pendingSend('p2', 'two', null, 1, false)
+    ]
+    expect(retiredIds(messages, pending)).toEqual([])
   })
 
   it('skips a caption-less image echo instead of gluing it', () => {

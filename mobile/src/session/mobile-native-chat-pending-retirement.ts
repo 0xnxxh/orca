@@ -37,7 +37,11 @@ export function selectGluedPendingIds(
       item.baselineTailMessageId === null
         ? -1
         : (messageIndexById.get(item.baselineTailMessageId) ?? null)
-    return excludedPendingIds.has(item.id) || item.images?.length || text === '' || tail === null
+    return excludedPendingIds.has(item.id) ||
+      !item.glueBaselineTrusted ||
+      item.images?.length ||
+      text === '' ||
+      tail === null
       ? null
       : { text, tail }
   })
