@@ -39,11 +39,14 @@ export function BrowserWebAuthnAccountDialog(): React.JSX.Element {
   )
   const activeRequest = requests[0] ?? null
   const lastRequestRef = useRef(activeRequest)
-  requestsRef.current = requests
-  if (activeRequest) {
-    lastRequestRef.current = activeRequest
-  }
   const displayedRequest = activeRequest ?? lastRequestRef.current
+
+  useEffect(() => {
+    requestsRef.current = requests
+    if (activeRequest) {
+      lastRequestRef.current = activeRequest
+    }
+  }, [activeRequest, requests])
 
   const removeRequest = useCallback((requestId: string) => {
     setRequests((current) => current.filter((request) => request.requestId !== requestId))
