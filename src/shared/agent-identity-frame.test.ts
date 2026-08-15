@@ -6,7 +6,10 @@ import {
   resolveAgentIdentityFrameType
 } from './agent-identity-frame'
 import { getAgentLabel } from './agent-title-identity'
-import { detectAgentStatusFromTitle } from './agent-title-status'
+import {
+  detectAgentStatusFromTitle,
+  isQuarterCircleSpinnerOnlyAgentTitle
+} from './agent-title-status'
 import {
   isClaudeIdentityFrameTitle,
   resolveExplicitTerminalTitleAgentType,
@@ -178,6 +181,14 @@ describe('Qwen Code title visibility (STA-2840 / #11148)', () => {
     )
     // Why: qwen falls back to its own name when the cwd basename is empty.
     expect(resolveAgentIdentityFrameType('Qwen - qwen')).toBe('qwen-code')
+  })
+
+  // Why: `◐` proves activity, not identity — but a title that also carries the agent's own
+  // name is not spinner-only, and Qwen must agree with Claude here (STA-4028 / #13925).
+  it('does not read a named Qwen frame as spinner-only evidence', () => {
+    expect(isQuarterCircleSpinnerOnlyAgentTitle(RESPONDING)).toBe(false)
+    expect(isQuarterCircleSpinnerOnlyAgentTitle('◐ Claude Code')).toBe(false)
+    expect(isQuarterCircleSpinnerOnlyAgentTitle('◐ building')).toBe(true)
   })
 
   // Why: the registry is shared — prove the neighbours it already carried still hold.
