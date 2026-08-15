@@ -123,6 +123,7 @@ export type AdoptProvisionedRootArgs = CreateWorktreeArgs & {
   runtimeId: string
   executionHostId: ExecutionHostId
   expectedPath: string
+  expectedRefHead?: string
 }
 
 export type CreateWorktreeResult = {
