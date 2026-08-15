@@ -45,7 +45,7 @@ describe('findServingProfileOwner', () => {
     // connect proves a live owner even while it is too busy to answer RPC.
     // Spawning a second one against it is what STA-4336 crash-loops on.
     await expect(
-      findServingProfileOwner(status({ running: true, pid: 77 }), METADATA, async () => true)
+      findServingProfileOwner(status({ running: true, pid: 77 }), METADATA, async () => 'accepting')
     ).resolves.toEqual({ pid: 77, evidence: 'listening' })
   })
 
@@ -53,7 +53,11 @@ describe('findServingProfileOwner', () => {
     // Why: the pid is diagnostic only — a live listener is the owner regardless
     // of whether the recorded pid still resolves.
     await expect(
-      findServingProfileOwner(status({ running: false, pid: null }), METADATA, async () => true)
+      findServingProfileOwner(
+        status({ running: false, pid: null }),
+        METADATA,
+        async () => 'accepting'
+      )
     ).resolves.toEqual({ pid: 77, evidence: 'listening' })
   })
 
@@ -61,13 +65,26 @@ describe('findServingProfileOwner', () => {
     // Why: pids get recycled. Believing a recorded pid would make a stale
     // metadata file refuse every serve on this profile forever.
     await expect(
-      findServingProfileOwner(status({ running: true, pid: 77 }), METADATA, async () => false)
+      findServingProfileOwner(
+        status({ running: true, pid: 77 }),
+        METADATA,
+        async () => 'not-listening'
+      )
     ).resolves.toBeNull()
+  })
+
+  it('treats an endpoint that never answered as an owner rather than free', async () => {
+    // Why: a stopped runtime unlinks its socket and a crashed one leaves a path that
+    // refuses — both definitive. Anything else means something still holds the endpoint,
+    // and spawning into it is the pre-JS abort loop STA-4336 is about.
+    await expect(
+      findServingProfileOwner(status({ running: true, pid: 77 }), METADATA, async () => 'unproven')
+    ).resolves.toEqual({ pid: 77, evidence: 'endpoint-held' })
   })
 
   it('does not treat a profile with no metadata as an owner', async () => {
     await expect(
-      findServingProfileOwner(status({ running: true, pid: 77 }), null, async () => true)
+      findServingProfileOwner(status({ running: true, pid: 77 }), null, async () => 'accepting')
     ).resolves.toBeNull()
   })
 })
@@ -88,6 +105,15 @@ describe('serveAlreadyRunningMessage', () => {
 
     expect(message).toContain('socket is accepting connections')
     expect(message).toContain('Wait for it to finish starting')
+  })
+
+  it('offers the stale-file escape hatch when the endpoint proved nothing', () => {
+    // Why: this is the one refusal the user may have to clear by hand, so the
+    // message has to name that option instead of only saying to wait.
+    const message = serveAlreadyRunningMessage({ pid: 9, evidence: 'endpoint-held' })
+
+    expect(message).toContain('neither accepted nor refused')
+    expect(message).toContain('delete orca-runtime.json')
   })
 
   it('stays readable when the owner pid is unknown', () => {

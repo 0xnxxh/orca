@@ -12957,13 +12957,14 @@
       "invariant": "When macOS Launch Services is unreachable, every CLI entrypoint that would start a GUI Electron main either reuses the runtime that already owns the userData profile, refuses with the single-instance exit code before spawning, or fails exactly once with a classified diagnostic naming _RegisterApplication — never a bare pre-JS SIGABRT a supervisor can retry.",
       "oracle": "For each scenario, create a short-path isolated userData profile under /tmp, optionally start an owning headless runtime by direct bundle exec with --user-data-dir, snapshot ~/Library/Logs/DiagnosticReports, run the CLI entrypoint under sandbox-exec with the Launch Services mach services denied, and record the exit code, whether the attempt reported SIGABRT, whether a new crash report names _RegisterApplication, whether the spawned child reached Orca JavaScript, and the wall-clock duration. The CLI is pointed at a wrapper that execs the build under test with --user-data-dir pinned to the run profile, so a packaged arm cannot reach the developer's real profile; the wrapper sits at a <name>.app/Contents/MacOS/ path so the CLI's bundle-shape branch is unchanged. Duplicate scenarios must exit 3 with no abort; open must refuse promptly with a machine-readable cause; a fresh serve must fail nonzero once carrying the _RegisterApplication diagnostic. A duplicate scenario whose owner never published metadata is reported ungraded rather than passed. The 45-second attempt and owner-readiness bounds (three attempts, 60-second cooldown) are failure deadlines, never success conditions, and cleanup only signals PIDs holding the run's own profile path.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/cli/runtime/serve-duplicate-refusal.test.ts src/cli/runtime/serving-profile-owner.test.ts src/cli/runtime/open-launch-failure.test.ts src/cli/runtime/launch-exit-diagnostic.test.ts src/cli/runtime/status.test.ts src/cli/runtime/launch.test.ts config/scripts/run-macos-launch-abort-oracle.test.mjs --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/cli/runtime/serve-duplicate-refusal.test.ts src/cli/runtime/serving-profile-owner.test.ts src/cli/runtime/runtime-listener-probe.test.ts src/cli/runtime/open-launch-failure.test.ts src/cli/runtime/launch-exit-diagnostic.test.ts src/cli/runtime/status.test.ts src/cli/runtime/launch.test.ts config/scripts/run-macos-launch-abort-oracle.test.mjs --reporter=dot",
         "node config/scripts/run-macos-launch-abort-oracle.mjs --label candidate --electron node_modules/electron/dist/Electron.app/Contents/MacOS/Electron --cli out/cli/index.js --app-root .",
         "node config/scripts/run-macos-launch-abort-oracle.mjs --label <arm> --electron <arm-electron> --cli <arm-cli> [--app-root <arm-root>]"
       ],
       "testFiles": [
         "src/cli/runtime/serve-duplicate-refusal.test.ts",
         "src/cli/runtime/serving-profile-owner.test.ts",
+        "src/cli/runtime/runtime-listener-probe.test.ts",
         "src/cli/runtime/open-launch-failure.test.ts",
         "src/cli/runtime/launch-exit-diagnostic.test.ts",
         "src/cli/runtime/status.test.ts",
@@ -12983,9 +12984,18 @@
         {
           "file": "src/cli/runtime/serving-profile-owner.test.ts",
           "assertions": [
-            "a runtime that has published metadata but not answered RPC still owns the profile",
-            "a stale profile is not treated as an owner",
+            "a runtime whose socket still accepts owns the profile even before it answers RPC",
+            "an endpoint that neither accepted nor refused leaves the profile owned rather than free",
+            "a stale profile whose endpoint refuses is not treated as an owner",
             "the refusal message names the owning pid and how to inspect it"
+          ]
+        },
+        {
+          "file": "src/cli/runtime/runtime-listener-probe.test.ts",
+          "assertions": [
+            "a listening but silent runtime reads as accepting",
+            "an endpoint a killed owner left on disk reads as not-listening",
+            "an endpoint that could not be reached, or that ran out of time, reads as unproven"
           ]
         },
         {
@@ -13029,7 +13039,7 @@
           "date": "2026-08-15",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/cli/runtime/serve-duplicate-refusal.test.ts src/cli/runtime/serving-profile-owner.test.ts src/cli/runtime/open-launch-failure.test.ts src/cli/runtime/launch-exit-diagnostic.test.ts src/cli/runtime/status.test.ts src/cli/runtime/launch.test.ts config/scripts/run-macos-launch-abort-oracle.test.mjs --reporter=dot",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/cli/runtime/serve-duplicate-refusal.test.ts src/cli/runtime/serving-profile-owner.test.ts src/cli/runtime/runtime-listener-probe.test.ts src/cli/runtime/open-launch-failure.test.ts src/cli/runtime/launch-exit-diagnostic.test.ts src/cli/runtime/status.test.ts src/cli/runtime/launch.test.ts config/scripts/run-macos-launch-abort-oracle.test.mjs --reporter=dot",
           "result": "passed",
           "durationSeconds": 3,
           "summary": "The refusal wiring, owner classification, open failure classification, diagnostic wording, EPERM ownership, and oracle grading contracts all passed."
@@ -13094,7 +13104,7 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "The product change adds one local status read on the `orca serve` path before spawning — the same read `orca status` already performs. It costs one synchronous metadata read, and only when that metadata names a transport does it open the existing local RPC socket with a 1s idle timeout, falling back to a single process.kill(pid, 0). That timeout is refreshed by keepalive frames, as it is for every other CLI command, so the bound is 1s of silence rather than 1s absolute. When the RPC does not answer, one further connect to the same local endpoint runs under a hard 250ms cap and is closed the moment it is accepted; that probe never runs on the common reachable path. No polling loop, subprocess, provider fanout, renderer work, retained payload, or recurring hot-path work is added; the only new listener is one `once('exit')` on the already-spawned detached child. `orca open` gets strictly faster on the direct-exec path by failing at the first launch exit instead of waiting out its 15s window — 604ms against 15231ms measured."
+        "evidence": "The product change adds one local status read on the `orca serve` path before spawning — the same read `orca status` already performs. It costs one synchronous metadata read, and only when that metadata names a transport does it open the existing local RPC socket with a 1s idle timeout, falling back to a single process.kill(pid, 0). That timeout is refreshed by keepalive frames, as it is for every other CLI command, so the bound is 1s of silence rather than 1s absolute. When the RPC does not answer, one further connect to the same local endpoint runs under a hard 250ms cap and is closed the moment it settles; that probe never runs on the common reachable path, and every outcome that frees the profile was measured under 1ms, so the cap is a ceiling rather than a latency the user pays. No polling loop, subprocess, provider fanout, renderer work, retained payload, or recurring hot-path work is added; the only new listener is one `once('exit')` on the already-spawned detached child. `orca open` gets strictly faster on the direct-exec path by failing at the first launch exit instead of waiting out its 15s window — 604ms against 15231ms measured."
       },
       "promotionCriteria": [
         "Collect 20 consecutive local macOS oracle runs with all six scenarios green and no ungraded owner.",
@@ -13106,7 +13116,7 @@
         "The open-duplicate scenario reaches either runtime_open_failed or desktop_activation_blocked depending on whether the owning headless runtime already reports a blocked desktop window; the runtime_open_failed path is pinned deterministically by open-launch-failure.test.ts instead.",
         "The packaged arm is profile-safe only because the harness pins --user-data-dir through its exec wrapper; a future scenario that spawns Electron by any other route must re-establish that isolation before it may run packaged.",
         "The CLI refusal reads an owner that already exists; two `orca serve` invocations racing on an ownerless profile can still both spawn, and the second is then rejected by the in-process single-instance lock — which is exactly the pre-JS boundary this gate is about. Narrowing that window needs a lock taken before the exec, not a status read, and is not covered here.",
-        "Ownership is asserted only on a live runtime answering for itself — an RPC reply, or a socket that still accepts a bounded 250ms connect. The recorded pid names the owner in the message but never establishes one, because pid recycling would otherwise let a crashed runtime's metadata refuse serve forever. The residual gap is a runtime alive but wedged badly enough that it no longer accepts connections: that no longer refuses at the CLI, and falls back to the in-process lock plus, on macOS, the classified diagnostic.",
+        "Ownership is decided by what the published endpoint proves, never by the recorded pid, because pid recycling would otherwise let a crashed runtime's metadata refuse serve forever; the pid only names the owner in the message. A profile is treated as free only when the endpoint disowns itself definitively — ENOENT (a runtime that unlinked its socket on shutdown) or ECONNREFUSED (a path a killed runtime left behind), both measured under 1ms locally. An accepted connect is an owner, and so is any other outcome, including the 250ms cap expiring: those prove nothing, and guessing free is what spawns the second main that aborts pre-JS. The residual gap is the reverse error — an endpoint held by something that is not a live Orca runtime refuses serve until the user stops it or deletes orca-runtime.json, which the refusal message names.",
         "`orca open` on a packaged macOS build launches through /usr/bin/open, which exits 0 as soon as Launch Services accepts the request. The new exit watcher therefore classifies launches on the direct-exec path (ORCA_APP_EXECUTABLE, dev, and this oracle) but cannot observe an Electron abort that happens after /usr/bin/open returns; that case still falls back to the 15s no-window timeout. Verified separately that a Launch-Services-denied seatbelt does not make /usr/bin/open fail, because the app it requests is launched outside the caller's sandbox.",
         "The harness covers macOS Launch Services unavailability and does not replace Linux headless, Windows, updater, or SSH launch coverage."
       ],

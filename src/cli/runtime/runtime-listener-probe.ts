@@ -3,6 +3,12 @@ import { findTransport, type RuntimeMetadata } from '../../shared/runtime-bootst
 
 export const RUNTIME_LISTENER_PROBE_TIMEOUT_MS = 250
 
+/** What a connect to the published endpoint proved — `unproven` is not an absence. */
+export type RuntimeListenerProbe = 'accepting' | 'not-listening' | 'unproven'
+
+/** Why: measured on macOS — a stopped runtime unlinks its socket (ENOENT) and a SIGKILLed one leaves a path that refuses (ECONNREFUSED). Both land in <1ms, so these are the only outcomes that prove nobody is home. */
+const NOT_LISTENING_CODES = new Set(['ENOENT', 'ECONNREFUSED'])
+
 /**
  * Why: a recorded pid is weak evidence — the OS recycles pids. The runtime binds its
  * endpoints before publishing metadata, so an accepted connect proves a live owner
@@ -11,26 +17,29 @@ export const RUNTIME_LISTENER_PROBE_TIMEOUT_MS = 250
 export function probeRuntimeListener(
   metadata: RuntimeMetadata,
   timeoutMs: number = RUNTIME_LISTENER_PROBE_TIMEOUT_MS
-): Promise<boolean> {
+): Promise<RuntimeListenerProbe> {
   const transport = findTransport(metadata, 'unix', 'named-pipe')
   if (!transport) {
-    return Promise.resolve(false)
+    return Promise.resolve('not-listening')
   }
   return new Promise((resolve) => {
     const socket = createConnection(transport.endpoint)
     let settled = false
-    const settle = (accepted: boolean): void => {
+    const settle = (result: RuntimeListenerProbe): void => {
       if (settled) {
         return
       }
       settled = true
       clearTimeout(timer)
       socket.destroy()
-      resolve(accepted)
+      resolve(result)
     }
-    // Why: an incomplete connect is no evidence, and this sits on the launch path.
-    const timer = setTimeout(() => settle(false), timeoutMs)
-    socket.once('connect', () => settle(true))
-    socket.once('error', () => settle(false))
+    // Why: a connect that neither lands nor is refused means something still holds the
+    // endpoint, so it is no proof the profile is free. Capped because this is the launch path.
+    const timer = setTimeout(() => settle('unproven'), timeoutMs)
+    socket.once('connect', () => settle('accepting'))
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      settle(NOT_LISTENING_CODES.has(error.code ?? '') ? 'not-listening' : 'unproven')
+    })
   })
 }
