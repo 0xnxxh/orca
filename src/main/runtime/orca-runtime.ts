@@ -53,7 +53,8 @@ import {
   type AgentStatusIpcPayload,
   type ParsedAgentStatusPayload,
   type AgentStatusOrchestrationContext,
-  type AgentStatusEntry
+  type AgentStatusEntry,
+  type AgentStatusState
 } from '../../shared/agent-status-types'
 import { indexAgentStatusRowsByPaneKey } from '../agent-hooks/agent-status-pane-index'
 import type { AgentHookAuthorityAttestation } from '../agent-hooks/server'
@@ -1471,6 +1472,10 @@ type RuntimePtyWorktreeRecord = {
   lastAgentStatusStartedAtEpochMs: number | null
   // A later semantic title interval cannot inherit rich fields from an earlier task.
   lastAgentStatusRichInvalidatedAtEpochMs: number | null
+  /** Latest first-party state from the agent's own OSC 9999 status stream — what the
+   *  agent SAYS it is doing, as opposed to `lastAgentStatus`, which is what we infer
+   *  from its OSC title. Optional like `tailWaitState`: absent until a payload lands. */
+  lastExplicitAgentStatus?: { state: AgentStatusState; updatedAt: number } | null
   lastOscTitle: string | null
   lastOscTitleAt: number | null
   // Why a second stamp: `lastOscTitleAt` is a title-observation sequence number,
@@ -11753,6 +11758,8 @@ export class OrcaRuntimeService {
       pty.lastAgentStatusObservedLive = false
       pty.lastAgentStatusStartedAtEpochMs = null
       pty.lastAgentStatusRichInvalidatedAtEpochMs = Date.now()
+      // Why: the prior process's turn state must not veto tui-idle for its replacement.
+      pty.lastExplicitAgentStatus = null
       pty.managementTitle = null
       pty.managementTitleAt = null
       pty.waitBlockedAt = null
@@ -11884,6 +11891,16 @@ export class OrcaRuntimeService {
     >()
     const pty = this.ptysById.get(ptyId)
     const connectionId = pty?.connectionId ?? null
+    if (pty) {
+      // Why: the retained snapshots below are keyed by paneKey, which a background
+      // CLI-created PTY may never have. `terminal wait --for tui-idle` still needs
+      // the agent's own state, so keep it on the PTY record where the ptyId is the
+      // only identity the wait path is guaranteed to hold.
+      const latest = chunk.payloads.at(-1)
+      if (latest) {
+        pty.lastExplicitAgentStatus = { state: latest.state, updatedAt: Date.now() }
+      }
+    }
     for (const leaf of this.getLeavesForPty(ptyId)) {
       const paneKey = this.makeRuntimePaneKey(leaf)
       targets.set(paneKey, {
@@ -19119,14 +19136,7 @@ export class OrcaRuntimeService {
       if (condition === 'tui-idle' && ptyBlockedReason) {
         return buildPtyTerminalWaitBlockedResult(handle, condition, pty.pty, ptyBlockedReason)
       }
-      if (condition === 'tui-idle' && pty.pty.lastAgentStatus === 'idle') {
-        return buildPtyTerminalWaitResult(handle, condition, pty.pty)
-      }
-      if (
-        condition === 'tui-idle' &&
-        (this.getAdoptedPtyExplicitIdleStatus(pty.pty) === 'idle' ||
-          isKnownReadyPromptPreview(ptyWaitText))
-      ) {
+      if (condition === 'tui-idle' && this.isPtyTuiIdleSatisfied(pty.pty, ptyWaitText)) {
         return buildPtyTerminalWaitResult(handle, condition, pty.pty)
       }
       return await new Promise<RuntimeTerminalWait>((resolve, reject) => {
@@ -19179,12 +19189,7 @@ export class OrcaRuntimeService {
               waiter,
               buildPtyTerminalWaitBlockedResult(handle, condition, live.pty, blockedReason)
             )
-          } else if (live.pty.lastAgentStatus === 'idle') {
-            this.resolveWaiter(waiter, buildPtyTerminalWaitResult(handle, condition, live.pty))
-          } else if (
-            this.getAdoptedPtyExplicitIdleStatus(live.pty) === 'idle' ||
-            isKnownReadyPromptPreview(livePtyWaitText)
-          ) {
+          } else if (this.isPtyTuiIdleSatisfied(live.pty, livePtyWaitText)) {
             this.resolveWaiter(waiter, buildPtyTerminalWaitResult(handle, condition, live.pty))
           } else {
             this.startPtyTuiIdleFallbackPoll(waiter, live.pty)
@@ -19204,22 +19209,13 @@ export class OrcaRuntimeService {
       return buildTerminalWaitBlockedResult(handle, condition, leaf, leafBlockedReason)
     }
 
-    // Why: if the agent already transitioned to idle (or permission) before the
-    // waiter was registered, resolve immediately. This uses the same OSC title
-    // detection that powers the renderer's "Task complete" notifications.
+    // Why: if the agent already reached idle before the waiter was registered,
+    // resolve immediately. This uses the same OSC title detection that powers the
+    // renderer's "Task complete" notifications.
     // Why: only 'idle' satisfies tui-idle, not 'permission'. Permission means the
     // agent is blocked on user approval, not finished with its task.
-    if (condition === 'tui-idle' && leaf.lastAgentStatus === 'idle') {
+    if (condition === 'tui-idle' && this.isLeafTuiIdleSatisfied(leaf, leafWaitText)) {
       return buildTerminalWaitResult(handle, condition, leaf)
-    }
-    if (condition === 'tui-idle') {
-      const fastPathTitle = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
-      if (
-        (fastPathTitle && detectExplicitIdleStatusFromTitle(fastPathTitle) === 'idle') ||
-        isKnownReadyPromptPreview(leafWaitText)
-      ) {
-        return buildTerminalWaitResult(handle, condition, leaf)
-      }
     }
 
     return await new Promise<RuntimeTerminalWait>((resolve, reject) => {
@@ -19281,7 +19277,7 @@ export class OrcaRuntimeService {
               waiter,
               buildTerminalWaitBlockedResult(handle, condition, live.leaf, blockedReason)
             )
-          } else if (live.leaf.lastAgentStatus === 'idle') {
+          } else if (this.isLeafTuiIdleSatisfied(live.leaf, liveLeafWaitText)) {
             // Why: don't clear lastAgentStatus here. It's a factual record of the
             // last detected OSC state, not a one-shot signal. Clearing it causes
             // subsequent tui-idle waiters to hang even though the agent is idle —
@@ -19291,15 +19287,7 @@ export class OrcaRuntimeService {
             // Why: renderer-synced previews can show a known ready prompt even
             // while the last OSC title is still "working"; keep polling the
             // preview/title until the waiter resolves or hits its timeout.
-            const fastPathTitle = live.leaf.paneTitle ?? this.tabs.get(live.leaf.tabId)?.title
-            if (
-              (fastPathTitle && detectExplicitIdleStatusFromTitle(fastPathTitle) === 'idle') ||
-              isKnownReadyPromptPreview(liveLeafWaitText)
-            ) {
-              this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
-            } else {
-              this.startTuiIdleFallbackPoll(waiter, live.leaf)
-            }
+            this.startTuiIdleFallbackPoll(waiter, live.leaf)
           }
         }
       } catch (error) {
@@ -34608,6 +34596,85 @@ export class OrcaRuntimeService {
     }
   }
 
+  // ─── tui-idle evidence ranking ──────────────────────────────────────────────
+  // Why the ranking exists: a thinking TUI and a finished TUI are both silent, so
+  // the absence of a working marker can never prove completion. Every satisfaction
+  // site below sorts its evidence into three tiers and only the top two can resolve:
+  //
+  //   1. POSITIVE  — the agent (or its rendered composer) states it is ready:
+  //                  an explicit idle OSC title, or a known ready-prompt body.
+  //   2. FIRST-PARTY VETO — a fresh OSC 9999 status saying working/blocked/waiting.
+  //                  This is the agent's own account of itself; it outranks anything
+  //                  we infer from titles or bytes, and it is the same freshness rule
+  //                  `getTerminalAgentStatus` already applies, so the two APIs agree.
+  //   3. ABSENCE   — a name-only agent title (which `detectAgentStatusFromTitle`
+  //                  DEFAULTS to 'idle'), or a quiet non-shell foreground process.
+  //                  Usable only as a last resort, and only once sustained.
+
+  /** The agent's own status stream says this turn is still open. */
+  private hasFreshWorkingAgentStatusForPty(ptyId: string | null | undefined): boolean {
+    if (!ptyId) {
+      return false
+    }
+    const explicit = this.ptysById.get(ptyId)?.lastExplicitAgentStatus
+    return isFreshNonDoneAgentStatus(explicit ?? undefined)
+  }
+
+  /** Tier 3: a title-derived 'idle' is the classifier's fallthrough for a name-only
+   *  agent title, so on its own it means "no working marker seen", not "finished".
+   *  Agents render their spinner and `esc to interrupt` in the terminal BODY, so a
+   *  busy Codex/Devin/aider is routinely titled idle — that is #6011. Demand the
+   *  stream also go quiet before acting on it. Handles with no PTY output of their
+   *  own (adopted/daemon) have nothing to debounce, so their title still stands. */
+  private hasSustainedTitleIdle(target: {
+    lastAgentStatus: AgentStatus | null
+    lastOutputAt: number | null
+  }): boolean {
+    if (target.lastAgentStatus !== 'idle') {
+      return false
+    }
+    if (target.lastOutputAt === null) {
+      return true
+    }
+    return Date.now() - target.lastOutputAt >= TUI_IDLE_QUIESCENCE_MS
+  }
+
+  /** Tier 3, cold start: Orca launched a known agent on this PTY, so a quiet
+   *  non-shell foreground process is an agent still booting, not one at its prompt.
+   *  Resolving here is what let `dispatch --inject` write into a TUI that had not
+   *  yet attached its reader and silently lose the prompt (#9976). Readiness for a
+   *  launched agent must come from tier 1/2 evidence instead. */
+  private quietForegroundProcessProvesTuiIdle(ptyId: string | null | undefined): boolean {
+    return !(ptyId && this.ptysById.get(ptyId)?.launchAgent)
+  }
+
+  private isPtyTuiIdleSatisfied(pty: RuntimePtyWorktreeRecord, waitText: string): boolean {
+    if (
+      this.getAdoptedPtyExplicitIdleStatus(pty) === 'idle' ||
+      isKnownReadyPromptPreview(waitText)
+    ) {
+      return true
+    }
+    if (this.hasFreshWorkingAgentStatusForPty(pty.ptyId)) {
+      return false
+    }
+    return this.hasSustainedTitleIdle(pty)
+  }
+
+  private isLeafTuiIdleSatisfied(leaf: RuntimeLeafRecord, waitText: string): boolean {
+    const title = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
+    if (
+      (title && detectExplicitIdleStatusFromTitle(title) === 'idle') ||
+      isKnownReadyPromptPreview(waitText)
+    ) {
+      return true
+    }
+    if (this.hasFreshWorkingAgentStatusForPty(leaf.ptyId)) {
+      return false
+    }
+    return this.hasSustainedTitleIdle(leaf)
+  }
+
   private resolveTuiIdleWaiters(leaf: RuntimeLeafRecord): void {
     const leafKey = this.getLeafKey(leaf.tabId, leaf.leafId)
     const candidateHandle =
@@ -34624,8 +34691,12 @@ export class OrcaRuntimeService {
     if (!waiters || waiters.size === 0) {
       return
     }
+    const waitText = buildTerminalWaitText(leaf.tailBuffer, leaf.tailPartialLine, leaf.preview)
     for (const waiter of [...waiters]) {
-      if (waiter.condition === 'tui-idle') {
+      // Why: the transition itself is only a title sample. Re-rank it — an idle
+      // title arriving mid-work is tier-3 evidence, and the fallback poll picks
+      // the waiter up once it becomes sustained or the agent reports done.
+      if (waiter.condition === 'tui-idle' && this.isLeafTuiIdleSatisfied(leaf, waitText)) {
         this.resolveWaiter(waiter, buildTerminalWaitResult(handle, 'tui-idle', leaf))
       }
     }
@@ -34659,8 +34730,11 @@ export class OrcaRuntimeService {
     if (!waiters || waiters.size === 0) {
       return
     }
+    const waitText = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
     for (const waiter of [...waiters]) {
-      if (waiter.condition === 'tui-idle') {
+      // Why: same re-ranking as resolveTuiIdleWaiters — a title transition is not
+      // on its own proof the turn ended.
+      if (waiter.condition === 'tui-idle' && this.isPtyTuiIdleSatisfied(pty, waitText)) {
         this.resolveWaiter(waiter, buildPtyTerminalWaitResult(handle, 'tui-idle', pty))
       }
     }
@@ -34675,27 +34749,6 @@ export class OrcaRuntimeService {
       }
       let startedForegroundPoll = false
       try {
-        if (leaf.lastAgentStatus === 'idle') {
-          if (waiter.pollInterval) {
-            clearInterval(waiter.pollInterval)
-            waiter.pollInterval = null
-          }
-          this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
-          return
-        }
-        // Why: the renderer-synced title is the only path where OSC titles are visible for daemon-hosted terminals.
-        const pollTitle = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
-        if (pollTitle) {
-          const titleStatus = detectExplicitIdleStatusFromTitle(pollTitle)
-          if (titleStatus === 'idle') {
-            if (waiter.pollInterval) {
-              clearInterval(waiter.pollInterval)
-              waiter.pollInterval = null
-            }
-            this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
-            return
-          }
-        }
         const leafWaitText = buildTerminalWaitText(
           leaf.tailBuffer,
           leaf.tailPartialLine,
@@ -34713,7 +34766,10 @@ export class OrcaRuntimeService {
           )
           return
         }
-        if (isKnownReadyPromptPreview(leafWaitText)) {
+        // Why: the renderer-synced title is the only path where OSC titles are
+        // visible for daemon-hosted terminals; it is ranked with the rest inside
+        // isLeafTuiIdleSatisfied.
+        if (this.isLeafTuiIdleSatisfied(leaf, leafWaitText)) {
           if (waiter.pollInterval) {
             clearInterval(waiter.pollInterval)
             waiter.pollInterval = null
@@ -34725,6 +34781,8 @@ export class OrcaRuntimeService {
         if (
           leaf.lastAgentStatus === null &&
           leaf.ptyId &&
+          this.quietForegroundProcessProvesTuiIdle(leaf.ptyId) &&
+          !this.hasFreshWorkingAgentStatusForPty(leaf.ptyId) &&
           this.ptyController &&
           !foregroundPollInFlight
         ) {
@@ -34760,14 +34818,6 @@ export class OrcaRuntimeService {
       }
       let startedForegroundPoll = false
       try {
-        if (pty.lastAgentStatus === 'idle') {
-          if (waiter.pollInterval) {
-            clearInterval(waiter.pollInterval)
-            waiter.pollInterval = null
-          }
-          this.resolveWaiter(waiter, buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty))
-          return
-        }
         const ptyWaitText = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
         const blockedReason = detectTerminalWaitBlockedReason(ptyWaitText)
         if (blockedReason) {
@@ -34782,10 +34832,7 @@ export class OrcaRuntimeService {
           return
         }
         // Why: adopted background PTY handles use their live xterm title as the same readiness signal as leaf handles.
-        if (
-          this.getAdoptedPtyExplicitIdleStatus(pty) === 'idle' ||
-          isKnownReadyPromptPreview(ptyWaitText)
-        ) {
+        if (this.isPtyTuiIdleSatisfied(pty, ptyWaitText)) {
           if (waiter.pollInterval) {
             clearInterval(waiter.pollInterval)
             waiter.pollInterval = null
@@ -34793,7 +34840,13 @@ export class OrcaRuntimeService {
           this.resolveWaiter(waiter, buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty))
           return
         }
-        if (pty.lastAgentStatus === null && this.ptyController && !foregroundPollInFlight) {
+        if (
+          pty.lastAgentStatus === null &&
+          this.quietForegroundProcessProvesTuiIdle(pty.ptyId) &&
+          !this.hasFreshWorkingAgentStatusForPty(pty.ptyId) &&
+          this.ptyController &&
+          !foregroundPollInFlight
+        ) {
           foregroundPollInFlight = true
           startedForegroundPoll = true
           const fg = await this.ptyController.getForegroundProcess(pty.ptyId)

@@ -16158,6 +16158,218 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  // Why: `Codex` is a name-only title, which detectAgentStatusFromTitle DEFAULTS to
+  // 'idle' — agents render their spinner and `esc to interrupt` in the terminal body,
+  // not the OSC title. The agent's own OSC 9999 stream is saying `working` the whole
+  // time, so tui-idle must not report a finished turn (#6011).
+  it('does not report tui-idle while the agent status stream still reports working', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      runtime.onPtyData(
+        'pty-bg',
+        '\x1b]9999;{"state":"working","agentType":"codex"}\x07\x1b]0;Codex\x07thinking\n',
+        Date.now()
+      )
+
+      const waitPromise = runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 30_000
+      })
+      let settled = false
+      void waitPromise.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+
+      // Well past TUI_IDLE_QUIESCENCE_MS: silence alone would have satisfied the
+      // wait here, which is exactly the inference this change removes.
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(settled).toBe(false)
+
+      runtime.onPtyData(
+        'pty-bg',
+        '\x1b]9999;{"state":"done","agentType":"codex"}\x07done\n',
+        Date.now()
+      )
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      await expect(waitPromise).resolves.toMatchObject({
+        handle,
+        condition: 'tui-idle',
+        satisfied: true,
+        status: 'running'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: agents that publish no OSC 9999 status at all (the tier-3 path) get only the
+  // sustained-quiescence guard. Streaming output is proof of work regardless of title.
+  it('does not report tui-idle while a name-only agent title keeps streaming output', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      runtime.onPtyData('pty-bg', '\x1b]0;Codex\x07working 1\n', Date.now())
+
+      const waitPromise = runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 60_000
+      })
+      let settled = false
+      void waitPromise.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+
+      for (let i = 2; i <= 6; i++) {
+        runtime.onPtyData('pty-bg', `working ${i}\n`, Date.now())
+        await vi.advanceTimersByTimeAsync(2_000)
+      }
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(waitPromise).resolves.toMatchObject({
+        handle,
+        condition: 'tui-idle',
+        satisfied: true,
+        status: 'running'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: a fresh `working` must never outrank the composer actually being on screen —
+  // otherwise an agent that misses its completion hook would strand every later wait
+  // for the whole staleness window.
+  it('resolves tui-idle from a ready prompt even while a working status is retained', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      runtime.onPtyData(
+        'pty-bg',
+        '\x1b]9999;{"state":"working","agentType":"codex"}\x07',
+        Date.now()
+      )
+      runtime.onPtyData(
+        'pty-bg',
+        [
+          ' >_ OpenAI Codex (v0.131.0)\n',
+          ' model:       gpt-5.5 high   /model to change\n',
+          ' directory:   ~/orca/workspaces/orca/cli-debug\n'
+        ].join(''),
+        Date.now()
+      )
+
+      await expect(
+        runtime.waitForTerminal(handle, { condition: 'tui-idle', timeoutMs: 1_000 })
+      ).resolves.toMatchObject({
+        handle,
+        condition: 'tui-idle',
+        satisfied: true,
+        status: 'running'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: a cold-starting agent is quiet by definition, so "non-shell process, quiet for
+  // 3s" is indistinguishable from "agent at its prompt". Resolving here is what let a
+  // dispatch inject write into a TUI that had not attached its reader yet (#9976).
+  it('does not report tui-idle from quiet foreground alone for a launched agent', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => 'claude'
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'claude'
+      })
+      // Boot noise with no OSC title and no status payload: nothing has reported
+      // readiness, so nothing may conclude it.
+      runtime.onPtyData('pty-bg', 'starting up\n', Date.now())
+
+      const waitPromise = runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 20_000
+      })
+      const timeoutAssertion = expect(waitPromise).rejects.toThrow('timeout')
+
+      await vi.advanceTimersByTimeAsync(25_000)
+      await timeoutAssertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: the cold-start guard is keyed on Orca having launched a KNOWN agent. An ad-hoc
+  // TUI Orca knows nothing about still has only the quiescence fallback; don't break it.
+  it('still reports tui-idle from quiet foreground for an unlaunched non-shell TUI', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => 'claude'
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      runtime.onPtyData('pty-bg', 'starting up\n', Date.now())
+
+      const waitPromise = runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 20_000
+      })
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      await expect(waitPromise).resolves.toMatchObject({
+        handle,
+        condition: 'tui-idle',
+        satisfied: true,
+        status: 'running'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resolves tui-idle from a Codex ready prompt preview', async () => {
     const runtime = new OrcaRuntimeService(store)
     runtime.setPtyController({
