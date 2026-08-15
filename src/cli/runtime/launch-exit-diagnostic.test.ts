@@ -129,6 +129,19 @@ describe('openLaunchExitError', () => {
     expect(error.message).toContain('Retrying cannot help')
   })
 
+  it('reports a command that never started without the abort guidance', () => {
+    // Why: nothing ran, so Launch Services and crash reports are the wrong
+    // place to send the user — the executable path is what they must fix.
+    const error = openLaunchExitError(
+      { code: null, signal: null, spawnError: 'spawn /missing/Orca ENOENT' },
+      'darwin'
+    )
+
+    expect(error.code).toBe('runtime_open_failed')
+    expect(error.message).toBe('Could not start Orca: spawn /missing/Orca ENOENT')
+    expect(error.message).not.toContain('_RegisterApplication')
+  })
+
   it('reports a plain failed launch without claiming the macOS cause', () => {
     expect(openLaunchExitError({ code: 1, signal: null }, 'darwin').message).toBe(
       'Orca exited with exit code 1 while starting up, before a desktop window appeared.'

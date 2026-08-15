@@ -54,9 +54,14 @@ export function serveSignalExitError(
  * blames the wrong thing and invites a retry loop.
  */
 export function openLaunchExitError(
-  exit: { code: number | null; signal: NodeJS.Signals | null },
+  exit: { code: number | null; signal: NodeJS.Signals | null; spawnError?: string },
   platform: NodeJS.Platform = process.platform
 ): RuntimeClientError {
+  if (exit.spawnError) {
+    // Why: nothing ran, so none of the abort guidance applies — the executable
+    // or its working directory is what the user has to fix.
+    return new RuntimeClientError('runtime_open_failed', `Could not start Orca: ${exit.spawnError}`)
+  }
   if (isMacStartupAbort(exit.signal, platform)) {
     return new RuntimeClientError('runtime_open_failed', `Orca ${MAC_ABORT_CAUSE}`, {
       nextSteps: macAbortNextSteps()

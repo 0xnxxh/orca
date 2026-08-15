@@ -464,9 +464,10 @@ describe('serveOrcaApp', () => {
       recipeJson: true,
       projectRoot: '/workspace/repo'
     })
-    queueMicrotask(() => {
-      child.stdout.emit('data', `${RECIPE_JSON}\n`)
-    })
+    // Why: the pre-spawn ownership check awaits, so emitting on a fixed number of
+    // microtasks would race the stdout listener that only exists after the spawn.
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled())
+    child.stdout.emit('data', `${RECIPE_JSON}\n`)
 
     await expect(result).resolves.toBe(0)
 
@@ -617,15 +618,36 @@ describe('launchOrcaApp', () => {
     delete process.env.ORCA_APP_EXECUTABLE_NEEDS_APP_ROOT
   })
 
-  it('handles asynchronous detached spawn errors without throwing', async () => {
+  it('reports an asynchronous detached spawn error as a launch failure', async () => {
+    // Why: a command that never starts emits `error` and no `exit`, so a
+    // discarded error left `orca open` waiting out its full 15s window and then
+    // blaming a missing window for a process that was never created.
     process.env.ORCA_APP_EXECUTABLE = '/missing/Orca'
     const child = new FakeChildProcess()
     spawnMock.mockReturnValue(child)
 
-    launchOrcaApp()
-    child.emit('error', new Error('ENOENT'))
+    const launch = launchOrcaApp()
+    child.emit('error', new Error('spawn /missing/Orca ENOENT'))
     await Promise.resolve()
 
+    expect(launch.failedExit()).toEqual({
+      code: null,
+      signal: null,
+      spawnError: 'spawn /missing/Orca ENOENT'
+    })
     expect(child.unref).toHaveBeenCalled()
+  })
+
+  it('keeps a clean detached exit out of the failure path', () => {
+    // Why: `open` returns 0 as soon as Launch Services accepts the request, so
+    // treating that as a failure would break every packaged macOS launch.
+    process.env.ORCA_APP_EXECUTABLE = '/Applications/Orca.app/Contents/MacOS/Orca'
+    const child = new FakeChildProcess()
+    spawnMock.mockReturnValue(child)
+
+    const launch = launchOrcaApp()
+    child.emit('exit', 0, null)
+
+    expect(launch.failedExit()).toBeNull()
   })
 })

@@ -10,7 +10,6 @@ import {
   parseEphemeralVmRecipeResult
 } from '../../shared/ephemeral-vm-recipes'
 import { SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE } from '../../shared/single-instance-exit-code'
-import { getRuntimeMetadataPath } from '../../shared/runtime-bootstrap'
 import { getDefaultUserDataPath, tryReadMetadata } from './metadata'
 import { getMacAppBundlePath } from './mac-app-update-bundle'
 import {
@@ -28,9 +27,16 @@ import { RuntimeClientError } from './types'
 
 const IGNORED_NON_RECIPE_STDOUT = '[serve] ignored non-recipe stdout'
 
+export type OrcaLaunchFailure = {
+  code: number | null
+  signal: NodeJS.Signals | null
+  /** Set when the command never started, in which case no exit ever follows. */
+  spawnError?: string
+}
+
 export type OrcaAppLaunch = {
   /** Non-null once the launched process died without producing a window. */
-  readonly failedExit: () => { code: number | null; signal: NodeJS.Signals | null } | null
+  readonly failedExit: () => OrcaLaunchFailure | null
 }
 
 export function launchOrcaApp(): OrcaAppLaunch {
@@ -77,7 +83,7 @@ function spawnDetached(command: string, args: string[], options: SpawnOptions): 
     stdio: 'ignore',
     ...options
   })
-  let failedExit: { code: number | null; signal: NodeJS.Signals | null } | null = null
+  let failedExit: OrcaLaunchFailure | null = null
   // Why: a macOS pre-JS abort (STA-4336) kills this child in ~200ms. Without
   // watching it, `orca open` can only report a 15s "no window" timeout, which
   // blames the wrong thing. A clean exit(0) is normal — `open` returns as soon
@@ -87,8 +93,12 @@ function spawnDetached(command: string, args: string[], options: SpawnOptions): 
       failedExit = { code, signal }
     }
   })
-  // Why: detached launch errors are reported asynchronously after this function returns.
-  child.once('error', () => {})
+  // Why: a command that never starts emits `error` and no `exit`, so discarding
+  // it leaves openOrca waiting out its full window for a process that does not
+  // exist. Reported asynchronously, hence the handle rather than a throw.
+  child.once('error', (error: NodeJS.ErrnoException) => {
+    failedExit ??= { code: null, signal: null, spawnError: error.message }
+  })
   child.unref()
   return { failedExit: () => failedExit }
 }
@@ -105,25 +115,26 @@ export async function serveOrcaApp(
   } = {}
 ): Promise<number> {
   const userDataPath = getDefaultUserDataPath()
-  const owner = findServingProfileOwner(
+  const owner = await findServingProfileOwner(
     (await getCliStatus(userDataPath)).result,
-    tryReadMetadata(userDataPath)?.startedAt ?? null
+    // Why: re-reading is deliberate. A runtime that removed its metadata in the
+    // meantime is shutting down and a fresh serve should proceed; one that
+    // rewrote it is newer, and that is the endpoint worth probing.
+    tryReadMetadata(userDataPath)
   )
   if (owner) {
     // Why: the Electron main enforces this same rule, but on macOS it does so
     // after NSApplication init, which aborts pre-JS when Launch Services is
     // unreachable (STA-4336). Refusing here keeps a supervisor's retry from
     // becoming a SIGABRT loop, and reports the exit code systemd keys off.
-    const metadataPath = getRuntimeMetadataPath(userDataPath)
-    // Why: recipe stdout carries a strict result schema and nothing else — even
+    //
+    // Recipe stdout carries a strict result schema and nothing else — even
     // schema-valid non-orca-server results are diverted to stderr below — so the
     // refusal envelope would corrupt that channel. Exit 3 is its signal.
     if (args.json === true && args.recipeJson !== true) {
-      process.stdout.write(
-        `${JSON.stringify(serveAlreadyRunningFailure(owner, metadataPath), null, 2)}\n`
-      )
+      process.stdout.write(`${JSON.stringify(serveAlreadyRunningFailure(owner), null, 2)}\n`)
     } else {
-      process.stderr.write(`${serveAlreadyRunningMessage(owner, metadataPath)}\n`)
+      process.stderr.write(`${serveAlreadyRunningMessage(owner)}\n`)
     }
     return SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE
   }

@@ -1,17 +1,14 @@
+import type { RuntimeMetadata } from '../../shared/runtime-bootstrap'
 import type { RuntimeRpcFailure } from '../../shared/runtime-rpc-envelope'
 import type { CliStatusResult } from '../../shared/runtime-types'
+import { probeRuntimeListener } from './runtime-listener-probe'
 
-/**
- * Why: an unreachable owner is believed on its recorded pid alone, and pids get
- * recycled. Bounding that belief to a plausible startup window keeps a crashed
- * runtime whose pid was reused from refusing every serve on the profile forever.
- */
-export const STARTING_OWNER_TRUST_WINDOW_MS = 120_000
+/** How the owner proved it is alive, strongest first. */
+export type ServingProfileOwnerEvidence = 'rpc' | 'listening'
 
 export type ServingProfileOwner = {
   pid: number | null
-  /** True when the owner answered RPC; false when only its pid proved alive. */
-  reachable: boolean
+  evidence: ServingProfileOwnerEvidence
 }
 
 /**
@@ -21,55 +18,52 @@ export type ServingProfileOwner = {
  * chance to apply and the duplicate launch dies via SIGABRT instead of exiting
  * cleanly (STA-4336). Deciding here — in the CLI, before the exec — keeps the
  * contract on the safe side of that boundary.
+ *
+ * Ownership is only ever asserted on a live runtime answering for itself: an
+ * RPC reply, or failing that a socket that still accepts connections. The pid in
+ * metadata names the owner in diagnostics but never establishes one, because a
+ * recycled pid would otherwise refuse every serve on this profile forever.
  */
-export function findServingProfileOwner(
+export async function findServingProfileOwner(
   status: CliStatusResult,
-  startedAt: number | null,
-  now: number = Date.now()
-): ServingProfileOwner | null {
-  if (!status.app.running) {
-    return null
+  metadata: RuntimeMetadata | null,
+  probeListener: (metadata: RuntimeMetadata) => Promise<boolean> = probeRuntimeListener
+): Promise<ServingProfileOwner | null> {
+  const pid = status.app.pid ?? metadata?.pid ?? null
+  if (status.runtime.reachable) {
+    return { pid, evidence: 'rpc' }
   }
-  const owner = { pid: status.app.pid, reachable: status.runtime.reachable }
-  if (owner.reachable) {
-    return owner
+  if (metadata && (await probeListener(metadata))) {
+    return { pid, evidence: 'listening' }
   }
-  // A future `startedAt` (clock skew) stays inside the window on purpose.
-  const startingFor = now - (startedAt ?? now)
-  return startingFor > STARTING_OWNER_TRUST_WINDOW_MS ? null : owner
+  return null
 }
 
 /**
- * Why: an owner trusted on its pid alone still needs an escape hatch, because
- * the pid is the only thing standing between the user and a refusal they cannot
- * otherwise explain. Naming the file that holds the claim always works.
+ * Why: a refusal the user cannot act on is worse than the duplicate it prevents,
+ * so each message names the owner and the next step that actually applies to it.
  */
-export function serveAlreadyRunningMessage(
-  owner: ServingProfileOwner,
-  metadataPath: string
-): string {
+export function serveAlreadyRunningMessage(owner: ServingProfileOwner): string {
   const who = owner.pid === null ? 'another process' : `pid ${owner.pid}`
-  if (owner.reachable) {
-    return `[serve] Orca is already running for this userData profile as ${who}; not starting a second process. Run \`orca status\` to inspect it, or stop it before serving again.`
+  const lead = `[serve] Orca is already running for this userData profile as ${who}`
+  if (owner.evidence === 'rpc') {
+    return `${lead}; not starting a second process. Run \`orca status\` to inspect it, or stop it before serving again.`
   }
-  return `[serve] Orca is already starting up for this userData profile as ${who}; not starting a second process. Run \`orca status\` to inspect it, or stop it before serving again. If that process is gone, delete ${metadataPath} and retry.`
+  return `${lead} — its socket is accepting connections but it is not answering \`orca status\` yet; not starting a second process. Wait for it to finish starting, or stop it before serving again.`
 }
 
 /**
  * Why: `--json` callers parse stdout. A refusal that only writes prose to stderr
  * looks to them like a serve that produced nothing.
  */
-export function serveAlreadyRunningFailure(
-  owner: ServingProfileOwner,
-  metadataPath: string
-): RuntimeRpcFailure {
+export function serveAlreadyRunningFailure(owner: ServingProfileOwner): RuntimeRpcFailure {
   return {
     id: 'local',
     ok: false,
     error: {
       code: 'runtime_serve_already_running',
-      message: serveAlreadyRunningMessage(owner, metadataPath),
-      data: { pid: owner.pid, reachable: owner.reachable, metadataPath }
+      message: serveAlreadyRunningMessage(owner),
+      data: { pid: owner.pid, evidence: owner.evidence }
     },
     _meta: { runtimeId: null }
   }

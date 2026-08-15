@@ -1,9 +1,9 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE } from '../../shared/single-instance-exit-code'
-import { STARTING_OWNER_TRUST_WINDOW_MS } from './serving-profile-owner'
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
 
@@ -21,6 +21,9 @@ describe('serveOrcaApp duplicate refusal', () => {
   let userDataPath: string
   let stderrSpy: ReturnType<typeof vi.spyOn>
   let stdoutSpy: ReturnType<typeof vi.spyOn>
+  let endpointCount = 0
+  const servers = new Set<Server>()
+  const sockets = new Set<Socket>()
 
   beforeEach(async () => {
     spawnMock.mockReset()
@@ -31,50 +34,73 @@ describe('serveOrcaApp duplicate refusal', () => {
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
   })
 
-  function writtenJson(spy: ReturnType<typeof vi.spyOn>): unknown {
-    const written = spy.mock.calls.map((call) => String(call[0])).join('')
-    return JSON.parse(written)
-  }
-
   afterEach(async () => {
     vi.restoreAllMocks()
+    for (const socket of sockets) {
+      socket.destroy()
+    }
+    sockets.clear()
+    await Promise.all(
+      [...servers].map((server) => new Promise<void>((resolve) => server.close(() => resolve())))
+    )
+    servers.clear()
     delete process.env.ORCA_USER_DATA_PATH
     delete process.env.ORCA_APP_EXECUTABLE
     await rm(userDataPath, { recursive: true, force: true })
   })
 
-  async function writeLiveRuntimeMetadata(startedAt: number = Date.now()): Promise<void> {
-    // Why: an unreachable endpoint with a live pid is the exact shape of a serve
-    // that is still starting — the window in which duplicates used to be spawned.
+  function writtenJson(spy: ReturnType<typeof vi.spyOn>): unknown {
+    return JSON.parse(spy.mock.calls.map((call) => String(call[0])).join(''))
+  }
+
+  function nextEndpoint(): { kind: 'unix' | 'named-pipe'; endpoint: string } {
+    endpointCount += 1
+    return process.platform === 'win32'
+      ? { kind: 'named-pipe', endpoint: `\\\\.\\pipe\\orca-dup-${process.pid}-${endpointCount}` }
+      : { kind: 'unix', endpoint: join(userDataPath, `owner-${endpointCount}.sock`) }
+  }
+
+  async function writeMetadata(transport: { kind: string; endpoint: string }): Promise<void> {
     await writeFile(
       join(userDataPath, 'orca-runtime.json'),
       JSON.stringify({
         runtimeId: 'runtime-owner',
         pid: process.pid,
-        transport: { kind: 'unix', endpoint: join(userDataPath, 'never-listening.sock') },
+        transports: [transport],
         authToken: 'token',
-        startedAt
+        startedAt: Date.now()
       })
     )
   }
 
+  /**
+   * Why: a socket that accepts but never answers is the exact shape of a serve
+   * that has published its metadata and is still initialising — the window in
+   * which duplicates used to be spawned straight into a pre-JS abort.
+   */
+  async function startSilentOwner(): Promise<void> {
+    const transport = nextEndpoint()
+    const server = createServer((socket) => {
+      sockets.add(socket)
+      socket.once('close', () => sockets.delete(socket))
+    })
+    servers.add(server)
+    await new Promise<void>((resolve) => server.listen(transport.endpoint, resolve))
+    await writeMetadata(transport)
+  }
+
   it('refuses without spawning when the profile already has a live owner', async () => {
-    await writeLiveRuntimeMetadata()
+    await startSilentOwner()
 
     await expect(serveOrcaApp()).resolves.toBe(SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE)
     expect(spawnMock).not.toHaveBeenCalled()
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('not starting a second process'))
-    // Why: the real userData profile is the one the refusal must point at, not a
-    // generic path — that file is the whole recovery instruction.
-    expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining(join(userDataPath, 'orca-runtime.json'))
-    )
   })
 
-  // Why: `--json`/`--recipe-json` callers parse stdout; a prose-only refusal is
-  // indistinguishable to them from a serve that produced no output at all.
+  // Why: `--json` callers parse stdout; a prose-only refusal is indistinguishable
+  // to them from a serve that produced no output at all.
   it('reports the refusal as a machine-readable envelope for --json', async () => {
-    await writeLiveRuntimeMetadata()
+    await startSilentOwner()
 
     await expect(serveOrcaApp({ json: true })).resolves.toBe(
       SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE
@@ -82,28 +108,33 @@ describe('serveOrcaApp duplicate refusal', () => {
     expect(spawnMock).not.toHaveBeenCalled()
     expect(writtenJson(stdoutSpy)).toMatchObject({
       ok: false,
-      error: { code: 'runtime_serve_already_running', data: { pid: process.pid } }
+      error: {
+        code: 'runtime_serve_already_running',
+        data: { pid: process.pid, evidence: 'listening' }
+      }
     })
   })
 
   // Why: recipe stdout carries only a schema-valid recipe result — the serve
   // path diverts even valid non-orca-server results to stderr — so the refusal
-  // envelope would corrupt the channel it is trying to inform.
+  // envelope would corrupt the channel it is trying to inform. `--json` is a
+  // global flag, so both can be set on one invocation.
   it('refuses recipe-json runs without writing anything to the recipe stdout channel', async () => {
-    await writeLiveRuntimeMetadata()
+    await startSilentOwner()
 
-    await expect(serveOrcaApp({ recipeJson: true, projectRoot: '/workspace/repo' })).resolves.toBe(
-      SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE
-    )
+    await expect(
+      serveOrcaApp({ json: true, recipeJson: true, projectRoot: '/workspace/repo' })
+    ).resolves.toBe(SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE)
     expect(spawnMock).not.toHaveBeenCalled()
     expect(stdoutSpy).not.toHaveBeenCalled()
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('not starting a second process'))
   })
 
-  it('does not refuse a profile whose unreachable owner stopped starting long ago', async () => {
-    // Why: an unreachable owner is believed on its pid alone, so a recycled pid
-    // would otherwise refuse every serve on this profile forever.
-    await writeLiveRuntimeMetadata(Date.now() - STARTING_OWNER_TRUST_WINDOW_MS - 1)
+  it('does not refuse a profile whose runtime left its metadata behind', async () => {
+    // Why: the recorded pid is this very test process, so a pid-based rule would
+    // read the crashed runtime as alive and refuse every serve on this profile
+    // forever. Only a socket that still accepts proves an owner.
+    await writeMetadata(nextEndpoint())
     spawnMock.mockReturnValue({ on: vi.fn(), once: vi.fn(), unref: vi.fn(), kill: vi.fn() })
 
     void serveOrcaApp({ json: true })

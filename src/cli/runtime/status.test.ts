@@ -103,8 +103,8 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
 
   it('treats an unreachable runtime owned by another user as running', async () => {
     // Why: EPERM means the pid exists but belongs to another user (a root
-    // supervisor, or a serve under a different account). Reading that as "dead"
-    // would let `orca serve` spawn a duplicate against an owned profile.
+    // supervisor, or a serve under a different account). Reporting that profile
+    // as stale tells the user to clean up a runtime that is still there.
     throwFromKill('EPERM', -1)
 
     const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-eperm-', 4242))
@@ -116,7 +116,7 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
   it('does not read a pid the OS rejects outright as a live owner', async () => {
     // Why: process.kill throws a TypeError with no errno for a non-integer pid,
     // and "not ESRCH" alone would call that alive — a corrupt metadata file
-    // would then refuse `orca serve` on this profile with nothing running.
+    // would then be reported as a running app that cannot be found or stopped.
     const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-badpid-', 1.5))
 
     expect(status.result.app).toMatchObject({ running: false, pid: null })
@@ -124,8 +124,8 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
   })
 
   it('still reports a runtime whose pid is gone as stale', async () => {
-    // Why: only ESRCH proves death — without this the widened rule could call
-    // every dead profile "starting" and refuse serve forever.
+    // Why: only ESRCH proves death — without this the widened rule would call
+    // every dead profile "starting" and never report a stale one.
     throwFromKill('ESRCH', -3)
 
     const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-esrch-', 4242))

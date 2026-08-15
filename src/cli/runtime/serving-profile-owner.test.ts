@@ -1,13 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { RuntimeMetadata } from '../../shared/runtime-bootstrap'
 import type { CliStatusResult } from '../../shared/runtime-types'
 import {
-  STARTING_OWNER_TRUST_WINDOW_MS,
   findServingProfileOwner,
   serveAlreadyRunningFailure,
   serveAlreadyRunningMessage
 } from './serving-profile-owner'
-
-const NOW = 1_700_000_000_000
 
 function status(overrides: Partial<CliStatusResult['app']> & { reachable?: boolean }) {
   const { reachable = false, ...app } = overrides
@@ -18,96 +16,96 @@ function status(overrides: Partial<CliStatusResult['app']> & { reachable?: boole
   } as CliStatusResult
 }
 
+const METADATA: RuntimeMetadata = {
+  runtimeId: 'runtime-1',
+  pid: 77,
+  transports: [{ kind: 'unix', endpoint: '/profile/o-77-a.sock' }],
+  authToken: 'token',
+  startedAt: 1_700_000_000_000
+}
+
 describe('findServingProfileOwner', () => {
-  it('reports the owner when the runtime answers RPC', () => {
-    // Why: an answered RPC proves ownership outright, so age is irrelevant.
-    expect(
-      findServingProfileOwner(status({ running: true, pid: 4242, reachable: true }), 0, NOW)
-    ).toEqual({ pid: 4242, reachable: true })
-  })
+  it('reports the owner when the runtime answers RPC without probing', async () => {
+    // Why: an answered RPC proves ownership outright; a second connect would be
+    // pure cost on the common path.
+    const probe = vi.fn()
 
-  it('reports an owner that is still starting up', () => {
-    // Why: a serve that has written metadata but not opened its socket still
-    // owns the profile; spawning a second one is what STA-4336 crash-loops on.
-    expect(
+    await expect(
       findServingProfileOwner(
-        status({ running: true, pid: 77, reachable: false }),
-        NOW - 5_000,
-        NOW
+        status({ running: true, pid: 4242, reachable: true }),
+        METADATA,
+        probe
       )
-    ).toEqual({ pid: 77, reachable: false })
+    ).resolves.toEqual({ pid: 4242, evidence: 'rpc' })
+    expect(probe).not.toHaveBeenCalled()
   })
 
-  it('stops believing an unreachable owner that never finished starting', () => {
-    // Why: an unreachable owner is trusted on its recorded pid alone. Once the
-    // OS recycles that pid the claim is permanent, and `orca serve` would exit 3
-    // forever with no runtime to show for it.
-    expect(
-      findServingProfileOwner(
-        status({ running: true, pid: 77, reachable: false }),
-        NOW - STARTING_OWNER_TRUST_WINDOW_MS - 1,
-        NOW
-      )
-    ).toBeNull()
+  it('reports an owner whose socket still accepts connections', async () => {
+    // Why: the runtime publishes metadata only after binding, so an accepted
+    // connect proves a live owner even while it is too busy to answer RPC.
+    // Spawning a second one against it is what STA-4336 crash-loops on.
+    await expect(
+      findServingProfileOwner(status({ running: true, pid: 77 }), METADATA, async () => true)
+    ).resolves.toEqual({ pid: 77, evidence: 'listening' })
   })
 
-  it('keeps refusing when metadata carries no start time', () => {
-    // Why: an absent startedAt is not evidence of staleness, and guessing "old"
-    // would reopen the duplicate-spawn window this whole change closes.
-    expect(
-      findServingProfileOwner(status({ running: true, pid: 77, reachable: false }), null, NOW)
-    ).toEqual({ pid: 77, reachable: false })
+  it('names the metadata pid when status could not confirm one', async () => {
+    // Why: the pid is diagnostic only — a live listener is the owner regardless
+    // of whether the recorded pid still resolves.
+    await expect(
+      findServingProfileOwner(status({ running: false, pid: null }), METADATA, async () => true)
+    ).resolves.toEqual({ pid: 77, evidence: 'listening' })
   })
 
-  it('does not treat a stale profile as an owner', () => {
-    expect(findServingProfileOwner(status({ running: false, pid: null }), NOW, NOW)).toBeNull()
+  it('does not treat a crashed runtime as an owner on its pid alone', async () => {
+    // Why: pids get recycled. Believing a recorded pid would make a stale
+    // metadata file refuse every serve on this profile forever.
+    await expect(
+      findServingProfileOwner(status({ running: true, pid: 77 }), METADATA, async () => false)
+    ).resolves.toBeNull()
+  })
+
+  it('does not treat a profile with no metadata as an owner', async () => {
+    await expect(
+      findServingProfileOwner(status({ running: true, pid: 77 }), null, async () => true)
+    ).resolves.toBeNull()
   })
 })
 
-const METADATA_PATH = '/profile/orca-runtime.json'
-
 describe('serveAlreadyRunningMessage', () => {
   it('names the owning pid and stays actionable', () => {
-    const message = serveAlreadyRunningMessage({ pid: 4242, reachable: true }, METADATA_PATH)
+    const message = serveAlreadyRunningMessage({ pid: 4242, evidence: 'rpc' })
 
     expect(message).toContain('pid 4242')
     expect(message).toContain('not starting a second process')
     expect(message).toContain('orca status')
   })
 
-  it('does not send a reachable owner to delete live metadata', () => {
-    expect(serveAlreadyRunningMessage({ pid: 4242, reachable: true }, METADATA_PATH)).not.toContain(
-      METADATA_PATH
-    )
-  })
+  it('says the owner is not answering yet when only its socket replied', () => {
+    // Why: telling the user to run `orca status` as the next step would repeat
+    // the call that just came back empty.
+    const message = serveAlreadyRunningMessage({ pid: 9, evidence: 'listening' })
 
-  it('offers a recovery path when the owner is only believed on its pid', () => {
-    // Why: an unreachable owner is trusted on a recorded pid alone, and a
-    // recycled pid would otherwise refuse every serve on this profile forever.
-    const message = serveAlreadyRunningMessage({ pid: 9, reachable: false }, METADATA_PATH)
-
-    expect(message).toContain('starting up')
-    expect(message).toContain(`delete ${METADATA_PATH}`)
+    expect(message).toContain('socket is accepting connections')
+    expect(message).toContain('Wait for it to finish starting')
   })
 
   it('stays readable when the owner pid is unknown', () => {
-    expect(serveAlreadyRunningMessage({ pid: null, reachable: true }, METADATA_PATH)).toContain(
-      'another process'
-    )
+    expect(serveAlreadyRunningMessage({ pid: null, evidence: 'rpc' })).toContain('another process')
   })
 })
 
 describe('serveAlreadyRunningFailure', () => {
   it('matches the envelope shape CLI json consumers already parse', () => {
-    const failure = serveAlreadyRunningFailure({ pid: 4242, reachable: false }, METADATA_PATH)
+    const owner = { pid: 4242, evidence: 'listening' } as const
 
-    expect(failure).toEqual({
+    expect(serveAlreadyRunningFailure(owner)).toEqual({
       id: 'local',
       ok: false,
       error: {
         code: 'runtime_serve_already_running',
-        message: serveAlreadyRunningMessage({ pid: 4242, reachable: false }, METADATA_PATH),
-        data: { pid: 4242, reachable: false, metadataPath: METADATA_PATH }
+        message: serveAlreadyRunningMessage(owner),
+        data: { pid: 4242, evidence: 'listening' }
       },
       _meta: { runtimeId: null }
     })
