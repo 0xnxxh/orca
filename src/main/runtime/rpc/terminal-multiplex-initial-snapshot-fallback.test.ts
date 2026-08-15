@@ -20,6 +20,8 @@ type SerializedBuffer = {
   rows: number
   seq?: number
   source?: 'headless' | 'renderer'
+  cwd?: string
+  pendingEscapeTailAnsi?: string
 } | null
 
 function makeRequest(method: string, params?: unknown): RpcRequest {
@@ -121,7 +123,14 @@ describe('terminal multiplex initial snapshot fallback', () => {
   it('serves the retained tail when serialization returns an empty snapshot object', async () => {
     const snapshot = await subscribeSnapshot({
       connectionId: 'conn-empty-snapshot-tail',
-      serialized: { data: '', cols: 120, rows: 40, seq: 42, source: 'renderer' },
+      serialized: {
+        data: '',
+        cols: 120,
+        rows: 40,
+        seq: 42,
+        source: 'renderer',
+        cwd: '/stale'
+      },
       tail: ['retained line 1', 'retained line 2']
     })
 
@@ -129,6 +138,7 @@ describe('terminal multiplex initial snapshot fallback', () => {
     expect(snapshot.start.unavailable).toBeUndefined()
     expect(snapshot.start.seq).toBeUndefined()
     expect(snapshot.start.source).toBeUndefined()
+    expect(snapshot.start.cwd).toBeUndefined()
   })
 
   it('keeps the retained-tail fallback when serialization returns null', async () => {
@@ -164,5 +174,38 @@ describe('terminal multiplex initial snapshot fallback', () => {
 
     expect(snapshot.data).toBe('')
     expect(snapshot.start.unavailable).toBe('no-serializable-buffer')
+  })
+
+  it('reports a successful empty snapshot when the serializer answered and no tail exists', async () => {
+    const snapshot = await subscribeSnapshot({
+      connectionId: 'conn-empty-snapshot-no-tail',
+      serialized: { data: '', cols: 120, rows: 40, seq: 42, source: 'renderer' },
+      tail: []
+    })
+
+    expect(snapshot.data).toBe('')
+    expect(snapshot.start.unavailable).toBeUndefined()
+    expect(snapshot.start.seq).toBeUndefined()
+    expect(snapshot.start.source).toBeUndefined()
+  })
+
+  it('preserves parser carry state when serialized visual data is empty', async () => {
+    const snapshot = await subscribeSnapshot({
+      connectionId: 'conn-empty-snapshot-parser-tail',
+      serialized: {
+        data: '',
+        cols: 120,
+        rows: 40,
+        seq: 42,
+        source: 'renderer',
+        pendingEscapeTailAnsi: '\x1b[38;2;255'
+      },
+      tail: []
+    })
+
+    expect(snapshot.data).toBe('')
+    expect(snapshot.start.pendingEscapeTailAnsi).toBe('\x1b[38;2;255')
+    expect(snapshot.start.seq).toBeUndefined()
+    expect(snapshot.start.source).toBeUndefined()
   })
 })

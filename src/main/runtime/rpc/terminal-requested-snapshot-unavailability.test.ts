@@ -13,7 +13,16 @@ import {
   encodeTerminalStreamJson
 } from '../../../shared/terminal-stream-protocol'
 
-type SerializedBuffer = { data: string; scrollbackAnsi?: string; cols: number; rows: number } | null
+type SerializedBuffer = {
+  data: string
+  scrollbackAnsi?: string
+  cols: number
+  rows: number
+  seq?: number
+  cwd?: string
+  source?: 'headless' | 'renderer'
+  pendingEscapeTailAnsi?: string
+} | null
 type SnapshotStartPayload = Record<string, unknown>
 
 // Why: 256 KiB is the pending-output budget, so this many 1 KiB chunks always trips the overflow guard.
@@ -168,9 +177,7 @@ describe('requested terminal snapshot unavailability reasons', () => {
     expect(start.unavailable).toBeUndefined()
   })
 
-  // Why: `unavailable` drives client retries and eventually a loss banner. A serializer
-  // that answered with an empty buffer HAS answered; a genuinely empty pane must not be
-  // reported as a failure or every fresh pane banners. Only an absent answer is a failure.
+  // Why: unavailable answers retry and eventually banner; empty answers are valid.
   it('does not report a reason when the serializer answered with an empty buffer', async () => {
     const { start, chunks } = await requestSnapshotReply({
       connectionId: 'conn-reason-empty',
@@ -181,15 +188,37 @@ describe('requested terminal snapshot unavailability reasons', () => {
     expect(start.unavailable).toBeUndefined()
   })
 
-  // Why: an empty answer must still not publish seq/source metadata, or the client
-  // anchors its stream to a snapshot that carries no content.
-  it('omits seq and source metadata for an empty serialized answer', async () => {
+  // Why: empty visual data cannot anchor stream provenance.
+  it('omits seq, source, and cwd metadata for an empty serialized answer', async () => {
     const { start } = await requestSnapshotReply({
       connectionId: 'conn-reason-empty-metadata',
-      serializeRequested: async () => ({ data: '', cols: 120, rows: 40 })
+      serializeRequested: async () => ({
+        data: '',
+        cols: 120,
+        rows: 40,
+        seq: 42,
+        source: 'renderer',
+        cwd: '/stale'
+      })
     })
     expect(start.seq).toBeUndefined()
     expect(start.source).toBeUndefined()
+    expect(start.cwd).toBeUndefined()
+  })
+
+  it('preserves parser carry state when serialized visual data is empty', async () => {
+    const { start, chunks } = await requestSnapshotReply({
+      connectionId: 'conn-reason-empty-parser-tail',
+      serializeRequested: async () => ({
+        data: '',
+        cols: 120,
+        rows: 40,
+        pendingEscapeTailAnsi: '\x1b[38;2;255'
+      })
+    })
+    expect(chunks).toBe('')
+    expect(start.pendingEscapeTailAnsi).toBe('\x1b[38;2;255')
+    expect(start.unavailable).toBeUndefined()
   })
 
   it('accepts scrollback-only serialized content', async () => {
