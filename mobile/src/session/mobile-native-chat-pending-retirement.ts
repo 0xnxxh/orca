@@ -37,7 +37,9 @@ export function selectGluedPendingIds(
       item.baselineTailMessageId === null
         ? -1
         : (messageIndexById.get(item.baselineTailMessageId) ?? null)
-    return excludedPendingIds.has(item.id) || text === '' || tail === null ? null : { text, tail }
+    return excludedPendingIds.has(item.id) || item.images?.length || text === '' || tail === null
+      ? null
+      : { text, tail }
   })
 
   // Barriers preserve original adjacency after exact landings retire.

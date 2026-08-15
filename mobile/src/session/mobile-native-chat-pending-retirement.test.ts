@@ -185,6 +185,18 @@ describe('selectGluedPendingIds', () => {
     expect(retiredIds(messages, pending)).toEqual(['p2', 'p3'])
   })
 
+  it('keeps a captioned image echo and its neighbors until the preview is rebound', () => {
+    const messages = [assistantTurn('m1', 'ready', 1000), userTurn('m2', 'one two', 5000)]
+    const pending = [
+      { ...pendingSend('p1', 'one', 'm1'), images: ['file:///a.png'] },
+      pendingSend('p2', 'two', 'm1')
+    ]
+    expect(retiredIds(messages, pending)).toEqual([])
+    expect(
+      retireLandedMobileNativeChatPending(messages, pending, NO_IMAGE_ECHOES).map((item) => item.id)
+    ).toEqual(['p1', 'p2'])
+  })
+
   it('does nothing for a single pending send', () => {
     const messages = [assistantTurn('m1', 'ready', 1000), userTurn('m2', 'one two', 5000)]
     expect(retiredIds(messages, [pendingSend('p1', 'one', 'm1')])).toEqual([])
