@@ -1,6 +1,7 @@
 import { useAppStore } from '@/store'
 import { createAgentStatusOscProcessor } from '../../../shared/agent-status-osc'
 import type { ParsedAgentStatusPayload } from '../../../shared/agent-status-types'
+import { getPaneAgentStatusOscNonce } from '@/components/terminal-pane/pane-agent-status-osc-nonce'
 import {
   resolveLiveAgentStatusConnectionRouting,
   type AgentStatusConnectionRouting
@@ -18,7 +19,9 @@ export function createBackgroundAgentStatusConsumer(args: {
   consume: (data: string) => void
   resolveRouting: () => AgentStatusConnectionRouting | undefined
 } {
-  const processAgentStatus = createAgentStatusOscProcessor()
+  const processAgentStatus = createAgentStatusOscProcessor({
+    getExpectedNonce: () => getPaneAgentStatusOscNonce(args.paneKey)
+  })
   const resolveRouting = (): AgentStatusConnectionRouting | undefined => {
     const ptyId = args.getPtyId()
     const state = useAppStore.getState()
