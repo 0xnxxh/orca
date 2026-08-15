@@ -11,12 +11,7 @@ vi.mock('child_process', () => ({ spawn: spawnMock }))
 
 import { serveOrcaApp } from './launch'
 
-/**
- * Why: on macOS the Electron main aborts inside `_RegisterApplication` before any
- * JS runs whenever Launch Services is unreachable, so the single-instance rule it
- * would have applied never runs and a supervisor retry becomes a SIGABRT loop
- * (STA-4336). These assert the CLI decides *before* the exec.
- */
+/** Why: the Electron main's single-instance rule sits past a pre-JS abort on macOS (STA-4336) — assert the CLI decides before the exec. */
 describe('serveOrcaApp duplicate refusal', () => {
   let userDataPath: string
   let stderrSpy: ReturnType<typeof vi.spyOn>
@@ -73,11 +68,7 @@ describe('serveOrcaApp duplicate refusal', () => {
     )
   }
 
-  /**
-   * Why: a socket that accepts but never answers is the exact shape of a serve
-   * that has published its metadata and is still initialising — the window in
-   * which duplicates used to be spawned straight into a pre-JS abort.
-   */
+  /** A socket that accepts but never answers is the shape of a serve still initialising. */
   async function startSilentOwner(): Promise<void> {
     const transport = nextEndpoint()
     const server = createServer((socket) => {
@@ -115,10 +106,8 @@ describe('serveOrcaApp duplicate refusal', () => {
     })
   })
 
-  // Why: recipe stdout carries only a schema-valid recipe result — the serve
-  // path diverts even valid non-orca-server results to stderr — so the refusal
-  // envelope would corrupt the channel it is trying to inform. `--json` is a
-  // global flag, so both can be set on one invocation.
+  // Why: recipe stdout carries only a schema-valid recipe result, so the envelope would
+  // corrupt it. `--json` is a global flag, so both can be set on one invocation.
   it('refuses recipe-json runs without writing anything to the recipe stdout channel', async () => {
     await startSilentOwner()
 

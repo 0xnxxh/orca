@@ -84,18 +84,15 @@ function spawnDetached(command: string, args: string[], options: SpawnOptions): 
     ...options
   })
   let failedExit: OrcaLaunchFailure | null = null
-  // Why: a macOS pre-JS abort (STA-4336) kills this child in ~200ms. Without
-  // watching it, `orca open` can only report a 15s "no window" timeout, which
-  // blames the wrong thing. A clean exit(0) is normal — `open` returns as soon
-  // as Launch Services accepts the request.
+  // Why: a pre-JS abort kills this child in ~200ms; unwatched, `orca open` can only
+  // blame a 15s "no window" timeout. exit(0) is normal — `open` returns on accept.
   child.once('exit', (code, signal) => {
     if (signal !== null || (code !== null && code !== 0)) {
       failedExit = { code, signal }
     }
   })
-  // Why: a command that never starts emits `error` and no `exit`, so discarding
-  // it leaves openOrca waiting out its full window for a process that does not
-  // exist. Reported asynchronously, hence the handle rather than a throw.
+  // Why: a command that never starts emits `error` and no `exit`, so discarding it
+  // leaves openOrca waiting out its window for a process that was never created.
   child.once('error', (error: NodeJS.ErrnoException) => {
     failedExit ??= { code: null, signal: null, spawnError: error.message }
   })
@@ -117,20 +114,16 @@ export async function serveOrcaApp(
   const userDataPath = getDefaultUserDataPath()
   const owner = await findServingProfileOwner(
     (await getCliStatus(userDataPath)).result,
-    // Why: re-reading is deliberate. A runtime that removed its metadata in the
-    // meantime is shutting down and a fresh serve should proceed; one that
-    // rewrote it is newer, and that is the endpoint worth probing.
+    // Why: re-read deliberately — a runtime that has since removed its metadata is
+    // shutting down, and one that rewrote it published the endpoint worth probing.
     tryReadMetadata(userDataPath)
   )
   if (owner) {
-    // Why: the Electron main enforces this same rule, but on macOS it does so
-    // after NSApplication init, which aborts pre-JS when Launch Services is
-    // unreachable (STA-4336). Refusing here keeps a supervisor's retry from
-    // becoming a SIGABRT loop, and reports the exit code systemd keys off.
-    //
-    // Recipe stdout carries a strict result schema and nothing else — even
-    // schema-valid non-orca-server results are diverted to stderr below — so the
-    // refusal envelope would corrupt that channel. Exit 3 is its signal.
+    // Why: the Electron main enforces this rule only after NSApplication init, which
+    // aborts pre-JS when Launch Services is unreachable (STA-4336) — so a supervisor's
+    // retry becomes a SIGABRT loop unless the CLI refuses first.
+    // Recipe stdout carries a strict result schema and nothing else, so the envelope
+    // would corrupt that channel; exit 3 is its signal.
     if (args.json === true && args.recipeJson !== true) {
       process.stdout.write(`${JSON.stringify(serveAlreadyRunningFailure(owner), null, 2)}\n`)
     } else {

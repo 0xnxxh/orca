@@ -12,17 +12,12 @@ export type ServingProfileOwner = {
 }
 
 /**
- * Why: the "one Orca per userData profile" rule is enforced inside the Electron
- * main, which on macOS creates NSApplication before any JS runs. When Launch
- * Services is unreachable that constructor aborts, so the rule never gets a
- * chance to apply and the duplicate launch dies via SIGABRT instead of exiting
- * cleanly (STA-4336). Deciding here — in the CLI, before the exec — keeps the
- * contract on the safe side of that boundary.
+ * Why: the "one Orca per profile" rule lives in the Electron main, past the
+ * NSApplication init that aborts pre-JS when Launch Services is unreachable
+ * (STA-4336) — so the CLI has to decide before the exec.
  *
- * Ownership is only ever asserted on a live runtime answering for itself: an
- * RPC reply, or failing that a socket that still accepts connections. The pid in
- * metadata names the owner in diagnostics but never establishes one, because a
- * recycled pid would otherwise refuse every serve on this profile forever.
+ * Ownership is asserted only on a runtime answering for itself: an RPC reply, or a
+ * socket that still accepts. A recycled pid would otherwise refuse serve forever.
  */
 export async function findServingProfileOwner(
   status: CliStatusResult,
@@ -39,10 +34,7 @@ export async function findServingProfileOwner(
   return null
 }
 
-/**
- * Why: a refusal the user cannot act on is worse than the duplicate it prevents,
- * so each message names the owner and the next step that actually applies to it.
- */
+/** Why: name the owner and the next step that applies to it — a refusal the user cannot act on is worse than the duplicate. */
 export function serveAlreadyRunningMessage(owner: ServingProfileOwner): string {
   const who = owner.pid === null ? 'another process' : `pid ${owner.pid}`
   const lead = `[serve] Orca is already running for this userData profile as ${who}`

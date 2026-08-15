@@ -384,8 +384,13 @@ async function startSharedOwner(session) {
  * and sits at a `<name>.app/Contents/MacOS/` path so the CLI's bundle-shape
  * checks (serve-update handoff) take the same branch a real bundle would.
  */
+/** A quote in a path would otherwise close the quoting and run the rest as shell. */
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`
+}
+
 export function executableWrapperScript(electron, profile) {
-  return `#!/bin/sh\nexec '${electron}' '--user-data-dir=${profile}' "$@"\n`
+  return `#!/bin/sh\nexec ${shellQuote(electron)} ${shellQuote(`--user-data-dir=${profile}`)} "$@"\n`
 }
 
 async function writeExecutableWrapper(context) {

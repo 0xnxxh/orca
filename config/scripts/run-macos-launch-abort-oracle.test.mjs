@@ -89,6 +89,15 @@ describe('macOS launch-abort oracle scenarios', () => {
     expect(script.trimEnd().endsWith('"$@"')).toBe(true)
   })
 
+  it('keeps a quote in a path inside the quoted word', () => {
+    // Why: an unescaped quote closes the quoting, and the rest of a worktree
+    // path named e.g. `jinwoo's orca` would run as shell code.
+    const script = executableWrapperScript("/base/jinwoo's orca/Electron", "/tmp/o'brien")
+
+    expect(script).toContain(`exec '/base/jinwoo'\\''s orca/Electron'`)
+    expect(script).toContain(`'--user-data-dir=/tmp/o'\\''brien'`)
+  })
+
   it('refuses a flag whose value is missing rather than labelling a run undefined', () => {
     expect(() => parseArgs(['--electron', 'e', '--cli', 'c', '--label'])).toThrow(
       /--label requires a value/

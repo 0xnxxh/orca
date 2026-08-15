@@ -619,8 +619,7 @@ describe('launchOrcaApp', () => {
   })
 
   it('reports an asynchronous detached spawn error as a launch failure', async () => {
-    // Why: a command that never starts emits `error` and no `exit`, so a
-    // discarded error left `orca open` waiting out its full 15s window and then
+    // Why: a discarded error left `orca open` waiting out its 15s window and then
     // blaming a missing window for a process that was never created.
     process.env.ORCA_APP_EXECUTABLE = '/missing/Orca'
     const child = new FakeChildProcess()
@@ -639,8 +638,7 @@ describe('launchOrcaApp', () => {
   })
 
   it('keeps a clean detached exit out of the failure path', () => {
-    // Why: `open` returns 0 as soon as Launch Services accepts the request, so
-    // treating that as a failure would break every packaged macOS launch.
+    // Why: `open` returns 0 on accept; treating that as failure breaks packaged launches.
     process.env.ORCA_APP_EXECUTABLE = '/Applications/Orca.app/Contents/MacOS/Orca'
     const child = new FakeChildProcess()
     spawnMock.mockReturnValue(child)
