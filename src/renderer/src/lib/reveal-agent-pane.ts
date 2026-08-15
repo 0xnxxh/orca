@@ -8,6 +8,8 @@ export type RevealAgentPaneTarget = {
   worktreeId: string
   tabId: string
   leafId: string | null
+  /** Exact retained card to resume when its completed pane no longer exists. */
+  paneKey?: string
   executionHostId?: ExecutionHostId
 }
 
@@ -35,10 +37,10 @@ export function revealAgentPane(
   target: RevealAgentPaneTarget,
   options?: RevealAgentPaneOptions
 ): boolean {
-  const activated = activateAndRevealWorkspace(
-    target.worktreeId,
-    target.executionHostId ? { executionHostId: target.executionHostId } : {}
-  )
+  const activated = activateAndRevealWorkspace(target.worktreeId, {
+    ...(target.executionHostId ? { executionHostId: target.executionHostId } : {}),
+    ...(target.paneKey ? { resumeCompletedPaneKey: target.paneKey } : {})
+  })
   if (!activated) {
     options?.onTargetUnavailable?.()
     return false
@@ -46,13 +48,15 @@ export function revealAgentPane(
   // Why: read tabs AFTER activation — waking a slept agent can add its `--resume`
   // tab, and a husk tab can be replaced rather than revived.
   const tabs = useAppStore.getState().tabsByWorktree[target.worktreeId] ?? []
-  if (!tabs.some((tab) => tab.id === target.tabId)) {
+  const targetTabExists = tabs.some((tab) => tab.id === target.tabId)
+  const focusTabId = activated.resumedAgentTabId ?? (targetTabExists ? target.tabId : undefined)
+  if (!focusTabId || !tabs.some((tab) => tab.id === focusTabId)) {
     // Why: the wake already focused the replacement tab; re-activating the dead
     // id would yank the user back to a tab that no longer renders.
     options?.onTargetUnavailable?.()
     return false
   }
-  activateTabAndFocusPane(target.tabId, target.leafId, {
+  activateTabAndFocusPane(focusTabId, activated.resumedAgentTabId ? null : target.leafId, {
     ...(options?.ackPaneKeyOnSuccess ? { ackPaneKeyOnSuccess: options.ackPaneKeyOnSuccess } : {}),
     ...(options?.flashFocusedPane ? { flashFocusedPane: true } : {}),
     ...(options?.scrollToBottomIfOutputSinceLastView

@@ -53,6 +53,28 @@ describe('revealAgentPane', () => {
     })
   })
 
+  it('requests only the selected retained card and focuses its replacement tab', () => {
+    mocks.activateAndRevealWorkspace.mockReturnValue({
+      primaryTabId: 'shell-tab',
+      resumedAgentTabId: 'resumed-tab'
+    })
+    mocks.tabsByWorktree = { 'wt-1': [{ id: 'shell-tab' }, { id: 'resumed-tab' }] }
+
+    expect(
+      revealAgentPane({
+        worktreeId: 'wt-1',
+        tabId: 'closed-tab',
+        leafId: 'closed-leaf',
+        paneKey: 'closed-tab:closed-leaf'
+      })
+    ).toBe(true)
+
+    expect(mocks.activateAndRevealWorkspace).toHaveBeenCalledWith('wt-1', {
+      resumeCompletedPaneKey: 'closed-tab:closed-leaf'
+    })
+    expect(mocks.activateTabAndFocusPane).toHaveBeenCalledWith('resumed-tab', null, {})
+  })
+
   // Dashboard/agent-map cards carry `folder:<id>` in worktreeId; the dispatcher
   // inside activateAndRevealWorkspace is what routes those to the folder path.
   it('passes a folder workspace key straight through to the dispatcher', () => {

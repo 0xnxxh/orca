@@ -185,6 +185,32 @@ export type ActivateAndRevealResult = {
   /** Id of the primary terminal tab seeded with `opts.startup`, or null. Prefer this over
    *  `activeTabIdByWorktree`, which may point at another tab if setup/issue scripts opened their own. */
   primaryTabId: string | null
+  /** Fresh tab created for an explicitly selected completed agent. */
+  resumedAgentTabId?: string
+}
+
+type WorkspaceAgentResumeOptions = {
+  executionHostId?: ExecutionHostId
+  resumeCompletedPaneKey?: string
+}
+
+function resumeAgentsForWorkspace(
+  workspaceId: string,
+  opts?: WorkspaceAgentResumeOptions,
+  forceFreshSelectedCompletion = false
+): string | null {
+  let resumedTabId: string | null = null
+  resumeSleepingAgentSessionsForWorktree(workspaceId, {
+    ...(opts?.executionHostId ? { executionHostId: opts.executionHostId } : {}),
+    ...(opts?.resumeCompletedPaneKey
+      ? { resumeCompletedPaneKey: opts.resumeCompletedPaneKey }
+      : {}),
+    ...(forceFreshSelectedCompletion ? { forceFreshSelectedCompletion: true } : {}),
+    onSelectedCompletedSessionLaunched: (tabId) => {
+      resumedTabId = tabId
+    }
+  })
+  return resumedTabId
 }
 
 function ensureFolderWorkspaceInitialTerminal(
@@ -211,6 +237,7 @@ export function activateAndRevealFolderWorkspace(
     startup?: WorktreeStartupPayload
     runtimeEnvironmentId?: string | null
     executionHostId?: ExecutionHostId
+    resumeCompletedPaneKey?: string
   }
 ): ActivateAndRevealResult | false {
   const state = useAppStore.getState()
@@ -260,8 +287,12 @@ export function activateAndRevealFolderWorkspace(
   if (!state.isNavigatingHistory) {
     state.recordWorktreeVisit(workspaceKey)
   }
-  resumeSleepingAgentSessionsForWorktree(workspaceKey)
-  const primaryTabId = ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
+  const resumedTabId = resumeAgentsForWorkspace(
+    workspaceKey,
+    opts,
+    Boolean(opts?.resumeCompletedPaneKey)
+  )
+  const ensuredTabId = ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
 
   if (opts?.sidebarRevealBehavior) {
     state.revealWorktreeInSidebar(workspaceKey, { behavior: opts.sidebarRevealBehavior })
@@ -269,7 +300,10 @@ export function activateAndRevealFolderWorkspace(
     state.revealWorktreeInSidebar(workspaceKey)
   }
 
-  return { primaryTabId }
+  return {
+    primaryTabId: ensuredTabId,
+    ...(resumedTabId ? { resumedAgentTabId: resumedTabId } : {})
+  }
 }
 
 export function activateAndRevealWorktree(
@@ -284,6 +318,7 @@ export function activateAndRevealWorktree(
     notifyHostRuntime?: boolean
     revealInSidebar?: boolean
     executionHostId?: ExecutionHostId
+    resumeCompletedPaneKey?: string
     backendStartupTerminalSpawned?: boolean
   }
 ): ActivateAndRevealResult | false {
@@ -336,7 +371,7 @@ export function activateAndRevealWorktree(
   }
 
   // Why: sleeping destroys the local PTY but preserves the provider session id, so waking should restore those CLI sessions automatically.
-  resumeSleepingAgentSessionsForWorktree(worktreeId)
+  const resumedTabId = resumeAgentsForWorkspace(worktreeId, opts)
 
   // 4. Ensure a focusable surface exists for externally-created worktrees
   const primaryTabId = ensureWorktreeHasInitialTerminal(
@@ -382,7 +417,10 @@ export function activateAndRevealWorktree(
     ensureWebRuntimeWorktreeTerminalAfterWake(worktreeId)
   }
 
-  return { primaryTabId }
+  return {
+    primaryTabId,
+    ...(resumedTabId ? { resumedAgentTabId: resumedTabId } : {})
+  }
 }
 
 export function ensureWebRuntimeWorktreeTerminalAfterWake(worktreeId: string): void {
@@ -743,7 +781,7 @@ function queueSetupAndIssueCommands(
  */
 export function activateAndRevealWorkspace(
   workspaceId: string,
-  opts?: { executionHostId?: ExecutionHostId }
+  opts?: WorkspaceAgentResumeOptions
 ): ActivateAndRevealResult | false {
   const workspaceScope = parseWorkspaceKey(workspaceId)
   if (workspaceScope?.type === 'folder') {

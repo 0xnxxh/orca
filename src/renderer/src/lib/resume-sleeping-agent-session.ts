@@ -68,6 +68,25 @@ function getNewestActiveRecordsByClaimKey(
   return newestRecords
 }
 
+function getPreservedPassiveClaimOwner(
+  record: SleepingAgentSessionRecord,
+  records: readonly SleepingAgentSessionRecord[],
+  state: ReturnType<typeof useAppStore.getState>,
+  excludedPaneKey?: string
+): SleepingAgentSessionRecord | null {
+  const claimKey = getProviderSessionClaimKey(record)
+  return (
+    records.find(
+      (candidate) =>
+        candidate.paneKey !== excludedPaneKey &&
+        state.sleepingAgentSessionsByPaneKey[candidate.paneKey] === candidate &&
+        isPassiveCompletedHibernationEvidence(candidate) &&
+        getProviderSessionClaimKey(candidate) === claimKey &&
+        recordPaneIsOwnedByPreservedPane(candidate, state)
+    ) ?? null
+  )
+}
+
 function getAgentStatusTabId(entry: {
   paneKey: string
   tabId?: string | undefined
@@ -181,10 +200,38 @@ export function resumeSleepingAgentSessionsForWorktree(
     }
     const isPaneOwned = recordPaneIsOwnedByPreservedPane(record, currentState)
     if (isPassiveCompletedHibernationEvidence(record)) {
-      // Why: completed-agent hibernation is passive history; activation should
-      // only keep displayable evidence, never start new work from it.
-      if (!isPaneOwned || activeClaimKeys.has(claimKey)) {
+      const explicitlySelected = options?.resumeCompletedPaneKey === record.paneKey
+      // Why: completed-agent hibernation stays passive unless the user opened
+      // this exact card; broad workspace activation must not restart history.
+      if (!explicitlySelected) {
+        if (!isPaneOwned || activeClaimKeys.has(claimKey)) {
+          state.clearSleepingAgentSession(record.paneKey)
+        }
+        continue
+      }
+      if (
+        activeClaimKeys.has(claimKey) ||
+        activeOrQueuedResumeClaimsProviderSession(record, currentState, isPaneOwned)
+      ) {
         state.clearSleepingAgentSession(record.paneKey)
+        continue
+      }
+      const preservedOwner = getPreservedPassiveClaimOwner(
+        record,
+        validWorktreeRecords,
+        currentState,
+        options?.forceFreshSelectedCompletion ? record.paneKey : undefined
+      )
+      if (preservedOwner) {
+        if (preservedOwner !== record) {
+          state.clearSleepingAgentSession(record.paneKey)
+        }
+        continue
+      }
+      if (launchSleepingAgentSession(record, options)) {
+        launched += 1
+        freshlyLaunchedClaimKeys.add(claimKey)
+        clearPassiveCompletedRecordsForClaimKey(worktreeRecords, claimKey, record.paneKey)
       }
       continue
     }
