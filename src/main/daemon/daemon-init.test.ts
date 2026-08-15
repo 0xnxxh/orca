@@ -585,7 +585,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
     await mod.initDaemonPtyProvider()
 
-    expect(adapterInstances[0].options.packagedAppVersion).toBe('1.2.3')
+    expect(adapterInstances[0].options.packagedAppVersion).toBe(
+      process.platform === 'darwin' ? '1.2.3' : null
+    )
   })
 
   it('uses daemon-owned idle retirement when a fresh launch fails permanent adoption', async () => {

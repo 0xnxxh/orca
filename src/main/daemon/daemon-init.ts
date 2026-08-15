@@ -962,7 +962,7 @@ export async function initDaemonPtyProvider(
     pidPath: getDaemonPidPath(runtimeDir),
     profileScope: runtimeDir,
     runtimeDir,
-    packagedAppVersion: app.isPackaged ? app.getVersion() : null,
+    packagedAppVersion: process.platform === 'darwin' && app.isPackaged ? app.getVersion() : null,
     historyPath: getHistoryDir(),
     // Why: on daemon death, ensureConnected() detects the dead socket and calls this to fork a replacement before retrying.
     respawn: async (reason: DaemonRespawnReason) => {
@@ -1198,7 +1198,7 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     pidPath: getDaemonPidPath(runtimeDir),
     profileScope: runtimeDir,
     runtimeDir,
-    packagedAppVersion: app.isPackaged ? app.getVersion() : null,
+    packagedAppVersion: process.platform === 'darwin' && app.isPackaged ? app.getVersion() : null,
     historyPath: getHistoryDir(),
     respawn: async (reason: DaemonRespawnReason) => {
       // Why: attribute rather than emit — the launcher below is the one that completes the
