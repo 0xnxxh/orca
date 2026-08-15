@@ -828,6 +828,8 @@ type EncryptionKeyResult = {
   mode: 'aes-128-cbc' | 'aes-256-gcm'
   // Why: Linux v10 cookies use "peanuts" and v11 the keyring password; both keys are needed to decrypt the full set.
   fallbackKey?: Buffer
+  // Why: no keyring means no v11 key at all, so v11 rows are undecryptable rather than merely wrong.
+  keyringUnavailable?: boolean
 }
 
 export type ChromiumCookieColumnInfo = {
@@ -1003,8 +1005,15 @@ function getLinuxEncryptionKey(
         timeout: 5_000
       }).trim()
     } catch {
-      diag('  Linux keyring unavailable — v11 cookies may fail to decrypt')
+      diag('  Linux keyring unavailable — v11 cookies cannot be decrypted')
     }
+  }
+
+  // Why: deriving a v11 key from an empty password yields a key that decrypts nothing, so every
+  // v11 row failed indistinguishably from a corrupt one. Hand back only the v10 key instead and
+  // let the caller report the keyring as the cause.
+  if (!keyringPassword) {
+    return { key: v10Key, mode: 'aes-128-cbc', keyringUnavailable: true }
   }
 
   const v11Key = pbkdf2Sync(keyringPassword, PBKDF2_SALT, 1, PBKDF2_KEY_LENGTH, 'sha1')
@@ -1082,6 +1091,41 @@ function hasHmacPrefix(buf: Buffer): boolean {
 
 function stripHmac(buf: Buffer): Buffer {
   return hasHmacPrefix(buf) ? buf.subarray(CHROMIUM_COOKIE_HMAC_LEN) : buf
+}
+
+// Why: the version prefix is the only thing that survives a failed decrypt, so read it once and
+// share it between the decrypt path and the failure attribution.
+function cookieEncryptionVersion(encryptedBuffer: Buffer): string | null {
+  if (encryptedBuffer.length < 3) {
+    return null
+  }
+  const version = encryptedBuffer.subarray(0, 3).toString('utf-8')
+  return /^v\d\d$/.test(version) ? version : null
+}
+
+// Why: Chrome/Edge 140+ on Windows prefix every cookie with `v20` (app-bound encryption), which
+// only the writing browser can unwrap. The prefix gate below is a FORMAT check, so v20 passes it
+// and fails inside AES with the v10 key — indistinguishable from corruption without this.
+export function isAppBoundEncryptedCookie(encryptedBuffer: Buffer): boolean {
+  return cookieEncryptionVersion(encryptedBuffer) === 'v20'
+}
+
+// Why: every caller must report the same cause, and the most specific one wins.
+function buildUndecryptableWarning(counts: {
+  decryptFailed: number
+  appBoundFailed: number
+  keyringUnavailableFailed: number
+}): BrowserCookieImportSummary['warning'] {
+  if (counts.decryptFailed === 0) {
+    return undefined
+  }
+  const reason =
+    counts.appBoundFailed > 0
+      ? 'app-bound-encryption'
+      : counts.keyringUnavailableFailed > 0
+        ? 'linux-keyring-unavailable'
+        : 'unknown'
+  return { code: 'cookies-undecryptable', failedCookies: counts.decryptFailed, reason }
 }
 
 function decryptCookieValueRaw(
@@ -1630,6 +1674,9 @@ export async function importCookiesFromBrowser(
 
     let imported = 0
     let skipped = 0
+    let decryptFailed = 0
+    let appBoundFailed = 0
+    let keyringUnavailableFailed = 0
     let integritySkipped = 0
     let nonTransplantableSkipped = 0
     let memoryLoaded = 0
@@ -1699,6 +1746,15 @@ export async function importCookiesFromBrowser(
       if (encBuf && encBuf.length > 0) {
         const raw = sourceKey ? decryptCookieValueRaw(encBuf, sourceKey) : null
         if (!raw) {
+          // Why: once decrypt returns null every failure looks identical, so attribute the cause
+          // here while the version prefix is still in hand. Without this an undecryptable profile
+          // is indistinguishable from an empty one and reports success.
+          decryptFailed++
+          if (isAppBoundEncryptedCookie(encBuf)) {
+            appBoundFailed++
+          } else if (sourceKey?.keyringUnavailable && cookieEncryptionVersion(encBuf) === 'v11') {
+            keyringUnavailableFailed++
+          }
           skipped++
           continue
         }
@@ -1765,7 +1821,14 @@ export async function importCookiesFromBrowser(
     )
     const googleCookiesSkipped = integritySkipped + nonTransplantableSkipped
 
+    const undecryptableWarning = buildUndecryptableWarning({
+      decryptFailed,
+      appBoundFailed,
+      keyringUnavailableFailed
+    })
+
     if (decryptedCookies.length === 0) {
+      const zeroPathWarning = undecryptableWarning
       closeStagingDb()
       discardStagingFile()
       return {
@@ -1776,7 +1839,10 @@ export async function importCookiesFromBrowser(
           importedCookies: 0,
           skippedCookies: skipped + integritySkipped + nonTransplantableSkipped,
           ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
-          domains: []
+          domains: [],
+          // Why: a profile whose rows cannot be decrypted returns here, and without this it is
+          // reported as a successful empty import.
+          ...(zeroPathWarning ? { warning: zeroPathWarning } : {})
         }
       }
     }
@@ -1873,6 +1939,13 @@ export async function importCookiesFromBrowser(
     // sessions to the re-import, not the UA (#12884), so it bought nothing.
     // Google-bound integrity cookies are already excluded by
     // isGoogleSourceBoundCookie, which is what actually prevents CookieMismatch.
+
+    // Why: a partial import still drops every undecryptable row, so silence here would report it
+    // as an unqualified success. The restart-fallback warning describes a lossier outcome and
+    // keeps precedence.
+    if (!warning && undecryptableWarning) {
+      warning = undecryptableWarning
+    }
 
     const summary: BrowserCookieImportSummary = {
       totalCookies: sourceRows.length,

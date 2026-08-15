@@ -305,6 +305,7 @@ inline src/renderer/src/store/slices/ui.test.ts
 inline src/renderer/src/store/slices/ui.ts
 inline src/renderer/src/store/slices/workspace-cleanup.ts
 inline src/renderer/src/store/slices/worktrees.test.ts
+inline src/renderer/src/store/slices/worktrees.ts
 inline src/renderer/src/web/web-preload-api.test.ts
 inline src/renderer/src/web/web-preload-api.ts
 inline src/renderer/src/web/web-runtime-client.ts

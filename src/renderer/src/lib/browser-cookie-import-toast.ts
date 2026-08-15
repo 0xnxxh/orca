@@ -21,6 +21,27 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
               value1: warning.loadedCookies + warning.failedCookies
             }
           )
+    case 'cookies-undecryptable':
+      switch (warning.reason) {
+        case 'app-bound-encryption':
+          return translate(
+            'auto.lib.browser.cookie.import.toast.undecryptableAppBound',
+            '{{value0}} cookies could not be decrypted because this browser encrypts them so only it can read them (app-bound encryption). Importing from this browser is not supported on this version.',
+            { value0: warning.failedCookies }
+          )
+        case 'linux-keyring-unavailable':
+          return translate(
+            'auto.lib.browser.cookie.import.toast.undecryptableKeyring',
+            '{{value0}} cookies could not be decrypted because the system keyring was unavailable. Unlock your login keyring (or install a Secret Service provider such as gnome-keyring) and import again.',
+            { value0: warning.failedCookies }
+          )
+        default:
+          return translate(
+            'auto.lib.browser.cookie.import.toast.undecryptableUnknown',
+            '{{value0}} cookies could not be decrypted and were skipped. Close the source browser completely and try the import again.',
+            { value0: warning.failedCookies }
+          )
+      }
   }
 }
 
