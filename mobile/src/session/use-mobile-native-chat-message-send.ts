@@ -91,12 +91,8 @@ export function useMobileNativeChatMessageSend(args: {
       recordControlSend: boolean,
       sharedDeadline?: number
     ): Promise<MobileNativeChatSendOutcome> => {
-      // Why: the host writes these bytes verbatim, so surrounding whitespace lands
-      // on the agent's TUI input line while every reconciliation key is
-      // normalized. A rapid follow-up send then glues onto that residue and the
-      // submitted turn matches neither pending key. Trim once here so the wire
-      // text and the match key describe the same message for every send path.
-      const text = rawText.trim()
+      // The host writes trailing whitespace verbatim, where it can glue the next send.
+      const text = rawText.trimEnd()
       const handle = handleRef.current
       const origin = captureSendOrigin(text)
       const agent = agentRef.current

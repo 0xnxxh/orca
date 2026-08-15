@@ -1,11 +1,15 @@
 import { createElement } from 'react'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { buildMobileNativeChatTransientData } from './mobile-native-chat-render-data'
 import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
 
 type DraftState = ReturnType<typeof useMobileNativeChatDrafts>
+type TestRenderer = {
+  unmount(): void
+  update(element: ReturnType<typeof createElement>): void
+}
 
 function userTurn(id: string, text: string, timestamp: number): NativeChatMessage {
   return { id, role: 'user', blocks: [{ type: 'text', text }], timestamp, source: 'transcript' }
@@ -37,7 +41,7 @@ function renderedPendingTexts(
 }
 
 describe('useMobileNativeChatDrafts glued pending sends', () => {
-  let renderer: ReactTestRenderer | null = null
+  let renderer: TestRenderer | null = null
   let state: DraftState | null = null
 
   afterEach(() => {

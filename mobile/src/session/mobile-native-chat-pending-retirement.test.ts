@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pending-echo'
 import {
@@ -189,6 +189,28 @@ describe('selectGluedPendingIds', () => {
     const messages = [assistantTurn('m1', 'ready', 1000), userTurn('m2', 'one two', 5000)]
     expect(retiredIds(messages, [pendingSend('p1', 'one', 'm1')])).toEqual([])
   })
+
+  it('inspects each pending segment at most once per transcript turn', () => {
+    const pendingCount = 96
+    const turnCount = 12
+    const text = `${'a '.repeat(pendingCount)}x`
+    const messages = [
+      assistantTurn('tail', 'ready', 1000),
+      ...Array.from({ length: turnCount }, (_, index) => userTurn(`m${index}`, text, 2000 + index))
+    ]
+    const pending = Array.from({ length: pendingCount }, (_, index) =>
+      pendingSend(`p${index}`, 'a', 'tail', index + 1)
+    )
+    const startsWith = vi.spyOn(String.prototype, 'startsWith')
+    let segmentChecks = 0
+    try {
+      expect(retiredIds(messages, pending)).toEqual([])
+      segmentChecks = startsWith.mock.calls.length
+    } finally {
+      startsWith.mockRestore()
+    }
+    expect(segmentChecks).toBeLessThanOrEqual(turnCount * pendingCount)
+  })
 })
 
 describe('retireLandedMobileNativeChatPending', () => {
@@ -212,6 +234,22 @@ describe('retireLandedMobileNativeChatPending', () => {
     expect(
       retireLandedMobileNativeChatPending(messages, pending, NO_IMAGE_ECHOES).map((item) => item.id)
     ).toEqual(['p1', 'p2'])
+  })
+
+  it('does not glue former neighbors across an exact-landed send', () => {
+    const messages = [
+      assistantTurn('m0', 'ready', 1000),
+      userTurn('m1', 'middle', 2000),
+      userTurn('m2', 'one two', 3000)
+    ]
+    const pending = [
+      pendingSend('p1', 'one', 'm0'),
+      pendingSend('p2', 'middle', 'm0'),
+      pendingSend('p3', 'two', 'm0')
+    ]
+    expect(
+      retireLandedMobileNativeChatPending(messages, pending, NO_IMAGE_ECHOES).map((item) => item.id)
+    ).toEqual(['p1', 'p3'])
   })
 
   it('keeps image echoes until their preview is rebound', () => {

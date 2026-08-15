@@ -388,28 +388,40 @@ describe('useMobileNativeChatMessageSend', () => {
 
   // The host writes these bytes verbatim, so whitespace the match key drops must
   // not reach the agent's input line and glue the next rapid send onto it (#14262).
-  it('writes the same trimmed body it reconciles against', async () => {
+  it('trims trailing whitespace without changing leading prompt content', async () => {
     mount(() => null)
     await act(async () => {
       await api!.send('  run the tests \n')
     })
-    expect(sentArgs().text).toBe('run the tests')
-    expect(captureSendOrigin).toHaveBeenCalledWith('run the tests')
-    expect(acceptSend.mock.calls[0]![1]).toBe('run the tests')
+    expect(sentArgs().text).toBe('  run the tests')
+    expect(captureSendOrigin).toHaveBeenCalledWith('  run the tests')
+    expect(acceptSend.mock.calls[0]![1]).toBe('  run the tests')
   })
 
-  it('trims the body on a question answer too', async () => {
+  it('trims trailing whitespace on a question answer too', async () => {
     mount(() => null)
     await act(async () => {
       await api!.answerQuestion('\n 1 ')
     })
-    expect(sentArgs().text).toBe('1')
+    expect(sentArgs().text).toBe('\n 1')
+  })
+
+  it('keeps a leading-whitespace slash draft as prose', async () => {
+    mount(() => null, 'codex')
+    await act(async () => {
+      await api!.send(' /delete ')
+    })
+    expect(sentArgs().text).toBe(' /delete')
+    expect(sendWithOutcome).toHaveBeenCalledOnce()
+    expect(typeCommandWithOutcome).not.toHaveBeenCalled()
+    expect(acceptSend).toHaveBeenCalledWith(expect.anything(), ' /delete', undefined)
+    expect(onCommandSend).not.toHaveBeenCalled()
   })
 
   it('keeps interior newlines of a multi-line prompt', async () => {
     mount(() => null)
     await act(async () => {
-      await api!.send('\nfirst line\nsecond line\n')
+      await api!.send('first line\nsecond line\n')
     })
     expect(sentArgs().text).toBe('first line\nsecond line')
   })

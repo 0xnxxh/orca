@@ -7,22 +7,16 @@ import {
 import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pending-echo'
 
 const SPACE = ' '
+const NO_PENDING_IDS: ReadonlySet<string> = new Set()
 
-/** A normalized user turn plus its transcript position, which bounds glue. */
 type UserTurn = { index: number; text: string }
+type GlueSegment = { text: string; tail: number } | null
 
-/**
- * Ids retired by a single transcript turn that glued several rapid sends into
- * one row (the host writes a send's body and its Enter ~500ms apart, so a second
- * body can land on the same TUI input line before the first submits).
- *
- * Bounded to turns strictly AFTER each send's captured tail. Without that bound
- * an older turn that happens to read like the concatenation retires a newer
- * send, and a message the user really queued silently never renders.
- */
+/** Pending ids represented by post-send transcript rows that glued adjacent sends. */
 export function selectGluedPendingIds(
   messages: readonly NativeChatMessage[],
-  pending: readonly MobileNativeChatPendingMessage[]
+  pending: readonly MobileNativeChatPendingMessage[],
+  excludedPendingIds: ReadonlySet<string> = NO_PENDING_IDS
 ): ReadonlySet<string> {
   const retired = new Set<string>()
   if (pending.length < 2) {
@@ -37,62 +31,65 @@ export function selectGluedPendingIds(
       turns.push({ index, text })
     }
   }
-  // Image echoes carry no caption to concatenate; an unresolvable tail leaves the
-  // send unbounded. Either way the item can only end a run, never join one.
-  const segments = pending.map((item) => normalizeReconcileText(item.text))
-  const tails = pending.map((item) =>
-    item.baselineTailMessageId === null
-      ? -1
-      : (messageIndexById.get(item.baselineTailMessageId) ?? null)
-  )
+  const segments: GlueSegment[] = pending.map((item) => {
+    const text = normalizeReconcileText(item.text)
+    const tail =
+      item.baselineTailMessageId === null
+        ? -1
+        : (messageIndexById.get(item.baselineTailMessageId) ?? null)
+    return excludedPendingIds.has(item.id) || text === '' || tail === null ? null : { text, tail }
+  })
 
-  let cursor = 0
-  for (const turn of turns) {
-    if (cursor >= pending.length - 1) {
-      break
+  // Barriers preserve original adjacency after exact landings retire.
+  let runStart = 0
+  while (runStart < pending.length) {
+    while (runStart < pending.length && segments[runStart] === null) {
+      runStart += 1
     }
-    for (let start = cursor; start < pending.length - 1; start++) {
-      const matched = matchGluedRun(turn, segments, tails, start)
+    let runEnd = runStart
+    while (runEnd < pending.length && segments[runEnd] !== null) {
+      runEnd += 1
+    }
+    let cursor = runStart
+    for (const turn of turns) {
+      if (cursor >= runEnd - 1) {
+        break
+      }
+      const matched = matchGluedRun(turn, segments, cursor, runEnd)
       if (matched === 0) {
         continue
       }
-      for (let index = start; index < start + matched; index++) {
+      for (let index = cursor; index < cursor + matched; index++) {
         retired.add(pending[index]!.id)
       }
-      cursor = start + matched
-      break
+      cursor += matched
     }
+    runStart = runEnd + 1
   }
   return retired
 }
 
-/**
- * Length of the pending run starting at `start` that exactly spells out `turn`,
- * or 0 when there is none. Greedy is provably equivalent to backtracking here:
- * both sides are whitespace-normalized, so a segment can never begin with the
- * optional single-space separator and consuming it is forced.
- */
+/** Length of the exact glued run at `start`, or zero. */
 function matchGluedRun(
   turn: UserTurn,
-  segments: readonly string[],
-  tails: readonly (number | null)[],
-  start: number
+  segments: readonly GlueSegment[],
+  start: number,
+  end: number
 ): number {
   let at = 0
   let matched = 0
-  for (let index = start; index < segments.length; index++) {
+  for (let index = start; index < end; index++) {
     const segment = segments[index]!
-    const tail = tails[index]
-    if (segment === '' || tail === null || turn.index <= tail) {
+    if (turn.index <= segment.tail) {
       return 0
     }
     if (at > 0 && turn.text[at] === SPACE) {
       at += 1
     }
-    if (!turn.text.startsWith(segment, at)) {
+    if (!turn.text.startsWith(segment.text, at)) {
       return 0
     }
-    at += segment.length
+    at += segment.text.length
     matched += 1
     if (at === turn.text.length) {
       // A lone exact match is an ordinary landing, which the count pass owns.
@@ -102,8 +99,7 @@ function matchGluedRun(
   return 0
 }
 
-/** Pending echoes that survive this transcript: exact-text landings retire by
- *  ordinal, and whatever is left gets one bounded pass for a glued row. */
+/** Retires exact and glued transcript landings while preserving pending order. */
 export function retireLandedMobileNativeChatPending(
   messages: readonly NativeChatMessage[],
   current: readonly MobileNativeChatPendingMessage[],
@@ -116,19 +112,27 @@ export function retireLandedMobileNativeChatPending(
       landedCounts.set(text, (landedCounts.get(text) ?? 0) + 1)
     }
   }
-  // Image-only source-turn counts stay stable across reruns and ignore paginated history.
-  const survivors = current.filter((item) => {
+  const landedPendingIds = new Set<string>()
+  for (const item of current) {
     if (landedImagePendingIds.has(item.id)) {
-      return false
+      landedPendingIds.add(item.id)
+      continue
     }
     // Keep image echoes until their local preview reaches the authoritative message.
     if (item.images?.length) {
-      return true
+      continue
     }
-    return item.text.trim() === ''
-      ? countImageSourceTurnsAfter(messages, item.baselineTailMessageId) < item.expectedOccurrence
-      : (landedCounts.get(normalizeReconcileText(item.text)) ?? 0) < item.expectedOccurrence
-  })
-  const glued = selectGluedPendingIds(messages, survivors)
-  return glued.size === 0 ? survivors : survivors.filter((item) => !glued.has(item.id))
+    const landed =
+      item.text.trim() === ''
+        ? countImageSourceTurnsAfter(messages, item.baselineTailMessageId) >=
+          item.expectedOccurrence
+        : (landedCounts.get(normalizeReconcileText(item.text)) ?? 0) >= item.expectedOccurrence
+    if (landed) {
+      landedPendingIds.add(item.id)
+    }
+  }
+  const glued = selectGluedPendingIds(messages, current, landedPendingIds)
+  return landedPendingIds.size === 0 && glued.size === 0
+    ? [...current]
+    : current.filter((item) => !landedPendingIds.has(item.id) && !glued.has(item.id))
 }
