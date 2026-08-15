@@ -33,16 +33,27 @@ const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
  * Reading the pane's own text is the point. Asserting a pty id, a status, or a spy call is what let
  * both of these through: every one of those was correct while the screen was wrong.
  *
- * KNOWN: (1) is fixed at the symptom, not the cause. The cause is that a PTY source delivery is the
- * only per-client relay state that survives its client detaching — fs-handler, git-handler and
- * relay-filesystem-watch-registry all subscribe to dispatcher.onClientDetached and release theirs;
- * relay-pty-source-publication never does. The primary client keeps its id across a transport
- * replacement (detachClient refuses to detach it, setWrite revives that id), so its delivery
- * outlives the dead transport and activate() answers 'existing' for a client that can no longer
- * receive anything. requireReplay makes the client ask for what the relay wrongly decided it did
- * not need. Retiring the delivery on detach is the real fix and is deliberately NOT done here: it
- * is the flow-control and credit path, and it was not worth shipping unverified. This test pins the
- * user-visible contract either way, so it should keep passing when that lands.
+ * KNOWN: (1) is fixed at the symptom. requireReplay makes the client ask for what the relay wrongly
+ * decided it did not need. Three attempts at the cause failed, and the reasons are worth keeping
+ * because each looks correct until you run it:
+ *
+ * - RETIRING THE DELIVERY ON dispatcher.onClientDetached, the way fs-handler, git-handler and
+ *   relay-filesystem-watch-registry release their per-client state, BREAKS CHECKPOINT RECOVERY (10
+ *   tests in relay-pty-source-recovery-interleavings / restore-retry). A delivery outliving its
+ *   client is deliberate here: it is what lets a reconnecting client resume from a checkpoint
+ *   instead of re-receiving everything. This class omits that subscription on purpose.
+ * - RETIRING WITHOUT session.cancelDelivery() orphans the credit ledger's one-upstream-owner-per-pty
+ *   slot, and the next open throws "PTY source delivery already has an upstream owner". Seen live as
+ *   an error toast and a blank pane.
+ * - COMPARING record.identity.clientGeneration TO THE REQUEST is not available: that value is
+ *   client-supplied through pty.openClient (dispatcher.ts:1219) and RequestContext carries no
+ *   generation of its own.
+ *
+ * Which points at the likeliest real cause, unverified: the SSH client presents the SAME
+ * clientGeneration across a reconnect, so the relay cannot tell a new connection from the old one
+ * and reuses its delivery. The fix is probably that reattachSshPtySession participates in the
+ * recovery protocol at all — it never sends sourceRecovery — rather than anything in the relay.
+ * Start there, not at onClientDetached.
  */
 async function openTerminalTab(page: Page): Promise<void> {
   await page.evaluate(async () => {
