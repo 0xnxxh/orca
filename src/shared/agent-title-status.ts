@@ -1,4 +1,7 @@
-import { resolveAgentIdentityFrameType } from './agent-identity-frame'
+import {
+  resolveAgentIdentityFrameStatus,
+  resolveAgentIdentityFrameType
+} from './agent-identity-frame'
 import {
   AGY_AGENT_NAME_RE,
   BRAILLE_SPINNER_RE,
@@ -182,6 +185,13 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   const piCompatibleSyntheticAgentStatus = getPiCompatibleSyntheticAgentStatus(title)
   if (piCompatibleSyntheticAgentStatus) {
     return piCompatibleSyntheticAgentStatus
+  }
+
+  // Why: an agent that declares its own status glyphs outranks the shared vocabulary
+  // below — Qwen's await-confirmation `✳` is the same glyph Claude uses for idle.
+  const identityFrameStatus = resolveAgentIdentityFrameStatus(title)
+  if (identityFrameStatus) {
+    return identityFrameStatus
   }
 
   if (title.startsWith(`${CLAUDE_IDLE} `) || title === CLAUDE_IDLE) {

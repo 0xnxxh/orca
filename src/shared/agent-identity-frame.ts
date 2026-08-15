@@ -14,6 +14,7 @@
  * (#8940). Anchoring the whole title is what separates the two.
  */
 import { stripLeadingAgentTitleDecorationOrEmpty } from './agent-title-decoration'
+import type { AgentStatus } from './agent-title-core'
 import { getWrapperTitleSegments } from './terminal-title-wrapper-segments'
 import type { TuiAgent } from './tui-agent'
 
@@ -24,18 +25,32 @@ const IDENTITY_STATUS_WORDS = ['ready', 'idle', 'done', 'working', 'thinking', '
 // Why: Windows titles can surface the launcher process name (`cline.cmd`).
 const EXECUTABLE_SUFFIX = String.raw`(?:\.(?:exe|cmd|bat|ps1))?`
 
+// Why: some CLIs append their working directory to their own name (`Qwen - orca`).
+// The separator must carry whitespace on both sides so a hyphenated compound
+// (`qwen-code-fixtures`) stays a path, not an identity.
+const CONTEXT_SUFFIX = String.raw`(?:\s+-\s+\S.*)?`
+
 export type AgentIdentityFrameSpec = {
   /** Lowercase names the agent presents itself under, longest first. */
   names: readonly string[]
   /** Accept a Windows launcher extension after the name. */
   executableSuffix?: boolean
+  /** Accept free-form context the agent appends after ` - ` (its cwd, typically). */
+  contextSuffix?: boolean
+  /**
+   * Leading glyphs the agent writes to mean a status of its own. Declared per agent
+   * because the same glyph differs across CLIs — `✳` is Claude's idle marker but
+   * Qwen's await-confirmation marker.
+   */
+  statusGlyphs?: Readonly<Record<string, AgentStatus>>
 }
 
 export function buildAgentIdentityFrameRe(spec: AgentIdentityFrameSpec): RegExp {
   const names = spec.names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
   const suffix = spec.executableSuffix ? EXECUTABLE_SUFFIX : ''
+  const context = spec.contextSuffix ? CONTEXT_SUFFIX : ''
   return new RegExp(
-    `^(?:${names})${suffix}(?:\\s+(?:${IDENTITY_STATUS_WORDS.join('|')}))?(?:\\s*-\\s*action required)?$`
+    `^(?:${names})${suffix}(?:\\s+(?:${IDENTITY_STATUS_WORDS.join('|')}))?(?:\\s*-\\s*action required)?${context}$`
   )
 }
 
@@ -48,7 +63,15 @@ export const AGENT_IDENTITY_FRAMES: Partial<Record<TuiAgent, AgentIdentityFrameS
   claude: { names: ['claude code', 'claude'] },
   // Verified against cline 3.0.55: it emits OSC 0 `Cline` and never varies it,
   // so Orca sees identity but no status transitions (STA-3906).
-  cline: { names: ['cline'], executableSuffix: true }
+  cline: { names: ['cline'], executableSuffix: true },
+  // Verified against qwen-code 0.21.12: OSC 0 is `Qwen - <cwd basename>`, padded to
+  // 80 chars, re-emitted on each turn with a leading `◐` while responding and `✳`
+  // while awaiting confirmation (STA-2840 / #11148).
+  'qwen-code': {
+    names: ['qwen'],
+    contextSuffix: true,
+    statusGlyphs: { '◐': 'working', '✳': 'permission' }
+  }
 }
 
 const IDENTITY_FRAME_RES = new Map<TuiAgent, RegExp>(
@@ -76,6 +99,34 @@ export function isAgentIdentityFrameTitleFor(
   return getWrapperTitleSegments(title).some((segment) =>
     re.test(stripLeadingAgentTitleDecorationOrEmpty(segment).trim().toLowerCase())
   )
+}
+
+/**
+ * The status a registry-declared agent claims through its own leading glyph, or null
+ * when the agent declares none. Gated on the identity frame so a glyph inside somebody
+ * else's task text can never mint a status.
+ */
+export function resolveAgentIdentityFrameStatus(
+  title: string | null | undefined
+): AgentStatus | null {
+  if (typeof title !== 'string') {
+    return null
+  }
+  for (const [agent, spec] of Object.entries(AGENT_IDENTITY_FRAMES)) {
+    const glyphs = spec?.statusGlyphs
+    if (!glyphs || !isAgentIdentityFrameTitleFor(title, agent as TuiAgent)) {
+      continue
+    }
+    for (const segment of getWrapperTitleSegments(title)) {
+      const leading = segment.trimStart()
+      for (const [glyph, status] of Object.entries(glyphs)) {
+        if (leading.startsWith(glyph)) {
+          return status
+        }
+      }
+    }
+  }
+  return null
 }
 
 /** The agent a title presents, or null when the title is task text, a path, or a bare shell title. */

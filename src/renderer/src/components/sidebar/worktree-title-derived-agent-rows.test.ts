@@ -258,6 +258,61 @@ describe('buildTitleDerivedAgentRows', () => {
     expect(rows).toHaveLength(0)
   })
 
+  // Why: qwen-code 0.21.12 posts no hooks and titles itself `Qwen - <cwd>` (80-char
+  // padded), so the title path is the only thing that can list the pane (STA-2840 / #11148).
+  it('adds rows for Qwen panes titled with the cwd suffix the CLI actually writes', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: 'Qwen - orca' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: {
+        'tab-1': {
+          1: 'Qwen - orca'.padEnd(80, ' '),
+          2: '\u25D0\uFE0E Qwen - orca'.padEnd(80, ' ')
+        }
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-left', 'pty-right'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSplitLayout() },
+      now: 2000
+    })
+
+    expect(rows.map((row) => [row.agentType, row.state])).toEqual([
+      ['qwen-code', 'idle'],
+      ['qwen-code', 'working']
+    ])
+  })
+
+  // Why: `\u2733` is Claude's idle glyph but Qwen's await-confirmation glyph; the pane
+  // must surface as Qwen needing input, not as an idle Claude row.
+  it('surfaces a confirming Qwen pane as qwen-code awaiting permission', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: 'Qwen - orca' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: '\u2733\uFE0E Qwen - orca'.padEnd(80, ' ') } },
+      ptyIdsByTabId: { 'tab-1': ['pty-qwen'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+
+    expect(rows.map((row) => [row.agentType, row.state])).toEqual([['qwen-code', 'waiting']])
+    expect(rows[0]?.paneKey).toBe(makePaneKey('tab-1', LEAF_ID_1))
+  })
+
+  it('keeps a qwen-named worktree path out of the sidebar', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: '~/orca/workspaces/qwen-scratch' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: '~/orca/workspaces/qwen-scratch' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-shell'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+
+    expect(rows).toHaveLength(0)
+  })
+
   it('attributes a spinner-only title to the launched agent when the title has no identity', () => {
     const launchAgent: TuiAgent = 'codex'
     const rows = buildWorktreeAgentRows({

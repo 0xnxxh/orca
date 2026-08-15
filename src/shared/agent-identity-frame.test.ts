@@ -110,3 +110,73 @@ describe('isClaudeIdentityFrameTitle after the shared-builder move', () => {
     }
   })
 })
+
+// Observed against qwen-code 0.21.12 under a pty: OSC 0 is `Qwen - <cwd basename>`
+// padded to 80 chars, prefixed with `◐︎` while responding and `✳︎` while awaiting
+// confirmation. Every literal below is a real captured payload (STA-2840 / #11148).
+describe('Qwen Code title visibility (STA-2840 / #11148)', () => {
+  const pad = (title: string): string => title.padEnd(80, ' ')
+  const IDLE = pad('Qwen - scratchdir')
+  const RESPONDING = pad('◐︎ Qwen - scratchdir')
+  const CONFIRMING = pad('✳︎ Qwen - scratchdir')
+
+  it('claims the name-plus-cwd frame the CLI actually writes, padding included', () => {
+    for (const title of [IDLE, RESPONDING, CONFIRMING]) {
+      expect(resolveAgentIdentityFrameType(title)).toBe('qwen-code')
+    }
+    expect(getAgentLabel(IDLE)).toBe('Qwen Code')
+    expect(resolveTerminalTitleAgentType(IDLE)).toBe('qwen-code')
+  })
+
+  // Why: this is the whole bug — a responding pane was resolving to Claude because
+  // `◐` is a quarter-circle spinner and nothing else claimed the title first.
+  it('stops a responding Qwen pane from being attributed to Claude', () => {
+    expect(getAgentLabel(RESPONDING)).toBe('Qwen Code')
+    expect(resolveTerminalTitleAgentType(RESPONDING)).toBe('qwen-code')
+    expect(isClaudeIdentityFrameTitle(RESPONDING)).toBe(false)
+  })
+
+  it('maps the declared glyphs to status, including the ✳ that means idle for Claude', () => {
+    expect(detectAgentStatusFromTitle(IDLE)).toBe('idle')
+    expect(detectAgentStatusFromTitle(RESPONDING)).toBe('working')
+    expect(detectAgentStatusFromTitle(CONFIRMING)).toBe('permission')
+    // Why: the same glyph must keep meaning idle for the agent that declares no glyphs.
+    expect(detectAgentStatusFromTitle('✳ Claude Code')).toBe('idle')
+  })
+
+  it('rejects the name in task text, a path, or a hyphenated compound', () => {
+    for (const title of [
+      'qwen-code-fixtures ready',
+      '~/qwen/working',
+      'src/qwen/index.ts',
+      'port the qwen prompt'
+    ]) {
+      expect(resolveAgentIdentityFrameType(title)).toBeNull()
+      expect(detectAgentStatusFromTitle(title)).toBeNull()
+    }
+  })
+
+  it('keeps Claude task text that mentions qwen as Claude', () => {
+    expect(getAgentLabel('⠋ ask qwen about the parser')).toBe('Claude Code')
+    expect(resolveTerminalTitleAgentType('⠋ ask qwen about the parser')).toBe('claude')
+  })
+
+  // Why: the context suffix must not swallow arbitrary trailing prose.
+  it('accepts only a separated context tail, never free-form trailing text', () => {
+    expect(isAgentIdentityFrameTitleFor('Qwen - orca', 'qwen-code')).toBe(true)
+    expect(isAgentIdentityFrameTitleFor('Qwen', 'qwen-code')).toBe(true)
+    expect(isAgentIdentityFrameTitleFor('Qwen fix the parser', 'qwen-code')).toBe(false)
+    expect(isAgentIdentityFrameTitleFor('Qwen-orca', 'qwen-code')).toBe(false)
+  })
+
+  // Why: the registry is shared — prove the neighbours it already carried still hold.
+  it('leaves the agents already in the registry unchanged', () => {
+    expect(resolveAgentIdentityFrameType('Cline')).toBe('cline')
+    expect(detectAgentStatusFromTitle('Cline')).toBe('idle')
+    expect(resolveAgentIdentityFrameType('Claude Code')).toBe('claude')
+    expect(isClaudeIdentityFrameTitle('zsh | ⠋ Claude Code')).toBe(true)
+    // Why: a context suffix is opt-in; cline must not start accepting `Cline - foo`.
+    expect(isAgentIdentityFrameTitleFor('Cline - the parser', 'cline')).toBe(false)
+    expect(AGENT_IDENTITY_FRAMES.amp).toBeUndefined()
+  })
+})
