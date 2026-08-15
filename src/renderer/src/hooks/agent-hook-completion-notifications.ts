@@ -281,12 +281,18 @@ export function observeAgentHookCompletionForNotification({
   payload: AgentCompletionStatusSnapshot
   seedOnly?: boolean
 }): void {
-  pruneClosedPaneCoordinators()
-  if (!paneCanReceiveHookCompletion(paneKey)) {
-    return
+  // Why: replay seeds already passed indexed snapshot ownership; re-resolving every row makes startup batches quadratic.
+  if (seedOnly !== true) {
+    pruneClosedPaneCoordinators()
+    if (!paneCanReceiveHookCompletion(paneKey)) {
+      return
+    }
   }
 
-  const trackingEnabled = syncAgentHookCompletionNotificationSettings()
+  const trackingEnabled =
+    seedOnly === true
+      ? isAgentTaskCompleteTrackingEnabled()
+      : syncAgentHookCompletionNotificationSettings()
 
   let entry = coordinatorsByPaneKey.get(paneKey)
   if (!entry || entry.worktreeId !== worktreeId) {

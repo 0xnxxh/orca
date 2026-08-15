@@ -1574,6 +1574,70 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).toHaveBeenCalledTimes(2)
   })
 
+  it.each(['pty-first', 'host-first'] as const)(
+    'releases stamped fallback dedupe when the next turn arrives %s',
+    (workingOrder) => {
+      const dispatchCompletion = vi.fn()
+      const localCoordinator = createAgentCompletionCoordinator({
+        paneKey: 'tab-1:leaf-1',
+        statusLane: 'pty',
+        getPtyId: () => 'pty-1',
+        getSettings: () => null,
+        inspectProcess: vi.fn(),
+        dispatchCompletion,
+        isLive: () => true
+      })
+      const hostCoordinator = createAgentCompletionCoordinator({
+        paneKey: 'tab-1:leaf-1',
+        statusLane: 'hook',
+        getPtyId: () => 'pty-1',
+        getSettings: () => null,
+        inspectProcess: vi.fn(),
+        dispatchCompletion,
+        isLive: () => true
+      })
+      const observeHostNextTurn = () =>
+        hostCoordinator.observeHookStatus({
+          state: 'working',
+          prompt: 'second turn',
+          agentType: 'claude',
+          stateStartedAt: 2_000
+        })
+
+      localCoordinator.observeHookStatus({
+        state: 'working',
+        prompt: 'first turn',
+        agentType: 'claude',
+        stateStartedAt: 5_000
+      })
+      hostCoordinator.observeHookStatus({
+        state: 'working',
+        prompt: 'first turn',
+        agentType: 'claude',
+        stateStartedAt: 2_000
+      })
+      hostCoordinator.observeHookStatus({
+        state: 'working',
+        prompt: 'first turn',
+        agentType: 'claude',
+        stateStartedAt: 2_000,
+        turnCompletedAt: 2_500
+      })
+      expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+      if (workingOrder === 'pty-first') {
+        localCoordinator.observeTitleWorking()
+        observeHostNextTurn()
+      } else {
+        observeHostNextTurn()
+        localCoordinator.observeTitleWorking()
+      }
+      localCoordinator.observeClassifiedTitleCompletion('Claude done')
+
+      expect(dispatchCompletion).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it.each(['before', 'after'] as const)(
     'keeps sibling tail replay suppression when the pane remounts %s its all-clear',
     (remountOrder) => {

@@ -3386,7 +3386,7 @@ export function useIpcEvents(): void {
             : undefined
       }
       const applyPostCommitNotification = (): void => {
-        if (options?.replay !== true && statusWorktreeId) {
+        if (statusWorktreeId && (options?.replay !== true || resolvedPayload.state === 'working')) {
           // Why: local Codex/Claude hooks arrive via this main-process IPC path, not the PTY OSC fallback, so task-complete notifications must observe accepted hook state here too.
           const notificationPayload =
             typeof data.stateStartedAt === 'number'
@@ -3395,7 +3395,8 @@ export function useIpcEvents(): void {
           observeAgentHookCompletionForNotification({
             paneKey,
             worktreeId: statusWorktreeId,
-            payload: notificationPayload
+            payload: notificationPayload,
+            ...(options?.replay === true ? { seedOnly: true } : {})
           })
         }
       }

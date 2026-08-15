@@ -9160,6 +9160,7 @@ describe('useIpcEvents agent status snapshot integration', () => {
 
   it('queues replayed startup snapshots until the pane hydrates', async () => {
     const setAgentStatus = vi.fn()
+    const observeAgentHookCompletionForNotification = vi.fn()
     const subscribeListenerRef: { current: StoreSubscribeListener | null } = { current: null }
     let resolveSnapshot!: (entries: AgentStatusSetData[]) => void
     const getSnapshot = vi.fn(
@@ -9190,6 +9191,12 @@ describe('useIpcEvents agent status snapshot integration', () => {
         getState: () => storeState
       }
     }))
+    vi.doMock('./agent-hook-completion-notifications', () => ({
+      observeAgentHookCompletionForNotification,
+      resetAgentHookCompletionNotificationCoordinators: vi.fn(),
+      syncAgentHookCompletionNotificationSettings: vi.fn(),
+      syncAgentHookCompletionNotificationsForStoreUpdate: vi.fn()
+    }))
     stubAuxiliaryModules()
     vi.stubGlobal(
       'window',
@@ -9215,6 +9222,7 @@ describe('useIpcEvents agent status snapshot integration', () => {
         agentType: 'codex',
         toolName: 'Bash',
         toolInput: 'pnpm test',
+        turnCompletedAt: 1_699_999_999_500,
         terminalHandle: 'term-future',
         receivedAt: 1_700_000_000_000,
         stateStartedAt: 1_699_999_999_000
@@ -9253,6 +9261,17 @@ describe('useIpcEvents agent status snapshot integration', () => {
       { updatedAt: 1_700_000_000_000, stateStartedAt: 1_699_999_999_000 },
       expectWorktreeRouting('wt-1'),
       undefined
+    )
+    expect(observeAgentHookCompletionForNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paneKey: FUTURE_PANE_KEY,
+        worktreeId: 'wt-1',
+        seedOnly: true,
+        payload: expect.objectContaining({
+          state: 'working',
+          turnCompletedAt: 1_699_999_999_500
+        })
+      })
     )
   })
 

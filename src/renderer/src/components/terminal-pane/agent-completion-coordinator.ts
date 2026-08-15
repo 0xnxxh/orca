@@ -1035,6 +1035,12 @@ export function createAgentCompletionCoordinator(
       const pendingStampedTail = pendingStampedTailByPaneKey.get(options.paneKey)
       if (pendingStampedTail?.originLane === coordinatorLane) {
         pendingStampedTailByPaneKey.delete(options.paneKey)
+        if (
+          lastCompletionIdentityByPaneKey.get(options.paneKey)?.lastTurnCompletedAtNotified ===
+          pendingStampedTail.turnCompletedAt
+        ) {
+          lastCompletionIdentityByPaneKey.delete(options.paneKey)
+        }
       }
       recordWorkingBoundary(payload.stateStartedAt)
       clearPendingHookDone()
