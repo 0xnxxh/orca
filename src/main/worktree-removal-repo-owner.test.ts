@@ -4,7 +4,10 @@
  * named host. The destructive RPC boundary rejects missing qualifiers earlier.
  */
 import { describe, expect, it } from 'vitest'
-import { resolveWorktreeRemovalRepoOwner } from './worktree-removal-repo-owner'
+import {
+  resolveWorktreeRemovalMetadata,
+  resolveWorktreeRemovalRepoOwner
+} from './worktree-removal-repo-owner'
 import type { Repo } from '../shared/repo-types'
 
 function makeRepo(overrides: Partial<Repo> & Pick<Repo, 'id'>): Repo {
@@ -51,5 +54,46 @@ describe('resolveWorktreeRemovalRepoOwner', () => {
       kind: 'missing'
     })
     expect(resolveWorktreeRemovalRepoOwner(makeStore([]), 'repo1')).toEqual({ kind: 'missing' })
+  })
+
+  it('does not borrow destructive metadata from a colliding host', () => {
+    const localMeta = { hostId: 'local', preserveBranchOnDelete: true }
+    const metadataStore = {
+      getRepos: () => [localRepo, sshRepo],
+      getWorktreeMeta: () => localMeta
+    }
+
+    expect(
+      resolveWorktreeRemovalMetadata(
+        metadataStore as never,
+        'repo1',
+        'repo1::/shared/worktree',
+        'ssh:ssh-1'
+      )
+    ).toBeUndefined()
+    expect(
+      resolveWorktreeRemovalMetadata(
+        metadataStore as never,
+        'repo1',
+        'repo1::/shared/worktree',
+        'local'
+      )
+    ).toBe(localMeta)
+  })
+
+  it('keeps legacy persisted host metadata when the repo id has one owner', () => {
+    const runtimeMeta = { hostId: 'runtime:env-1', preserveBranchOnDelete: true }
+
+    expect(
+      resolveWorktreeRemovalMetadata(
+        {
+          getRepos: () => [localRepo],
+          getWorktreeMeta: () => runtimeMeta
+        } as never,
+        'repo1',
+        'repo1::/shared/worktree',
+        'local'
+      )
+    ).toBe(runtimeMeta)
   })
 })

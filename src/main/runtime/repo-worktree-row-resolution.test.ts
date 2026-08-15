@@ -35,6 +35,7 @@ function gitWorktree(path: string): GitWorktreeInfo {
 }
 
 function createDeps(repos: Repo[]): RepoWorktreeRowDeps & {
+  metaById: Record<string, WorktreeMeta>
   scanRepo: ReturnType<typeof vi.fn<RepoWorktreeRowDeps['scanRepo']>>
   listFolderWorkspaces: ReturnType<typeof vi.fn<RepoWorktreeRowDeps['listFolderWorkspaces']>>
 } {
@@ -56,7 +57,7 @@ function createDeps(repos: Repo[]): RepoWorktreeRowDeps & {
     worktrees: [gitWorktree(owner.id === 'unrelated' ? '/unrelated/worktree' : '/same/worktree')]
   }))
   const listFolderWorkspaces = vi.fn<RepoWorktreeRowDeps['listFolderWorkspaces']>(() => [])
-  return { store, scanRepo, listFolderWorkspaces }
+  return { store, metaById, scanRepo, listFolderWorkspaces }
 }
 
 describe('host-qualified scoped worktree resolution', () => {
@@ -83,6 +84,31 @@ describe('host-qualified scoped worktree resolution', () => {
       hostId: 'local'
     })
     expect(deps.scanRepo.mock.calls.map(([owner]) => owner)).toEqual([owners[0]])
+  })
+
+  it('does not project another host metadata onto a colliding scoped row', async () => {
+    const deps = createDeps([
+      repo('shared', '/local/repo', { executionHostId: 'local' }),
+      repo('shared', '/remote/repo', {
+        connectionId: 'builder',
+        executionHostId: 'ssh:builder'
+      })
+    ])
+    const worktreeId = 'shared::/same/worktree'
+    deps.metaById[worktreeId] = {
+      displayName: 'local workspace',
+      hostId: 'local',
+      instanceId: 'local-instance',
+      preserveBranchOnDelete: true
+    } as WorktreeMeta
+
+    await expect(
+      resolveScopedWorktreeIdRow(deps, worktreeId, 'ssh:builder')
+    ).resolves.toMatchObject({
+      id: worktreeId,
+      hostId: 'ssh:builder',
+      displayName: 'feature'
+    })
   })
 
   it.each([

@@ -1,5 +1,6 @@
 import { getRepoExecutionHostId, type ExecutionHostId } from '../shared/execution-host'
 import type { Repo } from '../shared/repo-types'
+import type { WorktreeMeta } from '../shared/worktree/meta-types'
 
 export type WorktreeRemovalRepoSource = {
   getRepos: () => readonly Repo[]
@@ -36,4 +37,23 @@ export function resolveWorktreeRemovalRepoOwner(
   return legacyMatch && (!hostId || getRepoExecutionHostId(legacyMatch) === hostId)
     ? { kind: 'resolved', repo: legacyMatch }
     : { kind: 'missing' }
+}
+
+export function resolveWorktreeRemovalMetadata(
+  store: Pick<WorktreeRemovalRepoSource, 'getRepos'> & {
+    getWorktreeMeta: (worktreeId: string) => WorktreeMeta | undefined
+  },
+  repoId: string,
+  worktreeId: string,
+  hostId: ExecutionHostId
+): WorktreeMeta | undefined {
+  const meta = store.getWorktreeMeta(worktreeId)
+  if (!meta) {
+    return undefined
+  }
+  const repoOwnerCount = store.getRepos().filter((repo) => repo.id === repoId).length
+  if (repoOwnerCount <= 1) {
+    return meta
+  }
+  return meta.hostId === hostId ? meta : undefined
 }

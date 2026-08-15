@@ -161,7 +161,7 @@ function rowNames(): string[] {
 }
 
 function rowCheckbox(name: string): HTMLElement | null {
-  return container?.querySelector<HTMLElement>(`[aria-label="Select ${name}"]`) ?? null
+  return container?.querySelector<HTMLElement>(`[aria-label^="Select ${name} on "]`) ?? null
 }
 
 function cachedFleet(): WorkspaceCleanupScanResult {

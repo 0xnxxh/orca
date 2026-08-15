@@ -120,15 +120,24 @@ export async function resolveRepoWorktreeRows(
   if (scan.ok) {
     pruneLineageForMissingRepoWorktrees(store, repo, gitWorktrees)
   }
+  const expectedHostId = getRepoExecutionHostId(repo)
+  const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
   return gitWorktrees.map((gitWorktree) => {
     const worktreeId = `${repo.id}::${gitWorktree.path}`
     // Why: lineage validation needs a durable instance ID even when the runtime sees a workspace before renderer discovery-stamp.
     const existingMeta = metaById[worktreeId]
-    const meta =
-      existingMeta && existingMeta.instanceId ? existingMeta : store.setWorktreeMeta(worktreeId, {})
+    const ownedExistingMeta =
+      existingMeta && (repoOwnerCount === 1 || existingMeta.hostId === expectedHostId)
+        ? existingMeta
+        : undefined
+    const meta = ownedExistingMeta?.instanceId
+      ? ownedExistingMeta
+      : ownedExistingMeta || (!existingMeta && repoOwnerCount === 1)
+        ? store.setWorktreeMeta(worktreeId, {})
+        : undefined
     const merged = {
       ...mergeWorktree(repo.id, gitWorktree, meta, repo.displayName),
-      hostId: existingMeta?.hostId ?? meta?.hostId ?? getRepoExecutionHostId(repo)
+      hostId: repoOwnerCount === 1 ? (existingMeta?.hostId ?? expectedHostId) : expectedHostId
     }
     return {
       ...merged,

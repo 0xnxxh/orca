@@ -219,7 +219,10 @@ function getRepoForWorktreeRemoval(
   const owner = resolveWorktreeRemovalRepoOwner(store, repoId, hostId)
   return owner.kind === 'resolved' ? owner.repo : undefined
 }
-import { resolveWorktreeRemovalRepoOwner } from '../worktree-removal-repo-owner'
+import {
+  resolveWorktreeRemovalMetadata,
+  resolveWorktreeRemovalRepoOwner
+} from '../worktree-removal-repo-owner'
 import { classifyWorkspaceCreateError } from './workspace-create-error-classifier'
 import { advertisedUrlWatcher } from '../ports/advertised-url-watcher'
 import { localhostWorktreeLabelProxy } from '../localhost-worktree-label-proxy'
@@ -2534,7 +2537,12 @@ export function registerWorktreeHandlers(
             : hasLocalWorktreeGitOptions
               ? await listGitWorktreesStrict(repo.path, localWorktreeGitOptions)
               : await listGitWorktreesStrict(repo.path)
-          const removedMeta = store.getWorktreeMeta(args.worktreeId)
+          const removedMeta = resolveWorktreeRemovalMetadata(
+            store,
+            repoId,
+            args.worktreeId,
+            removalHostId
+          )
           const removedPushTarget = removedMeta?.pushTarget
           const registeredWorktree = findRegisteredDeletableWorktree(
             repo.path,
