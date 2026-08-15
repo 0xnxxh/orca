@@ -889,6 +889,25 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     expect(activateWorkspaceTabPaletteResult).not.toHaveBeenCalled()
   })
 
+  it('keeps the agent badge on an Open Tabs row a query surfaced', async () => {
+    await renderPalette(
+      makeRecentTabState({
+        agentStatusByPaneKey: {
+          [makePaneKey('term-alpha', LEAF_ID)]: makeAgentEntry('term-alpha', 'working', Date.now())
+        }
+      })
+    )
+
+    await act(async () => {
+      setCommandQuery?.('Alpha')
+    })
+    await flushEffects()
+
+    // Why: searching for a tab is exactly when its status matters — the pip must survive the query.
+    expect(getTabRowIds()).toContain('tab-alpha')
+    expect(testContainer.querySelector('[title="Working"]')).not.toBeNull()
+  })
+
   it('keeps create-worktree below the matches it would otherwise outrank', async () => {
     await renderPalette(makeRecentTabState())
 
