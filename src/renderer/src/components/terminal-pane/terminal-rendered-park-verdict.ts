@@ -2,22 +2,15 @@
  * The rendered park verdict for one worktree's terminal tabs.
  *
  * Why a pure module: render and the watcher-sync effect must consume the exact
- * same set, and every gate here must stay a function of committed inputs — the
- * activation-deferred coverage answer in particular goes through a latch so the
- * park/reveal lifecycle's own writes can never flip the verdict that caused
- * them (React #185).
+ * same set. Activation-deferred tabs are already approved for watcher handoff
+ * by Terminal's mount planner; a failed handoff reveals the tab monotonically
+ * instead of changing this render verdict (React #185).
  */
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
 import {
   findActivityTerminalPortal,
   type ActivityTerminalPortalTarget
 } from '../activity/activity-terminal-portal'
-import { canWatcherCoverParkedTerminalTab } from './terminal-parked-tab-watchers'
-import {
-  getDeferredParkMaterialKey,
-  latchDeferredParkCoverage,
-  type DeferredParkCoverageLatch
-} from './terminal-activation-deferred-park-latch'
 
 type TerminalOverlayTabAssignment = {
   groupId: string
@@ -36,11 +29,6 @@ export function selectRenderedParkedTerminalTabIds(args: {
   evictionExemptTerminalTabIds: ReadonlySet<string>
   shouldMeasureHiddenWorktree: boolean
   activationDeferredMountTabIds: ReadonlySet<string> | null | undefined
-  deferredParkCoverageLatch: DeferredParkCoverageLatch
-  deferredParkRestorePolicy: {
-    sshParkingEnabled: boolean
-    pairedRuntimeParkingEnvironmentIds: ReadonlySet<string>
-  }
 }): Set<string> {
   const parked = new Set<string>()
   for (const terminalTab of args.terminalTabs) {
@@ -75,20 +63,7 @@ export function selectRenderedParkedTerminalTabIds(args: {
     // Why: activation-deferred tabs render no pane regardless of the park
     // policy, so watchers must own their side effects immediately. Targeted
     // restrictions do not enter this set or add a new eager watcher burst.
-    // Why latched: the coverage predicate reads state the park/reveal
-    // lifecycle rewrites (captures, layouts), so a per-render re-ask lets the
-    // unmount a verdict caused flip the verdict back (React #185); only
-    // material identity or restore-policy changes re-open the verdict.
-    if (
-      args.activationDeferredMountTabIds?.has(terminalTab.id) &&
-      !hasActivityTerminalPortal &&
-      latchDeferredParkCoverage({
-        latch: args.deferredParkCoverageLatch,
-        tabId: terminalTab.id,
-        materialKey: getDeferredParkMaterialKey(terminalTab, args.deferredParkRestorePolicy),
-        evaluateCoverage: () => canWatcherCoverParkedTerminalTab(args.worktreeId, terminalTab)
-      })
-    ) {
+    if (args.activationDeferredMountTabIds?.has(terminalTab.id) && !hasActivityTerminalPortal) {
       parked.add(terminalTab.id)
     }
   }

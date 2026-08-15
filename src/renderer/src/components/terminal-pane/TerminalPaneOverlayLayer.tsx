@@ -32,7 +32,8 @@ const TerminalPaneOverlayLayer = memo(function TerminalPaneOverlayLayer({
   shouldMeasureHiddenWorktree = false,
   activityTerminalPortals = EMPTY_ACTIVITY_PORTALS,
   backgroundMountTabIds = null,
-  activationDeferredMountTabIds = null
+  activationDeferredMountTabIds = null,
+  onActivationDeferredWatcherHandoffFailed
 }: {
   worktreeId: string
   worktreePath: string
@@ -46,6 +47,7 @@ const TerminalPaneOverlayLayer = memo(function TerminalPaneOverlayLayer({
   backgroundMountTabIds?: ReadonlySet<string> | null
   /** Cold-activation deferred tabs receive immediate parked watcher coverage. */
   activationDeferredMountTabIds?: ReadonlySet<string> | null
+  onActivationDeferredWatcherHandoffFailed?: (tabId: string) => void
 }): React.JSX.Element | null {
   const { terminalTabs, unifiedTabs, groups, activeGroupId } = useAppStore(
     useShallow((state) => ({
@@ -123,7 +125,8 @@ const TerminalPaneOverlayLayer = memo(function TerminalPaneOverlayLayer({
     isForceParked,
     shouldMeasureHiddenWorktree,
     activityTerminalPortals,
-    activationDeferredMountTabIds
+    activationDeferredMountTabIds,
+    onActivationDeferredWatcherHandoffFailed
   })
 
   if (!worktreePath) {

@@ -47,6 +47,7 @@ const harness = vi.hoisted(() => ({
   slotRenders: 0,
   slotMounts: 0,
   restoreWrites: 0,
+  handoffFailures: [] as string[],
   watcherEntries: new Set<string>(),
   crumbNames: [] as string[],
   crumbs: [] as { name: string; data?: Record<string, unknown> }[]
@@ -205,6 +206,10 @@ type HarnessStore = {
 
 const harnessStore = useAppStore as unknown as HarnessStore
 
+function recordHandoffFailure(tabId: string): void {
+  harness.handoffFailures.push(tabId)
+}
+
 function terminalTab(id: string): TerminalTab {
   return {
     id,
@@ -249,6 +254,7 @@ function renderRevealStormLayer(
             isWorktreeActive={true}
             coldParkTerminalPanes={false}
             activationDeferredMountTabIds={options.activationDeferredMountTabIds}
+            onActivationDeferredWatcherHandoffFailed={recordHandoffFailure}
             {...(options.activityTerminalPortals
               ? { activityTerminalPortals: options.activityTerminalPortals }
               : {})}
@@ -277,6 +283,7 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
     harness.slotRenders = 0
     harness.slotMounts = 0
     harness.restoreWrites = 0
+    harness.handoffFailures.length = 0
     harness.watcherEntries.clear()
     harness.crumbNames.length = 0
     const tabs = TAB_IDS.map(terminalTab)
@@ -356,8 +363,8 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
     expect(harness.watcherEntries.size).toBe(0)
   })
 
-  // Why: the latch must hold the REAL verdict — an uncoverable tab (pty-less
-  // leaf / no layout) claimed by watchers would silently drop its bytes.
+  // Why: an uncoverable deferred tab must reveal through the mount owner;
+  // claiming it for watchers would silently drop its bytes.
   it('keeps an uncoverable deferred tab out of watcher ownership', () => {
     harness.coverageDenied = true
     root = createRoot(container)
@@ -367,8 +374,7 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
 
     expect(thrown).toBeNull()
     expect(harness.watcherEntries.has(DEFERRED_TAB_ID)).toBe(false)
-    // The unparked tab mounts a pane instead of parking into darkness.
-    expect(harness.slotMounts).toBeGreaterThan(0)
+    expect(harness.handoffFailures).toContain(DEFERRED_TAB_ID)
     expect(harness.syncCalls).toBeLessThan(10)
   })
 
@@ -394,25 +400,22 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
     expect(harness.watcherEntries.has(DEFERRED_TAB_ID)).toBe(false)
   })
 
-  // Why: the latch may not outlive deferral — a stale FALSE surviving a
-  // reveal → re-defer cycle would leave the re-deferred tab unmounted with no
-  // watcher (zero-watcher darkness), the failure the coverage gate exists for.
+  // Why: a rejected handoff must be retried after a later deferral episode.
   it('re-evaluates fresh when a revealed tab is deferred again', () => {
     harness.coverageDenied = true
     root = createRoot(container)
-    // Deferred while uncoverable: latched FALSE, no watcher, pane mounts.
+    // Deferred while uncoverable: no watcher, and the mount owner is notified.
     let thrown = renderRevealStormLayer(root, {
       activationDeferredMountTabIds: new Set([DEFERRED_TAB_ID])
     })
     expect(thrown).toBeNull()
     expect(harness.watcherEntries.has(DEFERRED_TAB_ID)).toBe(false)
 
-    // Revealed: leaves the deferred set, which prunes its latch entry.
+    // Revealed: leaves the deferred set.
     thrown = renderRevealStormLayer(root, { activationDeferredMountTabIds: null })
     expect(thrown).toBeNull()
 
-    // Re-deferred after coverage returns (same pty/generation/policy → same
-    // material key): the verdict must be re-asked, not replayed.
+    // Re-deferred after coverage returns: the handoff must be retried.
     harness.coverageDenied = false
     harness.coverageIgnoresWatcherState = true
     thrown = renderRevealStormLayer(root, {
@@ -422,10 +425,9 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
     expect(harness.watcherEntries.has(DEFERRED_TAB_ID)).toBe(true)
   })
 
-  // Why: the material key must be wired to the LIVE restore policy — the SSH
-  // kill switch and paired-runtime capability changes are the documented
-  // re-open edges, and each re-key must settle in one evaluation, not loop.
-  it('re-opens the latched verdict on restore-policy changes and settles', () => {
+  // Why: restore-policy changes must revalidate watcher ownership without
+  // changing the render verdict back and forth.
+  it('revalidates the handoff on restore-policy changes and settles', () => {
     root = createRoot(container)
     const thrown = renderRevealStormLayer(root, {
       activationDeferredMountTabIds: new Set([DEFERRED_TAB_ID])
@@ -437,8 +439,8 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     let policyThrow: unknown = null
     try {
-      // SSH parking kill switch: re-keys the latch; the fresh evaluation sees
-      // the watcher-feedback verdict (false) and releases the tab.
+      // SSH parking kill switch: the fresh evaluation sees the
+      // watcher-feedback verdict (false) and rejects the handoff.
       act(() => {
         harnessStore.setState({ settings: { terminalSshViewParking: false } })
       })
@@ -453,7 +455,7 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
     const consoleError2 = vi.spyOn(console, 'error').mockImplementation(() => {})
     let pairedThrow: unknown = null
     try {
-      // Paired-runtime capability change: re-keys again; coverage now passes
+      // Paired-runtime capability change: coverage now passes
       // (no watcher entry) and the tab returns to watcher ownership.
       act(() => {
         harnessStore.setState({
@@ -468,7 +470,7 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
     consoleError2.mockRestore()
     expect(pairedThrow).toBeNull()
     expect(harness.watcherEntries.has(DEFERRED_TAB_ID)).toBe(true)
-    // Each re-key settles instead of re-entering the storm.
+    // Each policy transition settles instead of re-entering the storm.
     expect(harness.syncCalls - syncCallsBeforePairedChange).toBeLessThan(10)
     expect(harness.slotMounts).toBeLessThan(20)
   })

@@ -21,10 +21,6 @@ import {
   type ParkVerdictFlipRecord
 } from './terminal-park-verdict-flip-telemetry'
 import { withholdUnparkableTerminalTabs } from './terminal-cold-park-withheld-tabs'
-import {
-  pruneDeferredParkCoverageLatch,
-  type DeferredParkCoverageLatch
-} from './terminal-activation-deferred-park-latch'
 import { selectRenderedParkedTerminalTabIds } from './terminal-rendered-park-verdict'
 import { getTerminalParkingPolicyOverrides } from './terminal-parking-e2e-overrides'
 import {
@@ -78,6 +74,7 @@ export function useTerminalTabColdParking(args: {
   /** Tabs cold activation keeps unmounted — parked-equivalent for watcher
    *  purposes. Targeted background restrictions intentionally stay bounded. */
   activationDeferredMountTabIds?: ReadonlySet<string> | null
+  onActivationDeferredWatcherHandoffFailed?: (tabId: string) => void
 }): ReadonlySet<string> {
   const {
     worktreeId,
@@ -89,7 +86,8 @@ export function useTerminalTabColdParking(args: {
     isForceParked = false,
     shouldMeasureHiddenWorktree,
     activityTerminalPortals,
-    activationDeferredMountTabIds
+    activationDeferredMountTabIds,
+    onActivationDeferredWatcherHandoffFailed
   } = args
   const terminalParkingInputsKey = getTerminalParkingInputsKey(terminalTabs)
   const terminalParkingAssignmentsKey = getTerminalParkingAssignmentsKey(assignments)
@@ -119,8 +117,6 @@ export function useTerminalTabColdParking(args: {
     [sleepingAgentSessionsByPaneKey, worktreeId]
   )
   const terminalTabHiddenSinceRef = useRef(new Map<string, number>())
-  // Why a ref: latch state must survive renders but never feed dependency arrays.
-  const deferredParkCoverageLatchRef = useRef<DeferredParkCoverageLatch>(new Map())
   // Why: view switches hide every tab at once, so the park clock cannot rank them.
   const terminalTabActivationOrderRef = useRef(createTerminalTabActivationOrder())
   // Why (shared measure-clock contract with Terminal.tsx): tab hiddenSince
@@ -300,12 +296,7 @@ export function useTerminalTabColdParking(args: {
       sleepingRecordOwnedTabIds,
       evictionExemptTerminalTabIds,
       shouldMeasureHiddenWorktree,
-      activationDeferredMountTabIds,
-      deferredParkCoverageLatch: deferredParkCoverageLatchRef.current,
-      deferredParkRestorePolicy: {
-        sshParkingEnabled: terminalSshParkingEnabled,
-        pairedRuntimeParkingEnvironmentIds
-      }
+      activationDeferredMountTabIds
     })
   }, [
     activityTerminalPortals,
@@ -315,23 +306,11 @@ export function useTerminalTabColdParking(args: {
     activationDeferredMountTabIds,
     evictionExemptTerminalTabIds,
     isWorktreeActive,
-    pairedRuntimeParkingEnvironmentIds,
     shouldMeasureHiddenWorktree,
     sleepingRecordOwnedTabIds,
-    terminalSshParkingEnabled,
     terminalTabs,
     worktreeId
   ])
-
-  // Why: a latch may not outlive its tab's deferral — a revealed tab must
-  // re-evaluate fresh if it is ever deferred again.
-  useEffect(() => {
-    pruneDeferredParkCoverageLatch(
-      deferredParkCoverageLatchRef.current,
-      activationDeferredMountTabIds,
-      new Set(terminalTabs.map((terminalTab) => terminalTab.id))
-    )
-  }, [activationDeferredMountTabIds, terminalTabs])
 
   // Why: observation only — records whether the *rendered* park verdict churns,
   // so a crash bundle can confirm or refute a park-flip update loop. Watching
@@ -357,7 +336,12 @@ export function useTerminalTabColdParking(args: {
     assignmentsKey: terminalParkingAssignmentsKey,
     inputsKey: terminalParkingInputsKey,
     parkedTabIds: parkedTerminalTabIds,
-    activationDeferredMountTabIds
+    activationDeferredMountTabIds,
+    coveragePolicyKey: JSON.stringify([
+      terminalSshParkingEnabled,
+      Array.from(pairedRuntimeParkingEnvironmentIds).sort()
+    ]),
+    onActivationDeferredWatcherHandoffFailed
   })
 
   return parkedTerminalTabIds
