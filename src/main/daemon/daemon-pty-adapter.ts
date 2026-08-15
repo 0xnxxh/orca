@@ -1064,7 +1064,21 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
   }
 
-  write(id: string, data: string): void {
+  write(id: string, data: string): boolean {
+    const recoverable = this.prepareWrite(id)
+    return this.finishWrite(id, this.client.notify('write', { sessionId: id, data }), recoverable)
+  }
+
+  async writeWithSettlement(id: string, data: string): Promise<boolean> {
+    const recoverable = this.prepareWrite(id)
+    return this.finishWrite(
+      id,
+      await this.client.notifyWithSettlement('write', { sessionId: id, data }),
+      recoverable
+    )
+  }
+
+  private prepareWrite(id: string): boolean {
     this.markSessionDirty(id)
     // Why recoverable and not just active: rejecting a write asks the pane to remount,
     // which only helps if this endpoint can come back. A legacy adapter has no respawn,
@@ -1080,12 +1094,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
       this.reconnectAfterWriteFailure()
       throw new PtyWriteUnavailableError(`Daemon PTY "${id}" is awaiting recovery`)
     }
-    const delivered = this.client.notify('write', { sessionId: id, data })
+    return recoverable
+  }
+
+  private finishWrite(id: string, delivered: boolean, recoverable: boolean): boolean {
     if (!delivered && recoverable) {
       this.sessionsAwaitingDaemonRecovery.add(id)
       this.reconnectAfterWriteFailure()
       throw new PtyWriteUnavailableError(`Daemon PTY "${id}" is awaiting recovery`)
     }
+    return delivered
   }
 
   resize(id: string, cols: number, rows: number): void {
