@@ -13097,6 +13097,24 @@
           "result": "passed",
           "durationSeconds": 140,
           "summary": "Ran as --label candidate-w9 at the final branch head, after ownership moved to a definitive-refusal rule, after the merge of main, and after the probe began rejecting a malformed endpoint. 6/6 green: duplicate serve 98ms, duplicate serve with a reachable owner 88ms and --recipe-json 96ms all exit 3 without spawning, open classified in 352ms, and a fresh sandboxed serve failed once carrying the diagnostic."
+        },
+        {
+          "date": "2026-08-15",
+          "runner": "local",
+          "platform": "macos",
+          "command": "node config/scripts/run-macos-launch-abort-oracle.mjs --label <arm> --electron <arm-electron> --cli <arm-cli> [--app-root <arm-root>]",
+          "result": "failed",
+          "durationSeconds": 120,
+          "summary": "Ran as --label disabled-c0a7754 against a worktree built at main c0a775454a, the branch's merge base. Because the branch diff against that commit is exactly this change, the same build is both the refreshed main arm and the fix-disabled arm. It failed the same four scenarios: duplicate serve 537ms and --recipe-json 404ms each launched a second Electron main that aborted with exit 1, open sat 15236ms with no machine-readable cause, and a fresh sandboxed serve aborted with no diagnostic. The two unsandboxed scenarios stayed green, as on every arm."
+        },
+        {
+          "date": "2026-08-15",
+          "runner": "local",
+          "platform": "macos",
+          "command": "node config/scripts/run-macos-launch-abort-oracle.mjs --label <arm> --electron <arm-electron> --cli <arm-cli> [--app-root <arm-root>]",
+          "result": "passed",
+          "durationSeconds": 140,
+          "summary": "Ran as --label candidate-w10 at the final branch head, back to back with the disabled-c0a7754 arm on the same machine. 6/6 green: duplicate serve 127ms, duplicate serve with a reachable owner 88ms and --recipe-json 96ms all exit 3 without spawning, open classified in 613ms, and a fresh sandboxed serve failed once carrying the diagnostic."
         }
       ],
       "runtimeBudget": {
