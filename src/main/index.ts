@@ -1557,6 +1557,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
       providerSessionOnly,
       promptInteractionKey,
       restoredUnconfirmed,
+      observation,
       isReplay
     }) => {
       if (mainWindow?.isDestroyed()) {
@@ -1574,6 +1575,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
           receivedAt,
           stateStartedAt,
           ...(providerSession ? { providerSession } : {}),
+          ...(observation ? { observation } : {}),
           providerSessionOnly: true
         })
         return
@@ -1603,6 +1605,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
         ...(providerSession ? { providerSession } : {}),
         ...(promptInteractionKey ? { promptInteractionKey } : {}),
         ...(restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
+        ...(observation ? { observation } : {}),
         ...(orchestration ? { orchestration } : {})
       }
       mainWindow?.webContents.send('agentStatus:set', statusEvent)
