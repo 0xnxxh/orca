@@ -151,18 +151,20 @@ export function useSourceControlSelection({
       setAnchorKey(key)
       onOpenDiffRef.current(entry)
     } else if (isCmdOrCtrl) {
-      // Toggle individual
-      setSelectedKeys((prev) => {
-        const next = new Set(prev)
-        if (next.has(key)) {
+      if (selectedKeysRef.current.has(key)) {
+        setSelectedKeys((prev) => {
+          const next = new Set(prev)
           next.delete(key)
-          // Keep anchorKey as is
-        } else {
+          return next
+        })
+      } else {
+        setSelectedKeys((prev) => {
+          const next = new Set(prev)
           next.add(key)
-          setAnchorKey(key)
-        }
-        return next
-      })
+          return next
+        })
+        setAnchorKey(key)
+      }
     } else {
       // Plain click
       setSelectedKeys((prev) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { resolveSourceControlGroupOrder } from '../listing/section-order'
 import { getNextSourceControlViewMode } from './header-toolbar'
 import { normalizeSourceControlViewMode } from '../commit/commit-drafts'
@@ -54,8 +54,10 @@ export function useSourceControlPanelViewState({
     })
   }, [settings, sourceControlViewMode, updateSettings])
 
-  // Why: reset worktree-specific state manually instead of key-remounting on switch (which caused a Windows IPC storm).
-  useEffect(() => {
+  // Why: reset during render instead of key-remounting on switch (which caused a Windows IPC storm).
+  const [viewStateWorktreeId, setViewStateWorktreeId] = useState(activeWorktreeId)
+  if (viewStateWorktreeId !== activeWorktreeId) {
+    setViewStateWorktreeId(activeWorktreeId)
     setFilterExpanded(false)
     setCollapsedSections(createDefaultCollapsedSections())
     setCollapsedTreeDirs(new Set())
@@ -64,7 +66,7 @@ export function useSourceControlPanelViewState({
     // Why: don't reset defaultBaseRef here — it's repo-scoped (resolved on activeRepo change); resetting would clobber non-main defaults.
     setFilterQuery('')
     // Why: don't reset commit-in-flight state — it's per-worktree; resetting would re-enable Commit for an incoming worktree mid-commit.
-  }, [activeWorktreeId, resetPendingDiffCommentsClear])
+  }
 
   const toggleSection = useCallback((section: string) => {
     setCollapsedSections((prev) => {

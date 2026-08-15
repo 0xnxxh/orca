@@ -63,7 +63,7 @@ export function GitHistoryGraphSvg({
       if (index !== circleIndex) {
         paths.push(
           <GraphPath
-            key={`base-${index}`}
+            key={`base-${inputSwimlanes[index]!.id}`}
             color={color}
             d={[
               `M ${SWIMLANE_WIDTH * (index + 1)} 0`,
@@ -85,7 +85,7 @@ export function GitHistoryGraphSvg({
       if (index === outputSwimlaneIndex) {
         paths.push(
           <GraphPath
-            key={`vertical-${index}`}
+            key={`vertical-${inputSwimlanes[index]!.id}`}
             color={color}
             d={`M ${SWIMLANE_WIDTH * (index + 1)} 0 V ${SWIMLANE_HEIGHT}`}
           />
@@ -93,7 +93,7 @@ export function GitHistoryGraphSvg({
       } else {
         paths.push(
           <GraphPath
-            key={`shift-${index}-${outputSwimlaneIndex}`}
+            key={`shift-${inputSwimlanes[index]!.id}-${outputSwimlanes[outputSwimlaneIndex]!.id}`}
             color={color}
             d={[
               `M ${SWIMLANE_WIDTH * (index + 1)} 0`,
@@ -122,7 +122,7 @@ export function GitHistoryGraphSvg({
     }
     paths.push(
       <GraphPath
-        key={`merge-parent-${index}`}
+        key={`merge-parent-${parentId}`}
         color={outputSwimlanes[parentOutputIndex]!.color}
         d={[
           `M ${SWIMLANE_WIDTH * parentOutputIndex} ${SWIMLANE_HEIGHT / 2}`,

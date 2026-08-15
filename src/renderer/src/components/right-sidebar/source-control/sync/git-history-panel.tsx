@@ -93,11 +93,13 @@ export function GitHistoryPanel({
 
   // A new history result can reorder or replace commits, so drop any expansion
   // and cached file lists rather than risk showing stale files under a row.
-  useEffect(() => {
+  const [historyResult, setHistoryResult] = useState(result)
+  if (historyResult !== result) {
+    setHistoryResult(result)
     setExpanded(new Set())
     setFilesByCommit({})
     loadedCommitsRef.current = new Set()
-  }, [result])
+  }
 
   const handleToggleExpand = useCallback(
     (item: GitHistoryItem): void => {

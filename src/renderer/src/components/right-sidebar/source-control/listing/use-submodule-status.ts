@@ -46,12 +46,15 @@ export function useSourceControlSubmoduleStatus(
   // when the active worktree/path/runtime/SSH route changes, so a slow response
   // from a previous target can't write stale submodule status into this panel.
   const generationRef = useRef(0)
-
-  useEffect(() => {
+  const submoduleStatusScopeKey = `${activeConnectionRouteKey}\0${activeRuntimeRouteKey}\0${activeWorktreeId ?? ''}\0${worktreePath ?? ''}`
+  // Why: reset during render so a worktree/host switch never paints the previous expansion.
+  const [submoduleStatusScope, setSubmoduleStatusScope] = useState(submoduleStatusScopeKey)
+  if (submoduleStatusScope !== submoduleStatusScopeKey) {
+    setSubmoduleStatusScope(submoduleStatusScopeKey)
     generationRef.current += 1
     setExpandedSubmoduleKeys(new Set())
     setSubmoduleStatusByKey({})
-  }, [activeConnectionRouteKey, activeRuntimeRouteKey, activeWorktreeId, worktreePath])
+  }
 
   const fetchSubmoduleStatus = useCallback(
     async (expansionKey: string): Promise<void> => {
