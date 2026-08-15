@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
+import { encodePairingOffer, PAIRING_OFFER_VERSION } from '../../src/shared/pairing'
 
 test.use({ seedTestRepo: false })
 
@@ -157,6 +158,77 @@ test('stops long-running cleanup and keeps it retryable', async ({ electronApp, 
   }
 })
 
+test('vm doctor waits for a closed destroy shell process group', () => {
+  test.skip(process.platform === 'win32', 'POSIX process-group ownership')
+  const repoPath = mkdtempSync(path.join(tmpdir(), 'orca-vm-doctor-cleanup-'))
+  const startPath = path.join(repoPath, 'start.js')
+  const destroyPath = path.join(repoPath, 'destroy.js')
+  const descendantPidPath = path.join(repoPath, 'descendant.pid')
+  let descendantPid = 0
+  try {
+    const pairingCode = encodePairingOffer({
+      v: PAIRING_OFFER_VERSION,
+      endpoint: 'ws://sandbox.example.com:6767',
+      deviceToken: 'token',
+      publicKeyB64: 'public-key'
+    })
+    writeFileSync(
+      startPath,
+      `console.log(${JSON.stringify(JSON.stringify({ schemaVersion: 1, pairingCode, projectRoot: '/workspace/repo' }))})`
+    )
+    writeFileSync(
+      destroyPath,
+      [
+        "const { spawn } = require('node:child_process')",
+        "const { writeFileSync } = require('node:fs')",
+        "const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 300)'], { stdio: 'ignore' })",
+        `writeFileSync(${JSON.stringify(descendantPidPath)}, String(child.pid))`
+      ].join('\n')
+    )
+    writeFileSync(
+      path.join(repoPath, 'orca.yaml'),
+      [
+        'environmentRecipes:',
+        '  - id: cloud-sandbox',
+        '    name: Cloud Sandbox',
+        `    create: ${JSON.stringify(`${process.execPath} ${startPath}`)}`,
+        `    destroy: ${JSON.stringify(`${process.execPath} ${destroyPath}`)}`
+      ].join('\n')
+    )
+
+    const output = execFileSync(
+      process.execPath,
+      [
+        path.join(process.cwd(), 'out', 'cli', 'index.js'),
+        'vm',
+        'recipe',
+        'doctor',
+        'cloud-sandbox',
+        '--repo-path',
+        repoPath,
+        '--provision',
+        '--json'
+      ],
+      { encoding: 'utf8', timeout: 5_000 }
+    )
+    descendantPid = Number(readFileSync(descendantPidPath, 'utf8'))
+    const result = JSON.parse(output) as {
+      ok: boolean
+      checks: { id: string; status: string }[]
+    }
+    expect(result.ok).toBe(true)
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({ id: 'recipe.destroy.run', status: 'pass' })
+    )
+    expect(isProcessAlive(descendantPid)).toBe(false)
+  } finally {
+    if (isProcessAlive(descendantPid)) {
+      process.kill(descendantPid, 'SIGKILL')
+    }
+    rmSync(repoPath, { recursive: true, force: true })
+  }
+})
+
 async function openCloudVmRuntimes(page: Page): Promise<void> {
   await page.evaluate(() => {
     const state = window.__store!.getState()
@@ -168,4 +240,16 @@ async function openCloudVmRuntimes(page: Page): Promise<void> {
     .getByRole('group', { name: 'Remote server workflow' })
     .getByRole('button', { name: /^Cloud VM/ })
     .click()
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!pid) {
+    return false
+  }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }

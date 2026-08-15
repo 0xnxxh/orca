@@ -15,11 +15,9 @@ import {
 // Why: import directly from the doctor module (not the barrel) — it uses Node
 // fs/path and must stay out of the browser bundle that imports the barrel.
 import { doctorEphemeralVmRecipe } from '../../shared/ephemeral-vm-recipe-doctor'
-import {
-  runEphemeralVmRecipeCleanup,
-  runEphemeralVmRecipeStart
-} from '../../shared/ephemeral-vm-recipe-runner'
+import { runEphemeralVmRecipeStart } from '../../shared/ephemeral-vm-recipe-runner'
 import type { OrcaVmRecipe } from '../../shared/orca-yaml-hook-types'
+import { runEphemeralVmDoctorCleanup } from '../ephemeral-vm-doctor-cleanup'
 
 export const VM_HANDLERS: Record<string, CommandHandler> = {
   'vm recipe doctor': async ({ flags, cwd, json }) => {
@@ -194,7 +192,7 @@ async function doctorRecipeWithProvision(
     })
   }
 
-  const cleanup = await runEphemeralVmRecipeCleanup({
+  const cleanup = await runEphemeralVmDoctorCleanup({
     repoPath,
     recipe,
     context: start.context,

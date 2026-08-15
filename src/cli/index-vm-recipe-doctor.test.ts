@@ -45,6 +45,8 @@ vi.mock('child_process', async () => {
 
 import { main } from './index'
 import { encodePairingOffer, PAIRING_OFFER_VERSION } from '../shared/pairing'
+import { EPHEMERAL_VM_DESTROY_DEADLINE_MS } from '../shared/ephemeral-vm-destroy-deadline'
+import { RECIPE_PROCESS_TREE_TERMINATION_TIMEOUT_MS } from '../shared/ephemeral-vm-recipe-process-termination'
 import { useWorktreeAwarenessEnvironment } from './index-test-harness'
 
 describe('orca cli worktree awareness', () => {
@@ -260,6 +262,84 @@ describe('orca cli worktree awareness', () => {
         recipeResult: { projectRoot: '/workspace/repo' }
       })
     } finally {
+      rmSync(repoPath, { recursive: true, force: true })
+    }
+  })
+
+  it('bounds vm recipe doctor cleanup with an actionable deadline', async () => {
+    vi.useFakeTimers()
+    const repoPath = mkdtempSync(path.join(tmpdir(), 'orca-vm-doctor-deadline-'))
+    const pairingCode = encodePairingOffer({
+      v: PAIRING_OFFER_VERSION,
+      endpoint: 'ws://sandbox.example.com:6767',
+      deviceToken: 'token',
+      publicKeyB64: 'public-key'
+    })
+    const { EventEmitter } = await import('node:events')
+    const { PassThrough } = await import('node:stream')
+    const makeChild = () =>
+      Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: vi.fn(),
+        unref: vi.fn()
+      })
+    const startChild = makeChild()
+    const cleanupChild = makeChild()
+    try {
+      writeFileSync(
+        path.join(repoPath, 'orca.yaml'),
+        [
+          'environmentRecipes:',
+          '  - id: cloud-sandbox',
+          '    name: Cloud Sandbox',
+          '    create: start',
+          '    destroy: destroy'
+        ].join('\n')
+      )
+      spawnMock.mockReturnValueOnce(startChild).mockReturnValueOnce(cleanupChild)
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const resultPromise = main([
+        'vm',
+        'recipe',
+        'doctor',
+        'cloud-sandbox',
+        '--repo-path',
+        repoPath,
+        '--provision',
+        '--json'
+      ])
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1))
+      startChild.stdout.write(
+        JSON.stringify({ schemaVersion: 1, pairingCode, projectRoot: '/workspace/repo' })
+      )
+      startChild.emit('exit', 0, null)
+      startChild.emit('close', 0, null)
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(2))
+
+      await vi.advanceTimersByTimeAsync(
+        EPHEMERAL_VM_DESTROY_DEADLINE_MS - RECIPE_PROCESS_TREE_TERMINATION_TIMEOUT_MS
+      )
+      await resultPromise
+
+      const output = JSON.parse(String(logSpy.mock.calls[0][0])) as {
+        ok: boolean
+        checks: { id: string; status: string; message: string }[]
+      }
+      expect(output.ok).toBe(false)
+      expect(output.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'recipe.destroy.run',
+          status: 'fail',
+          message: expect.stringContaining('5-minute deadline')
+        })
+      )
+      expect(cleanupChild.kill).toHaveBeenCalledWith('SIGKILL')
+      expect(cleanupChild.unref).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+      process.exitCode = 0
       rmSync(repoPath, { recursive: true, force: true })
     }
   })
