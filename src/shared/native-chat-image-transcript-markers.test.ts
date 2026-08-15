@@ -33,6 +33,20 @@ describe('normalizeImageTranscriptMessages', () => {
     ])
   })
 
+  it('merges the real prompt-before-source transcript order', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('prompt', '[Image #1] describe this'),
+      userText('source', '[Image: source: /tmp/orca-paste-1-2.png]')
+    ])
+
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ id: 'prompt' })
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/orca-paste-1-2.png' },
+      { type: 'text', text: 'describe this' }
+    ])
+  })
+
   it('merges a source turn into a prompt with a trailing image marker', () => {
     const out = normalizeImageTranscriptMessages([
       userText('a', '[Image: source: /tmp/orca-paste-1-2.png]'),
@@ -173,6 +187,43 @@ describe('normalizeImageTranscriptMessages', () => {
       { type: 'image-ref', path: '/tmp/a.png' },
       { type: 'image-ref', path: '/tmp/b.png' }
     ])
+  })
+
+  it('folds prompt-before-source multi-image turns symmetrically', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('prompt', '[Image #1] [Image #2] compare these'),
+      userText('a', '[Image: source: /tmp/a.png]'),
+      userText('b', '[Image: source: /tmp/b.png]')
+    ])
+
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ id: 'prompt' })
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'image-ref', path: '/tmp/b.png' },
+      { type: 'text', text: 'compare these' }
+    ])
+  })
+
+  it.each([
+    ['source before prompt', ['source-a', 'source-b', 'source-c', 'prompt']],
+    ['prompt before source', ['prompt', 'source-a', 'source-b', 'source-c']]
+  ])('does not let one marker prove three image sources: %s', (_label, order) => {
+    const byId = {
+      'source-a': userText('source-a', '[Image: source: /tmp/a.png]'),
+      'source-b': userText('source-b', '[Image: source: /tmp/b.png]'),
+      'source-c': userText('source-c', '[Image: source: /tmp/c.png]'),
+      prompt: userText('prompt', '[Image #1] compare these')
+    }
+    const out = normalizeImageTranscriptMessages(order.map((id) => byId[id as keyof typeof byId]))
+
+    expect(out).toHaveLength(4)
+    expect(out.find((message) => message.id === 'prompt')?.blocks).toEqual([
+      { type: 'text', text: '[Image #1] compare these' }
+    ])
+    expect(
+      out.flatMap((message) => message.blocks).filter((block) => block.type === 'image-ref')
+    ).toHaveLength(3)
   })
 
   it('preserves adjacent standalone image turns without a prompt marker', () => {

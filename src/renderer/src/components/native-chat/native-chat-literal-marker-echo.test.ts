@@ -142,6 +142,27 @@ describe('literal image-marker turns in native chat', () => {
     expect(rowImagePaths(rows[0]!)).toEqual(['/tmp/a.png'])
   })
 
+  it('reconciles a marker-bearing caption in the real prompt-before-source order', () => {
+    const pending: NativeChatPendingSend[] = [
+      {
+        id: 'p1',
+        text: 'keep [Image #1] literal',
+        imagePaths: ['/tmp/a.png'],
+        sentAt: 100
+      }
+    ]
+    const transcript = [
+      userMessage('prompt', 'keep [Image #1] literal'),
+      userMessage('src', '[Image: source: /tmp/a.png]')
+    ]
+
+    const rows = renderedUserRows(transcript, pending)
+
+    expect(rows).toHaveLength(1)
+    expect(rowText(rows[0]!)).toBe('keep  literal')
+    expect(rowImagePaths(rows[0]!)).toEqual(['/tmp/a.png'])
+  })
+
   it('still reconciles a caption-less image send whose echo is marker-only', () => {
     const pending: NativeChatPendingSend[] = [
       { id: 'p1', text: '', imagePaths: ['/tmp/a.png'], sentAt: 100 }

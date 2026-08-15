@@ -188,6 +188,21 @@ describe('mobile literal image-marker turns', () => {
     expect(rendered.map(rowImages)).toEqual([['file:///a.jpg']])
   })
 
+  it('reconciles a marker-bearing caption in the real prompt-before-source order', async () => {
+    await mount()
+    send('keep [Image #1] literal', ['file:///a.jpg'])
+
+    const messages = [
+      userTextMessage('prompt', 'keep [Image #1] literal'),
+      userTextMessage('src', '[Image: source: /tmp/a.png]')
+    ]
+    await transcript(messages)
+
+    const rendered = rows(messages)
+    expect(rendered.map(rowText)).toEqual(['keep  literal'])
+    expect(rendered.map(rowImages)).toEqual([['file:///a.jpg']])
+  })
+
   it('keeps a captioned multi-image echo until the transcript accounts for every image', async () => {
     await mount()
     send('compare these', ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg'])

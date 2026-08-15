@@ -137,8 +137,41 @@ export function nativeChatUserMessageImageEvidenceCount(message: NativeChatMessa
   return Math.max(imageRefCount, countImagePromptMarkers(message))
 }
 
-/** Claude records image paths as source turns followed by a prompt carrying
- *  image markers. Merge the whole run back into one native user turn. */
+function imageSourceRun(
+  messages: readonly NativeChatMessage[],
+  start: number,
+  source: NativeChatMessage['source']
+): { end: number; paths: string[] } {
+  const paths: string[] = []
+  let end = start
+  while (end < messages.length) {
+    const candidate = messages[end]!
+    const path = imageSourcePathFromText(soleText(candidate) ?? '')
+    if (candidate.role !== 'user' || candidate.source !== source || !path) {
+      break
+    }
+    paths.push(path)
+    end += 1
+  }
+  return { end, paths }
+}
+
+function mergedImagePrompt(
+  prompt: NativeChatMessage,
+  imagePaths: readonly string[]
+): NativeChatMessage {
+  return {
+    ...prompt,
+    blocks: [
+      ...imagePaths.map((path) => ({ type: 'image-ref' as const, path })),
+      ...stripImagePromptMarkersFromTextBlocks(prompt.blocks)
+    ]
+  }
+}
+
+/** Claude records adjacent image-source and marker-bearing prompt turns in
+ *  either order. Fold only a one-marker-per-source pair so partial evidence
+ *  cannot make one landed row claim more attached images than it proves. */
 export function normalizeImageTranscriptMessages(
   messages: readonly NativeChatMessage[]
 ): NativeChatMessage[] {
@@ -150,39 +183,37 @@ export function normalizeImageTranscriptMessages(
       continue
     }
     const imagePath = imageSourcePathFromText(soleText(message) ?? '')
+    const markerCount = countImagePromptMarkers(message)
+    if (!imagePath && markerCount > 0) {
+      const sources = imageSourceRun(messages, index + 1, message.source)
+      if (sources.paths.length === markerCount) {
+        normalized ??= messages.slice(0, index)
+        normalized.push(mergedImagePrompt(message, sources.paths))
+        index = sources.end - 1
+        continue
+      }
+    }
     if (imagePath) {
       normalized ??= messages.slice(0, index)
-      const imagePaths = [imagePath]
-      let nextIndex = index + 1
-      while (nextIndex < messages.length) {
-        const candidate = messages[nextIndex]!
-        const candidatePath = imageSourcePathFromText(soleText(candidate) ?? '')
-        if (candidate.role !== 'user' || candidate.source !== message.source || !candidatePath) {
-          break
-        }
-        imagePaths.push(candidatePath)
-        nextIndex += 1
-      }
-      const prompt = messages[nextIndex]
+      const sources = imageSourceRun(messages, index, message.source)
+      const prompt = messages[sources.end]
       if (
         prompt?.role === 'user' &&
         prompt.source === message.source &&
-        hasImagePromptMarker(prompt)
+        countImagePromptMarkers(prompt) === sources.paths.length
       ) {
-        normalized.push({
-          ...prompt,
-          blocks: [
-            ...imagePaths.map((path) => ({ type: 'image-ref' as const, path })),
-            ...stripImagePromptMarkersFromTextBlocks(prompt.blocks)
-          ]
-        })
-        index = nextIndex
+        normalized.push(mergedImagePrompt(prompt, sources.paths))
+        index = sources.end
         continue
       }
-      normalized.push({
-        ...message,
-        blocks: [{ type: 'image-ref', path: imagePath }]
-      })
+      for (let sourceIndex = index; sourceIndex < sources.end; sourceIndex += 1) {
+        const sourceMessage = messages[sourceIndex]!
+        normalized.push({
+          ...sourceMessage,
+          blocks: [{ type: 'image-ref', path: sources.paths[sourceIndex - index]! }]
+        })
+      }
+      index = sources.end - 1
       continue
     }
     const blocks = removeEmptyFirstTextBlock(message.blocks)
