@@ -22,13 +22,14 @@ export const SKILL_COMMAND_SPECS: CommandSpec[] = [
     allowedFlags: [...GLOBAL_FLAGS, 'skill', 'bundle-name', 'release-notes'],
     notes: [
       'Requires the default-off permission in Settings → Share Skills.',
+      'The bundle name may be human-readable; Orca converts it to a portable lowercase package name.',
       'Selectors are exact discovery IDs or unambiguous names from `orca skills installed`.',
       'Only discovered skill directories can be selected; arbitrary paths and --all are not supported.',
       'The resulting link is unlisted. Anyone with it can inspect and install the bundle.'
     ],
     examples: [
-      'orca skills share --skill frontend --bundle-name frontend',
-      'orca skills share --skill frontend --skill testing --bundle-name team-toolkit --json'
+      'orca skills share --skill frontend --bundle-name "Frontend Skills"',
+      'orca skills share --skill frontend --skill testing --bundle-name "Team Toolkit" --json'
     ]
   },
   {

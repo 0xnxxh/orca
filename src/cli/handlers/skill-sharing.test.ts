@@ -140,6 +140,76 @@ describe('skill sharing CLI handlers', () => {
     expect(output).not.toMatch(/token|secret/i)
   })
 
+  it('normalizes a human-readable bundle name before publishing', async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'settings',
+        ok: true,
+        result: { settings: { agentSkillSharingEnabled: true } },
+        _meta: successMeta
+      })
+      .mockResolvedValueOnce({
+        id: 'share',
+        ok: true,
+        result: {
+          status: 'ok',
+          value: {
+            share: { id: 'shr_public', url: 'https://share.onorca.dev/skills/share/shr_public' },
+            version: {
+              packageId: 'pkg_public',
+              versionId: 'ver_public',
+              name: 'team-skills-v2.0'
+            },
+            selectedSkills: [{ id: 'alpha-id', name: 'alpha', description: null }]
+          }
+        },
+        _meta: successMeta
+      })
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await SKILL_SHARING_HANDLERS['skills share']!(
+      context(
+        call,
+        new Map([
+          ['skill', 'alpha'],
+          ['bundle-name', 'Téam Skills -- v2.0']
+        ])
+      )
+    )
+
+    expect(call).toHaveBeenLastCalledWith(
+      'skills.share',
+      {
+        skillSelectors: ['alpha'],
+        bundleName: 'team-skills-v2.0',
+        releaseNotes: '',
+        target: { cwd: '/repo' }
+      },
+      { timeoutMs: 600_000 }
+    )
+  })
+
+  it('rejects a bundle name that cannot produce a valid package name', async () => {
+    const call = vi.fn()
+
+    await expect(
+      SKILL_SHARING_HANDLERS['skills share']!(
+        context(
+          call,
+          new Map([
+            ['skill', 'alpha'],
+            ['bundle-name', '🔥']
+          ])
+        )
+      )
+    ).rejects.toMatchObject({
+      code: 'invalid_argument',
+      message: '--bundle-name must contain at least one English letter or number.'
+    })
+    expect(call).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['a forwarded shell', false, '/remote/repo'],
     ['a paired runtime', true, undefined]

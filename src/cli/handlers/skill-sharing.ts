@@ -7,6 +7,7 @@ import {
   AGENT_SKILL_SHARING_DISABLED_MESSAGE,
   AGENT_SKILL_SHARING_DISABLED_NEXT_STEPS
 } from '../../shared/agent-skill-sharing-gate'
+import { normalizeSkillBundleName } from '../../shared/skill-bundle-name'
 import type { SkillCloudOperation } from '../../shared/skill-cloud-contract'
 import type { SkillDiscoveryResult } from '../../shared/skills'
 import type { CommandHandler, HandlerContext } from '../dispatch'
@@ -160,9 +161,16 @@ export const SKILL_SHARING_HANDLERS: Record<string, CommandHandler> = {
         'Select at least one installed skill with --skill. Run `orca skills installed` to list them.'
       )
     }
-    const bundleName = stringFlag(ctx, 'bundle-name')
-    if (!bundleName) {
+    const bundleLabel = stringFlag(ctx, 'bundle-name')
+    if (!bundleLabel) {
       throw new RuntimeClientError('invalid_argument', 'Missing required --bundle-name.')
+    }
+    const bundleName = normalizeSkillBundleName(bundleLabel)
+    if (!bundleName) {
+      throw new RuntimeClientError(
+        'invalid_argument',
+        '--bundle-name must contain at least one English letter or number.'
+      )
     }
     await preflightPublishCapability(ctx)
     const response = await callShare(ctx, {
