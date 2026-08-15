@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { requestAccountMock, cancelAllAccountRequestsMock } = vi.hoisted(() => ({
+const { requestAccountMock, cancelSessionAccountRequestsMock } = vi.hoisted(() => ({
   requestAccountMock: vi.fn(),
-  cancelAllAccountRequestsMock: vi.fn()
+  cancelSessionAccountRequestsMock: vi.fn()
 }))
 
 vi.mock('./browser-webauthn-account-picker', () => ({
   requestBrowserWebAuthnAccount: requestAccountMock,
-  cancelAllBrowserWebAuthnAccountRequests: cancelAllAccountRequestsMock
+  cancelBrowserWebAuthnAccountRequestsForSession: cancelSessionAccountRequestsMock
 }))
 
 import { installBrowserWebAuthnAccessHandlers } from './browser-webauthn-access'
@@ -15,7 +15,7 @@ import { installBrowserWebAuthnAccessHandlers } from './browser-webauthn-access'
 describe('browser WebAuthn access', () => {
   beforeEach(() => {
     requestAccountMock.mockReset()
-    cancelAllAccountRequestsMock.mockReset()
+    cancelSessionAccountRequestsMock.mockReset()
   })
 
   it('dispatches multi-account assertions to the account picker', async () => {
@@ -50,7 +50,7 @@ describe('browser WebAuthn access', () => {
       callback
     )
 
-    expect(requestAccountMock).toHaveBeenCalledWith(details)
+    expect(requestAccountMock).toHaveBeenCalledWith(details, browserSession)
     expect(callback).toHaveBeenCalledOnce()
     expect(callback).toHaveBeenCalledWith('second')
   })

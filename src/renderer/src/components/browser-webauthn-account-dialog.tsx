@@ -132,7 +132,7 @@ export function BrowserWebAuthnAccountDialog(): React.JSX.Element {
             const labels = accountLabels(account, index)
             return (
               <Button
-                key={`${account.credentialId}-${index}`}
+                key={account.credentialId}
                 ref={index === 0 ? firstAccountRef : undefined}
                 autoFocus={index === 0}
                 type="button"

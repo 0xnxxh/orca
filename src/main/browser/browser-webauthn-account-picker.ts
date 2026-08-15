@@ -11,11 +11,12 @@ export const BROWSER_WEBAUTHN_ACCOUNT_PICKER_TIMEOUT_MS = 60_000
 
 type PendingAccountRequest = {
   browserPageId: string
+  browserSession: Electron.Session
   guest: Electron.WebContents
   renderer: Electron.WebContents
   credentialIds: Set<string>
   timer: ReturnType<typeof setTimeout>
-  onDestroyed: () => void
+  onUnavailable: () => void
   settle: (credentialId: string | null) => void
 }
 
@@ -33,13 +34,16 @@ function closeRendererPrompt(requestId: string, request: PendingAccountRequest):
 
 function cleanUpRequest(requestId: string, request: PendingAccountRequest): void {
   clearTimeout(request.timer)
-  request.guest.removeListener('destroyed', request.onDestroyed)
-  request.renderer.removeListener('destroyed', request.onDestroyed)
+  request.guest.removeListener('destroyed', request.onUnavailable)
+  request.guest.removeListener('render-process-gone', request.onUnavailable)
+  request.renderer.removeListener('destroyed', request.onUnavailable)
+  request.renderer.removeListener('render-process-gone', request.onUnavailable)
   pendingAccountRequests.delete(requestId)
 }
 
 export function requestBrowserWebAuthnAccount(
-  details: Electron.SelectWebauthnAccountDetails
+  details: Electron.SelectWebauthnAccountDetails,
+  browserSession: Electron.Session
 ): Promise<string | null> {
   const guest = details.frame ? webContents.fromFrame(details.frame) : undefined
   if (!guest || guest.isDestroyed()) {
@@ -78,16 +82,19 @@ export function requestBrowserWebAuthnAccount(
     }
     const request: PendingAccountRequest = {
       browserPageId: context.browserPageId,
+      browserSession,
       guest,
       renderer: context.renderer,
       credentialIds: new Set(details.accounts.map((account) => account.credentialId)),
       timer: setTimeout(settle, BROWSER_WEBAUTHN_ACCOUNT_PICKER_TIMEOUT_MS),
-      onDestroyed: () => settle(null),
+      onUnavailable: () => settle(null),
       settle
     }
     pendingAccountRequests.set(requestId, request)
-    guest.once('destroyed', request.onDestroyed)
-    context.renderer.once('destroyed', request.onDestroyed)
+    guest.once('destroyed', request.onUnavailable)
+    guest.once('render-process-gone', request.onUnavailable)
+    context.renderer.once('destroyed', request.onUnavailable)
+    context.renderer.once('render-process-gone', request.onUnavailable)
     try {
       context.renderer.send('browser:webauthn-account-requested', requestPayload)
     } catch {
@@ -121,6 +128,16 @@ export function respondToBrowserWebAuthnAccountRequest(
 export function cancelBrowserWebAuthnAccountRequests(browserPageId: string): void {
   for (const request of pendingAccountRequests.values()) {
     if (request.browserPageId === browserPageId) {
+      request.settle(null)
+    }
+  }
+}
+
+export function cancelBrowserWebAuthnAccountRequestsForSession(
+  browserSession: Electron.Session
+): void {
+  for (const request of pendingAccountRequests.values()) {
+    if (request.browserSession === browserSession) {
       request.settle(null)
     }
   }
