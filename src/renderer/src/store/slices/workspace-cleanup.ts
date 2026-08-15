@@ -382,6 +382,28 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
     // Why: nested workspaces can belong to different repos; parent removal must
     // not race child cleanup hooks, PTY teardown, or metadata deletion.
     for (const candidate of [...candidatesToRemove].sort((a, b) => b.path.length - a.path.length)) {
+      // Why: earlier rows can await long enough for active-host routing to change
+      // after the batched preflight; recheck in the same turn as removeWorktree.
+      const scannedHostId = resolveWorkspaceCleanupRemovalHostId(candidate)
+      if (
+        !isWorkspaceCleanupRemovalHostCertain({
+          confirmedCandidate: candidate,
+          scannedCandidate: candidate,
+          scannedHostIds: [scannedHostId],
+          routeHostId:
+            resolveWorktreeOperationRoute(get(), candidate.worktreeId)?.executionHostId ?? null
+        })
+      ) {
+        failures.push({
+          worktreeId: candidate.worktreeId,
+          displayName: candidate.displayName,
+          message: translate(
+            'auto.store.slices.workspace.cleanup.hostUnresolved',
+            'Orca cannot tell which host owns this workspace. Refresh projects and review it again.'
+          )
+        })
+        continue
+      }
       const result = await get().removeWorktree(
         candidate.worktreeId,
         shouldForceWorkspaceCleanupRemoval(candidate),

@@ -66,20 +66,23 @@ import type {
 
 const WORKTREE_ID = 'repo1::/shared/workspace/path'
 const WORKTREE_PATH = '/shared/workspace/path'
+const FIRST_WORKTREE_ID = 'repo1::/first/very-long-workspace/path'
 
 function makeHostCandidate(
   executionHostId: ExecutionHostId | undefined,
-  connectionId: string | null = executionHostId === HOST_B_HOST_ID ? 'ssh-1' : null
+  connectionId: string | null = executionHostId === HOST_B_HOST_ID ? 'ssh-1' : null,
+  worktreeId = WORKTREE_ID
 ): WorkspaceCleanupCandidate {
+  const workspacePath = worktreeId.slice(worktreeId.indexOf('::') + 2)
   return {
-    worktreeId: WORKTREE_ID,
+    worktreeId,
     repoId: 'repo1',
     repoName: 'Repo 1',
     connectionId,
     ...(executionHostId ? { executionHostId } : {}),
     displayName: 'shared-workspace',
     branch: 'old-branch',
-    path: WORKTREE_PATH,
+    path: workspacePath,
     tier: 'ready',
     selectedByDefault: true,
     reasons: ['idle-clean'],
@@ -293,6 +296,68 @@ describe('STA-4343 minimal guard: cleanup refuses a removal it cannot attribute 
 
     expect(fs.existsSync(hosts.hostAMarkerPath), 'host A must survive').toBe(true)
     expect(routedHostIds).toEqual([])
+    expect(removal.failures).toEqual([
+      { worktreeId: WORKTREE_ID, displayName: 'shared-workspace', message: HOST_UNRESOLVED_MESSAGE }
+    ])
+  })
+
+  it('rechecks the route after an earlier removal changes ownership', async () => {
+    const hosts = createHostDirectories()
+    const routedHostIds: string[] = []
+    installRemovalTransport(
+      { [HOST_A_HOST_ID]: hosts.hostARoot, [HOST_B_HOST_ID]: hosts.hostBRoot },
+      routedHostIds
+    )
+    const firstCandidate = makeHostCandidate(HOST_A_HOST_ID, null, FIRST_WORKTREE_ID)
+    const secondCandidate = makeHostCandidate(HOST_A_HOST_ID)
+    seedScan([firstCandidate, secondCandidate])
+
+    const store = createTestStore()
+    const firstWorktree = makeWorktree({
+      id: FIRST_WORKTREE_ID,
+      repoId: 'repo1',
+      path: '/first/very-long-workspace/path',
+      hostId: HOST_A_HOST_ID
+    })
+    const secondHostAWorktree = makeWorktree({
+      id: WORKTREE_ID,
+      repoId: 'repo1',
+      path: WORKTREE_PATH,
+      hostId: HOST_A_HOST_ID
+    })
+    const secondHostBWorktree = makeWorktree({
+      id: WORKTREE_ID,
+      repoId: 'repo1',
+      path: WORKTREE_PATH,
+      hostId: HOST_B_HOST_ID
+    })
+    seedStore(store, {
+      worktreesByRepo: { repo1: [firstWorktree, secondHostAWorktree] }
+    } as Partial<AppState>)
+    const originalRemoveWorktree = store.getState().removeWorktree
+    store.setState({
+      removeWorktree: vi.fn(async (...args: Parameters<typeof originalRemoveWorktree>) => {
+        const result = await originalRemoveWorktree(...args)
+        if (args[0] === FIRST_WORKTREE_ID) {
+          store.setState({
+            activeWorktreeId: WORKTREE_ID,
+            activeWorkspaceExecutionHostId: HOST_B_HOST_ID,
+            worktreesByRepo: { repo1: [secondHostAWorktree, secondHostBWorktree] }
+          })
+        }
+        return result
+      })
+    })
+
+    const removal = await store
+      .getState()
+      .removeWorkspaceCleanupCandidates([FIRST_WORKTREE_ID, WORKTREE_ID], {
+        approvedCandidates: [firstCandidate, secondCandidate]
+      })
+
+    expect(fs.existsSync(hosts.hostBMarkerPath), 'newly active host B must survive').toBe(true)
+    expect(routedHostIds).toEqual([HOST_A_HOST_ID])
+    expect(removal.removedIds).toEqual([FIRST_WORKTREE_ID])
     expect(removal.failures).toEqual([
       { worktreeId: WORKTREE_ID, displayName: 'shared-workspace', message: HOST_UNRESOLVED_MESSAGE }
     ])
