@@ -131,7 +131,9 @@ export function cleanRetiredAgentReferences(state: PersistedState): boolean {
   // so clearing the id alone would let them run on whatever agent is default.
   // Scoped to automations on purpose — commitMessageAi also has an `enabled`
   // flag, but there a cleared agent must not switch the whole feature off.
-  for (const automation of state.automations ?? []) {
+  // Why isArray: this runs over a profile read off disk, so a corrupt `automations`
+  // would throw out of a load-time scrub and drop the user into backup recovery.
+  for (const automation of Array.isArray(state.automations) ? state.automations : []) {
     if (automation && RETIRED_AGENTS.includes(automation.agentId) && automation.enabled !== false) {
       automation.enabled = false
       changed = true

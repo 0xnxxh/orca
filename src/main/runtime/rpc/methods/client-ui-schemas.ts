@@ -152,6 +152,11 @@ export const SettingsUpdate = z
   })
   .strict()
   .default({})
+  // Why: `Store.updateSettings` spreads this over the live settings, so a key a
+  // transform rejected (an old client's retired `defaultTuiAgent`) would clear a
+  // valid post-upgrade value. JSON carries no `undefined`, so every one of these
+  // is a rejection, never an explicit clear — clients clear with `null`.
+  .transform(omitUndefinedValues)
 
 const TopLevelViewSchema = z.enum([
   'terminal',

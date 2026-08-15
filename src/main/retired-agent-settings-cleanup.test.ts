@@ -188,6 +188,15 @@ describe('cleanRetiredAgentReferences', () => {
     expect(cleanRetiredAgentReferences({} as PersistedState)).toBe(false)
   })
 
+  it('survives a corrupt non-array automations collection', () => {
+    // This scrub runs at load; throwing here would drop the user into backup
+    // recovery over a profile the rest of the walk handles defensively.
+    expect(() =>
+      cleanRetiredAgentReferences(profile({ automations: { nope: true } }))
+    ).not.toThrow()
+    expect(cleanRetiredAgentReferences(profile({ automations: 'corrupt' }))).toBe(false)
+  })
+
   it('does not touch retired-looking nodes outside the scoped roots', () => {
     // Unknown or non-agent top-level subtrees are out of scope: a scrub must
     // not rewrite state this walk has no license to interpret.

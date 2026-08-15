@@ -137,6 +137,36 @@ describe('client UI RPC methods', () => {
     })
   })
 
+  it('omits a retired default agent instead of clearing the host default', async () => {
+    // updateClientSettings spreads this over live settings, so emitting the
+    // rejected key as `undefined` wiped a valid post-upgrade default.
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateClientSettings: vi.fn(() => ({}))
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    await dispatcher.dispatch(
+      makeRequest('settings.update', { defaultTuiAgent: 'gemini', compactWorktreeCards: true })
+    )
+
+    const [update] = vi.mocked(runtime.updateClientSettings).mock.calls[0] ?? []
+    expect(Object.hasOwn(update ?? {}, 'defaultTuiAgent')).toBe(false)
+    expect(update).toEqual({ compactWorktreeCards: true })
+  })
+
+  it('still lets a client clear the default agent with an explicit null', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateClientSettings: vi.fn(() => ({}))
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    await dispatcher.dispatch(makeRequest('settings.update', { defaultTuiAgent: null }))
+
+    expect(runtime.updateClientSettings).toHaveBeenCalledWith({ defaultTuiAgent: null })
+  })
+
   it('normalizes manual bot-author overrides before persisting', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',

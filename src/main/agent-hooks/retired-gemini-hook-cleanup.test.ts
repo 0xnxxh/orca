@@ -124,6 +124,46 @@ describe('removeRetiredGeminiManagedHooksLocal', () => {
     })
   })
 
+  it('keeps the managed script when hooks are an array it cannot audit', () => {
+    // Object.entries walks an array by index, so the managed entry below is never
+    // read. Reporting "clean" would unlink a script this config still points at.
+    const settingsDir = join(homeDir, '.gemini')
+    const hooksDir = join(homeDir, '.orca', 'agent-hooks')
+    mkdirSync(settingsDir, { recursive: true })
+    mkdirSync(hooksDir, { recursive: true })
+    const scriptPath = join(hooksDir, 'gemini-hook.sh')
+    writeFileSync(scriptPath, 'noop', 'utf8')
+    writeFileSync(
+      join(settingsDir, 'settings.json'),
+      JSON.stringify({
+        hooks: [{ hooks: [{ type: 'command', command: join(hooksDir, 'gemini-hook.sh') }] }]
+      }),
+      'utf8'
+    )
+
+    removeRetiredGeminiManagedHooksLocal()
+
+    expect(existsSync(scriptPath)).toBe(true)
+  })
+
+  it('keeps the managed script when one event holds an unreadable value', () => {
+    const settingsDir = join(homeDir, '.gemini')
+    const hooksDir = join(homeDir, '.orca', 'agent-hooks')
+    mkdirSync(settingsDir, { recursive: true })
+    mkdirSync(hooksDir, { recursive: true })
+    const scriptPath = join(hooksDir, 'gemini-hook.sh')
+    writeFileSync(scriptPath, 'noop', 'utf8')
+    writeFileSync(
+      join(settingsDir, 'settings.json'),
+      JSON.stringify({ hooks: { BeforeAgent: 'not-a-definition-list' } }),
+      'utf8'
+    )
+
+    removeRetiredGeminiManagedHooksLocal()
+
+    expect(existsSync(scriptPath)).toBe(true)
+  })
+
   it('keeps the managed script when the settings file cannot be parsed', () => {
     // A JSONC settings.json may still hold a live entry pointing at the script;
     // deleting it would turn a 404 into empty stdout the Gemini CLI can't parse.

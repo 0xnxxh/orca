@@ -21,17 +21,30 @@ import { readHooksJsonRemote, writeHooksJsonRemote, unlink } from './installer-u
 const SCRIPT_FILES = ['gemini-hook.sh', 'gemini-hook.cmd', 'gemini-hook.ps1'] as const
 const isManagedCommand = createManagedCommandMatcher('gemini-hook.sh')
 
-/** Returns the rewritten config, or null when the file holds no managed Gemini hooks. */
-function stripManagedGeminiHooks(config: HooksConfig): HooksConfig | null {
+type ManagedGeminiHookStrip =
+  /** Audited and free of managed entries — safe to sweep the scripts. */
+  | { outcome: 'clean' }
+  | { outcome: 'rewritten'; config: HooksConfig }
+  /** A shape Orca never wrote and cannot audit; the script sweep must not run. */
+  | { outcome: 'unverified' }
+
+function stripManagedGeminiHooks(config: HooksConfig): ManagedGeminiHookStrip {
   const hooks = config.hooks
-  if (!hooks || typeof hooks !== 'object') {
-    return null
+  if (!hooks) {
+    return { outcome: 'clean' }
+  }
+  // Why: Object.entries walks an array by index and reads nothing useful off a
+  // scalar, so either shape would silently report "clean" and unlink a script a
+  // surviving entry still points at — the exact failure the sweep gate prevents.
+  if (typeof hooks !== 'object' || Array.isArray(hooks)) {
+    return { outcome: 'unverified' }
   }
   const nextHooks = { ...hooks }
   let changed = false
   for (const [eventName, definitions] of Object.entries(hooks)) {
     if (!Array.isArray(definitions)) {
-      continue
+      // Same reasoning per event: unreadable entries cannot be certified clean.
+      return { outcome: 'unverified' }
     }
     const cleaned = removeManagedCommands(definitions, isManagedCommand)
     if (cleaned.length === definitions.length) {
@@ -44,7 +57,9 @@ function stripManagedGeminiHooks(config: HooksConfig): HooksConfig | null {
       nextHooks[eventName] = cleaned
     }
   }
-  return changed ? { ...config, hooks: nextHooks } : null
+  return changed
+    ? { outcome: 'rewritten', config: { ...config, hooks: nextHooks } }
+    : { outcome: 'clean' }
 }
 
 /**
@@ -61,9 +76,12 @@ export function removeRetiredGeminiManagedHooksLocal(): void {
     return
   }
   const cleaned = stripManagedGeminiHooks(config)
-  if (cleaned) {
+  if (cleaned.outcome === 'unverified') {
+    return
+  }
+  if (cleaned.outcome === 'rewritten') {
     try {
-      writeHooksJson(configPath, cleaned)
+      writeHooksJson(configPath, cleaned.config)
     } catch {
       return
     }
@@ -90,8 +108,11 @@ export async function removeRetiredGeminiManagedHooksRemote(
       return
     }
     const cleaned = stripManagedGeminiHooks(config)
-    if (cleaned) {
-      await writeHooksJsonRemote(sftp, configPath, cleaned)
+    if (cleaned.outcome === 'unverified') {
+      return
+    }
+    if (cleaned.outcome === 'rewritten') {
+      await writeHooksJsonRemote(sftp, configPath, cleaned.config)
     }
   } catch {
     // Best-effort: do not block remote hook install for other agents. Leave the

@@ -53,6 +53,80 @@ describe('worktree RPC schemas', () => {
     expect(parsed.startupDraft).toBe('draft text')
   })
 
+  it('drops a retired agent launch bundle an old client prebuilt for itself', () => {
+    // The desktop quotes its own command, so `createdWithAgent` is the only agent
+    // id on the wire. Its transform drops 'gemini' while the command survived,
+    // which still spawned the retired binary on a host that no longer ships it.
+    const parsed = WorktreeCreate.parse({
+      repo: 'repo-1',
+      name: 'agent-startup',
+      createdWithAgent: 'gemini',
+      startupCommand: "gemini --prompt 'ship it'",
+      startupEnv: { GEMINI_API_KEY: 'k' },
+      startupLaunchConfig: { agentCommand: 'gemini', agentArgs: '', agentEnv: {} },
+      startupCommandDelivery: 'fast'
+    })
+
+    expect(parsed.startupCommand).toBeUndefined()
+    expect(parsed.startupEnv).toBeUndefined()
+    expect(parsed.startupLaunchConfig).toBeUndefined()
+    expect(parsed.startupCommandDelivery).toBeUndefined()
+    expect(parsed.createdWithAgent).toBeUndefined()
+  })
+
+  it('drops a retired launch command even when the client sent no agent id', () => {
+    const parsed = WorktreeCreate.parse({
+      repo: 'repo-1',
+      name: 'agent-startup',
+      startupCommand: '/opt/homebrew/bin/gemini --prompt hi'
+    })
+
+    expect(parsed.startupCommand).toBeUndefined()
+  })
+
+  it('keeps a retired-bundle create usable by rehoming the draft it came with', () => {
+    const parsed = WorktreeCreate.parse({
+      repo: 'repo-1',
+      name: 'agent-startup',
+      createdWithAgent: 'gemini',
+      startupCommand: 'gemini',
+      startupDraft: 'draft text'
+    })
+
+    expect(parsed.startupCommand).toBeUndefined()
+    // The host picks the default/detected agent and drafts into it.
+    expect(parsed.startupDraft).toBe('draft text')
+  })
+
+  it('keeps a supported agent launch bundle untouched', () => {
+    const parsed = WorktreeCreate.parse({
+      repo: 'repo-1',
+      name: 'agent-startup',
+      createdWithAgent: 'claude',
+      startupCommand: "claude 'ship it'",
+      startupEnv: { FOO: 'bar' },
+      startupCommandDelivery: 'fast'
+    })
+
+    expect(parsed.createdWithAgent).toBe('claude')
+    expect(parsed.startupCommand).toBe("claude 'ship it'")
+    expect(parsed.startupEnv).toEqual({ FOO: 'bar' })
+    expect(parsed.startupCommandDelivery).toBe('fast')
+  })
+
+  it('does not read a retired agent name out of a supported agent command', () => {
+    // Only the leading binary names the agent; an argument that mentions it must not
+    // strip an otherwise valid launch.
+    const parsed = WorktreeCreate.parse({
+      repo: 'repo-1',
+      name: 'agent-startup',
+      createdWithAgent: 'claude',
+      startupCommand: "claude 'port the gemini adapter'"
+    })
+
+    expect(parsed.startupCommand).toBe("claude 'port the gemini adapter'")
+  })
+
   it('rejects an unknown startup agent id rather than degrading to a plain shell', () => {
     const parsed = WorktreeCreate.safeParse({
       repo: 'repo-1',
