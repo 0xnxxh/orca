@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { GitStatusEntry } from '../../../../../../shared/git-status-types'
 import { getConnectionId } from '@/lib/connection-context'
 import { getRuntimeGitSubmoduleStatus, type RuntimeGitContext } from '@/runtime/runtime-git-client'
@@ -36,25 +36,21 @@ export function useSourceControlSubmoduleStatus(
 ): UseSourceControlSubmoduleStatusResult {
   const { activeWorktreeId, worktreePath, activeRepoSettings, entries } = input
   const [expandedSubmoduleKeys, setExpandedSubmoduleKeys] = useState<Set<string>>(() => new Set())
-  const [submoduleStatusByKey, setSubmoduleStatusByKey] = useState<
-    Record<string, SubmoduleStatusState>
-  >({})
   const activeRuntimeRouteKey = activeRepoSettings?.activeRuntimeEnvironmentId?.trim() ?? ''
   const activeConnectionRouteKey = getConnectionId(activeWorktreeId ?? null) ?? ''
-
-  // Why: a monotonically increasing generation invalidates in-flight requests
-  // when the active worktree/path/runtime/SSH route changes, so a slow response
-  // from a previous target can't write stale submodule status into this panel.
-  const generationRef = useRef(0)
   const submoduleStatusScopeKey = `${activeConnectionRouteKey}\0${activeRuntimeRouteKey}\0${activeWorktreeId ?? ''}\0${worktreePath ?? ''}`
+  // Why: scope lives in the status store so a late response from a previous
+  // worktree/host can no-op in the updater instead of mutating a render-time ref.
+  const [submoduleStatusStore, setSubmoduleStatusStore] = useState<{
+    scope: string
+    byKey: Record<string, SubmoduleStatusState>
+  }>(() => ({ scope: submoduleStatusScopeKey, byKey: {} }))
   // Why: reset during render so a worktree/host switch never paints the previous expansion.
-  const [submoduleStatusScope, setSubmoduleStatusScope] = useState(submoduleStatusScopeKey)
-  if (submoduleStatusScope !== submoduleStatusScopeKey) {
-    setSubmoduleStatusScope(submoduleStatusScopeKey)
-    generationRef.current += 1
+  if (submoduleStatusStore.scope !== submoduleStatusScopeKey) {
+    setSubmoduleStatusStore({ scope: submoduleStatusScopeKey, byKey: {} })
     setExpandedSubmoduleKeys(new Set())
-    setSubmoduleStatusByKey({})
   }
+  const submoduleStatusByKey = submoduleStatusStore.byKey
 
   const fetchSubmoduleStatus = useCallback(
     async (expansionKey: string): Promise<void> => {
@@ -66,11 +62,16 @@ export function useSourceControlSubmoduleStatus(
         return
       }
       const { area, path: submodulePath } = parsed
-      const generation = generationRef.current
+      const scopeAtStart = submoduleStatusScopeKey
       // Why: keep any already-loaded children visible during a poll-driven
       // refetch so expanding then refreshing doesn't flash a loading row.
-      setSubmoduleStatusByKey((prev) =>
-        prev[expansionKey] ? prev : { ...prev, [expansionKey]: { status: 'loading' } }
+      setSubmoduleStatusStore((prev) =>
+        prev.scope !== scopeAtStart || prev.byKey[expansionKey]
+          ? prev
+          : {
+              ...prev,
+              byKey: { ...prev.byKey, [expansionKey]: { status: 'loading' } }
+            }
       )
       try {
         const connectionId = getConnectionId(activeWorktreeId ?? null) ?? undefined
@@ -85,31 +86,39 @@ export function useSourceControlSubmoduleStatus(
           submodulePath,
           area
         )
-        if (generationRef.current !== generation) {
-          return
-        }
-        setSubmoduleStatusByKey((prev) => ({
-          ...prev,
-          [expansionKey]: {
-            status: 'loaded',
-            entries: result.entries,
-            ...(result.didHitLimit ? { didHitLimit: true } : {})
-          }
-        }))
+        setSubmoduleStatusStore((prev) =>
+          prev.scope !== scopeAtStart
+            ? prev
+            : {
+                ...prev,
+                byKey: {
+                  ...prev.byKey,
+                  [expansionKey]: {
+                    status: 'loaded',
+                    entries: result.entries,
+                    ...(result.didHitLimit ? { didHitLimit: true } : {})
+                  }
+                }
+              }
+        )
       } catch (error) {
-        if (generationRef.current !== generation) {
-          return
-        }
-        setSubmoduleStatusByKey((prev) => ({
-          ...prev,
-          [expansionKey]: {
-            status: 'error',
-            error: error instanceof Error ? error.message : String(error)
-          }
-        }))
+        setSubmoduleStatusStore((prev) =>
+          prev.scope !== scopeAtStart
+            ? prev
+            : {
+                ...prev,
+                byKey: {
+                  ...prev.byKey,
+                  [expansionKey]: {
+                    status: 'error',
+                    error: error instanceof Error ? error.message : String(error)
+                  }
+                }
+              }
+        )
       }
     },
-    [activeRepoSettings, activeWorktreeId, worktreePath]
+    [activeRepoSettings, activeWorktreeId, submoduleStatusScopeKey, worktreePath]
   )
 
   const toggleSubmodule = useCallback((entry: Pick<GitStatusEntry, 'area' | 'path'>) => {

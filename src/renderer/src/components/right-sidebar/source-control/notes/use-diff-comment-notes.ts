@@ -47,6 +47,13 @@ export function useSourceControlDiffCommentNotes({
   const [pendingDiffCommentsClear, setPendingDiffCommentsClear] =
     useState<PendingDiffCommentsClear | null>(null)
   const [isClearingDiffComments, setIsClearingDiffComments] = useState(false)
+  // Why: reset during render so a worktree switch never paints the previous confirmation.
+  const [notesWorktreeId, setNotesWorktreeId] = useState(activeWorktreeId)
+  if (notesWorktreeId !== activeWorktreeId) {
+    setNotesWorktreeId(activeWorktreeId)
+    setPendingDiffCommentsClear(null)
+    setIsClearingDiffComments(false)
+  }
   const handleCopyDiffComments = useCallback(async (): Promise<void> => {
     if (diffCommentsForActive.length === 0) {
       return
@@ -120,11 +127,6 @@ export function useSourceControlDiffCommentNotes({
     pendingDiffCommentsClearCount
   ])
 
-  const resetPendingDiffCommentsClear = useCallback((): void => {
-    setPendingDiffCommentsClear(null)
-    setIsClearingDiffComments(false)
-  }, [])
-
   return {
     diffCommentCount,
     diffCommentCountByPath,
@@ -136,7 +138,6 @@ export function useSourceControlDiffCommentNotes({
     isClearingDiffComments,
     pendingDiffCommentsClearCount,
     pendingDiffCommentsClearDescription,
-    resetPendingDiffCommentsClear,
     resolvedPendingDiffCommentsClear,
     setDiffCommentsExpanded,
     setPendingDiffCommentsClear

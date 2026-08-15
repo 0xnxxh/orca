@@ -37,8 +37,7 @@ export function useSourceControlPanelState() {
   const viewState = useSourceControlPanelViewState({
     activeWorktreeId,
     settings,
-    updateSettings: storeActions.updateSettings,
-    resetPendingDiffCommentsClear: notes.resetPendingDiffCommentsClear
+    updateSettings: storeActions.updateSettings
   })
   const operationState = useSourceControlWorktreeOperationState({
     activeWorktreeId,

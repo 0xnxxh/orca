@@ -19,13 +19,11 @@ function createDefaultCollapsedSections(): Set<string> {
 export function useSourceControlPanelViewState({
   activeWorktreeId,
   settings,
-  updateSettings,
-  resetPendingDiffCommentsClear
+  updateSettings
 }: {
   activeWorktreeId: string | null
   settings: SourceControlWorktreeContext['settings']
   updateSettings: SourceControlStoreActions['updateSettings']
-  resetPendingDiffCommentsClear: () => void
 }) {
   const sourceControlRef = useRef<HTMLDivElement | null>(null)
   // Why: virtualize against the panel's shared scroller; use state (not a ref) so lists re-render and start observing once the element attaches.
@@ -62,7 +60,6 @@ export function useSourceControlPanelViewState({
     setCollapsedSections(createDefaultCollapsedSections())
     setCollapsedTreeDirs(new Set())
     setBaseRefDialogOpen(false)
-    resetPendingDiffCommentsClear()
     // Why: don't reset defaultBaseRef here — it's repo-scoped (resolved on activeRepo change); resetting would clobber non-main defaults.
     setFilterQuery('')
     // Why: don't reset commit-in-flight state — it's per-worktree; resetting would re-enable Commit for an incoming worktree mid-commit.

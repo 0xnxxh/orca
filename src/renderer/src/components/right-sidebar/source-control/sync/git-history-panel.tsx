@@ -89,7 +89,10 @@ export function GitHistoryPanel({
   const [filesByCommit, setFilesByCommit] = useState<Record<string, GitHistoryCommitFilesState>>({})
   // Tracks commits whose files have been loaded (or are in flight) so re-expanding
   // never refetches; an entry is cleared on error to allow a retry.
-  const loadedCommitsRef = useRef<Set<string>>(new Set())
+  const loadedCommitsRef = useRef<{
+    result: GitHistoryResult | undefined
+    ids: Set<string>
+  }>({ result, ids: new Set() })
 
   // A new history result can reorder or replace commits, so drop any expansion
   // and cached file lists rather than risk showing stale files under a row.
@@ -98,7 +101,6 @@ export function GitHistoryPanel({
     setHistoryResult(result)
     setExpanded(new Set())
     setFilesByCommit({})
-    loadedCommitsRef.current = new Set()
   }
 
   const handleToggleExpand = useCallback(
@@ -114,17 +116,24 @@ export function GitHistoryPanel({
         }
         return next
       })
-      if (!willExpand || !onLoadCommitFiles || loadedCommitsRef.current.has(id)) {
+      // Why: clear the in-flight lock in the click handler, not during render —
+      // a new history result can reuse commit ids with different file lists.
+      if (loadedCommitsRef.current.result !== result) {
+        loadedCommitsRef.current = { result, ids: new Set() }
+      }
+      if (!willExpand || !onLoadCommitFiles || loadedCommitsRef.current.ids.has(id)) {
         return
       }
-      loadedCommitsRef.current.add(id)
+      loadedCommitsRef.current.ids.add(id)
       setFilesByCommit((prev) => ({ ...prev, [id]: { status: 'loading' } }))
       onLoadCommitFiles(item)
         .then((entries) => {
           setFilesByCommit((prev) => ({ ...prev, [id]: { status: 'ready', entries } }))
         })
         .catch((error: unknown) => {
-          loadedCommitsRef.current.delete(id)
+          if (loadedCommitsRef.current.result === result) {
+            loadedCommitsRef.current.ids.delete(id)
+          }
           setFilesByCommit((prev) => ({
             ...prev,
             [id]: {
@@ -140,7 +149,7 @@ export function GitHistoryPanel({
           }))
         })
     },
-    [expanded, onLoadCommitFiles]
+    [expanded, onLoadCommitFiles, result]
   )
 
   const stopResize = useCallback((): void => {

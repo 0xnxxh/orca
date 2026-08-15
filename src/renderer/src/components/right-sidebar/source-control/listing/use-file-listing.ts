@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { deriveSourceControlPushRecovery } from '../sync/push-recovery'
-import { isSourceControlSplitOpenModifier } from './split-open'
+import { isSourceControlSplitOpenModifier, type SourceControlRowOpenEvent } from './split-open'
 import { useSourceControlSelection } from './use-selection'
 import { useSourceControlSubmoduleStatus } from './use-submodule-status'
 import type { SourceControlActionError } from '../sync/action-error'
@@ -122,11 +122,15 @@ export function useSourceControlFileListing({
       branchSummary
     })
 
+  const shouldOpenAsSplit = useCallback(
+    (event: SourceControlRowOpenEvent) => isSourceControlSplitOpenModifier(event, isMac),
+    [isMac]
+  )
   const { selectedKeys, handleSelect, handleContextMenu, clearSelection } =
     useSourceControlSelection({
       flatEntries: visibleSelectionEntries,
       onOpenDiff: handleOpenDiff,
-      shouldOpenAsSplit: (event) => isSourceControlSplitOpenModifier(event, isMac),
+      shouldOpenAsSplit,
       containerRef: sourceControlRef
     })
 
