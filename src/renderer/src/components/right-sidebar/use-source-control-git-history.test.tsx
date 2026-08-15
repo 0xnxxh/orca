@@ -35,6 +35,7 @@ type Api = ReturnType<typeof useSourceControlGitHistory>
 let latest: Api | null = null
 
 function Probe(props: {
+  activeRepoSettings?: { activeRuntimeEnvironmentId: string | null }
   worktreeId?: string | null
   worktreePath?: string
   compareBaseRef?: string | null
@@ -45,7 +46,7 @@ function Probe(props: {
   worktreeMap?: ReadonlyMap<string, unknown>
 }): null {
   latest = useSourceControlGitHistory({
-    activeRepoSettings: null,
+    activeRepoSettings: props.activeRepoSettings ?? null,
     activeWorktreeId: props.worktreeId === undefined ? 'A' : props.worktreeId,
     worktreePath: props.worktreePath ?? '/a',
     compareBaseRef: props.compareBaseRef === undefined ? 'origin/main' : props.compareBaseRef,
@@ -233,6 +234,35 @@ describe('useSourceControlGitHistory stale completion', () => {
       limit: 50,
       baseRef: 'origin/dev'
     })
+  })
+
+  it('re-fetches when the owner host changes but the worktree and path stay put', async () => {
+    const root = await mount({
+      activeRepoSettings: { activeRuntimeEnvironmentId: null }
+    })
+    await flush()
+    expect(mocks.getRuntimeGitHistory).toHaveBeenCalledTimes(1)
+    expect(mocks.getRuntimeGitHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settings: { activeRuntimeEnvironmentId: null } }),
+      expect.anything()
+    )
+
+    await act(async () => {
+      root.render(<Probe activeRepoSettings={{ activeRuntimeEnvironmentId: 'env-1' }} />)
+    })
+    await flush()
+    expect(mocks.getRuntimeGitHistory).toHaveBeenCalledTimes(2)
+    expect(mocks.getRuntimeGitHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settings: { activeRuntimeEnvironmentId: 'env-1' } }),
+      expect.anything()
+    )
+
+    // A new settings object with the same owner host must not trigger another git read.
+    await act(async () => {
+      root.render(<Probe activeRepoSettings={{ activeRuntimeEnvironmentId: 'env-1' }} />)
+    })
+    await flush()
+    expect(mocks.getRuntimeGitHistory).toHaveBeenCalledTimes(2)
   })
 
   it('does not shell out to git while collapsed, hidden, or on a folder workspace', async () => {

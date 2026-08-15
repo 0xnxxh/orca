@@ -23,6 +23,13 @@ import {
 } from './row-layout'
 import { STATUS_COLORS, STATUS_LABELS } from '../../status-display'
 
+/**
+ * Renders one uncommitted change row: file identity, conflict/diff badges, and the hover actions
+ * (discard, stage, unstage) that the entry's own state permits.
+ *
+ * Clicking opens the file unless `onSelect` claims the click for bulk selection, or the row is a
+ * dirty submodule, in which case it toggles `submoduleExpansion` instead.
+ */
 export const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
   entryKey,
   entry,

@@ -48,6 +48,8 @@ export function useSourceControlGitHistory({
   const gitHistoryState = activeWorktreeId
     ? (gitHistoryByWorktree[activeWorktreeId] ?? EMPTY_GIT_HISTORY_STATE)
     : EMPTY_GIT_HISTORY_STATE
+  // Why: the read is routed by owner host, so track it as a stable string — a new settings object alone must not refetch.
+  const ownerHostKey = activeRepoSettings?.activeRuntimeEnvironmentId?.trim() ?? ''
 
   useEffect(() => {
     setGitHistoryByWorktree((prev) => {
@@ -157,6 +159,8 @@ export function useSourceControlGitHistory({
     isFolder,
     isGitHistoryExpanded,
     isGitHistoryVisible,
+    // Why: same worktree + path can switch owner host; without this the panel keeps the previous host's commits.
+    ownerHostKey,
     worktreePath
   ])
 

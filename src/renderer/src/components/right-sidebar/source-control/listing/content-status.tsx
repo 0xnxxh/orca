@@ -5,6 +5,11 @@ import { ConflictSummaryCard, OperationBanner } from './conflict-status-cards'
 import { EmptyState } from './empty-state'
 import { TooManyChangesBanner } from './too-many-changes-banner'
 
+/**
+ * Renders the banners and empty states that sit above the source control file list: conflict
+ * summary or in-progress operation, the huge-repository warning, and the empty state matching the
+ * current filter (none, too large, or no matches).
+ */
 export function SourceControlContentStatus({
   unresolvedConflictCount,
   conflictOperation,
