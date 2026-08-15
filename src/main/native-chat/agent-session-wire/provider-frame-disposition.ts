@@ -34,7 +34,7 @@ export const PROVIDER_FRAME_CLASSIFICATIONS = {
     'hook/started': 'suppressed-benign',
     'turn/completed': 'status-chrome',
     'hook/completed': 'suppressed-benign',
-    'turn/diff/updated': 'timeline-substantive',
+    'turn/diff/updated': 'suppressed-benign',
     'turn/plan/updated': 'timeline-substantive',
     'item/started': 'timeline-substantive',
     'item/autoApprovalReview/started': 'status-chrome',

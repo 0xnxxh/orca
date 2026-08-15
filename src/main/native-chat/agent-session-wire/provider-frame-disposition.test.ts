@@ -33,7 +33,7 @@ describe('provider frame classification catalog', () => {
     }
   })
 
-  it('suppresses benign hook lifecycle and Codex rate-limit frames', () => {
+  it('suppresses benign hook lifecycle and Codex progress frames', () => {
     expect(classifyProviderFrame('codex', 'notification:hook/started', {})).toBe(
       'suppressed-benign'
     )
@@ -41,6 +41,9 @@ describe('provider frame classification catalog', () => {
       'suppressed-benign'
     )
     expect(classifyProviderFrame('codex', 'notification:account/rateLimits/updated', {})).toBe(
+      'suppressed-benign'
+    )
+    expect(classifyProviderFrame('codex', 'notification:turn/diff/updated', {})).toBe(
       'suppressed-benign'
     )
     expect(classifyProviderFrame('claude', 'message:system:hook_started', {})).toBe(
