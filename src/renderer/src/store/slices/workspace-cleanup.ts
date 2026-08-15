@@ -35,6 +35,10 @@ import {
 } from './workspace-cleanup-broad-scan-registry'
 import { classifyTitleActivity, isExplicitAgentStatusFresh } from '@/lib/pane-agent-evidence'
 import { translate } from '@/i18n/i18n'
+import { resolveWorktreeOperationRoute } from '@/lib/worktree-operation-route'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
+import { resolveWorkspaceCleanupRemovalHostId } from '../../../../shared/workspace-cleanup-host-identity'
+import { isWorkspaceCleanupRemovalHostCertain } from './workspace-cleanup-removal-host-guard'
 import type { PreservedBranchCleanup } from '@/lib/preserved-branch-cleanup'
 
 export type WorkspaceCleanupFailure = {
@@ -1018,6 +1022,9 @@ async function preflightWorkspaceCleanupCandidates(
   // Why: one batched scan per chunk replaces a git worktree-list + activity
   // read per row; chunks stay under main's silent target truncation limit.
   const candidatesByWorktreeId = new Map<string, WorkspaceCleanupCandidate>()
+  // Why: candidatesByWorktreeId collapses a colliding id to one row, so record
+  // every owner the scan reported before the collapse hides the collision.
+  const scannedHostIdsByWorktreeId = new Map<string, Set<ExecutionHostId | null>>()
   for (let start = 0; start < worktreeIds.length; start += WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT) {
     const chunk = worktreeIds.slice(start, start + WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT)
     const scan = await window.api.workspaceCleanup.scan({
@@ -1025,6 +1032,11 @@ async function preflightWorkspaceCleanupCandidates(
       scanId: crypto.randomUUID(),
       refreshActivity: true
     })
+    for (const candidate of scan.candidates) {
+      const hostIds = scannedHostIdsByWorktreeId.get(candidate.worktreeId) ?? new Set()
+      hostIds.add(resolveWorkspaceCleanupRemovalHostId(candidate))
+      scannedHostIdsByWorktreeId.set(candidate.worktreeId, hostIds)
+    }
     const enriched = await enrichWorkspaceCleanupCandidates(scan.candidates, getState(), {
       applyDismissals: false
     })
@@ -1032,13 +1044,36 @@ async function preflightWorkspaceCleanupCandidates(
       candidatesByWorktreeId.set(candidate.worktreeId, candidate)
     }
   }
-  return worktreeIds.map((worktreeId) =>
-    evaluateWorkspaceCleanupPreflight(
+  return worktreeIds.map((worktreeId) => {
+    const preflight = evaluateWorkspaceCleanupPreflight(
       worktreeId,
       candidatesByWorktreeId.get(worktreeId),
       approvedCandidatesByWorktreeId.get(worktreeId)
     )
-  )
+    if (!preflight.ok) {
+      return preflight
+    }
+    // STA-4343: fail closed rather than delete another host's uncommitted work.
+    const hostIsCertain = isWorkspaceCleanupRemovalHostCertain({
+      confirmedCandidate: approvedCandidatesByWorktreeId.get(worktreeId),
+      scannedCandidate: preflight.candidate,
+      scannedHostIds: [...(scannedHostIdsByWorktreeId.get(worktreeId) ?? [])],
+      routeHostId: resolveWorktreeOperationRoute(getState(), worktreeId)?.executionHostId ?? null
+    })
+    return hostIsCertain
+      ? preflight
+      : {
+          ok: false as const,
+          failure: {
+            worktreeId,
+            displayName: preflight.candidate.displayName,
+            message: translate(
+              'auto.store.slices.workspace.cleanup.hostUnresolved',
+              'Orca cannot tell which host owns this workspace. Refresh projects and review it again.'
+            )
+          }
+        }
+  })
 }
 
 function evaluateWorkspaceCleanupPreflight(
