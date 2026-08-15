@@ -752,7 +752,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     attachWebglAddon(true);
     if (window.Unicode11Addon && window.Unicode11Addon.Unicode11Addon) try { term.loadAddon(new window.Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = '11'; } catch (e) {}
     if (typeof replayData === 'string' && replayData.length > 0) {
-      enqueueWrite(replayData);
+      enqueueWrite(ESC + '[0m' + replayData + ESC + '[0m');
     }
 
     // Why: reset eviction tracking + attach observers for the new term.
