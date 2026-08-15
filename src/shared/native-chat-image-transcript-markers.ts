@@ -48,8 +48,14 @@ export function normalizeNativeChatUserText(text: string): string {
 /** Marker text that stripping would erase entirely is text the user typed
  *  literally — a real marker always rides on an image turn, which normalization
  *  has already folded away by the time echo matching runs. */
-export function normalizeNativeChatUserTextWithLiteralFallback(text: string): string {
+function normalizeNativeChatUserTextWithLiteralFallback(text: string): string {
   return normalizeNativeChatUserText(text) || text.trim().replace(/\s+/g, ' ')
+}
+
+export function nativeChatUserTextMatchText(text: string, hasImages: boolean): string {
+  return hasImages
+    ? normalizeNativeChatUserText(text)
+    : normalizeNativeChatUserTextWithLiteralFallback(text)
 }
 
 function joinedUserText(message: NativeChatMessage): string {
@@ -74,11 +80,7 @@ export function nativeChatUserMessageMatchText(message: NativeChatMessage): stri
     return null
   }
   const joined = joinedUserText(message)
-  const normalized = normalizeNativeChatUserText(joined)
-  if (normalized || message.blocks.some(isImageRefBlock)) {
-    return normalized || null
-  }
-  return normalizeNativeChatUserTextWithLiteralFallback(joined) || null
+  return nativeChatUserTextMatchText(joined, message.blocks.some(isImageRefBlock)) || null
 }
 
 function stripImagePromptMarkersFromTextBlocks(
@@ -130,6 +132,14 @@ export function countImagePromptMarkers(message: NativeChatMessage): number {
       count + (isTextBlock(block) ? (block.text.match(IMAGE_PROMPT_MARKERS)?.length ?? 0) : 0),
     0
   )
+}
+
+export function nativeChatUserMessageImageEvidenceCount(message: NativeChatMessage): number {
+  if (message.role !== 'user') {
+    return 0
+  }
+  const imageRefCount = message.blocks.filter(isImageRefBlock).length
+  return Math.max(imageRefCount, countImagePromptMarkers(message))
 }
 
 /** Claude records image paths as source turns followed by a prompt carrying

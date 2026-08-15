@@ -3,7 +3,7 @@
 // an incomplete multi-image echo is allowed to do to the local previews.
 
 import { createElement } from 'react'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   isImageRefBlock,
@@ -29,12 +29,14 @@ function userTextMessage(id: string, text: string): NativeChatMessage {
 }
 
 describe('mobile literal image-marker turns', () => {
-  let renderer: ReactTestRenderer | null = null
+  let updateRenderer: (messages: NativeChatMessage[]) => void = () => {}
+  let unmountRenderer = (): void => {}
   let state: DraftState | null = null
 
   afterEach(() => {
-    act(() => renderer?.unmount())
-    renderer = null
+    act(unmountRenderer)
+    updateRenderer = () => {}
+    unmountRenderer = () => {}
     state = null
   })
 
@@ -51,12 +53,14 @@ describe('mobile literal image-marker turns', () => {
 
   async function mount(): Promise<void> {
     await act(async () => {
-      renderer = create(createElement(Harness, {}))
+      const renderer = create(createElement(Harness, {}))
+      updateRenderer = (messages) => renderer.update(createElement(Harness, { messages }))
+      unmountRenderer = () => renderer.unmount()
     })
   }
 
   async function transcript(messages: NativeChatMessage[]): Promise<void> {
-    await act(async () => renderer?.update(createElement(Harness, { messages })))
+    await act(async () => updateRenderer(messages))
   }
 
   function send(text: string, images?: string[]): void {
@@ -157,5 +161,41 @@ describe('mobile literal image-marker turns', () => {
     const rendered = rows(messages)
     expect(rendered.map(rowText)).toEqual(['look'])
     expect(rendered.map(rowImages)).toEqual([['file:///a.jpg']])
+  })
+
+  it('keeps a captioned multi-image echo until the transcript accounts for every image', async () => {
+    await mount()
+    send('compare these', ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg'])
+
+    const partial = [
+      userTextMessage('source-a', '[Image: source: /tmp/a.png]'),
+      userTextMessage('prompt', 'compare these [Image #1]')
+    ]
+    await transcript(partial)
+
+    expect(rows(partial).map(rowImages)).toEqual([
+      ['/tmp/a.png'],
+      ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg']
+    ])
+    expect(rows(partial).map(rowText)).toEqual(['compare these', 'compare these'])
+    expect(state?.imagePreviewsByMessageId).toEqual({})
+
+    const complete = [
+      userTextMessage('source-a', '[Image: source: /tmp/a.png]'),
+      userTextMessage('source-b', '[Image: source: /tmp/b.png]'),
+      userTextMessage('source-c', '[Image: source: /tmp/c.png]'),
+      userTextMessage('complete-prompt', 'compare these [Image #1] [Image #2] [Image #3]')
+    ]
+    await transcript(complete)
+
+    expect(state?.imagePreviewsByMessageId).toEqual({
+      'complete-prompt': ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg']
+    })
+    const completeRows = rows(complete)
+    expect(completeRows).toHaveLength(1)
+    expect(completeRows.map(rowText)).toEqual(['compare these'])
+    expect(completeRows.map(rowImages)).toEqual([
+      ['file:///a.jpg', 'file:///b.jpg', 'file:///c.jpg']
+    ])
   })
 })

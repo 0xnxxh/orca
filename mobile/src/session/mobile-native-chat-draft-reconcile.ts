@@ -3,14 +3,11 @@ import {
   countImagePromptMarkers,
   hasImagePromptMarker,
   isImageSourceUserTurn,
+  nativeChatUserMessageImageEvidenceCount,
   nativeChatUserMessageMatchText,
+  nativeChatUserTextMatchText,
   normalizeImageTranscriptMessages,
-  normalizeNativeChatUserText,
   normalizedNativeChatUserMessageText
-} from './mobile-native-chat-image-transcript-markers'
-export {
-  normalizeNativeChatUserText as normalizeReconcileText,
-  normalizeNativeChatUserTextWithLiteralFallback as normalizeReconcileTextWithLiteralFallback
 } from './mobile-native-chat-image-transcript-markers'
 
 /** An ack-lost ('unknown' outcome) send held until its transcript echo lands or
@@ -20,6 +17,7 @@ export type UnconfirmedSend = {
   pendingKey: string | null
   text: string
   normalizedText: string
+  imageCount: number
   baselineTailMessageId: string | null
   deadline: ReturnType<typeof setTimeout> | null
 }
@@ -30,11 +28,15 @@ export function normalizedUserText(message: NativeChatMessage): string | null {
 
 export function countUserTextOccurrences(
   messages: readonly NativeChatMessage[],
-  text: string
+  text: string,
+  imageCount = 0
 ): number {
   let count = 0
   for (const message of messages) {
-    if (nativeChatUserMessageMatchText(message) === text) {
+    if (
+      nativeChatUserMessageMatchText(message) === text &&
+      nativeChatUserMessageImageEvidenceCount(message) >= imageCount
+    ) {
       count++
     }
   }
@@ -178,20 +180,24 @@ export function findLandedImagePreviewEchoes(
     if (!entry.images?.length) {
       continue
     }
-    const targetText = normalizeNativeChatUserText(entry.text)
+    const targetText = nativeChatUserTextMatchText(entry.text, true)
     const candidates = normalized.filter((message) => {
       if (message.role !== 'user') {
         return false
       }
+      const imageCount = nativeChatUserMessageImageEvidenceCount(message)
       if (targetText) {
-        return normalizedUserText(message) === targetText
+        return (
+          nativeChatUserMessageMatchText(message) === targetText &&
+          imageCount >= entry.images!.length
+        )
       }
-      const imageCount = message.blocks.filter(isImageRefBlock).length
+      const imageRefCount = message.blocks.filter(isImageRefBlock).length
       // Why: a marker-only echo proves delivery per marker, so a partially
       // rendered turn must not claim (and rebind) previews it cannot account for.
       return (
         message.blocks.length === 0 ||
-        imageCount >= entry.images!.length ||
+        imageRefCount >= entry.images!.length ||
         (countImagePromptMarkers(message) >= entry.images!.length &&
           normalizedUserText(message) === null)
       )
@@ -228,7 +234,10 @@ export function findLandedUnconfirmedSends(
   // (`[Image: source: …]` or no text) keys under '' so an empty-text send can
   // claim it.
   const messageIndexById = new Map<string, number>()
-  const userMessagesByText = new Map<string, Array<{ id: string; index: number }>>()
+  const userMessagesByText = new Map<
+    string,
+    Array<{ id: string; index: number; imageCount: number }>
+  >()
   for (const [index, message] of messages.entries()) {
     messageIndexById.set(message.id, index)
     if (message.role !== 'user') {
@@ -239,9 +248,10 @@ export function findLandedUnconfirmedSends(
     // A marker-only turn keys both ways: '' claims it for a caption-less image
     // send, and its literal text claims it for a send of that same text.
     const literalKey = isImageSource ? key : (nativeChatUserMessageMatchText(message) ?? key)
+    const imageCount = nativeChatUserMessageImageEvidenceCount(message)
     for (const candidateKey of literalKey === key ? [key] : [key, literalKey]) {
       const current = userMessagesByText.get(candidateKey) ?? []
-      current.push({ id: message.id, index })
+      current.push({ id: message.id, index, imageCount })
       userMessagesByText.set(candidateKey, current)
     }
   }
@@ -257,7 +267,12 @@ export function findLandedUnconfirmedSends(
     }
     const echo = userMessagesByText
       .get(entry.normalizedText)
-      ?.find((message) => message.index > tailIndex && !claimedMessageIds.has(message.id))
+      ?.find(
+        (message) =>
+          message.index > tailIndex &&
+          message.imageCount >= entry.imageCount &&
+          !claimedMessageIds.has(message.id)
+      )
     if (echo) {
       claimedMessageIds.add(echo.id)
       landed.push(entry)

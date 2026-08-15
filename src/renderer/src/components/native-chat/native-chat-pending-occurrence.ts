@@ -1,7 +1,9 @@
 import {
+  nativeChatUserMessageImageEvidenceCount,
   nativeChatUserMessageMatchText,
+  nativeChatUserTextMatchText,
   normalizeNativeChatUserText,
-  normalizeNativeChatUserTextWithLiteralFallback
+  normalizedNativeChatUserMessageText
 } from '../../../../shared/native-chat-image-transcript-markers'
 import { isImageRefBlock, type NativeChatMessage } from '../../../../shared/native-chat-types'
 
@@ -25,36 +27,47 @@ export function normalizeNativeChatPendingText(text: string): string {
 function nativeChatPendingMatchText(
   pending: Pick<NativeChatPendingOccurrence, 'text' | 'imagePaths'>
 ): string {
-  return pending.imagePaths?.some(Boolean)
-    ? normalizeNativeChatPendingText(pending.text)
-    : normalizeNativeChatUserTextWithLiteralFallback(pending.text)
+  return nativeChatUserTextMatchText(pending.text, Boolean(pending.imagePaths?.some(Boolean)))
+}
+
+function nativeChatTextContentKey(text: string, imageCount: number): string {
+  return imageCount > 0 ? `text:${text}\0images:${imageCount}` : `text:${text}`
 }
 
 export function nativeChatPendingContentKey(
   pending: Pick<NativeChatPendingOccurrence, 'text' | 'imagePaths'>
 ): string {
   const text = nativeChatPendingMatchText(pending)
-  if (text) {
-    return `text:${text}`
-  }
   const imagePaths = pending.imagePaths?.filter(Boolean) ?? []
+  if (text) {
+    return nativeChatTextContentKey(text, imagePaths.length)
+  }
   return imagePaths.length > 0 ? `images:${JSON.stringify(imagePaths)}` : 'empty'
 }
 
-function nativeChatUserMessageContentKey(message: NativeChatMessage): string | null {
+function nativeChatUserMessageContentKeys(message: NativeChatMessage): readonly string[] {
   if (message.role !== 'user') {
-    return null
+    return []
   }
-  const text = nativeChatUserMessageMatchText(message) ?? ''
-  if (text) {
-    return `text:${text}`
+  const keys = new Set<string>()
+  const matchText = nativeChatUserMessageMatchText(message) ?? ''
+  if (matchText) {
+    keys.add(nativeChatTextContentKey(matchText, 0))
   }
-  const imagePaths = message.blocks
-    .filter(isImageRefBlock)
-    .map((block) => block.path)
-    .filter((path): path is string => Boolean(path))
-  const key = nativeChatPendingContentKey({ text: '', imagePaths })
-  return key === 'empty' ? null : key
+  const imageCount = nativeChatUserMessageImageEvidenceCount(message)
+  const imageText = normalizedNativeChatUserMessageText(message)
+  if (imageText && imageCount > 0) {
+    keys.add(nativeChatTextContentKey(imageText, imageCount))
+  } else if (imageCount > 0) {
+    const imagePaths = message.blocks
+      .filter(isImageRefBlock)
+      .map((block) => block.path)
+      .filter((path): path is string => Boolean(path))
+    if (imagePaths.length > 0) {
+      keys.add(`images:${JSON.stringify(imagePaths)}`)
+    }
+  }
+  return [...keys]
 }
 
 export function matchingNativeChatUserContentCounts(
@@ -62,8 +75,7 @@ export function matchingNativeChatUserContentCounts(
 ): Map<string, number> {
   const counts = new Map<string, number>()
   for (const message of messages) {
-    const key = nativeChatUserMessageContentKey(message)
-    if (key) {
+    for (const key of nativeChatUserMessageContentKeys(message)) {
       counts.set(key, (counts.get(key) ?? 0) + 1)
     }
   }
@@ -77,8 +89,7 @@ export function advancedNativeChatUserContentCounts(
   const waiting = new Map<string, number>()
   for (const message of messages) {
     if (message.role === 'user') {
-      const key = nativeChatUserMessageContentKey(message)
-      if (key) {
+      for (const key of nativeChatUserMessageContentKeys(message)) {
         waiting.set(key, (waiting.get(key) ?? 0) + 1)
       }
       continue
@@ -180,10 +191,13 @@ export function selectPendingIndicesRepresentedByUserTexts(
   }
   const remaining = pending.map((entry, index) => ({
     index,
-    text: nativeChatPendingMatchText(entry)
+    text: nativeChatPendingMatchText(entry),
+    hasImages: Boolean(entry.imagePaths?.some(Boolean))
   }))
   for (const userText of userTexts) {
-    const open = remaining.filter((entry) => !represented.has(entry.index) && entry.text.length > 0)
+    const open = remaining.filter(
+      (entry) => !entry.hasImages && !represented.has(entry.index) && entry.text.length > 0
+    )
     const gluedCount = countLeadingPendingTextsGluedToUserText(
       open.map((entry) => entry.text),
       userText
