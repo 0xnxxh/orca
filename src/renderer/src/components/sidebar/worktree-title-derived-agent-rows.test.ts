@@ -368,6 +368,35 @@ describe('buildTitleDerivedAgentRows', () => {
     expect(rowsFor('zsh', 'opencode')).toHaveLength(0)
   })
 
+  it('surfaces Kilo panes from its native title, carrying its declared indicator', () => {
+    // Titles as `@kilocode/cli` 7.4.22 emits them: bare base on the home screen,
+    // `${glyph} Kilo CLI | ${session}` in a session. Pre-fix every one of these
+    // produced no label and no status, so the pane had no row at all.
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1'), makeTab('tab-2'), makeTab('tab-3')],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: {
+        'tab-1': { 1: 'Kilo CLI' },
+        'tab-2': { 1: '◔ Kilo CLI | fix the flaky pty test' },
+        'tab-3': { 1: '⚠ Kilo CLI | fix the flaky pty test' }
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'], 'tab-2': ['pty-2'], 'tab-3': ['pty-3'] },
+      terminalLayoutsByTabId: {
+        'tab-1': makeSingleLayout(LEAF_ID_1),
+        'tab-2': makeSingleLayout(LEAF_ID_1),
+        'tab-3': makeSingleLayout(LEAF_ID_1)
+      },
+      now: 2000
+    })
+
+    expect(rows.map((row) => [row.agentType, row.state, row.entry.lastAssistantMessage])).toEqual([
+      ['kilo', 'idle', 'Idle'],
+      ['kilo', 'working', 'Running'],
+      ['kilo', 'waiting', 'Needs input']
+    ])
+  })
+
   it('does not brand a split pane with the tab-scoped launch agent', () => {
     const rows = buildWorktreeAgentRows({
       tabs: [makeTab('tab-1', { launchAgent: 'opencode' })],

@@ -10,6 +10,7 @@ import {
   isPiAgentTitle,
   titleHasAgentName
 } from './agent-title-core'
+import { isKiloNativeTitle } from './kilo-terminal-title'
 import { isOpenCodeNativeTitle } from './opencode-terminal-title'
 import { getPiCompatibleSyntheticAgentLabel } from './pi-compatible-synthetic-title'
 
@@ -18,7 +19,12 @@ import { getPiCompatibleSyntheticAgentLabel } from './pi-compatible-synthetic-ti
  * Used to scope prompt-cache-timer behavior to Claude sessions only.
  */
 export function isClaudeAgent(title: string): boolean {
-  if (!title || isClaudeManagementTitle(title) || isOpenCodeNativeTitle(title)) {
+  if (
+    !title ||
+    isClaudeManagementTitle(title) ||
+    isOpenCodeNativeTitle(title) ||
+    isKiloNativeTitle(title)
+  ) {
     return false
   }
   const lower = title.toLowerCase()
@@ -51,6 +57,11 @@ export function getAgentLabel(title: string): string | null {
   // include status glyphs from other agents without changing OpenCode identity.
   if (isOpenCodeNativeTitle(title)) {
     return 'OpenCode'
+  }
+  // Why: same reasoning for Kilo's native frame — its session text is free-form
+  // and may carry another agent's name or spinner.
+  if (isKiloNativeTitle(title)) {
+    return 'Kilocode'
   }
   // Why: Claude task titles can mention another CLI; the prefix is the identity
   // signal, not arbitrary task text.

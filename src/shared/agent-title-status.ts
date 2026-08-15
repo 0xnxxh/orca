@@ -24,6 +24,7 @@ import {
   isPiTerminalTitle
 } from './agent-title-core'
 import type { AgentStatus } from './agent-title-core'
+import { detectKiloTitleStatus } from './kilo-terminal-title'
 import { isOpenCodeNativeTitle } from './opencode-terminal-title'
 import { getPiCompatibleSyntheticAgentStatus } from './pi-compatible-synthetic-title'
 import { isGrokRotatingWorkingTitle } from './terminal-title-agent-type'
@@ -164,6 +165,15 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
 
   if (isOpenCodeNativeTitle(title)) {
     return containsAgentSpinnerGlyph(title) ? 'working' : 'idle'
+  }
+
+  // Why: Kilo declares its own turn state in the title glyph, so read that
+  // rather than the generic spinner heuristic — a Kilo frame whose session text
+  // carries an unrelated spinner would otherwise report `working` while Kilo is
+  // actually waiting on a permission prompt.
+  const kiloStatus = detectKiloTitleStatus(title)
+  if (kiloStatus) {
+    return kiloStatus
   }
 
   if (title.includes(GEMINI_PERMISSION)) {
