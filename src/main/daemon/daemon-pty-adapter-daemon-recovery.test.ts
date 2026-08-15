@@ -14,23 +14,27 @@ import {
 } from './daemon-pty-adapter-test-harness'
 import type * as DaemonHealthModule from './daemon-health'
 
-const { getMacDaemonSystemResolverHealthMock, getMacDaemonTccAttributionHealthMock } = vi.hoisted(
-  () => ({
-    getMacDaemonSystemResolverHealthMock: vi.fn(
-      async (): Promise<'unknown' | 'unhealthy'> => 'unknown'
-    ),
-    getMacDaemonTccAttributionHealthMock: vi.fn(
-      async (): Promise<'intact' | 'severed' | 'unknown'> => 'unknown'
-    )
-  })
-)
+const {
+  getMacDaemonSystemResolverHealthMock,
+  getMacDaemonTccAttributionHealthMock,
+  isDaemonStaleForCurrentBundleMock
+} = vi.hoisted(() => ({
+  getMacDaemonSystemResolverHealthMock: vi.fn(
+    async (): Promise<'unknown' | 'unhealthy'> => 'unknown'
+  ),
+  getMacDaemonTccAttributionHealthMock: vi.fn(
+    async (): Promise<'intact' | 'severed' | 'unknown'> => 'unknown'
+  ),
+  isDaemonStaleForCurrentBundleMock: vi.fn(async () => false)
+}))
 
 vi.mock('./daemon-health', async (importOriginal) => {
   const actual = await importOriginal<typeof DaemonHealthModule>()
   return {
     ...actual,
     getMacDaemonSystemResolverHealth: getMacDaemonSystemResolverHealthMock,
-    getMacDaemonTccAttributionHealth: getMacDaemonTccAttributionHealthMock
+    getMacDaemonTccAttributionHealth: getMacDaemonTccAttributionHealthMock,
+    isDaemonStaleForCurrentBundle: isDaemonStaleForCurrentBundleMock
   }
 })
 
@@ -58,6 +62,8 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     getMacDaemonSystemResolverHealthMock.mockResolvedValue('unknown')
     getMacDaemonTccAttributionHealthMock.mockReset()
     getMacDaemonTccAttributionHealthMock.mockResolvedValue('unknown')
+    isDaemonStaleForCurrentBundleMock.mockReset()
+    isDaemonStaleForCurrentBundleMock.mockResolvedValue(false)
   })
 
   afterEach(async () => {
@@ -558,13 +564,102 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       respawnAdapter.dispose()
     })
 
-    it('preserves a severed-TCC daemon that still owns live sessions before a new spawn', async () => {
+    it('preserves a stale packaged daemon that still owns live sessions before a new spawn', async () => {
       const respawnFn = vi.fn()
       const respawnAdapter = new DaemonPtyAdapter({
         socketPath,
         tokenPath,
         runtimeDir: dir,
         packagedAppVersion: '1.4.178',
+        respawn: respawnFn
+      })
+      await respawnAdapter.spawn({ cols: 80, rows: 24, isNewSession: true })
+      isDaemonStaleForCurrentBundleMock.mockResolvedValueOnce(true)
+
+      const next = await respawnAdapter.spawn({ cols: 80, rows: 24, isNewSession: true })
+
+      expect(isDaemonStaleForCurrentBundleMock).toHaveBeenCalledWith(
+        dir,
+        socketPath,
+        tokenPath,
+        '1.4.178',
+        respawnAdapter.protocolVersion
+      )
+      expect(respawnFn).not.toHaveBeenCalled()
+      expect(next.id).toBeDefined()
+
+      respawnAdapter.dispose()
+    })
+
+    it('preserves a stale packaged daemon when its live session inventory is unavailable', async () => {
+      const respawnFn = vi.fn()
+      const respawnAdapter = new DaemonPtyAdapter({
+        socketPath,
+        tokenPath,
+        runtimeDir: dir,
+        packagedAppVersion: '1.4.178',
+        respawn: respawnFn
+      })
+      const internals = respawnAdapter as unknown as {
+        client: { request: (type: string, payload?: unknown) => Promise<unknown> }
+      }
+      const originalRequest = internals.client.request.bind(internals.client)
+      vi.spyOn(internals.client, 'request').mockImplementation((type, payload) => {
+        if (type === 'listSessions') {
+          return Promise.reject(new Error('inventory unavailable'))
+        }
+        return originalRequest(type, payload)
+      })
+      isDaemonStaleForCurrentBundleMock.mockResolvedValueOnce(true)
+
+      const next = await respawnAdapter.spawn({ cols: 80, rows: 24, isNewSession: true })
+
+      expect(respawnFn).not.toHaveBeenCalled()
+      expect(next.id).toBeDefined()
+
+      respawnAdapter.dispose()
+    })
+
+    it('coalesces stale-bundle retirement before concurrent fresh sessions', async () => {
+      let respawnServer: DaemonServer | undefined
+      const respawnFn = vi.fn(async () => {
+        await server.shutdown()
+        rmSync(socketPath, { force: true })
+        respawnServer = new DaemonServer({
+          socketPath,
+          tokenPath,
+          spawnSubprocess: () => createMockSubprocess()
+        })
+        await respawnServer.start()
+      })
+      const respawnAdapter = new DaemonPtyAdapter({
+        socketPath,
+        tokenPath,
+        runtimeDir: dir,
+        packagedAppVersion: '1.4.178',
+        respawn: respawnFn
+      })
+      isDaemonStaleForCurrentBundleMock.mockResolvedValue(true)
+
+      const replacements = await Promise.all([
+        respawnAdapter.spawn({ cols: 80, rows: 24, isNewSession: true }),
+        respawnAdapter.spawn({ cols: 80, rows: 24, isNewSession: true })
+      ])
+
+      expect(respawnFn).toHaveBeenCalledTimes(1)
+      expect(respawnFn).toHaveBeenCalledWith('stale_bundle')
+      expect(replacements.every((replacement) => replacement.id)).toBe(true)
+
+      respawnAdapter.dispose()
+      await respawnServer?.shutdown()
+    })
+
+    it('preserves a severed-TCC daemon that still owns live sessions before a new spawn', async () => {
+      const respawnFn = vi.fn()
+      const respawnAdapter = new DaemonPtyAdapter({
+        socketPath,
+        tokenPath,
+        runtimeDir: dir,
         respawn: respawnFn
       })
       // One live session in this adapter — the zero-session gate must fail closed.
@@ -577,7 +672,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         dir,
         socketPath,
         tokenPath,
-        '1.4.178',
         respawnAdapter.protocolVersion
       )
       expect(respawnFn).not.toHaveBeenCalled()
@@ -592,7 +686,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         socketPath,
         tokenPath,
         runtimeDir: dir,
-        packagedAppVersion: '1.4.178',
         respawn: respawnFn
       })
       const internals = respawnAdapter as unknown as {
@@ -631,7 +724,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         socketPath,
         tokenPath,
         runtimeDir: dir,
-        packagedAppVersion: '1.4.178',
         respawn: respawnFn
       })
       getMacDaemonTccAttributionHealthMock.mockResolvedValueOnce('severed')
@@ -642,7 +734,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         dir,
         socketPath,
         tokenPath,
-        '1.4.178',
         respawnAdapter.protocolVersion
       )
       expect(respawnFn).toHaveBeenCalledTimes(1)

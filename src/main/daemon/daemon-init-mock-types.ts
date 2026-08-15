@@ -16,7 +16,10 @@ export type MockAdapter = {
     socketPath: string
     tokenPath: string
     historyPath?: string
-    respawn?: (reason: 'daemon_died' | 'unhealthy_resolver') => Promise<void>
+    packagedAppVersion?: string | null
+    respawn?: (
+      reason: 'daemon_died' | 'unhealthy_resolver' | 'stale_bundle' | 'severed_tcc_attribution'
+    ) => Promise<void>
     protocolVersion?: number
   }
   getActiveSessionIds: Mock

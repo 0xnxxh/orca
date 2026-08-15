@@ -9177,7 +9177,7 @@
       "commands": [
         "pnpm run build:cli && pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration-message-delivery-identity.test.ts --reporter=dot --testTimeout=5000",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration-mailbox-routing-races.test.ts src/main/runtime/orchestration-mailbox-notification-consistency.test.ts src/main/runtime/orchestration-mailbox-detached-routing.test.ts src/main/runtime/orchestration-mailbox-transport-settlement.test.ts src/main/runtime/orchestration/run-coordinator-handle-migration.test.ts src/main/runtime/orchestration/orchestration-run-delivery-db.test.ts src/main/runtime/orchestration/orchestration-worker-dispatch-db.test.ts src/main/runtime/orchestration/formatter.test.ts src/main/providers/ssh-pty-provider.test.ts src/main/providers/ssh-pty-write.test.ts src/main/daemon/client.test.ts src/main/daemon/daemon-pty-router.test.ts src/main/daemon/degraded-daemon-pty-provider.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/terminal-send-stale-leaf-liveness.test.ts src/main/runtime/rpc/methods/orchestration.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/terminal-send-stale-leaf-liveness.test.ts src/main/runtime/rpc/methods/orchestration-runs.test.ts src/main/runtime/rpc/methods/orchestration-send.test.ts src/main/runtime/rpc/methods/orchestration-check.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/federation-sync.test.ts src/main/runtime/rpc/methods/orchestration-federation.test.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot"
       ],
       "testFiles": [
@@ -9197,7 +9197,9 @@
         "src/main/daemon/degraded-daemon-pty-provider.test.ts",
         "src/main/runtime/orca-runtime.test.ts",
         "src/main/runtime/terminal-send-stale-leaf-liveness.test.ts",
-        "src/main/runtime/rpc/methods/orchestration.test.ts",
+        "src/main/runtime/rpc/methods/orchestration-runs.test.ts",
+        "src/main/runtime/rpc/methods/orchestration-send.test.ts",
+        "src/main/runtime/rpc/methods/orchestration-check.test.ts",
         "src/main/runtime/orchestration/federation-sync.test.ts",
         "src/main/runtime/rpc/methods/orchestration-federation.test.ts",
         "src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts"
@@ -9342,7 +9344,7 @@
           "date": "2026-08-14",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/terminal-send-stale-leaf-liveness.test.ts src/main/runtime/rpc/methods/orchestration.test.ts",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/terminal-send-stale-leaf-liveness.test.ts src/main/runtime/rpc/methods/orchestration-runs.test.ts src/main/runtime/rpc/methods/orchestration-send.test.ts src/main/runtime/rpc/methods/orchestration-check.test.ts",
           "result": "passed",
           "durationSeconds": 14.15,
           "summary": "1,293 tests passed and 1 was skipped across Run-bound pointer delivery, PTY retirement and respawn, stale-leaf liveness, direct-mail routing, filtered waiter ownership, canonical stored-recipient notification, and orchestration RPC behavior."

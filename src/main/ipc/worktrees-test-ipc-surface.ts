@@ -32,6 +32,9 @@ export type TestStore = {
   getAllWorkspaceLineage: StoreMock
   getFolderWorkspaces: StoreMock
   getProjectGroups: StoreMock
+  addRetiredWorktreeName: StoreMock
+  getRetiredWorktreeNameRegistry: StoreMock
+  mergeRetiredWorktreeNames: StoreMock
 }
 
 /** Channel handlers captured from the mocked ipcMain.handle during registration. */
@@ -60,5 +63,8 @@ export const store: TestStore = {
   removeWorktreeLineage: vi.fn(),
   getAllWorkspaceLineage: vi.fn(),
   getFolderWorkspaces: vi.fn(),
-  getProjectGroups: vi.fn()
+  getProjectGroups: vi.fn(),
+  addRetiredWorktreeName: vi.fn(),
+  getRetiredWorktreeNameRegistry: vi.fn(),
+  mergeRetiredWorktreeNames: vi.fn()
 }

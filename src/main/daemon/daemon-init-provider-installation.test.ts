@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
+  isPackagedMock,
   probeSocketExistsMock,
   readFileSyncMock,
   unlinkSyncMock,
@@ -63,8 +64,20 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       setLocalPtyProviderMock.mock.invocationCallOrder[0]
     )
     expect(adoptionLeaseReleases[0]).toHaveBeenCalledOnce()
+    expect(adapterInstances[0].options.packagedAppVersion).toBeNull()
     expect(adapterInstances[0].establishLifecycleLease.mock.invocationCallOrder[0]).toBeLessThan(
       adoptionLeaseReleases[0].mock.invocationCallOrder[0]
+    )
+  })
+
+  it('passes the packaged app version to runtime stale-bundle retirement', async () => {
+    const mod = await importFresh()
+    isPackagedMock.mockReturnValue(true)
+
+    await mod.initDaemonPtyProvider()
+
+    expect(adapterInstances[0].options.packagedAppVersion).toBe(
+      process.platform === 'darwin' ? '1.2.3' : null
     )
   })
 

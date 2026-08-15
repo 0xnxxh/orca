@@ -2,6 +2,7 @@ import { __resetSshWorktreeCreateFetchCacheForTests } from './worktree-remote'
 import { invalidateAuthorizedRootsCache } from './filesystem-auth'
 import { __resetDetectedWorktreeScanCacheForTests, registerWorktreeHandlers } from './worktrees'
 import { clearConfiguredWorktreeSharedDirectoriesCacheForTests } from '../git/worktree-shared-directories'
+import { resetRetirementCollisionKeyCacheForTests } from '../worktree-name-retirement'
 import { resetSshProviderAuthorities } from '../ssh/ssh-provider-authority'
 import { createWorktreeRuntimeStub, type WorktreeRuntimeStub } from './worktrees-test-runtime-stub'
 import { handlers, mainWindow, store } from './worktrees-test-ipc-surface'
@@ -133,6 +134,9 @@ export function setupWorktreeHandlers(): WorktreeRuntimeStub {
     store.getAllWorkspaceLineage,
     store.getFolderWorkspaces,
     store.getProjectGroups,
+    store.addRetiredWorktreeName,
+    store.getRetiredWorktreeNameRegistry,
+    store.mergeRetiredWorktreeNames,
     killAllProcessesForWorktreeMock,
     clearProviderPtyStateMock,
     getLocalPtyProviderMock,
@@ -186,6 +190,8 @@ export function setupWorktreeHandlers(): WorktreeRuntimeStub {
   })
   store.getWorktreeMeta.mockReturnValue(undefined)
   store.getAllWorktreeMeta.mockReturnValue({})
+  store.getRetiredWorktreeNameRegistry.mockReturnValue({ exhaustedTiers: 0, names: [] })
+  resetRetirementCollisionKeyCacheForTests()
   store.setWorktreeMeta.mockReturnValue({})
   store.getProjectHostSetups.mockReturnValue([
     {

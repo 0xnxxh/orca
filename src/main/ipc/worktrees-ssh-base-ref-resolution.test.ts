@@ -71,7 +71,7 @@ describe('registerWorktreeHandlers', () => {
     setupWorktreeHandlers()
   })
 
-  it('unsets SSH branch base config before removing a sparse worktree after setup failure', async () => {
+  it('attempts SSH base cleanup and still removes a sparse worktree when that cleanup fails', async () => {
     const repo = {
       id: 'repo-ssh',
       path: '/remote/repo',
@@ -89,6 +89,9 @@ describe('registerWorktreeHandlers', () => {
         }
         if (args[0] === 'sparse-checkout' && args[1] === 'init') {
           throw setupError
+        }
+        if (args[0] === 'config' && args[2] === '--unset-all') {
+          throw new Error('metadata cleanup failed')
         }
         return { stdout: '', stderr: '' }
       }),

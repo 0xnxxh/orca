@@ -255,6 +255,67 @@ describe('orchestration RPC methods', () => {
       expect(db.getUnreadMessages(`run:${activeRunId}`)).toHaveLength(0)
     })
 
+    it('peeks an old unread Run row beyond the newest history page', async () => {
+      setup()
+      const unread = db.insertMessage({
+        from: 'worker',
+        to: `run:${activeRunId}`,
+        subject: 'old unread',
+        runId: activeRunId
+      })
+      for (let index = 0; index < 100; index += 1) {
+        const read = db.insertMessage({
+          from: 'worker',
+          to: `run:${activeRunId}`,
+          subject: `new read ${index}`,
+          runId: activeRunId
+        })
+        db.markAsRead([read.id])
+      }
+
+      const peeked = (await call('orchestration.check', {
+        terminal: 'term_coord',
+        peek: true
+      })) as { messages: { id: string }[]; count: number }
+      const delivered = (await call('orchestration.check', {
+        terminal: 'term_coord'
+      })) as { messages: { id: string }[]; count: number }
+
+      expect(peeked).toMatchObject({ count: 1, messages: [{ id: unread.id }] })
+      expect(delivered).toMatchObject({ count: 1, messages: [{ id: unread.id }] })
+    })
+
+    it('waits for a filtered Run peek without consuming the arrival', async () => {
+      setup()
+      let arrivedId = ''
+      const waitSpy = vi.spyOn(runtime, 'waitForMessage').mockImplementation(async () => {
+        arrivedId = db.insertMessage({
+          from: 'worker',
+          to: `run:${activeRunId}`,
+          subject: 'peeked completion',
+          type: 'worker_done',
+          runId: activeRunId
+        }).id
+        return 'notified'
+      })
+
+      const peeked = (await call('orchestration.check', {
+        terminal: 'term_coord',
+        peek: true,
+        wait: true,
+        types: 'worker_done',
+        timeoutMs: 100
+      })) as { messages: { id: string }[]; count: number }
+
+      expect(peeked).toMatchObject({ count: 1, messages: [{ id: arrivedId }] })
+      expect(waitSpy).toHaveBeenCalledWith(
+        `run:${activeRunId}`,
+        expect.objectContaining({ typeFilter: ['worker_done'] })
+      )
+      expect(db.getMessageById(arrivedId)?.read).toBe(0)
+      expect(db.getUnreadMessages(`run:${activeRunId}`, ['worker_done'])).toHaveLength(1)
+    })
+
     it('reconciles worker_done returned by a waiting manual check', async () => {
       setup()
       const { task, dispatch } = createDispatchedTask()

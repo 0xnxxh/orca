@@ -60,6 +60,33 @@ describe('orchestration RPC methods', () => {
       expect(runtime.deliverPendingMessagesForHandle).toHaveBeenCalled()
     })
 
+    it('wakes the Run mailbox after canonicalizing an old coordinator recipient', async () => {
+      setup()
+      const remintedPaneKey = 'tab_reminted:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      vi.mocked(runtime.getTerminalPaneKey).mockImplementation((handle) =>
+        handle === 'term_reminted'
+          ? remintedPaneKey
+          : handle === 'term_coord'
+            ? coordinatorPaneKey
+            : null
+      )
+      db.bindRun({
+        runId: activeRunId!,
+        coordinatorHandle: 'term_reminted',
+        coordinatorPaneKey: remintedPaneKey
+      })
+      const waiting = runtime.waitForMessage(`run:${activeRunId}`, { timeoutMs: 5_000 })
+
+      const result = (await call('orchestration.send', {
+        from: 'term_reminted',
+        to: 'term_coord',
+        subject: 'late completion'
+      })) as { message: { to_handle: string } }
+
+      expect(result.message.to_handle).toBe(`run:${activeRunId}`)
+      await expect(waiting).resolves.toBe('notified')
+    })
+
     it('routes exact Dispatch mail independently of terminal handles', async () => {
       setup()
       const task = db.createTask({ spec: 'controlled worker' })

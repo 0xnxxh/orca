@@ -127,46 +127,48 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
   // STA-2376 regression: dropping the adapter's last authenticated client is enough to make an idle
   // daemon self-retire, so by the time the launcher runs there is nothing to kill and its own
-  // confirmed-kill gate reports nothing. The attributed reason is what keeps the runtime resolver
-  // replacement on the wire — and keeps it off the failed_health_check bucket it would otherwise land in.
-  it('reports the runtime resolver replacement even after the daemon self-retired', async () => {
-    const mod = await importFresh()
-    await mod.initDaemonPtyProvider()
-    const adapterOptions = adapterInstances[0].options
-    trackDaemonReplacedMock.mockClear()
+  // confirmed-kill gate reports nothing. The attributed reason keeps the replacement on the wire.
+  it.each(['unhealthy_resolver', 'stale_bundle'] as const)(
+    'reports the %s replacement even after the daemon self-retired',
+    async (reason) => {
+      const mod = await importFresh()
+      await mod.initDaemonPtyProvider()
+      const adapterOptions = adapterInstances[0].options
+      trackDaemonReplacedMock.mockClear()
 
-    // The daemon is gone before the launcher looks: nothing answers, nothing left to kill.
-    checkDaemonHealthMock.mockResolvedValue('unreachable')
-    killStaleDaemonMock
-      .mockResolvedValueOnce({ killed: false, liveOwnerSurvived: false })
-      .mockResolvedValueOnce({ killed: false, liveOwnerSurvived: false })
-    forkMock.mockImplementationOnce(() => {
-      throw new Error('stop after replacement decision')
-    })
-    const launcher = spawnerInstances[0].launcher as (
-      socketPath: string,
-      tokenPath: string
-    ) => Promise<{ shutdown(): Promise<void> }>
+      // The daemon is gone before the launcher looks: nothing answers, nothing left to kill.
+      checkDaemonHealthMock.mockResolvedValue('unreachable')
+      killStaleDaemonMock
+        .mockResolvedValueOnce({ killed: false, liveOwnerSurvived: false })
+        .mockResolvedValueOnce({ killed: false, liveOwnerSurvived: false })
+      forkMock.mockImplementationOnce(() => {
+        throw new Error('stop after replacement decision')
+      })
+      const launcher = spawnerInstances[0].launcher as (
+        socketPath: string,
+        tokenPath: string
+      ) => Promise<{ shutdown(): Promise<void> }>
 
-    await adapterOptions.respawn?.('unhealthy_resolver')
-    expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
+      await adapterOptions.respawn?.(reason)
+      expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
 
-    await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
-      'stop after replacement decision'
-    )
-    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
-    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
+      await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+        'stop after replacement decision'
+      )
+      expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
+      expect(trackDaemonReplacedMock).toHaveBeenCalledWith(reason, 0)
 
-    // One-shot: a later unrelated launch must not inherit the attribution.
-    trackDaemonReplacedMock.mockClear()
-    forkMock.mockImplementationOnce(() => {
-      throw new Error('stop after replacement decision')
-    })
-    await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
-      'stop after replacement decision'
-    )
-    expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
-  })
+      // One-shot: a later unrelated launch must not inherit the attribution.
+      trackDaemonReplacedMock.mockClear()
+      forkMock.mockImplementationOnce(() => {
+        throw new Error('stop after replacement decision')
+      })
+      await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+        'stop after replacement decision'
+      )
+      expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
+    }
+  )
 
   // STA-2376: the attribution covers the case the confirmed-kill gate cannot see; it must not
   // overwrite a reason this launch proved against the daemon it actually removed. Otherwise a

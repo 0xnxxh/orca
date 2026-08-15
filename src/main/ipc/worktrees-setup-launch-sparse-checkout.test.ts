@@ -217,6 +217,23 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
+  it('retires a generated sparse name when creation rollback also fails', async () => {
+    addSparseWorktreeMock.mockRejectedValueOnce(
+      Object.assign(new Error('sparse setup failed'), { cleanupFailed: true })
+    )
+
+    await expect(
+      handlers['worktrees:create'](null, {
+        repoId: 'repo-1',
+        name: 'nautilus',
+        nameWasGenerated: true,
+        sparseCheckout: { directories: ['packages/web'] }
+      })
+    ).rejects.toThrow('sparse setup failed')
+
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-1', 'nautilus')
+  })
+
   it('clears sparse preset attribution when the preset id does not belong to the repo', async () => {
     listWorktreesMock.mockResolvedValue([
       {
