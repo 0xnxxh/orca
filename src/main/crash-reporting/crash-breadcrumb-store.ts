@@ -14,6 +14,8 @@ const MAX_RETAINED_BREADCRUMBS = 4
 const MAX_COALESCE_KEYS = 128
 
 type CoalescedBreadcrumbState = {
+  /** Name needed to materialize unresolved repeats if the owned crumb is orphaned. */
+  name: string
   recordedAt: number
   suppressed: number
   /** Count the crumb was emitted claiming (the previous window's repeats). */
@@ -99,9 +101,7 @@ export function recordCoalescedCrashBreadcrumb({
     // this coalescing was built to prevent. Sanitizing here would put that cost
     // on every suppressed hit of a 1459/min crash loop; the snapshot resolves it
     // once instead, on the rare path that actually reads breadcrumbs.
-    if (previous.emitted) {
-      previous.pending = data
-    }
+    previous.pending = data
     // Re-anchor recency without touching recordedAt: a suppressed key is the
     // hottest key in the map, but only the emit path below moves position, so
     // a continuously-suppressed key would keep its original slot and be first
@@ -122,7 +122,7 @@ export function recordCoalescedCrashBreadcrumb({
       // `suppressedSinceLast`, so folding the same events into its old slot
       // too would report one burst twice.
       if (key !== coalesceKey) {
-        resolvePendingCoalescedBreadcrumb(entry)
+        preservePendingCoalescedBreadcrumb(entry)
       }
       coalescedBreadcrumbs.delete(key)
     }
@@ -133,6 +133,7 @@ export function recordCoalescedCrashBreadcrumb({
   // count one burst twice.
   const suppressedSinceLast = previous ? previous.suppressed - previous.resolved : 0
   const state: CoalescedBreadcrumbState = {
+    name,
     recordedAt: now,
     suppressed: 0,
     carried: suppressedSinceLast,
@@ -144,7 +145,7 @@ export function recordCoalescedCrashBreadcrumb({
     if (oldest.done) {
       break
     }
-    resolvePendingCoalescedBreadcrumb(oldest.value[1])
+    preservePendingCoalescedBreadcrumb(oldest.value[1])
     coalescedBreadcrumbs.delete(oldest.value[0])
   }
   state.emitted = recordCrashBreadcrumb(
@@ -179,11 +180,10 @@ function resolvePendingCoalescedBreadcrumb(state: CoalescedBreadcrumbState): voi
   // Eviction can orphan the crumb mid-window; folding into it would mark the
   // repeats resolved into evidence no snapshot can see, and the next emit would
   // then claim nothing — the burst vanishes from the record entirely. Drop the
-  // handle (keeping `resolved` for folds that landed while it was live) so the
-  // next emit claims the unclaimed repeats instead.
+  // handle (keeping `resolved` for folds that landed while it was live) so a
+  // later emit or bounded cleanup can materialize the unclaimed repeats.
   if (!isCoalescedCrumbStillInEvidence(state.emitted)) {
     state.emitted = undefined
-    state.pending = undefined
     return
   }
   // The crumb's claim is a running total: what it was born claiming plus every
@@ -193,6 +193,22 @@ function resolvePendingCoalescedBreadcrumb(state: CoalescedBreadcrumbState): voi
   state.emitted.data = sanitizeCrashReportDetails({
     ...state.pending,
     suppressedSinceLast: state.carried + state.suppressed
+  })
+  state.resolved = state.suppressed
+  state.pending = undefined
+}
+
+/** Resolve into the owned crumb, or emit the unclaimed repeats before bounded
+ *  cleanup drops an orphan's last accounting state. */
+function preservePendingCoalescedBreadcrumb(state: CoalescedBreadcrumbState): void {
+  resolvePendingCoalescedBreadcrumb(state)
+  const unresolved = state.suppressed - state.resolved
+  if (state.emitted || unresolved <= 0) {
+    return
+  }
+  recordCrashBreadcrumb(state.name, {
+    ...state.pending,
+    suppressedSinceLast: unresolved
   })
   state.resolved = state.suppressed
   state.pending = undefined
