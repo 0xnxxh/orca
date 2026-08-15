@@ -1446,7 +1446,8 @@ async function importCookiesFromSafari(
 
 export async function importCookiesFromBrowser(
   browser: DetectedBrowser,
-  targetPartition: string
+  targetPartition: string,
+  options: { canReportPartitionSkippedCookies?: boolean } = {}
 ): Promise<BrowserCookieImportResult> {
   diag(`importCookiesFromBrowser: browser=${browser.family} partition="${targetPartition}"`)
   if (!existsSync(browser.cookiesPath)) {
@@ -1773,6 +1774,17 @@ export async function importCookiesFromBrowser(
       `  skipped ${integritySkipped} Google integrity cookies (SIDCC/STRP/AEC) and ${nonTransplantableSkipped} non-transplantable-domain cookies`
     )
     const googleCookiesSkipped = integritySkipped + nonTransplantableSkipped
+
+    // Why: an older remote client ignores the new counter and would present this loss as success.
+    if (partitionSkipped > 0 && options.canReportPartitionSkippedCookies === false) {
+      closeStagingDb()
+      discardStagingFile()
+      return {
+        ok: false,
+        reason:
+          'This Orca client cannot report cookies skipped for an unreadable site partition. Update Orca on this device and try again.'
+      }
+    }
 
     if (imported === 0) {
       closeStagingDb()

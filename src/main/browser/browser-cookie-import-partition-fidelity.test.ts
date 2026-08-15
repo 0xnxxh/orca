@@ -314,6 +314,21 @@ describe('native Chromium import partition fidelity', () => {
     ).close()
     cookieWriteMock.mockRejectedValueOnce(new Error('plain cookie needs restart'))
 
+    const blocked = await importCookiesFromBrowser(
+      chromeBrowser(sourceCookiesPath),
+      'persist:test',
+      {
+        canReportPartitionSkippedCookies: false
+      }
+    )
+    expect(blocked.ok).toBe(false)
+    expect(blocked.ok || blocked.reason).toContain('cannot report')
+    expect(cookieWriteMock).not.toHaveBeenCalled()
+    expect(setPendingCookieImportMock).not.toHaveBeenCalled()
+    const blockedSession = sessionFromPartitionMock.mock.results[0].value
+    expect(blockedSession.clearData).not.toHaveBeenCalled()
+    expect(blockedSession.cookies.remove).not.toHaveBeenCalled()
+
     const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
 
     expect(result.ok).toBe(true)

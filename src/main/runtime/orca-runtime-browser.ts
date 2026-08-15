@@ -1549,6 +1549,7 @@ export class RuntimeBrowserCommands {
     profileId: string
     browserFamily: string
     browserProfile?: string
+    supportsPartitionSkippedCookies?: true
   }): Promise<BrowserProfileImportFromBrowserResult> {
     const profile = browserSessionRegistry.getProfile(params.profileId)
     if (!profile) {
@@ -1578,7 +1579,9 @@ export class RuntimeBrowserCommands {
       browser = reselected
     }
 
-    const result = await importCookiesFromBrowser(browser, profile.partition)
+    const result = await importCookiesFromBrowser(browser, profile.partition, {
+      canReportPartitionSkippedCookies: params.supportsPartitionSkippedCookies === true
+    })
     if (!result.ok) {
       return result
     }
