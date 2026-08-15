@@ -3485,6 +3485,17 @@ export function connectPanePty(
           : undefined
     return attempt
   })()
+  // Only the PENDING retry marks a mount that a reconnect created. directSshRetryAttempt also
+  // accepts the live binding, which is written at the same tab generation once the reconnect
+  // succeeds and then outlives it — so it stays truthy for every later remount of that generation,
+  // not just this one.
+  const followsDirectSshReconnect = (() => {
+    const pending = state.directSshPaneRetryByTabId?.[deps.tabId]
+    return (
+      pending?.authority.targetId === connectionId &&
+      pending.tabGeneration === (tab?.generation ?? 0)
+    )
+  })()
   const pendingSpawnKey = directSshRetryAttempt
     ? JSON.stringify([cacheKey, directSshRetryAttempt.attemptId])
     : cacheKey
@@ -8209,6 +8220,12 @@ export function connectPanePty(
       const revealFollowsTerminalPark =
         mountFollowsTerminalPark &&
         (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))
+      // An SSH reconnect remounts the pane (tab.generation is its React key), so it also paints into
+      // a fresh xterm — but unlike a park it may only use the model for a FULL-SCREEN app. See the
+      // alternate-screen gate below for why. Consumed with the flag above: directSshRetryAttempt
+      // stays true for the whole tab generation, not just this mount, so reading it directly would
+      // re-arm on every later remount.
+      const reconnectMayUseModel = followsDirectSshReconnect && !revealFollowsTerminalPark
       mountFollowsTerminalPark = false
       // Why: ordinary parking destroys xterm. Rebuild from the authoritative
       // host snapshot before releasing queued live bytes; null falls back to
@@ -8310,10 +8327,24 @@ export function connectPanePty(
           // model still holds, but an in-place reattach (network reconnect, wake,
           // reload) already has that replay in hand, so probing would only delay its
           // paint by the timeout. Memoized, so this is never a second probe.
-          const modelSnapshot = revealFollowsTerminalPark
+          // Why an SSH reconnect may only use the model on the ALTERNATE SCREEN: the reconnect replay
+          // reaches the renderer without passing through main's model (forwardReattachReplay and the
+          // inline attach replay both bypass onPtyData), so at this moment the model is stale by
+          // exactly the outage. For a full-screen app that is the right trade — a byte tail cannot
+          // rebuild a frame it no longer contains, while a grid can, and the SIGWINCH the restore
+          // already sends makes the app repaint the delta itself. For a scrolling shell it is the
+          // wrong trade: the tail holds output the model never saw, and preferring the grid would
+          // drop it for good. A park has no such hole, so it keeps using the model either way.
+          const revealSnapshot = revealFollowsTerminalPark
             ? (prefetchedParkModelSnapshot ??
               (isRemoteRuntimePtyId(ptyId) ? null : await fetchSshMainModelReattachSnapshot()))
             : null
+          const reconnectSnapshot =
+            !revealSnapshot && reconnectMayUseModel
+              ? await fetchSshMainModelReattachSnapshot()
+              : null
+          const modelSnapshot =
+            revealSnapshot ?? (reconnectSnapshot?.alternateScreen ? reconnectSnapshot : null)
           if (!isCurrentReattachPayload()) {
             return
           }
