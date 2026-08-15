@@ -93,6 +93,7 @@ import {
 import { openCookieClearStore } from './browser-cookie-clear-store'
 import {
   readChromiumRowPartition,
+  readFirefoxOriginAttributesPartition,
   readJsonCookiePartition,
   type SourcePartitionRead
 } from './browser-cookie-source-partition'
@@ -1316,10 +1317,11 @@ async function importCookiesFromFirefox(
       isSecure: number
       isHttpOnly: number
       sameSite: number
+      originAttributes: string | null
     }
     const rows = db
       .prepare(
-        'SELECT name, value, host, path, expiry, isSecure, isHttpOnly, sameSite FROM moz_cookies'
+        'SELECT name, value, host, path, expiry, isSecure, isHttpOnly, sameSite, originAttributes FROM moz_cookies'
       )
       .all() as FirefoxRow[]
     db.close()
@@ -1357,9 +1359,7 @@ async function importCookiesFromFirefox(
         httpOnly: row.isHttpOnly === 1,
         sameSite: firefoxSameSite(row.sameSite),
         expirationDate: row.expiry > 0 ? row.expiry : undefined,
-        // Why: Firefox partitions through originAttributes, a different model from CHIPS that this
-        // query does not read. Unpartitioned is what the selected columns actually describe.
-        partition: { status: 'unpartitioned' }
+        partition: readFirefoxOriginAttributesPartition(row.originAttributes)
       })
     }
 

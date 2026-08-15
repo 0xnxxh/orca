@@ -66,6 +66,42 @@ export function readChromiumRowPartition(
   return { status: 'partitioned', partitionKey: { topLevelSite: rawSite, hasCrossSiteAncestor } }
 }
 
+const FIREFOX_PARTITION_KEY_PATTERN = /(?:^|&|\^)partitionKey=\(([^)]*)\)/
+
+/**
+ * Reads a Firefox cookie's partition identity from its `originAttributes` suffix.
+ *
+ * Firefox encodes two different things in the same field. A two-part key —
+ * `^partitionKey=(https,example.com)` — is dFPI: storage isolation *the browser imposed* on an
+ * ordinary cookie, which Chromium re-derives for itself, so the cookie the server sent is genuinely
+ * unpartitioned. A longer key carries `isPartitionedAttributeSet`, meaning the server sent
+ * `Partitioned` — a real CHIPS cookie. That identity cannot be rebuilt for Chromium, because Firefox
+ * records no cross-site-ancestor bit, so it is skipped and reported rather than downgraded.
+ */
+export function readFirefoxOriginAttributesPartition(raw: unknown): SourcePartitionRead {
+  if (raw === undefined || raw === null || raw === '') {
+    return UNPARTITIONED
+  }
+  if (typeof raw !== 'string') {
+    return { status: 'unreadable', reason: 'originAttributes was not text' }
+  }
+
+  let suffix = raw
+  try {
+    suffix = decodeURIComponent(raw)
+  } catch {
+    // Why: a malformed escape is not proof of a partition; fall back to the raw suffix.
+  }
+  const match = FIREFOX_PARTITION_KEY_PATTERN.exec(suffix)
+  if (!match || match[1].split(',').length <= 2) {
+    return UNPARTITIONED
+  }
+  return {
+    status: 'unreadable',
+    reason: 'Firefox partitioned-attribute cookie has no cross-site-ancestor bit to read'
+  }
+}
+
 /**
  * Reads a JSON cookie entry's partition identity.
  *

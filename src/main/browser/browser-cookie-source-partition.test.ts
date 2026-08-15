@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   readChromiumRowPartition,
+  readFirefoxOriginAttributesPartition,
   readJsonCookiePartition
 } from './browser-cookie-source-partition'
 
@@ -125,5 +126,47 @@ describe('readJsonCookiePartition', () => {
     expect(readJsonCookiePartition({ topLevelSite: '', hasCrossSiteAncestor: true }).status).toBe(
       'unreadable'
     )
+  })
+})
+
+describe('readFirefoxOriginAttributesPartition', () => {
+  it('reads an empty or absent originAttributes as unpartitioned', () => {
+    expect(readFirefoxOriginAttributesPartition('')).toEqual({ status: 'unpartitioned' })
+    expect(readFirefoxOriginAttributesPartition(null)).toEqual({ status: 'unpartitioned' })
+  })
+
+  it('reads a suffix with no partitionKey as unpartitioned', () => {
+    expect(readFirefoxOriginAttributesPartition('^userContextId=3')).toEqual({
+      status: 'unpartitioned'
+    })
+  })
+
+  // Why: dFPI is storage isolation Firefox imposed on an ordinary cookie. The cookie the server set
+  // is genuinely unpartitioned, and Chromium re-derives its own third-party isolation after import,
+  // so importing it unpartitioned is faithful — skipping it would drop cookies that work today.
+  it('reads a two-part dFPI partitionKey as unpartitioned', () => {
+    expect(readFirefoxOriginAttributesPartition('^partitionKey=(https,example.com)')).toEqual({
+      status: 'unpartitioned'
+    })
+  })
+
+  it('reads a percent-encoded dFPI partitionKey as unpartitioned', () => {
+    expect(
+      readFirefoxOriginAttributesPartition('%5EpartitionKey%3D%28https%2Cexample.com%29')
+    ).toEqual({ status: 'unpartitioned' })
+  })
+
+  // Why (STA-4300): the extra component is isPartitionedAttributeSet — the server sent
+  // `Partitioned`, so this is a real CHIPS cookie. Firefox has no cross-site-ancestor bit, so its
+  // Chromium identity cannot be rebuilt and the cookie must be skipped, never written unpartitioned.
+  it('refuses a partitioned-attribute (CHIPS) partitionKey', () => {
+    const result = readFirefoxOriginAttributesPartition('^partitionKey=(https,example.com,f)')
+
+    expect(result.status).toBe('unreadable')
+    expect(result).toHaveProperty('reason', expect.stringContaining('cross-site-ancestor'))
+  })
+
+  it('refuses an originAttributes value that is not text', () => {
+    expect(readFirefoxOriginAttributesPartition(42).status).toBe('unreadable')
   })
 })
