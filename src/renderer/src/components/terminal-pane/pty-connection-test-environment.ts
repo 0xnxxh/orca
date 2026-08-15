@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import { resetAgentStartupDelayedDeliveryForTests } from '@/lib/agent-startup-delayed-delivery'
-import { drainFakeTimerWork } from './pty-connection-test-async'
+import { drainFakeTimerWork, flushAsyncTicks } from './pty-connection-test-async'
 
 const originalRequestAnimationFrame = globalThis.requestAnimationFrame
 const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
@@ -98,6 +98,12 @@ export async function restoreTerminalTestGlobals(): Promise<void> {
   // Drain deferred confirmation work before the next test replaces its store mock.
   await drainFakeTimerWork()
   vi.useRealTimers()
+  // Why: reattach/settle chains await a real promise and then touch `window.api`.
+  // Under fake timers those continuations cannot run, so they only become
+  // schedulable here — flush them while `window` still exists, or a late
+  // continuation throws `ReferenceError: window is not defined` and fails the
+  // whole file (orca#14728, CI-only because it needs a slow enough tick).
+  await flushAsyncTicks(20)
   vi.restoreAllMocks()
   if (originalRequestAnimationFrame) {
     globalThis.requestAnimationFrame = originalRequestAnimationFrame
