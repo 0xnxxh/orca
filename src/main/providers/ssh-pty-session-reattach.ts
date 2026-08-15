@@ -209,8 +209,7 @@ export async function reattachSshPtySession(args: {
       rememberPtyIncarnation: args.rememberPtyIncarnation
     })
     console.warn(
-      `[ssh-pty] pty.attach succeeded for ${args.sessionId}, replay=${!!attachResult.replay}` +
-        `, replayLen=${attachResult.replay?.length ?? 0}`
+      `[ssh-pty] pty.attach succeeded for ${args.sessionId}, replay=${!!attachResult.replay}`
     )
     return {
       id: toAppSshPtyId(args.connectionId, relaySessionId),
