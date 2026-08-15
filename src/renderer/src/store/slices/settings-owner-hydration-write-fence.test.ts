@@ -109,6 +109,41 @@ it('publishes startup settings before remote owner hydration and local catalog w
   })
 })
 
+it('preserves deferred owner hydration across a no-op runtime selection', async () => {
+  markRuntimeEnvironmentCompatible('env-no-op')
+  let resolveOwnerRead!: (value: unknown) => void
+  const ownerRead = new Promise((resolve) => (resolveOwnerRead = resolve))
+  vi.stubGlobal('window', {
+    api: {
+      settings: {
+        get: vi.fn().mockResolvedValue({ activeRuntimeEnvironmentId: 'env-no-op' }),
+        setActiveRuntimeEnvironmentPreference: vi.fn()
+      },
+      runtimeEnvironments: {
+        call: vi.fn().mockReturnValue(ownerRead),
+        list: vi.fn().mockResolvedValue([])
+      }
+    }
+  })
+  const store = createTestStore()
+  await store.getState().fetchSettings({ deferOwnerWorktreeVisibilityDefaults: true })
+
+  await expect(store.getState().setActiveRuntimeEnvironmentPreference(' env-no-op ')).resolves.toBe(
+    true
+  )
+  resolveOwnerRead({
+    ok: true,
+    result: { settings: { worktreeVisibilityDefaults: { external: 'show' } } },
+    _meta: { runtimeId: 'runtime-no-op' }
+  })
+  await store.getState().awaitOwnerWorktreeVisibilityDefaultsHydration()
+
+  expect(window.api.settings.setActiveRuntimeEnvironmentPreference).not.toHaveBeenCalled()
+  expect(store.getState().worktreeVisibilityDefaultsByHost['runtime:env-no-op']).toEqual({
+    external: 'show'
+  })
+})
+
 it('waits for a replacement owner hydration before publishing remote rows', async () => {
   markRuntimeEnvironmentCompatible('env-replacement')
   let resolveFirstOwnerRead!: (value: unknown) => void

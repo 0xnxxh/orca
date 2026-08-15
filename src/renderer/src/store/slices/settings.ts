@@ -244,12 +244,12 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
   },
 
   setActiveRuntimeEnvironmentPreference: async (environmentId) => {
-    const shouldPublish = ownerHydration.createSettingsPublicationFence(true)
     const nextId = normalizeRuntimeEnvironmentId(environmentId)
     const previousId = normalizeRuntimeEnvironmentId(get().settings?.activeRuntimeEnvironmentId)
     if (previousId === nextId) {
       return true
     }
+    const shouldPublish = ownerHydration.createSettingsPublicationFence(true)
     try {
       clearRuntimeCompatibilityCache(nextId)
       await verifyRuntimeEnvironmentReachable(nextId)
