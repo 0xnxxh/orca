@@ -3464,6 +3464,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     // STA-2376: stale-bundle replacement, emitted exactly once.
     expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
     expect(trackDaemonReplacedMock).toHaveBeenCalledWith('stale_bundle', 0)
+    expect(getMacDaemonTccAttributionHealthMock).not.toHaveBeenCalled()
   })
 
   it('preserves a packaged daemon that predates the current app bundle when it owns live sessions', async () => {

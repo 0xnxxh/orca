@@ -4115,7 +4115,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         socketPath,
         tokenPath,
         runtimeDir: dir,
-        packagedAppVersion: '1.4.178',
         respawn: respawnFn
       })
       // One live session in this adapter — the zero-session gate must fail closed.
@@ -4128,7 +4127,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         dir,
         socketPath,
         tokenPath,
-        '1.4.178',
         respawnAdapter.protocolVersion
       )
       expect(respawnFn).not.toHaveBeenCalled()
@@ -4143,7 +4141,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         socketPath,
         tokenPath,
         runtimeDir: dir,
-        packagedAppVersion: '1.4.178',
         respawn: respawnFn
       })
       const internals = respawnAdapter as unknown as {
@@ -4182,7 +4179,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         socketPath,
         tokenPath,
         runtimeDir: dir,
-        packagedAppVersion: '1.4.178',
         respawn: respawnFn
       })
       getMacDaemonTccAttributionHealthMock.mockResolvedValueOnce('severed')
@@ -4193,7 +4189,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         dir,
         socketPath,
         tokenPath,
-        '1.4.178',
         respawnAdapter.protocolVersion
       )
       expect(respawnFn).toHaveBeenCalledTimes(1)

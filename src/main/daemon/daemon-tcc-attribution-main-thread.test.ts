@@ -77,7 +77,7 @@ describe('macOS daemon TCC attribution main-thread cost', () => {
     }
   })
 
-  function writePidRecord(appVersion?: string): void {
+  function writePidRecord(appVersion?: string, includeSpawner = true): void {
     writeFileSync(
       join(dir, `daemon-v${PROTOCOL_VERSION}.pid`),
       JSON.stringify({
@@ -85,7 +85,7 @@ describe('macOS daemon TCC attribution main-thread cost', () => {
         startedAtMs: PS_STARTED_AT_MS,
         launchNonce: 'launch-a',
         ...(appVersion === undefined ? {} : { appVersion }),
-        spawnerExecPath
+        ...(includeSpawner ? { spawnerExecPath } : {})
       })
     )
   }
@@ -95,13 +95,13 @@ describe('macOS daemon TCC attribution main-thread cost', () => {
 
     await expect(
       Promise.all([
-        getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3'),
-        getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')
+        getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath),
+        getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath)
       ])
-    ).resolves.toEqual(['severed', 'severed'])
-    await expect(
-      getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')
-    ).resolves.toBe('severed')
+    ).resolves.toEqual(['intact', 'intact'])
+    await expect(getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath)).resolves.toBe(
+      'intact'
+    )
 
     expect(execFileSyncMock).not.toHaveBeenCalled()
     expect(execFileMock).toHaveBeenCalledTimes(1)
@@ -113,40 +113,40 @@ describe('macOS daemon TCC attribution main-thread cost', () => {
     )
 
     writePidRecord('1.2.3')
-    await expect(
-      getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')
-    ).resolves.toBe('intact')
+    await expect(getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath)).resolves.toBe(
+      'intact'
+    )
     expect(execFileMock).toHaveBeenCalledTimes(2)
 
     rmSync(spawnerExecPath)
-    await expect(
-      getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')
-    ).resolves.toBe('severed')
+    await expect(getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath)).resolves.toBe(
+      'severed'
+    )
     expect(execFileMock).toHaveBeenCalledTimes(3)
   })
 
   it('retries an indeterminate identity inspection', async () => {
     writePidRecord('1.2.2')
     psError.value = new Error('ps unavailable')
-    await expect(
-      getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')
-    ).resolves.toBe('unknown')
+    await expect(getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath)).resolves.toBe(
+      'unknown'
+    )
 
     psError.value = null
-    await expect(
-      getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')
-    ).resolves.toBe('severed')
+    await expect(getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath)).resolves.toBe(
+      'intact'
+    )
 
     expect(execFileSyncMock).not.toHaveBeenCalled()
     expect(execFileMock).toHaveBeenCalledTimes(2)
   })
 
-  it('treats a packaged legacy pid record as a previous app generation', async () => {
-    writePidRecord()
+  it('fails open for a legacy pid record without app-version metadata', async () => {
+    writePidRecord(undefined, false)
 
-    await expect(
-      getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')
-    ).resolves.toBe('severed')
+    await expect(getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath)).resolves.toBe(
+      'unknown'
+    )
 
     expect(execFileMock).toHaveBeenCalledTimes(1)
     expect(execFileSyncMock).not.toHaveBeenCalled()

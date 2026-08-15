@@ -707,7 +707,6 @@ function getMacDaemonTccAttributionCacheKey(
   runtimeDir: string,
   socketPath: string,
   tokenPath: string,
-  packagedAppVersion: string | null,
   protocolVersion: number
 ): string | null {
   try {
@@ -717,14 +716,7 @@ function getMacDaemonTccAttributionCacheKey(
       return null
     }
     const spawnerExists = parsedPid.spawnerExecPath ? existsSync(parsedPid.spawnerExecPath) : null
-    return JSON.stringify([
-      socketPath,
-      tokenPath,
-      packagedAppVersion,
-      protocolVersion,
-      pidRecord,
-      spawnerExists
-    ])
+    return JSON.stringify([socketPath, tokenPath, protocolVersion, pidRecord, spawnerExists])
   } catch {
     return null
   }
@@ -732,16 +724,13 @@ function getMacDaemonTccAttributionCacheKey(
 
 /**
  * macOS pins a process's TCC "responsible process" to the binary that forked it,
- * by file reference. The detached daemon outlives that app instance, and once the
- * spawning binary is deleted (every packaged update replaces the bundle) tccd
- * can't resolve the grant subject — `osascript`/System Events from every terminal
- * hosted by that daemon is silently denied (-25211) no matter what the user grants.
+ * by file reference. If that binary path disappears while the daemon survives, tccd
+ * cannot resolve the grant subject for the daemon's terminals (STA-3491).
  */
 export async function getMacDaemonTccAttributionHealth(
   runtimeDir: string,
   socketPath: string,
   tokenPath: string,
-  packagedAppVersion: string | null,
   protocolVersion = PROTOCOL_VERSION
 ): Promise<MacDaemonTccAttributionHealth> {
   if (process.platform !== 'darwin') {
@@ -751,7 +740,6 @@ export async function getMacDaemonTccAttributionHealth(
     runtimeDir,
     socketPath,
     tokenPath,
-    packagedAppVersion,
     protocolVersion
   )
   if (cacheKey && cachedMacDaemonTccAttributionHealth?.key === cacheKey) {
@@ -767,11 +755,6 @@ export async function getMacDaemonTccAttributionHealth(
     )
     if (!parsedPid) {
       return 'unknown'
-    }
-    // Packaged updates can replace the bundle at the same path; missing version
-    // metadata also identifies a daemon from before the current packaged generation.
-    if (packagedAppVersion !== null && parsedPid.appVersion !== packagedAppVersion) {
-      return 'severed'
     }
     if (parsedPid.spawnerExecPath) {
       return existsSync(parsedPid.spawnerExecPath) ? 'intact' : 'severed'
