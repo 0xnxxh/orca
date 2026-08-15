@@ -739,13 +739,13 @@ import {
 } from './repo-worktree-resolution-scan'
 import { readRepoWorktreeAdminFingerprint } from './repo-worktree-admin-fingerprint'
 import {
-  getRepoOwnedWorktreeMeta,
   listStoredWorktreeRowsForRepo,
   resolveRepoWorktreeRows,
   resolveScopedWorktreeIdRow,
   RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
   type RepoWorktreeRowDeps
 } from './repo-worktree-row-resolution'
+import { getRepoOwnedWorktreeMeta } from '../worktree-metadata-ownership'
 import { withTimeout } from '../../shared/promise-timeout-fallback'
 import {
   getLocalWorktreePathAccess,

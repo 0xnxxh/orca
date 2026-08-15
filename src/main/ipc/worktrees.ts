@@ -3145,7 +3145,7 @@ export function registerWorktreeHandlers(
         args.worktreeId,
         repo
           ? getRepoExecutionHostId(repo)
-          : (store.getWorktreeMeta(args.worktreeId)?.hostId ?? args.hostId)
+          : (args.hostId ?? store.getWorktreeMeta(args.worktreeId)?.hostId)
       )
       const optionsKey = 'forget-local'
       const inFlight = worktreeRemovalsInFlight.get(inFlightKey)

@@ -11,6 +11,7 @@ import type { ProjectExecutionRuntimeResolution } from '../../shared/project-exe
 import type { Store } from '../persistence'
 import { areWorktreePathsEqual, mergeWorktree } from '../ipc/worktree-logic'
 import { pruneLineageForMissingRepoWorktrees } from '../worktree-lineage-pruning'
+import { getRepoOwnedWorktreeMeta } from '../worktree-metadata-ownership'
 import { resolveLocalProjectRuntimesForRepos } from '../project-runtime-git-options'
 import type { RuntimeWorktreeScanResult } from './repo-worktree-resolution-scan'
 
@@ -44,21 +45,6 @@ export type RepoWorktreeRowDeps = {
   ) => Promise<RuntimeWorktreeScanResult>
   /** Folder workspaces are stamped from runtime-owned identity helpers, so the caller supplies them. */
   listFolderWorkspaces: (repo: Repo) => Worktree[]
-}
-
-export function getRepoOwnedWorktreeMeta(
-  repo: Repo,
-  worktreeId: string,
-  metaById: Readonly<Record<string, WorktreeMeta>>,
-  repoOwnerCount: number
-): WorktreeMeta | undefined {
-  const existingMeta = metaById[worktreeId]
-  if (!existingMeta) {
-    return undefined
-  }
-  return repoOwnerCount === 1 || existingMeta.hostId === getRepoExecutionHostId(repo)
-    ? existingMeta
-    : undefined
 }
 
 /**
