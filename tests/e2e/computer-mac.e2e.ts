@@ -75,6 +75,39 @@ describe.skipIf(!isMac || !e2eOptIn)('computer-use macOS e2e (TextEdit)', () => 
     expect(after.result.snapshot.treeText).toContain(marker)
   })
 
+  test('middle click reaches TextEdit as a real event instead of an AXPress', async () => {
+    const before = parseJsonOutput<{ result: ComputerSnapshotResult }>(
+      (await runOrcaCli(['computer', 'get-app-state', '--app', 'TextEdit', '--json'])).stdout
+    )
+    const textTarget = findRoleIndex(
+      before.result.snapshot.treeText,
+      /^\s*(\d+)\s+(text entry area|text field|HTML content)(?:\s|$)/m
+    )
+    expect(textTarget).toBeGreaterThanOrEqual(0)
+
+    const middle = parseJsonOutput<{ result: ComputerActionResult }>(
+      (
+        await runOrcaCli([
+          'computer',
+          'click',
+          '--app',
+          'TextEdit',
+          '--element-index',
+          String(textTarget),
+          '--mouse-button',
+          'middle',
+          '--no-screenshot',
+          '--json'
+        ])
+      ).stdout
+    )
+
+    // The accessibility path can only press an element, so reporting it here
+    // would mean a middle click was silently delivered as a left click.
+    expect(middle.result.action?.path).toBe('synthetic')
+    expect(middle.result.action?.fallbackReason).toBe('actionUnsupported')
+  })
+
   test('coordinate double-click activates a control, not just hover (STA-3433)', async () => {
     const result = await doubleClickTextEditWord()
 
