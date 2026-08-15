@@ -150,6 +150,7 @@ describe('applyTerminalAppearance theme assignment', () => {
         getBoundingClientRect: () => ({ width: measurable ? 800 : 0, height: measurable ? 600 : 0 })
       },
       fitAddon: {
+        fit: vi.fn(),
         proposeDimensions: () => (measurable ? { cols: 80, rows: 24 } : undefined)
       }
     } as unknown as ManagedPane
@@ -401,6 +402,31 @@ describe('applyTerminalAppearance theme assignment', () => {
 
     expect(manager.setPaneStyleOptions).toHaveBeenCalledWith(
       expect.objectContaining({ paddingX: 2, paddingY: 3 })
+    )
+  })
+
+  it('stamps padding before fitting the pane', () => {
+    const pane = makePane(1)
+    pane.fitAddon.proposeDimensions = () => ({ cols: 79, rows: 23 })
+    const manager = makeManager([pane])
+
+    applyTerminalAppearance(
+      manager,
+      getDefaultSettings('/tmp'),
+      true,
+      new Map(),
+      new Map(),
+      'false',
+      new Map(),
+      new Map()
+    )
+
+    const setPaneStyleOptions = vi.mocked(manager.setPaneStyleOptions)
+    const fit = vi.mocked(pane.fitAddon.fit)
+    expect(setPaneStyleOptions).toHaveBeenCalledOnce()
+    expect(fit).toHaveBeenCalledOnce()
+    expect(setPaneStyleOptions.mock.invocationCallOrder[0]!).toBeLessThan(
+      fit.mock.invocationCallOrder[0]!
     )
   })
 })
