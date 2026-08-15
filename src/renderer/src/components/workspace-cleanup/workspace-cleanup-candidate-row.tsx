@@ -12,6 +12,7 @@ import {
   GitPullRequest,
   HardDrive,
   Loader2,
+  Monitor,
   SquareTerminal,
   Trash2
 } from 'lucide-react'
@@ -41,6 +42,10 @@ import {
 } from './workspace-cleanup-candidate-row-data'
 import { StatusPill } from './workspace-cleanup-status-pill'
 import { WorkspaceCleanupMetadataChip } from './workspace-cleanup-metadata-chip'
+import {
+  getWorkspaceCleanupCandidateAccessibleName,
+  getWorkspaceCleanupCandidateHostLabel
+} from './workspace-cleanup-host-label'
 
 export type WorkspaceCleanupDeletionPhase = 'deleting' | 'queued'
 
@@ -107,6 +112,8 @@ export const CandidateRow = React.memo(function CandidateRow({
   const gitLabel = getWorkspaceCleanupGitLabel(candidate)
   const showGitMetadataChip = shouldShowGitMetadataChip(candidate)
   const contextCount = getContextCount(candidate)
+  const candidateAccessibleName = getWorkspaceCleanupCandidateAccessibleName(candidate)
+  const hostLabel = getWorkspaceCleanupCandidateHostLabel(candidate)
   const sizeValue =
     sizeLabel ?? translate('components.workspace.cleanup.browse.notMeasured', 'Not measured')
   const hasExpandableDetails =
@@ -134,7 +141,7 @@ export const CandidateRow = React.memo(function CandidateRow({
             aria-label={translate(
               'auto.components.workspace.cleanup.WorkspaceCleanupDialog.bbb1ab6a6f',
               'Select {{value0}}',
-              { value0: candidate.displayName }
+              { value0: candidateAccessibleName }
             )}
             onClick={() => onToggleSelected(identity)}
             className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border bg-background text-primary hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -152,6 +159,13 @@ export const CandidateRow = React.memo(function CandidateRow({
             <span data-workspace-cleanup-row-name className="min-w-0 truncate text-sm font-medium">
               {candidate.displayName}
             </span>
+            <WorkspaceCleanupMetadataChip
+              icon={Monitor}
+              label={translate('components.workspace.cleanup.host.label', 'Host: {{value0}}', {
+                value0: hostLabel
+              })}
+              value={hostLabel}
+            />
             {deletionPhase ? (
               <StatusPill tone="destructive">
                 {deletionPhase === 'queued'
@@ -303,7 +317,7 @@ export const CandidateRow = React.memo(function CandidateRow({
                 aria-label={translate(
                   'components.workspace.cleanup.browse.openWorkspaceNamed',
                   'Open {{value0}}',
-                  { value0: candidate.displayName }
+                  { value0: candidateAccessibleName }
                 )}
                 onClick={() => onView(candidate)}
               >
@@ -323,7 +337,7 @@ export const CandidateRow = React.memo(function CandidateRow({
                   aria-label={translate(
                     'auto.components.workspace.cleanup.WorkspaceCleanupDialog.a9957007eb',
                     'Ignore {{value0}}',
-                    { value0: candidate.displayName }
+                    { value0: candidateAccessibleName }
                   )}
                   onClick={() => onIgnore(candidate)}
                 >
@@ -347,7 +361,7 @@ export const CandidateRow = React.memo(function CandidateRow({
                   aria-label={translate(
                     'auto.components.workspace.cleanup.WorkspaceCleanupDialog.3828408538',
                     'Remove {{value0}}',
-                    { value0: candidate.displayName }
+                    { value0: candidateAccessibleName }
                   )}
                   className="text-destructive hover:text-destructive"
                   onClick={() => onRemove(candidate)}

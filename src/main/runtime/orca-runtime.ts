@@ -24582,25 +24582,13 @@ export class OrcaRuntimeService {
 
   private async resolveWorktreeRemovalTarget(
     worktreeSelector: string,
-    requiredHostId?: string
+    requiredHostId?: ExecutionHostId
   ): Promise<RuntimeWorktreeRemovalTarget> {
     try {
       const exactTarget = parseExactWorktreeIdSelector(worktreeSelector)
       const worktree =
         exactTarget && requiredHostId
-          ? ((await this.listResolvedWorktrees()).find((candidate) => {
-              if (candidate.id !== exactTarget.id) {
-                return false
-              }
-              const repo = this.store
-                ?.getRepos()
-                .find(
-                  (entry) =>
-                    entry.id === candidate.repoId &&
-                    getRepoExecutionHostId(entry) === requiredHostId
-                )
-              return getWorktreeExecutionHostId(candidate, repo) === requiredHostId
-            }) ??
+          ? ((await this.resolveExplicitWorktreeIdScoped(exactTarget.id, requiredHostId)) ??
             (() => {
               throw new Error('selector_not_found')
             })())
@@ -29827,12 +29815,13 @@ export class OrcaRuntimeService {
   }
 
   private async resolveExplicitWorktreeIdScoped(
-    worktreeId: string
+    worktreeId: string,
+    requiredHostId?: ExecutionHostId
   ): Promise<ResolvedWorktree | null> {
     if (!this.store) {
       return null
     }
-    return await resolveScopedWorktreeIdRow(this.repoWorktreeRowDeps(), worktreeId)
+    return await resolveScopedWorktreeIdRow(this.repoWorktreeRowDeps(), worktreeId, requiredHostId)
   }
 
   private async listRepoWorktreesForResolution(

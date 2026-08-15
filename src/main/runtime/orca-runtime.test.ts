@@ -2417,6 +2417,7 @@ describe('OrcaRuntimeService', () => {
     await expect(
       internals.resolveWorktreeRemovalTarget(TEST_WORKTREE_ID, 'runtime:env-b')
     ).rejects.toThrow('selector_not_found')
+    expect(internals.listResolvedWorktrees).not.toHaveBeenCalled()
   })
 
   it('claims the first window as authoritative and ignores later windows', () => {
