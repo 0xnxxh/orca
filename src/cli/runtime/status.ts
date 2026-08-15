@@ -107,9 +107,8 @@ function isProcessRunning(pid: number | null | undefined): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    // Why: EPERM means the pid exists but is owned by another user (a serve
-    // started under a different account, or a root supervisor). Reading that as
-    // "dead" lets a duplicate launch through the pre-spawn refusal.
-    return (error as NodeJS.ErrnoException | null)?.code === 'EPERM'
+    // Why: only ESRCH proves the pid is gone; EPERM means a foreign owner holds
+    // it (same rule as runtime-metadata-ownership-watch).
+    return (error as NodeJS.ErrnoException | null)?.code !== 'ESRCH'
   }
 }

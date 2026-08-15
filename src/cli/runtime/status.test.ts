@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getRuntimeMetadataPath } from '../../shared/runtime-bootstrap'
 import { RuntimeClient } from './client'
 import { getCliStatus } from './status'
@@ -24,6 +24,7 @@ afterEach(async () => {
     )
   )
   servers.clear()
+  vi.restoreAllMocks()
 })
 
 // Why: legacy runtime metadata compatibility only applies to local Unix socket
@@ -75,25 +76,50 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
     })
   })
 
-  it('treats an unreachable runtime owned by another user as running', async () => {
-    // Why: pid 1 is root-owned, so an unprivileged `process.kill(1, 0)` raises
-    // EPERM. Reading that as "dead" would let `orca serve` spawn a duplicate
-    // against a profile a root supervisor already owns (STA-4336).
-    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-status-eperm-'))
+  function writeUnreachableMetadata(prefix: string, pid: number): string {
+    const userDataPath = mkdtempSync(join(tmpdir(), prefix))
     writeFileSync(
       getRuntimeMetadataPath(userDataPath),
       JSON.stringify({
         runtimeId: 'runtime-foreign',
-        pid: 1,
+        pid,
         transport: { kind: 'unix', endpoint: join(userDataPath, 'never-listening.sock') },
         authToken: 'token',
         startedAt: Date.now()
       })
     )
+    return userDataPath
+  }
 
-    const status = await getCliStatus(userDataPath)
+  function throwFromKill(code: string): void {
+    // Why: a real pid would make the branch environment-dependent — as root, or
+    // in a container, a "foreign" pid answers normally and the test passes
+    // without ever reaching the errno it claims to cover.
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error(code), { code })
+    })
+  }
 
-    expect(status.result.app).toMatchObject({ running: true, pid: 1 })
+  it('treats an unreachable runtime owned by another user as running', async () => {
+    // Why: EPERM means the pid exists but belongs to another user (a root
+    // supervisor, or a serve under a different account). Reading that as "dead"
+    // would let `orca serve` spawn a duplicate against an owned profile.
+    throwFromKill('EPERM')
+
+    const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-eperm-', 4242))
+
+    expect(status.result.app).toMatchObject({ running: true, pid: 4242 })
     expect(status.result.runtime.state).toBe('starting')
+  })
+
+  it('still reports a runtime whose pid is gone as stale', async () => {
+    // Why: only ESRCH proves death — without this the widened rule could call
+    // every dead profile "starting" and refuse serve forever.
+    throwFromKill('ESRCH')
+
+    const status = await getCliStatus(writeUnreachableMetadata('orca-runtime-status-esrch-', 4242))
+
+    expect(status.result.app).toMatchObject({ running: false, pid: null })
+    expect(status.result.runtime.state).toBe('stale_bootstrap')
   })
 })

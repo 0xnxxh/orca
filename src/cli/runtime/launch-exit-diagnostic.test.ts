@@ -4,7 +4,7 @@ import {
   macCrashReportGlob,
   openLaunchExitError,
   serveSignalExitError
-} from './serve-signal-exit-diagnostic'
+} from './launch-exit-diagnostic'
 import { superviseForegroundServe } from './serve-update-supervisor'
 import { RuntimeClientError } from './types'
 

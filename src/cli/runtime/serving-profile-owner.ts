@@ -1,6 +1,13 @@
 import type { RuntimeRpcFailure } from '../../shared/runtime-rpc-envelope'
 import type { CliStatusResult } from '../../shared/runtime-types'
 
+/**
+ * Why: an unreachable owner is believed on its recorded pid alone, and pids get
+ * recycled. Bounding that belief to a plausible startup window keeps a crashed
+ * runtime whose pid was reused from refusing every serve on the profile forever.
+ */
+export const STARTING_OWNER_TRUST_WINDOW_MS = 120_000
+
 export type ServingProfileOwner = {
   pid: number | null
   /** True when the owner answered RPC; false when only its pid proved alive. */
@@ -15,17 +22,27 @@ export type ServingProfileOwner = {
  * cleanly (STA-4336). Deciding here — in the CLI, before the exec — keeps the
  * contract on the safe side of that boundary.
  */
-export function findServingProfileOwner(status: CliStatusResult): ServingProfileOwner | null {
+export function findServingProfileOwner(
+  status: CliStatusResult,
+  startedAt: number | null,
+  now: number = Date.now()
+): ServingProfileOwner | null {
   if (!status.app.running) {
     return null
   }
-  return { pid: status.app.pid, reachable: status.runtime.reachable }
+  const owner = { pid: status.app.pid, reachable: status.runtime.reachable }
+  if (owner.reachable) {
+    return owner
+  }
+  // A future `startedAt` (clock skew) stays inside the window on purpose.
+  const startingFor = now - (startedAt ?? now)
+  return startingFor > STARTING_OWNER_TRUST_WINDOW_MS ? null : owner
 }
 
 /**
- * Why: an unreachable owner is believed on the strength of its recorded pid, and
- * a pid the OS has since recycled would refuse forever. Naming the file that
- * holds the claim is the only recovery instruction that always works.
+ * Why: an owner trusted on its pid alone still needs an escape hatch, because
+ * the pid is the only thing standing between the user and a refusal they cannot
+ * otherwise explain. Naming the file that holds the claim always works.
  */
 export function serveAlreadyRunningMessage(
   owner: ServingProfileOwner,
@@ -39,8 +56,8 @@ export function serveAlreadyRunningMessage(
 }
 
 /**
- * Why: `--json` and `--recipe-json` callers parse stdout. A refusal that only
- * writes prose to stderr looks to them like a serve that produced nothing.
+ * Why: `--json` callers parse stdout. A refusal that only writes prose to stderr
+ * looks to them like a serve that produced nothing.
  */
 export function serveAlreadyRunningFailure(
   owner: ServingProfileOwner,

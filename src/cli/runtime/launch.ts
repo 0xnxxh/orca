@@ -11,7 +11,7 @@ import {
 } from '../../shared/ephemeral-vm-recipes'
 import { SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE } from '../../shared/single-instance-exit-code'
 import { getRuntimeMetadataPath } from '../../shared/runtime-bootstrap'
-import { getDefaultUserDataPath } from './metadata'
+import { getDefaultUserDataPath, tryReadMetadata } from './metadata'
 import { getMacAppBundlePath } from './mac-app-update-bundle'
 import {
   findServingProfileOwner,
@@ -105,14 +105,20 @@ export async function serveOrcaApp(
   } = {}
 ): Promise<number> {
   const userDataPath = getDefaultUserDataPath()
-  const owner = findServingProfileOwner((await getCliStatus(userDataPath)).result)
+  const owner = findServingProfileOwner(
+    (await getCliStatus(userDataPath)).result,
+    tryReadMetadata(userDataPath)?.startedAt ?? null
+  )
   if (owner) {
     // Why: the Electron main enforces this same rule, but on macOS it does so
     // after NSApplication init, which aborts pre-JS when Launch Services is
     // unreachable (STA-4336). Refusing here keeps a supervisor's retry from
     // becoming a SIGABRT loop, and reports the exit code systemd keys off.
     const metadataPath = getRuntimeMetadataPath(userDataPath)
-    if (args.json === true || args.recipeJson === true) {
+    // Why: recipe stdout carries a strict result schema and nothing else — even
+    // schema-valid non-orca-server results are diverted to stderr below — so the
+    // refusal envelope would corrupt that channel. Exit 3 is its signal.
+    if (args.json === true && args.recipeJson !== true) {
       process.stdout.write(
         `${JSON.stringify(serveAlreadyRunningFailure(owner, metadataPath), null, 2)}\n`
       )

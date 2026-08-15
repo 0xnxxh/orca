@@ -1,8 +1,10 @@
 import { basename } from 'node:path'
 import { RuntimeClientError } from './types'
 
+// The parent only ever sees the signal, so the cause is offered as the likely
+// one rather than asserted; the crash report in the next steps confirms it.
 const MAC_ABORT_CAUSE =
-  'aborted with SIGABRT on macOS before any Orca JavaScript ran. The Electron main creates NSApplication first, and _RegisterApplication calls abort() when Launch Services is unreachable — common in sandboxed agent environments, SSH sessions without a GUI login, and CI. Retrying cannot help: the abort happens before Orca can run, so every attempt fails identically.'
+  'aborted with SIGABRT on macOS before any Orca JavaScript ran. That is almost always the Electron main creating NSApplication: _RegisterApplication calls abort() when Launch Services is unreachable — common in sandboxed agent environments, SSH sessions without a GUI login, and CI. Retrying cannot help in that case: the abort happens before Orca can run, so every attempt fails identically.'
 
 /**
  * Why: macOS names crash reports after the executing binary, so a packaged run
@@ -41,8 +43,6 @@ export function serveSignalExitError(
   if (!isMacStartupAbort(signal, platform)) {
     return new RuntimeClientError('runtime_serve_failed', `Orca serve exited via ${signal}.`)
   }
-  // Why: we only ever see the signal, never the phase, so the cause is offered as the likely one
-  // rather than asserted; the parent CLI is the only place that can explain it at all.
   return new RuntimeClientError('runtime_serve_failed', `Orca serve ${MAC_ABORT_CAUSE}`, {
     nextSteps: macAbortNextSteps()
   })

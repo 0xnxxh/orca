@@ -7,7 +7,7 @@ import {
 } from '../../shared/orchestration-rpc-contract'
 import { parsePairingCode, type PairingOffer } from '../../shared/pairing'
 import { launchOrcaApp } from './launch'
-import { openLaunchExitError } from './serve-signal-exit-diagnostic'
+import { openLaunchExitError } from './launch-exit-diagnostic'
 import { getDefaultUserDataPath, readMetadata } from './metadata'
 import { getCliStatus, resolveDesktopWindowStatus } from './status'
 import { sendRequest } from './transport'
