@@ -10573,6 +10573,7 @@ describe('pending worktree creation state', () => {
   it('removePendingWorktreeCreation cleans up a provisioned-root setup and VM runtime', async () => {
     const store = createTestStore()
     const deleteProjectHostSetup = vi.mocked(store.getState().deleteProjectHostSetup)
+    deleteProjectHostSetup.mockResolvedValue({ setup: { id: 'setup-1' } } as never)
     store.getState().beginPendingWorktreeCreation(
       makePendingCreation('c1', {
         phase: 'fetching',
