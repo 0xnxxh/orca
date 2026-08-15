@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef } from 'react'
 import type React from 'react'
 import type { WorkspaceStatus } from '../../../../../../shared/worktree/types'
 import type { HostSectionRow } from '../../host-section-rows'
-import { PINNED_GROUP_KEY } from '../rows/groups'
+import { PINNED_GROUP_KEY } from '../grouping/group-keys'
 import { WORKTREE_SIDEBAR_VIRTUAL_ROW_GAP } from '../viewport/virtual-rows'
 import { getWorkspaceStatusGroupKey } from '../../workspace-status'
 import { expandDraggedWorktreeIdsForVisibleLineage } from '../../worktree-manual-order'
@@ -23,7 +23,7 @@ import {
   type WorktreeSidebarDropPreview
 } from '../../worktree-sidebar-drop-preview'
 import { getWorktreeDragGroups, getWorktreeDragIndexes } from './groups'
-import type { WorktreeItemRow } from '../rows/renderable-rows'
+import type { WorktreeItemRow } from '../listing/renderable-rows'
 
 export type WorktreeStatusDropRequest = {
   pointerY: number

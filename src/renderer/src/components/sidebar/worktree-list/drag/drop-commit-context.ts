@@ -6,9 +6,17 @@ import type {
 import type { WorktreeDragGroup } from '../../worktree-manual-order'
 import type { WorktreeDragUnitGroup } from '../../worktree-drag-units'
 import type { WorktreeSidebarDropPreview } from '../../worktree-sidebar-drop-preview'
-import type { WorktreeStatusDropAtIndexArgs } from '../viewport/viewport-props'
 import type { WorktreeStatusDropRequest } from './use-session'
 import type { WorktreeSidebarLineageDropTarget } from './row-state'
+
+export const NOOP_WORKSPACE_BOARD_DRAG_PREVIEW_CALLBACK = (): void => {}
+
+export type WorktreeStatusDropAtIndexArgs = {
+  worktreeIds: readonly string[]
+  status: WorkspaceStatus
+  dropIndex: number
+  groups: readonly WorktreeDragGroup[]
+}
 
 // The shared surface every drop path (pointer, native drag, document capture) commits through.
 export type WorktreeDropCommitContext = {

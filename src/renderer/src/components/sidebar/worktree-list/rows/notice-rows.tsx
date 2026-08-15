@@ -1,6 +1,6 @@
 import React from 'react'
 import type { VirtualItem } from '@tanstack/react-virtual'
-import type { Row } from './groups'
+import type { Row } from '../grouping/row-types'
 import { getVirtualRowTransform } from '../viewport/virtual-rows'
 import { PendingWorktreeRow } from '../../PendingWorktreeRow'
 import ImportedWorktreesVisibilityLine from '../../ImportedWorktreesVisibilityLine'

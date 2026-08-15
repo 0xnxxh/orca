@@ -1,10 +1,13 @@
 import { useEffect } from 'react'
 import type { WorktreeDragRuntime } from './use-runtime'
-import type { WorktreeDropCommitContext } from './drop-commit-context'
-import type { WorktreeStatusDropAtIndexArgs } from '../viewport/viewport-props'
+import type {
+  WorktreeDropCommitContext,
+  WorktreeStatusDropAtIndexArgs
+} from './drop-commit-context'
 import { commitWorktreePointerDrop } from './pointer-commit'
-import { SIDEBAR_POINTER_DRAG_THRESHOLD_PX } from '../scroll/tuning'
 import type { WorktreePointerDrag } from './row-state'
+
+const SIDEBAR_POINTER_DRAG_THRESHOLD_PX = 4
 
 // Pointer drags escape the row that started them, so move/up/cancel are tracked on the
 // window in capture phase.

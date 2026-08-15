@@ -3,7 +3,8 @@ import { cn } from '@/lib/utils'
 import type { AppState } from '@/store/types'
 import type { Worktree } from '../../../../../../shared/worktree/types'
 import WorktreeCard, { type ActiveSurfaceVariant } from '../../WorktreeCard'
-import { PINNED_GROUP_KEY, type WorktreeGroupBy } from './groups'
+import { PINNED_GROUP_KEY } from '../grouping/group-keys'
+import type { WorktreeGroupBy } from '../grouping/row-types'
 import {
   getFolderBackedRepoWorktreeCardContentIndent,
   getFolderBackedRepoWorktreeCardSurfaceInset,
@@ -14,9 +15,9 @@ import {
   LINEAGE_CHILDREN_INLINE_OFFSET
 } from './indentation'
 import type { LineageToggleHandler } from '../../worktree-lineage-toggle-handler-cache'
-import { stopNestedWorktreeCardBubble } from '../headers/event-guards'
-import type { WorktreeItemRow } from './renderable-rows'
-import { getWorktreeOptionId } from '../option-dom'
+import { stopNestedWorktreeCardBubble } from './header-event-guards'
+import type { WorktreeItemRow } from '../listing/renderable-rows'
+import { getWorktreeOptionId } from './option-dom'
 import type { WorktreePointerDrag, WorktreeRowDragState } from '../drag/row-state'
 
 export type WorktreeItemRowContext = {

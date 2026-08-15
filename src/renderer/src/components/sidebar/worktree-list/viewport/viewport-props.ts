@@ -20,22 +20,11 @@ import type { HostSectionRow } from '../../host-section-rows'
 import type { ImportedWorktreeCardActionState } from '../../imported-worktrees-card-actions'
 import type { NewExternalWorktreesInboxActionState } from '../../new-external-worktrees-inbox-actions'
 import type { WorktreeDragGroup } from '../../worktree-manual-order'
-import type {
-  PinnedWorktreeDisplayPolicy,
-  ProjectGroupingModel,
-  WorktreeGroupBy
-} from '../rows/groups'
+import type { WorktreeStatusDropAtIndexArgs } from '../drag/drop-commit-context'
+import type { ProjectGroupingModel } from '../grouping/project-grouping'
+import type { PinnedWorktreeDisplayPolicy, WorktreeGroupBy } from '../grouping/row-types'
 
 export const EMPTY_PROJECT_GROUPS: readonly ProjectGroup[] = []
-export const NOOP_WORKSPACE_BOARD_DRAG_PREVIEW_CALLBACK = (): void => {}
-
-export type WorktreeStatusDropAtIndexArgs = {
-  worktreeIds: readonly string[]
-  status: WorkspaceStatus
-  dropIndex: number
-  groups: readonly WorktreeDragGroup[]
-}
-
 export type VirtualizedWorktreeViewportProps = {
   rows: HostSectionRow[]
   activeWorktreeId: string | null

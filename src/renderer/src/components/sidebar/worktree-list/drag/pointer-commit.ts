@@ -8,8 +8,10 @@ import { resolveWorkspaceKanbanCardDropCommitTarget } from '../../workspace-kanb
 import { getFullDropIndexForWorktreeDragUnit } from '../../worktree-drag-units'
 import { resolveWorktreeSidebarStatusDropCommitTarget } from '../../worktree-sidebar-drop-preview'
 import { getPointerDropStatusTarget, shouldPreferSidebarStatusDropTarget } from './status-target'
-import type { WorktreeDropCommitContext } from './drop-commit-context'
-import type { WorktreeStatusDropAtIndexArgs } from '../viewport/viewport-props'
+import type {
+  WorktreeDropCommitContext,
+  WorktreeStatusDropAtIndexArgs
+} from './drop-commit-context'
 import type { WorktreeSidebarStatusDropTarget } from '../../worktree-sidebar-drop-preview'
 import { NO_WORKTREE_SIDEBAR_DROP_TARGET, type WorktreePointerDrag } from './row-state'
 

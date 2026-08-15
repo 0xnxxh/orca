@@ -8,13 +8,24 @@ import {
 import {
   buildLineageRowRekeyMap,
   getActiveStickyIndexesForScroll,
-  getRenderRowKey,
   getVirtualRowKey,
-  pruneStaleVirtualRowElementCache,
-  type RenderRow
+  pruneStaleVirtualRowElementCache
 } from './virtual-rows'
-import { countRecordKeysByReference } from '../scroll/tuning'
+import { getRenderRowKey } from '../listing/render-row'
+import type { RenderRow } from '../listing/render-row'
 import type { WorktreeListVirtualizer } from './use-virtualizer'
+
+const recordKeyCountCache = new WeakMap<Record<string, unknown>, number>()
+
+export function countRecordKeysByReference(record: Record<string, unknown>): number {
+  const cached = recordKeyCountCache.get(record)
+  if (cached !== undefined) {
+    return cached
+  }
+  const count = Object.keys(record).length
+  recordKeyCountCache.set(record, count)
+  return count
+}
 
 // Re-measures only rows whose DOM node still matches its virtual key, and publishes the
 // sticky-header slots the render pass reads out of refs.

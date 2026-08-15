@@ -11,13 +11,13 @@ import type { FolderWorkspacePathStatus } from '../../../../../../shared/folder-
 import { isConfirmedStaleFolderPathStatus } from '../../../../../../shared/folder-workspace-path-status'
 import { folderWorkspaceToWorktree } from '../../../../../../shared/folder-workspace-worktree'
 import WorktreeCard from '../../WorktreeCard'
-import type { WorktreeGroupBy } from './groups'
+import type { WorktreeGroupBy } from '../grouping/row-types'
 import { getVirtualRowTransform } from '../viewport/virtual-rows'
 import { getFolderWorkspaceRowGeometry } from './indentation'
 import { getFolderWorkspaceCardPrDisplay } from '../../folder-workspace-card-pr-display'
-import { FolderPathStatusIndicator } from '../headers/FolderPathStatusIndicator'
-import type { FolderWorkspaceItemRow } from './renderable-rows'
-import { getWorktreeOptionId } from '../option-dom'
+import { FolderPathStatusIndicator } from './FolderPathStatusIndicator'
+import type { FolderWorkspaceItemRow } from '../listing/renderable-rows'
+import { getWorktreeOptionId } from './option-dom'
 
 export type FolderWorkspaceRowContext = {
   groupBy: WorktreeGroupBy

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 function readWorktreeListSource(): string {
   return readFileSync(
-    fileURLToPath(new URL('./worktree-list/headers/SectionHeader.tsx', import.meta.url)),
+    fileURLToPath(new URL('./worktree-list/rows/SectionHeader.tsx', import.meta.url)),
     'utf8'
   )
 }

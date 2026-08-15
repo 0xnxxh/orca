@@ -2,7 +2,7 @@ import {
   computeWorktreeSidebarHeaderDropPreview,
   type WorktreeSidebarHeaderDropPreview
 } from './worktree-sidebar-header-drop-preview'
-import type { Row } from './worktree-list/rows/groups'
+import type { Row } from './worktree-list/grouping/row-types'
 import type { ProjectGroup } from '../../../../shared/project-group-types'
 
 export type ProjectGroupHeaderDragBucketKey = string

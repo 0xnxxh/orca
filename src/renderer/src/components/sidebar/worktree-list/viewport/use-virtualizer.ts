@@ -8,17 +8,17 @@ import type { Range } from '@tanstack/react-virtual'
 import {
   estimateRenderRowSize,
   extractWorktreeVirtualRowIndexes,
-  getRenderRowKey,
   getStickyHeaderIndexes,
   getVirtualRowIndex,
-  WORKTREE_SIDEBAR_VIRTUAL_ROW_GAP,
-  type RenderRow
+  WORKTREE_SIDEBAR_VIRTUAL_ROW_GAP
 } from './virtual-rows'
+import { getRenderRowKey } from '../listing/render-row'
+import type { RenderRow } from '../listing/render-row'
 import { WORKTREE_SIDEBAR_REVEAL_TOP_INSET } from '../../worktree-sidebar-reveal'
 import {
   shouldAdjustWorktreeSidebarMeasuredRowScroll,
   USER_SCROLL_MEASUREMENT_ADJUSTMENT_SUPPRESS_MS
-} from '../scroll/tuning'
+} from './use-scroll-suppression'
 
 export type WorktreeListVirtualizer = ReturnType<typeof useWorktreeListVirtualizer>
 

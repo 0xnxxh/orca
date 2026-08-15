@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildRows } from '../rows/groups'
+import { buildRows } from '../grouping/build-rows'
 import { getStickyHeaderIndexes } from './virtual-rows'
 import type { ProjectGroup } from '../../../../../../shared/project-group-types'
 import type { Repo } from '../../../../../../shared/repo-types'
 import type { Worktree } from '../../../../../../shared/worktree/types'
-import type { Row } from '../rows/groups'
+import type { Row } from '../grouping/row-types'
 
 const repo: Repo = {
   id: 'repo-1',

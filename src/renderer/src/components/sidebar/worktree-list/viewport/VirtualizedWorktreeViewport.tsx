@@ -1,16 +1,16 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
-import { WorktreeSidebarDropIndicator } from '../../WorktreeSidebarDropIndicator'
 import { WorktreeListScrollToTopButton } from '../../WorktreeListScrollToTopButton'
-import { useWorktreeListScrollToTop } from '../scroll/use-scroll-to-top'
-import { getActiveDescendantOptionId } from './active-descendant-option'
-import { buildRenderableRows } from '../rows/renderable-rows'
-import { useFolderWorkspacePathStatusRows } from './use-folder-path-statuses'
+import { renderWorktreeSidebarDropIndicators } from './drop-indicators'
+import { useWorktreeListScrollToTop } from './use-scroll-to-top'
+import { getActiveDescendantOptionId } from '../navigation/active-descendant-option'
+import { buildRenderableRows } from '../listing/renderable-rows'
+import { useFolderWorkspacePathStatusRows } from '../listing/use-folder-path-statuses'
 import { useGroupToggleWithScrollAnchor } from './use-group-toggle'
-import { usePendingSidebarReveal } from '../reveal/use-pending'
-import { usePrimaryActiveWorktreeRow } from './use-active-row'
-import { useSidebarRevealHighlight } from '../reveal/use-highlight'
+import { usePendingSidebarReveal } from '../navigation/use-pending-reveal'
+import { usePrimaryActiveWorktreeRow } from '../navigation/use-active-row'
+import { useSidebarRevealHighlight } from '../navigation/use-reveal-highlight'
 import { useVirtualRowMeasurementSync } from './use-row-measurement'
 import { useVisiblePrRefreshReporting } from './use-visible-review-refresh'
 import { useWorkspaceStatusRowDrag } from '../drag/use-status-row-drag'
@@ -18,17 +18,21 @@ import { useWorktreeDragRuntime } from '../drag/use-runtime'
 import { useWorktreeDragSession } from '../drag/use-session'
 import { useWorktreeDocumentDrop } from '../drag/use-document-drop'
 import { useWorktreeLineageDropCommit } from '../drag/use-lineage-drop-commit'
-import { useWorktreeListKeyboardNavigation } from './use-keyboard'
+import { useWorktreeListKeyboardNavigation } from '../navigation/use-keyboard'
 import { useWorktreeListVirtualizer } from './use-virtualizer'
 import { useWorktreeNativeDrag } from '../drag/use-native-drag'
 import { useWorktreePointerDrag } from '../drag/use-pointer-drag'
 import { useWorktreeSidebarHeaderDrag } from '../drag/use-header-drag'
-import { useWorktreeSidebarScrollSuppression } from '../scroll/use-suppression'
+import { useWorktreeSidebarScrollSuppression } from './use-scroll-suppression'
 import { EMPTY_PROJECT_GROUPS, type VirtualizedWorktreeViewportProps } from './viewport-props'
-import { WORKTREE_SIDEBAR_SCROLL_STYLE } from '../scroll/tuning'
-import type { WorktreeDropCommitContext } from '../drag/drop-commit-context'
-import { buildWorktreeVirtualRowContext } from '../rows/virtual-row-context'
+import { useWorktreeDropCommitContext } from '../drag/use-drop-commit-context'
+import { buildWorktreeVirtualRowContext } from './virtual-row-context'
 import { renderWorktreeVirtualRow } from '../rows/virtual-row-dispatch'
+
+const WORKTREE_SIDEBAR_SCROLL_STYLE: React.CSSProperties = {
+  // Why: TanStack Virtual owns scroll correction; native overflow anchoring fights it and causes jumps.
+  overflowAnchor: 'none'
+}
 
 export const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewport(
   props: VirtualizedWorktreeViewportProps
@@ -188,41 +192,17 @@ export const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktr
     markDirectScrollInput
   })
 
-  const dropCtx = useMemo<WorktreeDropCommitContext>(
-    () => ({
-      scrollRef,
-      workspaceStatuses,
-      worktreeDragGroups: session.worktreeDragGroups,
-      worktreeDragUnitGroups: session.worktreeDragUnitGroups,
-      computeWorktreeDrop: session.computeWorktreeDrop,
-      computeWorktreeStatusDrop: session.computeWorktreeStatusDrop,
-      refreshWorktreeDragSession: session.refreshWorktreeDragSession,
-      getEligibleLineageDropTarget: lineageDrop.getEligibleLineageDropTarget,
-      commitWorktreeLineageParentDrop: lineageDrop.commitWorktreeLineageParentDrop,
-      clearReorderedWorktreeParents: lineageDrop.clearReorderedWorktreeParents,
-      clearWorktreeDrag: runtime.clearWorktreeDrag,
-      onMoveWorktreesToStatus: props.onMoveWorktreesToStatus,
-      onMoveWorktreesToStatusAtIndex: props.onMoveWorktreesToStatusAtIndex,
-      onReorderWorktrees: props.onReorderWorktrees,
-      onPinWorktrees: props.onPinWorktrees
-    }),
-    [
-      lineageDrop.clearReorderedWorktreeParents,
-      lineageDrop.commitWorktreeLineageParentDrop,
-      lineageDrop.getEligibleLineageDropTarget,
-      props.onMoveWorktreesToStatus,
-      props.onMoveWorktreesToStatusAtIndex,
-      props.onPinWorktrees,
-      props.onReorderWorktrees,
-      runtime.clearWorktreeDrag,
-      session.computeWorktreeDrop,
-      session.computeWorktreeStatusDrop,
-      session.refreshWorktreeDragSession,
-      session.worktreeDragGroups,
-      session.worktreeDragUnitGroups,
-      workspaceStatuses
-    ]
-  )
+  const dropCtx = useWorktreeDropCommitContext({
+    scrollRef,
+    workspaceStatuses,
+    session,
+    lineageDrop,
+    runtime,
+    onMoveWorktreesToStatus: props.onMoveWorktreesToStatus,
+    onMoveWorktreesToStatusAtIndex: props.onMoveWorktreesToStatusAtIndex,
+    onReorderWorktrees: props.onReorderWorktrees,
+    onPinWorktrees: props.onPinWorktrees
+  })
 
   const { handleWorktreeRowPointerDown, handleWorktreeRowClickCapture } = useWorktreePointerDrag({
     ctx: dropCtx,
@@ -377,27 +357,10 @@ export const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktr
           className="relative w-full"
           style={{ height: `${virtualization.virtualizer.getTotalSize()}px` }}
         >
-          {headerDrag.canReorderRepoHeaders &&
-          headerDrag.repoDrag.state.draggingRepoId !== null &&
-          headerDrag.repoDrag.state.dropIndicatorY !== null ? (
-            <WorktreeSidebarDropIndicator y={headerDrag.repoDrag.state.dropIndicatorY} />
-          ) : null}
-          {headerDrag.canReorderProjectGroupHeaders &&
-          headerDrag.projectGroupDrag.state.draggingGroupId !== null &&
-          headerDrag.projectGroupDrag.state.dropIndicatorY !== null ? (
-            <WorktreeSidebarDropIndicator y={headerDrag.projectGroupDrag.state.dropIndicatorY} />
-          ) : null}
-          {headerDrag.hostDrag.state.draggingHostId !== null &&
-          headerDrag.hostDrag.state.dropIndicatorY !== null ? (
-            <WorktreeSidebarDropIndicator
-              y={headerDrag.hostDrag.state.dropIndicatorY}
-              className="z-40"
-            />
-          ) : null}
-          {runtime.worktreeDragState.draggingWorktreeId !== null &&
-          runtime.worktreeDragState.dropIndicatorY !== null ? (
-            <WorktreeSidebarDropIndicator y={runtime.worktreeDragState.dropIndicatorY} />
-          ) : null}
+          {renderWorktreeSidebarDropIndicators({
+            headerDrag,
+            worktreeDragState: runtime.worktreeDragState
+          })}
           {virtualItems.map((vItem) => {
             const row = renderRows[vItem.index]
             return row ? renderWorktreeVirtualRow(rowContext, row, vItem) : null

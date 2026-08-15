@@ -6,17 +6,17 @@ import type {
   WorkspaceStatusDefinition
 } from '../../../../../../shared/worktree/types'
 import { getWorkspaceStatus } from '../../workspace-status'
-import type { WorktreeGroupBy } from './groups'
+import type { WorktreeGroupBy } from '../grouping/row-types'
 import {
   getVirtualRowTransform,
   getWorktreeVirtualRowTransform,
-  shouldUseHeaderTopSpacing,
-  type RenderRow
+  shouldUseHeaderTopSpacing
 } from '../viewport/virtual-rows'
+import type { RenderRow } from '../listing/render-row'
 import type { ImportedWorktreeCardActionState } from '../../imported-worktrees-card-actions'
 import type { NewExternalWorktreesInboxActionState } from '../../new-external-worktrees-inbox-actions'
 import type { useHostHeaderDrag } from '../../host-header-drag'
-import { HostSectionHeader } from '../headers/HostSectionHeader'
+import { HostSectionHeader } from './HostSectionHeader'
 import { renderFolderWorkspaceVirtualRow, type FolderWorkspaceRowContext } from './folder-row'
 import {
   renderImportedWorktreesVirtualRow,
@@ -28,10 +28,7 @@ import {
   renderWorktreeLineageDescendants,
   type WorktreeItemRowContext
 } from './item-row'
-import {
-  renderWorktreeSectionHeaderRow,
-  type SectionHeaderRowContext
-} from '../headers/SectionHeader'
+import { renderWorktreeSectionHeaderRow, type SectionHeaderRowContext } from './SectionHeader'
 import type { WorktreeRowDragState } from '../drag/row-state'
 
 export type WorktreeVirtualRowContext = {

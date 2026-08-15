@@ -1,4 +1,4 @@
-import { ALL_GROUP_KEY, PINNED_GROUP_KEY } from '../rows/groups'
+import { ALL_GROUP_KEY, PINNED_GROUP_KEY } from '../grouping/group-keys'
 import type { HostSectionRow } from '../../host-section-rows'
 import type { WorktreeDragGroup } from '../../worktree-manual-order'
 

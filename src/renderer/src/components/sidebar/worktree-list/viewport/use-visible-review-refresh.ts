@@ -4,10 +4,14 @@ import type { VirtualItem } from '@tanstack/react-virtual'
 import { useAppStore } from '@/store'
 import { rightSidebarShowsPullRequestData } from '@/lib/right-sidebar-visibility'
 import type { Worktree } from '../../../../../../shared/worktree/types'
-import type { WorktreeGroupBy } from '../rows/groups'
-import type { RenderRow } from './virtual-rows'
-import type { WorktreeItemRow } from '../rows/renderable-rows'
-import { installWorktreeVisibleRefreshVisibilityListener } from '../scroll/tuning'
+import type { WorktreeGroupBy } from '../grouping/row-types'
+import type { RenderRow } from '../listing/render-row'
+import type { WorktreeItemRow } from '../listing/renderable-rows'
+
+export function installWorktreeVisibleRefreshVisibilityListener(onChange: () => void): () => void {
+  document.addEventListener('visibilitychange', onChange)
+  return () => document.removeEventListener('visibilitychange', onChange)
+}
 
 const DOCUMENT_HIDDEN_KEY = '__document_hidden__'
 const NOTHING_TO_TRACK_KEY = '__hidden__'

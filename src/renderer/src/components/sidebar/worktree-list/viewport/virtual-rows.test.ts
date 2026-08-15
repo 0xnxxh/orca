@@ -6,11 +6,11 @@ import {
   buildLineageRowRekeyMap,
   extractWorktreeVirtualRowIndexes,
   getActiveStickyIndexesForScroll,
-  getRenderRowKey,
   getStickyHeaderIndexes,
-  pruneStaleVirtualRowElementCache,
-  type RenderRow
+  pruneStaleVirtualRowElementCache
 } from './virtual-rows'
+import { getRenderRowKey } from '../listing/render-row'
+import type { RenderRow } from '../listing/render-row'
 
 function hostRow(hostId: ExecutionHostId): RenderRow {
   return {

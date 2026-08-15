@@ -9,9 +9,11 @@ import {
 } from '../../worktree-sidebar-pointer-drag-dom'
 import { getWorktreeSidebarDragRectsForGroup } from '../../worktree-sidebar-drag-autoscroll'
 import { getWorktreeSidebarDragGrab } from '../../worktree-sidebar-drag-geometry'
-import { NOOP_WORKSPACE_BOARD_DRAG_PREVIEW_CALLBACK } from '../viewport/viewport-props'
-import type { WorktreeStatusDropAtIndexArgs } from '../viewport/viewport-props'
-import type { WorktreeDropCommitContext } from './drop-commit-context'
+import { NOOP_WORKSPACE_BOARD_DRAG_PREVIEW_CALLBACK } from './drop-commit-context'
+import type {
+  WorktreeDropCommitContext,
+  WorktreeStatusDropAtIndexArgs
+} from './drop-commit-context'
 import type { WorktreeDragRuntime } from './use-runtime'
 import type { WorktreeDragSession } from './use-session'
 import { useWorktreePointerDragAutoscroll } from './use-pointer-autoscroll'

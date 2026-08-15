@@ -1,7 +1,8 @@
 import { defaultRangeExtractor } from '@tanstack/react-virtual'
 import type { Range, VirtualItem } from '@tanstack/react-virtual'
-import type { HostSectionRow } from '../../host-section-rows'
-import { getLineageGroupKey, PINNED_GROUP_KEY } from '../rows/groups'
+import { PINNED_GROUP_KEY, getLineageGroupKey } from '../grouping/group-keys'
+import { getRenderRowKey } from '../listing/render-row'
+import type { RenderRow } from '../listing/render-row'
 
 export const GROUP_HEADER_ROW_HEIGHT = 28
 export const HOST_HEADER_ROW_HEIGHT = 32
@@ -10,36 +11,6 @@ const SECONDARY_GROUP_HEADER_TOP_MARGIN = 4
 const IMPORTED_WORKTREES_LINE_ROW_HEIGHT = 36
 const PENDING_CREATION_ROW_HEIGHT = 56
 const FOLDER_WORKSPACE_ROW_HEIGHT = 64
-
-type WorktreeItemRow = Extract<HostSectionRow, { type: 'item' }>
-export type RenderRow =
-  | HostSectionRow
-  | { type: 'lineage-group'; key: string; rows: WorktreeItemRow[] }
-
-export function getRenderRowKey(row: RenderRow): string {
-  if (row.type === 'host-header') {
-    return `host:${row.hostId}`
-  }
-  if (row.type === 'header') {
-    return row.hostId ? `hdr:${row.hostId}:${row.key}` : `hdr:${row.key}`
-  }
-  if (row.type === 'lineage-group') {
-    return `lineage-group:${row.key}`
-  }
-  if (row.type === 'imported-worktrees-card') {
-    return `imported:${row.key}`
-  }
-  if (row.type === 'new-external-worktrees-inbox') {
-    return `inbox:${row.key}`
-  }
-  if (row.type === 'pending-creation') {
-    return `pending:${row.creationId}`
-  }
-  if (row.type === 'folder-workspace') {
-    return `folder-workspace:${row.folderWorkspace.id}`
-  }
-  return `wt:${row.rowKey}`
-}
 
 /**
  * Old row key -> current row key for rows that were re-keyed without moving.
