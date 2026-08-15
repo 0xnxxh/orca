@@ -32,6 +32,7 @@ import {
   hydrateOwnerWorktreeVisibilityDefaults,
   type WorktreeVisibilityDefaultsByHost
 } from './worktree-visibility-owner-settings'
+import * as ownerHydration from './settings-owner-hydration-publication'
 import { persistVisibilityAwareSettings } from './worktree-visibility-settings-write'
 import { getSettingsFocusedExecutionHostId } from '../../../../shared/execution-host'
 
@@ -40,7 +41,8 @@ export type SettingsSlice = SettingsSearchState & {
   worktreeVisibilityDefaultsByHost: WorktreeVisibilityDefaultsByHost
   worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: string | null
   worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId: string | null
-  fetchSettings: () => Promise<void>
+  fetchSettings: (options?: ownerHydration.FetchSettingsOptions) => Promise<void>
+  awaitOwnerWorktreeVisibilityDefaultsHydration: () => Promise<void>
   updateSettings: (updates: Partial<GlobalSettings>) => Promise<void>
   updateSettingsOrThrow: (updates: Partial<GlobalSettings>) => Promise<void>
   setActiveRuntimeEnvironmentPreference: (environmentId: string | null) => Promise<boolean>
@@ -50,7 +52,6 @@ type LegacyTerminalScrollbackSettingsUpdate = Partial<GlobalSettings> & {
   terminalScrollbackBytes?: unknown
 }
 
-type SettingsStateSetter = Parameters<StateCreator<AppState, [], [], SettingsSlice>>[0]
 let ownerSettingsHydrationGeneration = 0
 
 function normalizeRuntimeEnvironmentId(value: string | null | undefined): string | null {
@@ -134,7 +135,7 @@ function normalizeSettingsUpdates(
 }
 
 async function persistSettingsUpdates(
-  set: SettingsStateSetter,
+  set: ownerHydration.SettingsStateSetter,
   updates: Partial<GlobalSettings>,
   currentSettings: GlobalSettings | null,
   supportedRuntimeEnvironmentId: string | null,
@@ -185,27 +186,24 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
   worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId: null,
   ...createSettingsSearchState((state) => set(state)),
 
-  fetchSettings: async () => {
+  fetchSettings: async (options) => {
     const generation = ++ownerSettingsHydrationGeneration
     try {
-      const hydrated = await hydrateOwnerWorktreeVisibilityDefaults(
-        (await window.api.settings.get()) as GlobalSettings,
-        get().worktreeVisibilityDefaultsByHost
-      )
+      const localSettings = (await window.api.settings.get()) as GlobalSettings
       if (generation !== ownerSettingsHydrationGeneration) {
         return
       }
-      set((state) => ({
-        settings: hydrated.settings,
-        worktreeVisibilityDefaultsByHost: {
-          ...state.worktreeVisibilityDefaultsByHost,
-          ...hydrated.defaultsByHost
-        },
-        worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId:
-          hydrated.supportedRuntimeEnvironmentId,
-        worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId:
-          hydrated.sourceDefaultsSupportedRuntimeEnvironmentId
-      }))
+      const ownerVisibilityDefaultsHydration =
+        ownerHydration.startOwnerWorktreeVisibilityDefaultsHydration({
+          settings: localSettings,
+          deferPublication: options?.deferOwnerWorktreeVisibilityDefaults === true,
+          shouldPublish: () => generation === ownerSettingsHydrationGeneration,
+          set,
+          get
+        })
+      if (!options?.deferOwnerWorktreeVisibilityDefaults) {
+        await ownerVisibilityDefaultsHydration
+      }
     } catch (err) {
       console.error('Failed to fetch settings:', err)
     }
@@ -222,6 +220,9 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
       void get().hydrateRuntimeEnvironmentStatuses()
     }
   },
+
+  awaitOwnerWorktreeVisibilityDefaultsHydration: () =>
+    ownerHydration.awaitOwnerWorktreeVisibilityDefaultsHydration(get),
 
   updateSettings: async (updates) => {
     const generation = ++ownerSettingsHydrationGeneration

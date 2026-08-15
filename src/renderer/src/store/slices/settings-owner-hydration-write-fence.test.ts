@@ -35,7 +35,8 @@ it('preserves host defaults added while owner hydration is in flight', async () 
         get: vi.fn().mockResolvedValue({ activeRuntimeEnvironmentId: 'env-1' })
       },
       runtimeEnvironments: {
-        call: vi.fn().mockReturnValue(ownerRead)
+        call: vi.fn().mockReturnValue(ownerRead),
+        list: vi.fn().mockResolvedValue([])
       }
     }
   })
@@ -57,4 +58,51 @@ it('preserves host defaults added while owner hydration is in flight', async () 
     'runtime:env-1': { external: 'hide' },
     'runtime:env-2': { external: 'show' }
   })
+})
+
+it('publishes startup settings before remote owner hydration and local catalog work', async () => {
+  markRuntimeEnvironmentCompatible('env-1')
+  let resolveOwnerRead!: (value: unknown) => void
+  const ownerRead = new Promise((resolve) => (resolveOwnerRead = resolve))
+  vi.stubGlobal('window', {
+    api: {
+      settings: {
+        get: vi.fn().mockResolvedValue({
+          activeRuntimeEnvironmentId: 'env-1',
+          worktreeVisibilityDefaults: { external: 'show' }
+        }),
+        set: vi.fn().mockResolvedValue({
+          activeRuntimeEnvironmentId: 'env-1',
+          pluginSystemEnabled: true,
+          worktreeVisibilityDefaults: { external: 'show' }
+        })
+      },
+      runtimeEnvironments: {
+        call: vi.fn().mockReturnValue(ownerRead),
+        list: vi.fn().mockResolvedValue([])
+      }
+    }
+  })
+  const store = createTestStore()
+  let localCatalogStarted = false
+  const startup = (async () => {
+    await store.getState().fetchSettings({ deferOwnerWorktreeVisibilityDefaults: true })
+    localCatalogStarted = true
+  })()
+  await vi.waitFor(() => expect(window.api.runtimeEnvironments.call).toHaveBeenCalled())
+
+  expect(store.getState().settings?.activeRuntimeEnvironmentId).toBe('env-1')
+  expect(store.getState().worktreeVisibilityDefaultsByHost.local).toEqual({ external: 'show' })
+  expect(localCatalogStarted).toBe(true)
+
+  await store.getState().updateSettingsOrThrow({ pluginSystemEnabled: true })
+  resolveOwnerRead({
+    ok: true,
+    result: { settings: { worktreeVisibilityDefaults: { external: 'hide' } } },
+    _meta: { runtimeId: 'runtime-1' }
+  })
+  await startup
+  await store.getState().awaitOwnerWorktreeVisibilityDefaultsHydration()
+  expect(store.getState().settings?.pluginSystemEnabled).toBe(true)
+  expect(store.getState().worktreeVisibilityDefaultsByHost['runtime:env-1']).toBeUndefined()
 })
