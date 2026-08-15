@@ -584,7 +584,8 @@ describe('SshPtyProvider', () => {
           id: 'pty-old',
           cols: 80,
           rows: 24,
-          suppressReplayNotification: true
+          suppressReplayNotification: true,
+          requireReplay: true
         },
         sourceActivationRequestOptions
       )
@@ -630,7 +631,8 @@ describe('SshPtyProvider', () => {
         id: 'pty-old',
         cols: 80,
         rows: 24,
-        suppressReplayNotification: true
+        suppressReplayNotification: true,
+        requireReplay: true
       })
       expect(result).toEqual({
         id: 'ssh:conn-1@@pty-old',
@@ -655,6 +657,7 @@ describe('SshPtyProvider', () => {
         cols: 80,
         rows: 24,
         suppressReplayNotification: true,
+        requireReplay: true,
         expectedPaneKey: 'tab-a:leaf-a',
         expectedTabId: 'tab-a'
       })
@@ -674,7 +677,8 @@ describe('SshPtyProvider', () => {
           id: 'pty-old',
           cols: 80,
           rows: 24,
-          suppressReplayNotification: true
+          suppressReplayNotification: true,
+          requireReplay: true
         },
         sourceActivationRequestOptions
       )

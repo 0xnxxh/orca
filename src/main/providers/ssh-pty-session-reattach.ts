@@ -196,6 +196,12 @@ export async function reattachSshPtySession(args: {
         cols: args.options.cols,
         rows: args.options.rows,
         suppressReplayNotification: true,
+        // A reattach always paints into a NEW terminal: a reconnect bumps tab.generation, which is
+        // the pane's React key, so TerminalPane remounts and the old xterm is disposed with its
+        // buffer. Without this the relay sees a delivery still open under our unchanged client id,
+        // answers "you already have this", and the pane stays blank until new output arrives.
+        // Optional on the wire, so an older relay simply ignores it and behaves as it does today.
+        requireReplay: true,
         ...(expectedPaneKey ? { expectedPaneKey } : {}),
         ...(expectedTabId ? { expectedTabId } : {})
       },
@@ -203,7 +209,8 @@ export async function reattachSshPtySession(args: {
       rememberPtyIncarnation: args.rememberPtyIncarnation
     })
     console.warn(
-      `[ssh-pty] pty.attach succeeded for ${args.sessionId}, replay=${!!attachResult.replay}`
+      `[ssh-pty] pty.attach succeeded for ${args.sessionId}, replay=${!!attachResult.replay}` +
+        `, replayLen=${attachResult.replay?.length ?? 0}`
     )
     return {
       id: toAppSshPtyId(args.connectionId, relaySessionId),
