@@ -72,6 +72,30 @@ function kittyAltModifiers(shiftKey: boolean): number {
   return shiftKey ? 4 : 3
 }
 
+/**
+ * True when the layout composed a printable-ASCII character onto this Option chord
+ * (Turkish Option+Q -> '@', German Option+8 -> '{'), rather than leaving a hotkey.
+ *
+ * Why ASCII: kitty and Ghostty let macOS consume Option for composition by default and send the
+ * composed text, so any composed glyph is "typed" there. Orca additionally forwards Option hotkeys
+ * to kitty TUIs (#8031), and the composed glyphs that motivated it are all non-ASCII (alt+p -> 'π',
+ * alt+b -> '∫'). Printable ASCII is the set a shell or TUI prompt actually needs typed, so it wins;
+ * everything else stays a hotkey.
+ *
+ * Why the base-character compare: a layout that composes nothing reports the unmodified character
+ * back in `key`, which must stay a hotkey rather than type itself.
+ */
+function isLayoutComposedAsciiCharacter(key: string, baseCharacter: string): boolean {
+  if (key.length !== 1) {
+    return false
+  }
+  const codePoint = key.codePointAt(0) as number
+  if (codePoint <= 0x20 || codePoint > 0x7e) {
+    return false
+  }
+  return key.toLowerCase() !== baseCharacter.toLowerCase()
+}
+
 /** Un-shifted ASCII character for a physical key code (letters, digits, punctuation map), or undefined. */
 function resolveUnshiftedCharacterForCode(code: string | undefined): string | undefined {
   if (!code) {
@@ -296,12 +320,24 @@ export function resolveTerminalShortcutAction(
 
   // Why: macOptionIsMeta stays off so non-US layouts can compose @/€; match event.code since composition rewrites event.key.
   if (isMac && !event.metaKey && !event.ctrlKey && event.altKey && macOptionAsAlt !== 'true') {
+    // Why: event.location reflects the char key, not the held modifier, so the caller supplies Option's tracked keydown location.
+    const isLeftOption = optionKeyLocation === 1
+    const isRightOption = optionKeyLocation === 2
+
+    const shouldActAsMeta =
+      (macOptionAsAlt === 'left' && isLeftOption) || (macOptionAsAlt === 'right' && isRightOption)
+
     // Why: kitty pane — encode the physical base key as CSI-u; the composed codepoint (alt+π) binds nothing, Dead keys exempt to keep composition.
     if (event.key !== 'Dead' && isKittyKeyboardActivePane?.()) {
       const baseCharacter =
         (event.code ? layoutBaseCharacterForCode?.(event.code) : undefined) ??
         resolveUnshiftedCharacterForCode(event.code)
       if (baseCharacter) {
+        // Why: xterm's kitty encoder would report the composed char as a chord (alt+@), so send it as text
+        // like kitty/Ghostty do — unless this Option key is the user's configured Alt side.
+        if (!shouldActAsMeta && isLayoutComposedAsciiCharacter(event.key, baseCharacter)) {
+          return { type: 'sendInput', data: event.key }
+        }
         return {
           type: 'sendInput',
           data: `\x1b[${baseCharacter.codePointAt(0)};${kittyAltModifiers(event.shiftKey)}u`
@@ -310,13 +346,6 @@ export function resolveTerminalShortcutAction(
     }
 
     if (!event.shiftKey) {
-      // Why: event.location reflects the char key, not the held modifier, so the caller supplies Option's tracked keydown location.
-      const isLeftOption = optionKeyLocation === 1
-      const isRightOption = optionKeyLocation === 2
-
-      const shouldActAsMeta =
-        (macOptionAsAlt === 'left' && isLeftOption) || (macOptionAsAlt === 'right' && isRightOption)
-
       if (shouldActAsMeta) {
         const character = resolveUnshiftedCharacterForCode(event.code)
         if (character) {
