@@ -120,6 +120,24 @@ describe('probeRuntimeListener', () => {
     }
   })
 
+  it.each([
+    ['a missing endpoint', undefined],
+    ['a blank endpoint', '   '],
+    ['a numeric endpoint', 42]
+  ])('frees a profile whose metadata carries %s instead of dialling it', async (_label, value) => {
+    // Why: the metadata file is unvalidated JSON. A missing or blank endpoint throws
+    // out of createConnection and would fail serve outright, and a number is read as a
+    // TCP port — 127.0.0.1:42 could be answered by something that is not Orca at all.
+    const metadata = metadataFor(nextEndpoint())
+
+    await expect(
+      probeRuntimeListener({
+        ...metadata,
+        transports: [{ kind: metadata.transports[0]!.kind, endpoint: value as string }]
+      })
+    ).resolves.toBe('not-listening')
+  })
+
   it('frees a profile whose metadata published no local transport to probe', async () => {
     const metadata = metadataFor(nextEndpoint())
 

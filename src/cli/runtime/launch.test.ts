@@ -648,4 +648,24 @@ describe('launchOrcaApp', () => {
 
     expect(launch.failedExit()).toBeNull()
   })
+
+  it('watches the Launch Services branch too, where the abort lands after open returns', () => {
+    // Why: the packaged path goes through /usr/bin/open, whose own exit says only that
+    // Launch Services accepted the request. Watch it anyway — an open that fails to hand
+    // off still reports here, and only the post-return abort stays out of reach.
+    delete process.env.ORCA_APP_EXECUTABLE
+    process.env.ORCA_OPEN_COMMAND = '/usr/bin/open -a Orca'
+    const child = new FakeChildProcess()
+    spawnMock.mockReturnValue(child)
+
+    const launch = launchOrcaApp()
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/usr/bin/open -a Orca',
+      [],
+      expect.objectContaining({ shell: true, detached: true })
+    )
+
+    child.emit('exit', 1, null)
+    expect(launch.failedExit()).toEqual({ code: 1, signal: null })
+  })
 })

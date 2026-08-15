@@ -19,11 +19,15 @@ export function probeRuntimeListener(
   timeoutMs: number = RUNTIME_LISTENER_PROBE_TIMEOUT_MS
 ): Promise<RuntimeListenerProbe> {
   const transport = findTransport(metadata, 'unix', 'named-pipe')
-  if (!transport) {
+  const endpoint = transport?.endpoint
+  // Why: metadata is unvalidated JSON from disk. A missing or blank endpoint makes
+  // createConnection throw out of serve, and a numeric one is read as a TCP port —
+  // it would dial 127.0.0.1 and could be answered by something that is not Orca.
+  if (typeof endpoint !== 'string' || endpoint.trim().length === 0) {
     return Promise.resolve('not-listening')
   }
   return new Promise((resolve) => {
-    const socket = createConnection(transport.endpoint)
+    const socket = createConnection(endpoint)
     let settled = false
     const settle = (result: RuntimeListenerProbe): void => {
       if (settled) {
