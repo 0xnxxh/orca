@@ -337,6 +337,8 @@ describe('TerminalPaneOverlayLayer activation-deferred reveal storm', () => {
       crumbNames: [...new Set(harness.crumbNames)]
     })
     expect(thrown).toBeNull()
+    expect(harness.restoreWrites).toBeGreaterThan(0)
+    expect(harness.slotMounts).toBeGreaterThan(0)
     expect(harness.syncCalls).toBeLessThan(10)
     expect(harness.slotMounts).toBeLessThan(10)
   })
