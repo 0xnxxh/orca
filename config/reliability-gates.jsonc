@@ -13088,6 +13088,15 @@
           "result": "passed",
           "durationSeconds": 140,
           "summary": "Ran as --label candidate-w3 after the refusal message gained the runtime metadata path, re-confirming 6/6 green at the final branch head so the wording change is covered by the oracle and not only by unit assertions."
+        },
+        {
+          "date": "2026-08-15",
+          "runner": "local",
+          "platform": "macos",
+          "command": "node config/scripts/run-macos-launch-abort-oracle.mjs --label <arm> --electron <arm-electron> --cli <arm-cli> [--app-root <arm-root>]",
+          "result": "passed",
+          "durationSeconds": 140,
+          "summary": "Ran as --label candidate-w9 at the final branch head, after ownership moved to a definitive-refusal rule, after the merge of main, and after the probe began rejecting a malformed endpoint. 6/6 green: duplicate serve 98ms, duplicate serve with a reachable owner 88ms and --recipe-json 96ms all exit 3 without spawning, open classified in 352ms, and a fresh sandboxed serve failed once carrying the diagnostic."
         }
       ],
       "runtimeBudget": {
@@ -13118,6 +13127,7 @@
         "The CLI refusal reads an owner that already exists; two `orca serve` invocations racing on an ownerless profile can still both spawn, and the second is then rejected by the in-process single-instance lock — which is exactly the pre-JS boundary this gate is about. Narrowing that window needs a lock taken before the exec, not a status read, and is not covered here.",
         "Ownership is decided by what the published endpoint proves, never by the recorded pid, because pid recycling would otherwise let a crashed runtime's metadata refuse serve forever; the pid only names the owner in the message. A profile is treated as free only when the endpoint disowns itself definitively — ENOENT (a runtime that unlinked its socket on shutdown) or ECONNREFUSED (a path a killed runtime left behind), both measured under 1ms locally. An accepted connect is an owner, and so is any other outcome, including the 250ms cap expiring: those prove nothing, and guessing free is what spawns the second main that aborts pre-JS. The residual gap is the reverse error — an endpoint held by something that is not a live Orca runtime refuses serve until the user stops it or deletes orca-runtime.json, which the refusal message names.",
         "`orca open` on a packaged macOS build launches through /usr/bin/open, which exits 0 as soon as Launch Services accepts the request. The new exit watcher therefore classifies launches on the direct-exec path (ORCA_APP_EXECUTABLE, dev, and this oracle) but cannot observe an Electron abort that happens after /usr/bin/open returns; that case still falls back to the 15s no-window timeout. Verified separately that a Launch-Services-denied seatbelt does not make /usr/bin/open fail, because the app it requests is launched outside the caller's sandbox.",
+        "orca-runtime.json is parsed without validation, so the probe requires a non-blank string endpoint and treats anything else as an unowned profile: a missing or blank endpoint makes createConnection throw synchronously, and a numeric one is read as a TCP port that would dial loopback and could be answered by a process that is not Orca. Junk metadata therefore frees the profile rather than refusing forever, and the in-process single-instance rule remains the backstop for it.",
         "The harness covers macOS Launch Services unavailability and does not replace Linux headless, Windows, updater, or SSH launch coverage."
       ],
       "demotionRule": "Demote if any entrypoint reaches NSApplication against a profile that already has an owner, if a fresh failure loses its classified diagnostic, if open regresses to an unclassified timeout, or if the focused vitest command flakes without an identified product or harness defect."
