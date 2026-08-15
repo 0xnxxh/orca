@@ -89,7 +89,7 @@ export type ImportWritePhase = {
   writeRejected: number
   partitionSkipped: number
   domains: Set<string>
-  failure: unknown | null
+  failure: unknown
 }
 
 export function emptyImportWritePhase(): ImportWritePhase {

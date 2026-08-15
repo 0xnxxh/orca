@@ -499,7 +499,6 @@ describe('importCookiesFromBrowser Chromium', () => {
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
-
   it('imports from a live Chromium source DB into a Network/Cookies target profile', async () => {
     const sourceCookiesPath = join(tmpDir, 'Chrome', 'Default', 'Network', 'Cookies')
     const targetCookiesPath = join(tmpDir, 'userData', 'Partitions', 'test', 'Network', 'Cookies')
