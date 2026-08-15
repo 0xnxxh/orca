@@ -5,6 +5,10 @@ import { browserCertificateTrustController, browserManager } from '../browser/br
 import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
 import { browserSessionRegistry } from '../browser/browser-session-registry'
 import {
+  cancelBrowserWebAuthnAccountRequests,
+  respondToBrowserWebAuthnAccountRequest
+} from '../browser/browser-webauthn-account-picker'
+import {
   pickCookieFile,
   importCookiesFromFile,
   detectInstalledBrowsers,
@@ -35,6 +39,7 @@ import {
   isValidBrowserAnnotationViewportBridgeToken,
   type BrowserSetAnnotationViewportBridgeArgs
 } from '../../shared/browser-annotation-viewport-bridge'
+import type { BrowserWebAuthnAccountResponse } from '../../shared/browser-webauthn-account'
 
 let trustedBrowserRendererWebContentsId: number | null = null
 let agentBrowserBridgeRef: AgentBrowserBridge | null = null
@@ -221,6 +226,7 @@ export function registerBrowserHandlers(): void {
   ipcMain.removeHandler('browser:extractHoverPayload')
   ipcMain.removeHandler('browser:activeTabChanged')
   ipcMain.removeHandler('browser:proceedCertificate')
+  ipcMain.removeHandler('browser:respondWebAuthnAccount')
 
   const registerGuest = (
     event: Electron.IpcMainInvokeEvent,
@@ -315,12 +321,23 @@ export function registerBrowserHandlers(): void {
     if (wcId !== null && agentBrowserBridgeRef) {
       agentBrowserBridgeRef.onTabClosed(wcId)
     }
+    cancelBrowserWebAuthnAccountRequests(args.browserPageId)
     browserManager.unregisterGuest(args.browserPageId)
     grabModeIntentByPageId.delete(args.browserPageId)
     // Why: don't let a reused browserPageId queue behind the destroyed guest's pending chain.
     grabModeOperationByPageId.delete(args.browserPageId)
     return true
   })
+
+  ipcMain.handle(
+    'browser:respondWebAuthnAccount',
+    (event, response: BrowserWebAuthnAccountResponse): boolean => {
+      if (!isTrustedBrowserRenderer(event.sender)) {
+        return false
+      }
+      return respondToBrowserWebAuthnAccountRequest(event.sender, response)
+    }
+  )
 
   ipcMain.handle(
     'browser:proceedCertificate',

@@ -62,6 +62,10 @@ import type {
 import type { PluginConsentRequest } from '../shared/plugins/plugin-consent-request'
 import type { PluginChangeEvent } from '../shared/plugins/plugin-change-event'
 import type { BrowserViewportOverride } from '../shared/browser-workspace-types'
+import type {
+  BrowserWebAuthnAccountRequest,
+  BrowserWebAuthnAccountResponse
+} from '../shared/browser-webauthn-account'
 import type { SearchResult } from '../shared/code-search-types'
 import type {
   FilesystemPathFlavor,
@@ -2575,6 +2579,29 @@ const api = {
 
     unregisterGuest: (args: { browserPageId: string }): Promise<void> =>
       ipcRenderer.invoke('browser:unregisterGuest', args),
+
+    onWebAuthnAccountRequest: (
+      callback: (request: BrowserWebAuthnAccountRequest) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        request: BrowserWebAuthnAccountRequest
+      ): void => callback(request)
+      ipcRenderer.on('browser:webauthn-account-requested', listener)
+      return () => ipcRenderer.removeListener('browser:webauthn-account-requested', listener)
+    },
+
+    onWebAuthnAccountRequestClosed: (
+      callback: (event: { requestId: string }) => void
+    ): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { requestId: string }): void =>
+        callback(data)
+      ipcRenderer.on('browser:webauthn-account-request-closed', listener)
+      return () => ipcRenderer.removeListener('browser:webauthn-account-request-closed', listener)
+    },
+
+    respondWebAuthnAccount: (response: BrowserWebAuthnAccountResponse): Promise<boolean> =>
+      ipcRenderer.invoke('browser:respondWebAuthnAccount', response),
 
     openDevTools: (args: { browserPageId: string }): Promise<boolean> =>
       ipcRenderer.invoke('browser:openDevTools', args),

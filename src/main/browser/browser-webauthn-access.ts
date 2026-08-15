@@ -1,4 +1,8 @@
 import type { Session } from 'electron'
+import {
+  cancelAllBrowserWebAuthnAccountRequests,
+  requestBrowserWebAuthnAccount
+} from './browser-webauthn-account-picker'
 
 const FIDO_HID_USAGE_PAGE = 0xf1d0
 const LOCALHOST_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
@@ -53,15 +57,22 @@ function handleBrowserSelectHidDevice(
   callback(selectedDevice?.deviceId)
 }
 
-function handleBrowserSelectWebAuthnAccount(
+async function handleBrowserSelectWebAuthnAccount(
   event: Electron.Event,
   details: Electron.SelectWebauthnAccountDetails,
   callback: (credentialId?: string | null) => void
-): void {
+): Promise<void> {
   event.preventDefault()
-  // Why: Electron cancels discoverable WebAuthn when no listener exists. Pick
-  // only the unambiguous single-account case until Orca has account-picker UI.
-  callback(details.accounts.length === 1 ? details.accounts[0].credentialId : null)
+  if (details.accounts.length <= 1) {
+    callback(details.accounts[0]?.credentialId ?? null)
+    return
+  }
+  let credentialId: string | null = null
+  try {
+    credentialId = await requestBrowserWebAuthnAccount(details)
+  } finally {
+    callback(credentialId)
+  }
 }
 
 export function installBrowserWebAuthnAccessHandlers(browserSession: Session): void {
@@ -82,4 +93,5 @@ export function clearBrowserWebAuthnAccessHandlers(browserSession: Session): voi
   browserSession.removeListener('select-hid-device', handleBrowserSelectHidDevice)
   browserSession.removeListener('select-webauthn-account', handleBrowserSelectWebAuthnAccount)
   browserSession.setDevicePermissionHandler(null)
+  cancelAllBrowserWebAuthnAccountRequests()
 }
