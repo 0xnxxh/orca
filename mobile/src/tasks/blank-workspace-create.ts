@@ -24,6 +24,7 @@ export async function createBlankWorkspace(args: {
   return createWorktreeWithNameRetry({
     client: args.client,
     baseName: args.baseName,
+    nameWasGenerated: args.nameWasGenerated,
     supportsIdempotentCutoverRetry: args.supportsIdempotentCutoverRetry,
     buildParams: (name) => {
       const params: Record<string, unknown> = {

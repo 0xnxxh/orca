@@ -6244,6 +6244,33 @@ describe('worktree remote runtime mutations', () => {
     expect(store.getState().worktreesByRepo.repo1).toEqual([wt])
   })
 
+  it('forwards generated-name provenance through paired-runtime create', async () => {
+    const store = createTestStore()
+    const wt = makeWorktree({ id: 'repo1::/path/nautilus', repoId: 'repo1' })
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-create',
+      ok: true,
+      result: { worktree: wt },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      worktreesByRepo: { repo1: [] }
+    } as Partial<AppState>)
+    const createWorktree = store.getState().createWorktree
+    const args: Parameters<typeof createWorktree> = ['repo1', 'nautilus']
+    args[25] = { nameWasGenerated: true }
+
+    await createWorktree(...args)
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'worktree.create',
+        params: expect.objectContaining({ nameWasGenerated: true })
+      })
+    )
+  })
+
   it('persists Jira item and source context through paired-runtime create', async () => {
     const store = createTestStore()
     const wt = makeWorktree({

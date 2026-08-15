@@ -430,6 +430,7 @@ export function getDefaultPersistedState(homedir: string): PersistedState {
     folderWorkspaces: [],
     sparsePresetsByRepo: {},
     retiredWorktreeNamesByRepo: {},
+    retiredWorktreeNamesByNamespace: {},
     worktreeMeta: {},
     worktreeLineageById: {},
     workspaceLineageByChildKey: {},

@@ -1067,7 +1067,14 @@ export async function addSparseWorktree(
       error instanceof Error ? (error as SparseWorktreeCreateError) : new Error(String(error))
     if (created) {
       if (!options.checkoutExistingBranch) {
-        await unsetWorktreeCreationBase(worktreePath, branch, options)
+        try {
+          await unsetWorktreeCreationBase(worktreePath, branch, options)
+        } catch (cleanupError) {
+          console.warn(
+            `addSparseWorktree: failed to clear creation base for ${worktreePath}`,
+            cleanupError
+          )
+        }
       }
       try {
         await removeWorktree(repoPath, worktreePath, true, {

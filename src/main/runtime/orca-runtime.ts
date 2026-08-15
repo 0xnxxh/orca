@@ -962,12 +962,15 @@ import {
 } from '../ipc/worktree-remote'
 import {
   getBranchNameOverrideCandidate,
+  getGeneratedWorktreeCreateCandidate,
   getWorktreeCreateCandidate,
+  isGeneratedWorktreeCreateName,
   WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS
 } from '../worktree-create-candidates'
 import {
-  ensureRetiredWorktreeNamesBackfilled,
-  getRetiredNameRegistryForRepo
+  failedWorktreeCreationNeedsRetirement,
+  getRetiredNameRegistryForRepo,
+  retireGeneratedWorktreeName
 } from '../worktree-name-retirement'
 import {
   createRetiredNameLookup,
@@ -21348,12 +21351,7 @@ export class OrcaRuntimeService {
     }
     const repo = await this.resolveRepoSelector(repoSelector)
     const settings = store.getSettings()
-    try {
-      await ensureRetiredWorktreeNamesBackfilled(store, repo, settings)
-    } catch (error) {
-      console.warn(`[runtime] retirement backfill failed for repo ${repo.id}:`, error)
-    }
-    const registry: RetiredNameRegistry = getRetiredNameRegistryForRepo(
+    const registry: RetiredNameRegistry = await getRetiredNameRegistryForRepo(
       store,
       repo,
       store.getRepos(),
@@ -22570,21 +22568,35 @@ export class OrcaRuntimeService {
     let branchConflictKind: 'local' | 'remote' | null = null
     let worktreePath = ''
     let worktreePathResolved = false
-    const isRetiredName = args.nameWasGenerated
-      ? createRetiredNameLookup(
-          getRetiredNameRegistryForRepo(this.store, repo, this.store.getRepos(), settings)
-        )
+    const shouldRetireGeneratedName =
+      args.nameWasGenerated === true && isGeneratedWorktreeCreateName(sanitizedName)
+    const retiredNameRegistry = shouldRetireGeneratedName
+      ? await getRetiredNameRegistryForRepo(this.store, repo, this.store.getRepos(), settings)
       : null
+    const isRetiredName = retiredNameRegistry ? createRetiredNameLookup(retiredNameRegistry) : null
     // Why: runtime/mobile create-from-review callers should get a new workspace
     // even when the PR branch or review branch name is already in use.
-    for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
-      effectiveSanitizedName = getWorktreeCreateCandidate(sanitizedName, suffix)
-      effectiveRequestedName = args.name.trim()
-        ? getWorktreeCreateCandidate(args.name, suffix)
-        : effectiveSanitizedName
+    for (
+      let suffix = 1, attempts = 0;
+      attempts < WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS;
+      suffix += 1
+    ) {
+      effectiveSanitizedName = shouldRetireGeneratedName
+        ? getGeneratedWorktreeCreateCandidate(
+            sanitizedName,
+            suffix,
+            retiredNameRegistry?.exhaustedTiers
+          )
+        : getWorktreeCreateCandidate(sanitizedName, suffix)
+      effectiveRequestedName = shouldRetireGeneratedName
+        ? effectiveSanitizedName
+        : args.name.trim()
+          ? getWorktreeCreateCandidate(args.name, suffix)
+          : effectiveSanitizedName
       if (isRetiredName?.(effectiveSanitizedName)) {
         continue
       }
+      attempts += 1
       branchName = await resolveCreateBranchName(
         repo.path,
         selectedExistingLocalBranchName ??
@@ -22786,19 +22798,11 @@ export class OrcaRuntimeService {
       ...(suggestLocalBaseRefUpdate ? { suggestLocalBaseRefUpdate } : {})
     }
     const defaultAddWorktreeOption = addProjectGitOptions()
-    const addResult: AddWorktreeResult =
-      (await (sparseDirectories.length > 0
-        ? checkoutExistingBranch
-          ? addSparseWorktree(
-              repo.path,
-              worktreePath,
-              branchName,
-              sparseDirectories,
-              baseBranch,
-              settings.refreshLocalBaseRefOnWorktreeCreate,
-              addProjectGitOptions(existingBranchOption)
-            )
-          : suggestLocalBaseRefUpdate
+    let addResult: AddWorktreeResult
+    try {
+      addResult =
+        (await (sparseDirectories.length > 0
+          ? checkoutExistingBranch
             ? addSparseWorktree(
                 repo.path,
                 worktreePath,
@@ -22806,9 +22810,9 @@ export class OrcaRuntimeService {
                 sparseDirectories,
                 baseBranch,
                 settings.refreshLocalBaseRefOnWorktreeCreate,
-                addProjectGitOptions({ ...remoteTrackingBaseOption, suggestLocalBaseRefUpdate })
+                addProjectGitOptions(existingBranchOption)
               )
-            : remoteTrackingBaseOption
+            : suggestLocalBaseRefUpdate
               ? addSparseWorktree(
                   repo.path,
                   worktreePath,
@@ -22816,9 +22820,9 @@ export class OrcaRuntimeService {
                   sparseDirectories,
                   baseBranch,
                   settings.refreshLocalBaseRefOnWorktreeCreate,
-                  addProjectGitOptions(remoteTrackingBaseOption)
+                  addProjectGitOptions({ ...remoteTrackingBaseOption, suggestLocalBaseRefUpdate })
                 )
-              : defaultAddWorktreeOption
+              : remoteTrackingBaseOption
                 ? addSparseWorktree(
                     repo.path,
                     worktreePath,
@@ -22826,27 +22830,27 @@ export class OrcaRuntimeService {
                     sparseDirectories,
                     baseBranch,
                     settings.refreshLocalBaseRefOnWorktreeCreate,
-                    defaultAddWorktreeOption
+                    addProjectGitOptions(remoteTrackingBaseOption)
                   )
-                : addSparseWorktree(
-                    repo.path,
-                    worktreePath,
-                    branchName,
-                    sparseDirectories,
-                    baseBranch,
-                    settings.refreshLocalBaseRefOnWorktreeCreate
-                  )
-        : checkoutExistingBranch
-          ? addWorktree(
-              repo.path,
-              worktreePath,
-              branchName,
-              baseBranch,
-              settings.refreshLocalBaseRefOnWorktreeCreate,
-              false,
-              addProjectGitOptions(existingBranchOption)
-            )
-          : suggestLocalBaseRefUpdate
+                : defaultAddWorktreeOption
+                  ? addSparseWorktree(
+                      repo.path,
+                      worktreePath,
+                      branchName,
+                      sparseDirectories,
+                      baseBranch,
+                      settings.refreshLocalBaseRefOnWorktreeCreate,
+                      defaultAddWorktreeOption
+                    )
+                  : addSparseWorktree(
+                      repo.path,
+                      worktreePath,
+                      branchName,
+                      sparseDirectories,
+                      baseBranch,
+                      settings.refreshLocalBaseRefOnWorktreeCreate
+                    )
+          : checkoutExistingBranch
             ? addWorktree(
                 repo.path,
                 worktreePath,
@@ -22854,9 +22858,9 @@ export class OrcaRuntimeService {
                 baseBranch,
                 settings.refreshLocalBaseRefOnWorktreeCreate,
                 false,
-                addProjectGitOptions({ ...remoteTrackingBaseOption, suggestLocalBaseRefUpdate })
+                addProjectGitOptions(existingBranchOption)
               )
-            : remoteTrackingBaseOption
+            : suggestLocalBaseRefUpdate
               ? addWorktree(
                   repo.path,
                   worktreePath,
@@ -22864,9 +22868,9 @@ export class OrcaRuntimeService {
                   baseBranch,
                   settings.refreshLocalBaseRefOnWorktreeCreate,
                   false,
-                  addProjectGitOptions(remoteTrackingBaseOption)
+                  addProjectGitOptions({ ...remoteTrackingBaseOption, suggestLocalBaseRefUpdate })
                 )
-              : defaultAddWorktreeOption
+              : remoteTrackingBaseOption
                 ? addWorktree(
                     repo.path,
                     worktreePath,
@@ -22874,15 +22878,36 @@ export class OrcaRuntimeService {
                     baseBranch,
                     settings.refreshLocalBaseRefOnWorktreeCreate,
                     false,
-                    defaultAddWorktreeOption
+                    addProjectGitOptions(remoteTrackingBaseOption)
                   )
-                : addWorktree(
-                    repo.path,
-                    worktreePath,
-                    branchName,
-                    baseBranch,
-                    settings.refreshLocalBaseRefOnWorktreeCreate
-                  ))) ?? {}
+                : defaultAddWorktreeOption
+                  ? addWorktree(
+                      repo.path,
+                      worktreePath,
+                      branchName,
+                      baseBranch,
+                      settings.refreshLocalBaseRefOnWorktreeCreate,
+                      false,
+                      defaultAddWorktreeOption
+                    )
+                  : addWorktree(
+                      repo.path,
+                      worktreePath,
+                      branchName,
+                      baseBranch,
+                      settings.refreshLocalBaseRefOnWorktreeCreate
+                    ))) ?? {}
+    } catch (error) {
+      if (shouldRetireGeneratedName && failedWorktreeCreationNeedsRetirement(error)) {
+        await retireGeneratedWorktreeName(this.store, repo, settings, effectiveSanitizedName)
+      }
+      throw error
+    }
+
+    // Why: fallible metadata work after creation must not leave a real workspace name reusable.
+    if (shouldRetireGeneratedName) {
+      await retireGeneratedWorktreeName(this.store, repo, settings, effectiveSanitizedName)
+    }
 
     let configuredPushTarget: GitPushTarget | undefined
     if (preparedPushTarget) {
@@ -22904,10 +22929,6 @@ export class OrcaRuntimeService {
     }
 
     const worktreeId = `${repo.id}::${created.path}`
-    // Why: repo-qualified layouts decorate the physical leaf; retire the name main actually used.
-    if (args.nameWasGenerated) {
-      this.store.addRetiredWorktreeName(repo.id, effectiveSanitizedName)
-    }
     const now = Date.now()
     // Why: PR/MR-created worktrees can start from a head ref/SHA while Source
     // Control must compare against the review target branch.
@@ -23355,6 +23376,7 @@ export class OrcaRuntimeService {
     repo: Repo,
     args: {
       name: string
+      nameWasGenerated?: boolean
       baseBranch?: string
       compareBaseRef?: string
       branchNameOverride?: string
@@ -23406,6 +23428,7 @@ export class OrcaRuntimeService {
       {
         repoId: repo.id,
         name: args.name,
+        ...(args.nameWasGenerated === true ? { nameWasGenerated: true } : {}),
         ...(args.displayName ? { displayName: args.displayName } : {}),
         ...(args.baseBranch ? { baseBranch: args.baseBranch } : {}),
         ...(args.compareBaseRef ? { compareBaseRef: args.compareBaseRef } : {}),

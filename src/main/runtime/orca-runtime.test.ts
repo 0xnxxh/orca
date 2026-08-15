@@ -28,6 +28,7 @@ const ORIGIN_REMOTE_URL = 'git@example.com:group/repo.git'
 const ORIGIN_HEAD_COMPONENT = reviewHeadRemoteRefComponent('origin', ORIGIN_REMOTE_URL)
 import { detectAgentStatusFromTitle, MAX_OSC_TITLE_CHARS } from '../../shared/agent-detection'
 import {
+  addSparseWorktree,
   addWorktree,
   assertWorktreeCleanForRemoval,
   listWorktrees,
@@ -216,6 +217,7 @@ vi.mock('../ipc/filesystem-watcher', () => ({
 
 const {
   MOCK_GIT_WORKTREES,
+  addSparseWorktreeMock,
   addWorktreeMock,
   removeWorktreeMock,
   forceDeleteLocalBranchMock,
@@ -312,6 +314,7 @@ const {
         isMainWorktree: false
       }
     ],
+    addSparseWorktreeMock: vi.fn(),
     addWorktreeMock: vi.fn(),
     removeWorktreeMock: vi.fn(),
     forceDeleteLocalBranchMock: vi.fn(),
@@ -412,6 +415,7 @@ vi.mock('../git/worktree', () => ({
   listWorktrees: vi.fn().mockResolvedValue(MOCK_GIT_WORKTREES),
   listWorktreesStrict: vi.fn().mockResolvedValue(MOCK_GIT_WORKTREES),
   assertWorktreeCleanForRemoval: vi.fn().mockResolvedValue(undefined),
+  addSparseWorktree: addSparseWorktreeMock,
   addWorktree: addWorktreeMock,
   removeWorktree: removeWorktreeMock,
   forceDeleteLocalBranch: forceDeleteLocalBranchMock
@@ -677,6 +681,7 @@ function resetRuntimeTestMocks(): void {
       }
     })
   vi.mocked(addWorktree).mockReset()
+  vi.mocked(addSparseWorktree).mockReset()
   vi.mocked(assertWorktreeCleanForRemoval).mockReset()
   vi.mocked(assertWorktreeCleanForRemoval).mockResolvedValue(undefined)
   vi.mocked(removeWorktree).mockReset()
@@ -4297,13 +4302,18 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService({
       ...store,
       addRetiredWorktreeName,
-      getRetiredWorktreeNameRegistry: () => ({ exhaustedTiers: 0, names: ['nautilus'] })
+      getRetiredWorktreeNameRegistry: () => ({
+        exhaustedTiers: 0,
+        names: Array.from({ length: 100 }, (_unused, index) =>
+          index === 0 ? 'nautilus' : `nautilus-${index + 1}`
+        )
+      })
     })
     const staleScan = deferred<typeof MOCK_GIT_WORKTREES>()
     const createdWorktree = {
-      path: '/tmp/workspaces/repo-nautilus-2',
+      path: '/tmp/workspaces/repo-nautilus-101',
       head: 'def',
-      branch: 'nautilus-2',
+      branch: 'nautilus-101',
       isBare: false,
       isMainWorktree: false
     }
@@ -4334,7 +4344,47 @@ describe('OrcaRuntimeService', () => {
         worktrees: expect.arrayContaining([expect.objectContaining({ path: createdWorktree.path })])
       }
     )
-    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus-2')
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus-101')
+  })
+
+  it('retires a generated name before a post-create listing failure', async () => {
+    const addRetiredWorktreeName = vi.fn()
+    const runtime = new OrcaRuntimeService({ ...store, addRetiredWorktreeName })
+    computeWorktreePathMock.mockReturnValue('/tmp/workspaces/nautilus')
+    ensurePathWithinWorkspaceMock.mockReturnValue('/tmp/workspaces/nautilus')
+    vi.mocked(listWorktrees).mockRejectedValueOnce(new Error('listing unavailable'))
+
+    await expect(
+      runtime.createManagedWorktree({
+        repoSelector: 'id:repo-1',
+        name: 'nautilus',
+        nameWasGenerated: true
+      })
+    ).rejects.toThrow('listing unavailable')
+
+    expect(addWorktree).toHaveBeenCalled()
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus')
+  })
+
+  it('retires a generated sparse name when creation rollback also fails', async () => {
+    const addRetiredWorktreeName = vi.fn()
+    const runtime = new OrcaRuntimeService({ ...store, addRetiredWorktreeName })
+    computeWorktreePathMock.mockReturnValue('/tmp/workspaces/nautilus')
+    ensurePathWithinWorkspaceMock.mockReturnValue('/tmp/workspaces/nautilus')
+    vi.mocked(addSparseWorktree).mockRejectedValueOnce(
+      Object.assign(new Error('sparse setup failed'), { cleanupFailed: true })
+    )
+
+    await expect(
+      runtime.createManagedWorktree({
+        repoSelector: 'id:repo-1',
+        name: 'nautilus',
+        nameWasGenerated: true,
+        sparseCheckout: { directories: ['packages/web'] }
+      })
+    ).rejects.toThrow('sparse setup failed')
+
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus')
   })
 
   it('neither skips nor retires a name the user typed', async () => {
@@ -44878,12 +44928,12 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
-  it('detects agents on the SSH host before launching remote startup drafts', async () => {
+  it('forwards generated-name provenance while launching SSH startup drafts', async () => {
     detectRemoteAgentsMock.mockResolvedValue(['claude'])
     const created = {
-      path: '/remote/mobile-startup-draft',
+      path: '/remote/repo-nautilus-2',
       head: 'def',
-      branch: 'refs/heads/mobile-startup-draft',
+      branch: 'refs/heads/nautilus-2',
       isBare: false,
       isMainWorktree: false
     }
@@ -44913,6 +44963,7 @@ describe('OrcaRuntimeService', () => {
         defaultTuiAgent: null,
         agentCmdOverrides: {}
       }),
+      getRetiredWorktreeNameRegistry: () => ({ exhaustedTiers: 0, names: ['nautilus'] }),
       getAllWorktreeMeta: () => metaById,
       getWorktreeMeta: (worktreeId: string) => metaById[worktreeId],
       setWorktreeMeta: (worktreeId: string, meta: Partial<WorktreeMeta>) => {
@@ -44956,15 +45007,22 @@ describe('OrcaRuntimeService', () => {
     const draftUrl = 'https://github.com/stablyai/orca/pull/456'
     const result = await runtime.createManagedWorktree({
       repoSelector: TEST_REPO_ID,
-      name: 'mobile-startup-draft',
+      name: 'nautilus',
+      nameWasGenerated: true,
       startupDraft: draftUrl
     })
 
     expect(detectRemoteAgentsMock).toHaveBeenCalledWith({ connectionId: 'ssh-1' })
     expect(detectInstalledAgentsWithShellPathHydrationMock).not.toHaveBeenCalled()
+    expect(provider.addWorktree).toHaveBeenCalledWith(
+      '/remote/repo',
+      'nautilus-2',
+      '/remote/repo-nautilus-2',
+      expect.any(Object)
+    )
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
-        cwd: '/remote/mobile-startup-draft',
+        cwd: '/remote/repo-nautilus-2',
         command: `claude '--dangerously-skip-permissions' --prefill '${draftUrl}'`,
         connectionId: 'ssh-1',
         worktreeId: result.worktree.id

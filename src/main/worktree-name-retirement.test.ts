@@ -35,12 +35,9 @@ describe('normalizeRetirableGeneratedName', () => {
     expect(normalizeRetirableGeneratedName(`${FIRST}-100`)).toBe(`${FIRST}-100`)
   })
 
-  it('retires a suffixed name that itself took a collision suffix', () => {
-    // Once the pool is spent the suggester emits `<name>-2`; a collision on that yields
-    // `<name>-2-3`. Stripping only one suffix leaves `<name>-2`, which is not a pool name, so
-    // retirement would no-op at exactly the tier where every base name is already gone.
-    expect(normalizeRetirableGeneratedName(`${FIRST}-2-3`)).toBe(`${FIRST}-2-3`)
-    expect(normalizeRetirableGeneratedName(`${FIRST}-2-3-4`)).toBe(`${FIRST}-2-3-4`)
+  it('rejects legacy repeated suffixes that the canonical collision sequence never emits', () => {
+    expect(normalizeRetirableGeneratedName(`${FIRST}-2-3`)).toBeNull()
+    expect(normalizeRetirableGeneratedName(`${FIRST}-2-3-4`)).toBeNull()
     expect(normalizeRetirableGeneratedName('fix-login-2-3')).toBeNull()
   })
 
@@ -115,6 +112,18 @@ describe('discoverRetiredWorktreeNames', () => {
     await withFakeHome([`-Users-ada-orca-workspaces-orca-${FIRST}`], async (home) => {
       const retired = await discoverRetiredWorktreeNames({
         workspaceRoots: ['/Users/ada/orca/workspaces/orca'],
+        home,
+        env: {}
+      })
+      expect(retired).toEqual(new Set([FIRST]))
+    })
+  })
+
+  it('matches an NFC bucket for an NFD workspace root', async () => {
+    const nfdRoot = '/Users/ada/cafe\u0301'
+    await withFakeHome([`-Users-ada-caf--${FIRST}`], async (home) => {
+      const retired = await discoverRetiredWorktreeNames({
+        workspaceRoots: [nfdRoot],
         home,
         env: {}
       })
@@ -214,6 +223,7 @@ describe('getRetiredNameRegistryForRepo', () => {
     const calls: string[] = []
     return {
       calls,
+      mergeRetiredWorktreeNames: () => false,
       getRetiredWorktreeNameRegistry: (repoId: string) => {
         calls.push(repoId)
         return { exhaustedTiers: 0, names: byRepo[repoId] ?? [] }
@@ -221,28 +231,28 @@ describe('getRetiredNameRegistryForRepo', () => {
     }
   }
 
-  it('shares retirements when two repos create into the same cwd namespace', () => {
+  it('shares retirements when two repos create into the same cwd namespace', async () => {
     const store = storeOf({ 'repo-a': [FIRST], 'repo-b': [SECOND] })
     const repos = [makeRepo('repo-a', '/repos/a'), makeRepo('repo-b', '/repos/b')]
 
     expect(
-      [...getRetiredNameRegistryForRepo(store, repos[1], repos, settingsFor(false)).names].sort()
+      [
+        ...(await getRetiredNameRegistryForRepo(store, repos[1], repos, settingsFor(false))).names
+      ].sort()
     ).toEqual([FIRST, SECOND].sort())
   })
 
-  it('keeps independent nested repo paths in separate retirement domains', () => {
+  it('keeps independent nested repo paths in separate retirement domains', async () => {
     const store = storeOf({ 'repo-a': [FIRST], 'repo-b': [SECOND] })
     const repos = [makeRepo('repo-a', '/repos/a'), makeRepo('repo-b', '/repos/b')]
 
-    expect(getRetiredNameRegistryForRepo(store, repos[1], repos, settingsFor(true))).toEqual({
+    expect(await getRetiredNameRegistryForRepo(store, repos[1], repos, settingsFor(true))).toEqual({
       exhaustedTiers: 0,
       names: [SECOND]
     })
   })
 
-  it('never probes a path for peers that hold no retirements', () => {
-    // Why: deriving a peer's namespace runs computeWorktreePath, which for a WSL repo is a blocking
-    // wsl.exe call. Reading `path` is exactly what a probe does, so count that.
+  it('never probes a path for peers that hold no retirements', async () => {
     const pathReads: string[] = []
     const spyRepo = (id: string, path: string): Repo => {
       const repo = makeRepo(id, path)
@@ -259,19 +269,22 @@ describe('getRetiredNameRegistryForRepo', () => {
       ...Array.from({ length: 20 }, (_unused, index) => spyRepo(`peer-${index}`, `/repos/${index}`))
     ]
 
-    expect(getRetiredNameRegistryForRepo(store, repos[0], repos, settingsFor(false))).toEqual({
-      exhaustedTiers: 0,
-      names: [FIRST]
-    })
+    expect(await getRetiredNameRegistryForRepo(store, repos[0], repos, settingsFor(false))).toEqual(
+      {
+        exhaustedTiers: 0,
+        names: [FIRST]
+      }
+    )
     expect(pathReads.filter((id) => id.startsWith('peer-'))).toEqual([])
   })
 
-  it('reports nothing for a folder workspace, which has no generated worktree names', () => {
+  it('reports nothing for a folder workspace, which has no generated worktree names', async () => {
     const store = storeOf({ folder: [FIRST] })
     const folderRepo = { ...makeRepo('folder', '/repos/folder'), kind: 'folder' as const }
 
     expect(
-      getRetiredNameRegistryForRepo(store, folderRepo, [folderRepo], settingsFor(false)).names
+      (await getRetiredNameRegistryForRepo(store, folderRepo, [folderRepo], settingsFor(false)))
+        .names
     ).toEqual([])
   })
 })

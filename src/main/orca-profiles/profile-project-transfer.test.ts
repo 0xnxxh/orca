@@ -129,6 +129,9 @@ describe('profile project transfer', () => {
           ]
         },
         retiredWorktreeNamesByRepo: { 'repo-1': { exhaustedTiers: 0, names: ['nautilus'] } },
+        retiredWorktreeNamesByNamespace: {
+          'ssh:ssh-1:/workspace/orca-nautilus': { exhaustedTiers: 0, names: ['seahorse'] }
+        },
         worktreeMeta: {
           [sourceWorktreeId]: makeWorktreeMeta({ projectHostSetupId: 'repo-1' })
         },
@@ -186,6 +189,7 @@ describe('profile project transfer', () => {
       exhaustedTiers: 0,
       names: ['nautilus']
     })
+    expect(target.retiredWorktreeNamesByNamespace).toEqual({})
     expect(target.workspaceSession.tabsByWorktree).toEqual({})
     expect(readProfileState('personal').repos.map((repo) => repo.id)).toEqual(['repo-1'])
   })
@@ -211,6 +215,12 @@ describe('profile project transfer', () => {
           })
         ],
         sshTargets: [sshTarget],
+        retiredWorktreeNamesByNamespace: {
+          'ssh:ssh-1:posix:/srv/orca-orca-retirement-probe': {
+            exhaustedTiers: 0,
+            names: ['seahorse']
+          }
+        },
         worktreeMeta: {
           [sourceWorktreeId]: makeWorktreeMeta({ projectHostSetupId: 'repo-ssh' })
         },
@@ -266,6 +276,12 @@ describe('profile project transfer', () => {
       executionHostId: 'ssh:ssh-1'
     })
     expect(target.sshTargets).toEqual([sshTarget])
+    expect(target.retiredWorktreeNamesByNamespace).toEqual({
+      'ssh:ssh-1:posix:/srv/orca-orca-retirement-probe': {
+        exhaustedTiers: 0,
+        names: ['seahorse']
+      }
+    })
     expect(target.workspaceSession.browserTabsByWorktree?.[sourceWorktreeId]?.[0]).toMatchObject({
       worktreeId: sourceWorktreeId,
       sessionProfileId: null,

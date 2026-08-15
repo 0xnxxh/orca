@@ -67,12 +67,13 @@ export type PersistedState = {
   /** Generated workspace names already issued, keyed by repoId. Suppresses reissuing a name so a
    *  recreated workspace never lands on a prior occupant's path and inherits agent state keyed to
    *  that cwd. Grows monotonically within a repo — entries are never removed on workspace deletion
-   *  — and is dropped wholesale when the repo is removed. Readers union across every repo that
-   *  creates into the same cwd namespace, so the storage key stays the stable repo id while the
-   *  guarantee follows the path.
+   *  — and the repo-keyed copy is dropped when the repo is removed. Readers union across repos
+   *  that create into the same cwd namespace; remote namespaces also retain a compact tombstone.
    *
    *  Stored compacted, not as a flat list: a fully spent tier collapses into the row's watermark. */
   retiredWorktreeNamesByRepo?: Record<string, RetiredNameRegistry>
+  /** Compacted remote cwd tombstones outlive repo ids, so remove/re-add cannot reissue a path. */
+  retiredWorktreeNamesByNamespace?: Record<string, RetiredNameRegistry>
   /** Per paired device last tab selection by worktree; keeps mobile navigation across host restarts. */
   mobileClientTabSelectionsByDeviceId?: PersistedMobileClientTabSelections
   worktreeMeta: Record<string, WorktreeMeta>

@@ -47,6 +47,9 @@ export function readProfileState(profileId: string, userDataPath: string): Trans
     retiredWorktreeNamesByRepo: recordOrEmpty<RetiredNameRegistry>(
       parsed.retiredWorktreeNamesByRepo
     ),
+    retiredWorktreeNamesByNamespace: recordOrEmpty<RetiredNameRegistry>(
+      parsed.retiredWorktreeNamesByNamespace
+    ),
     worktreeMeta: recordOrEmpty(parsed.worktreeMeta),
     worktreeLineageById: recordOrEmpty(parsed.worktreeLineageById),
     workspaceLineageByChildKey: recordOrEmpty(parsed.workspaceLineageByChildKey),

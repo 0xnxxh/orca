@@ -2358,7 +2358,7 @@ function normalizeRetiredNameRegistry(row: unknown): RetiredNameRegistry {
 
 /** Why: a corrupt or hand-edited map must degrade to "nothing retired" rather than throw during
  *  load — over-retiring costs one name from a 552-entry pool, but a load failure costs the app. */
-function normalizeRetiredWorktreeNamesByRepo(value: unknown): Record<string, RetiredNameRegistry> {
+function normalizeRetiredNameRegistryMap(value: unknown): Record<string, RetiredNameRegistry> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
   }
@@ -3865,8 +3865,11 @@ export class Store {
                 (alias): alias is string => typeof alias === 'string'
               )
             : [],
-          retiredWorktreeNamesByRepo: normalizeRetiredWorktreeNamesByRepo(
+          retiredWorktreeNamesByRepo: normalizeRetiredNameRegistryMap(
             parsed.retiredWorktreeNamesByRepo
+          ),
+          retiredWorktreeNamesByNamespace: normalizeRetiredNameRegistryMap(
+            parsed.retiredWorktreeNamesByNamespace
           ),
           sshRemotePtyLeases: (parsed.sshRemotePtyLeases ?? [])
             .map(normalizeSshRemotePtyLease)
@@ -7265,6 +7268,13 @@ export class Store {
       : EMPTY_RETIRED_NAME_REGISTRY
   }
 
+  getRetiredWorktreeNameRegistryForNamespace(namespaceKey: string): RetiredNameRegistry {
+    const stored = this.state.retiredWorktreeNamesByNamespace?.[namespaceKey]
+    return stored
+      ? { exhaustedTiers: stored.exhaustedTiers, names: [...stored.names] }
+      : EMPTY_RETIRED_NAME_REGISTRY
+  }
+
   /** Records a generated workspace name as spent for this repo. Called with the name main actually
    *  used, not the one the renderer proposed — the create path can advance past it on collision. */
   addRetiredWorktreeName(repoId: string, name: string): void {
@@ -7289,6 +7299,30 @@ export class Store {
       }
     }
     return incoming.size > 0 && this.applyRetiredWorktreeNames(repoId, incoming)
+  }
+
+  mergeRetiredWorktreeNamesForNamespace(namespaceKey: string, names: Iterable<string>): boolean {
+    if (!namespaceKey) {
+      return false
+    }
+    const normalized = new Set<string>()
+    for (const name of names) {
+      const candidate = normalizeRetirableGeneratedName(name)
+      if (candidate) {
+        normalized.add(candidate)
+      }
+    }
+    const next = addRetiredNames(
+      this.getRetiredWorktreeNameRegistryForNamespace(namespaceKey),
+      normalized
+    )
+    if (!next) {
+      return false
+    }
+    this.state.retiredWorktreeNamesByNamespace ??= {}
+    this.state.retiredWorktreeNamesByNamespace[namespaceKey] = next
+    this.scheduleSave()
+    return true
   }
 
   private applyRetiredWorktreeNames(repoId: string, names: Iterable<string>): boolean {

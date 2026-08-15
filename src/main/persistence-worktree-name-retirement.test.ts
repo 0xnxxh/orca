@@ -140,6 +140,32 @@ describe('worktree name retirement registry', () => {
     expect(store.getRetiredWorktreeNameRegistry(REPO).names).toEqual([])
   })
 
+  it('reassociates remote retirements after remove and re-add mints a new repo id', async () => {
+    const oldRepo = {
+      id: REPO,
+      path: '/remote/repos/a',
+      displayName: 'a',
+      badgeColor: '',
+      addedAt: 0,
+      connectionId: 'ssh-1'
+    }
+    let store = await createStore()
+    store.addRepo(oldRepo)
+    const { getRetiredNameRegistryForRepo, retireGeneratedWorktreeName } =
+      await import('./worktree-name-retirement')
+    await retireGeneratedWorktreeName(store, oldRepo, store.getSettings(), 'nautilus')
+    store.removeProject(REPO)
+    store.flush()
+
+    store = await reloadStore()
+    const newRepo = { ...oldRepo, id: OTHER_REPO }
+    store.addRepo(newRepo)
+
+    await expect(
+      getRetiredNameRegistryForRepo(store, newRepo, [newRepo], store.getSettings())
+    ).resolves.toEqual({ exhaustedTiers: 0, names: ['nautilus'] })
+  })
+
   it('keeps the registry when one host row is removed but the repo id survives elsewhere', async () => {
     const store = await createStore()
     store.addRepo({ id: REPO, path: '/repos/a', displayName: 'a', badgeColor: '', addedAt: 0 })
