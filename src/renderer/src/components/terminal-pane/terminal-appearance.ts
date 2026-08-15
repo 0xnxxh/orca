@@ -158,6 +158,9 @@ export function applyTerminalAppearance(
     settings.terminalLigatures,
     settings.terminalFontFamily
   )
+  // FitAddon parses each CSS padding as an integer, so normalize imported half-pixels before styling and fitting.
+  const paddingX = Math.round(settings.terminalPaddingX ?? 4)
+  const paddingY = Math.round(settings.terminalPaddingY ?? 4)
 
   // Why before the pane loop: FitAddon subtracts live .xterm padding, so the
   // CSS vars must be stamped before safeFit or a padding shrink leaves a stale grid.
@@ -169,8 +172,8 @@ export function applyTerminalAppearance(
     opacityTransitionMs: paneStyles.opacityTransitionMs,
     dividerThicknessPx: paneStyles.dividerThicknessPx,
     focusFollowsMouse: paneStyles.focusFollowsMouse,
-    paddingX: settings.terminalPaddingX ?? 4,
-    paddingY: settings.terminalPaddingY ?? 4
+    paddingX,
+    paddingY
   })
 
   for (const pane of manager.getPanes()) {

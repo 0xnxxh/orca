@@ -378,6 +378,31 @@ describe('applyTerminalAppearance theme assignment', () => {
       expect.objectContaining({ paddingX: 4, paddingY: 4 })
     )
   })
+
+  it('rounds imported half-pixel padding before fitting', () => {
+    const pane = makePane(1)
+    const manager = makeManager([pane])
+    const settings = {
+      ...getDefaultSettings('/tmp'),
+      terminalPaddingX: 1.5,
+      terminalPaddingY: 2.5
+    }
+
+    applyTerminalAppearance(
+      manager,
+      settings,
+      true,
+      new Map(),
+      new Map(),
+      'false',
+      new Map(),
+      new Map()
+    )
+
+    expect(manager.setPaneStyleOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ paddingX: 2, paddingY: 3 })
+    )
+  })
 })
 
 describe('publishTerminalViewAttributesAtAppStart', () => {
