@@ -166,6 +166,56 @@ describe('worktree name retirement registry', () => {
     ).resolves.toEqual({ exhaustedTiers: 0, names: ['nautilus'] })
   })
 
+  it('preserves a Codex-only local retirement across remove and re-add', async () => {
+    const workspaceDir = join(testState.dir, 'workspaces')
+    const oldRepo = {
+      id: REPO,
+      path: join(testState.dir, 'repos', 'a'),
+      displayName: 'a',
+      badgeColor: '',
+      addedAt: 0
+    }
+    const store = await createStore()
+    store.updateSettings({ workspaceDir, nestWorkspaces: false })
+    store.addRepo(oldRepo)
+    const { getRetiredNameRegistryForRepo, retireGeneratedWorktreeName } =
+      await import('./worktree-name-retirement')
+    await retireGeneratedWorktreeName(store, oldRepo, store.getSettings(), 'nautilus')
+
+    // The deleted workspace has no Claude bucket; Codex rollout files are not backfilled.
+    store.removeProject(REPO)
+    const newRepo = { ...oldRepo, id: OTHER_REPO }
+    store.addRepo(newRepo)
+
+    await expect(
+      getRetiredNameRegistryForRepo(store, newRepo, [newRepo], store.getSettings())
+    ).resolves.toEqual({ exhaustedTiers: 0, names: ['nautilus'] })
+  })
+
+  it('preserves a remote retirement when an SSH target id rotates before re-add', async () => {
+    const oldRepo = {
+      id: REPO,
+      path: '/remote/repos/a',
+      displayName: 'a',
+      badgeColor: '',
+      addedAt: 0,
+      connectionId: 'ssh-old'
+    }
+    const store = await createStore()
+    store.addRepo(oldRepo)
+    const { getRetiredNameRegistryForRepo, retireGeneratedWorktreeName } =
+      await import('./worktree-name-retirement')
+    await retireGeneratedWorktreeName(store, oldRepo, store.getSettings(), 'nautilus')
+
+    store.removeProject(REPO)
+    const newRepo = { ...oldRepo, id: OTHER_REPO, connectionId: 'ssh-new' }
+    store.addRepo(newRepo)
+
+    await expect(
+      getRetiredNameRegistryForRepo(store, newRepo, [newRepo], store.getSettings())
+    ).resolves.toEqual({ exhaustedTiers: 0, names: ['nautilus'] })
+  })
+
   it('keeps the registry when one host row is removed but the repo id survives elsewhere', async () => {
     const store = await createStore()
     store.addRepo({ id: REPO, path: '/repos/a', displayName: 'a', badgeColor: '', addedAt: 0 })
