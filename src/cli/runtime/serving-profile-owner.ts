@@ -22,24 +22,37 @@ export function findServingProfileOwner(status: CliStatusResult): ServingProfile
   return { pid: status.app.pid, reachable: status.runtime.reachable }
 }
 
-export function serveAlreadyRunningMessage(owner: ServingProfileOwner): string {
+/**
+ * Why: an unreachable owner is believed on the strength of its recorded pid, and
+ * a pid the OS has since recycled would refuse forever. Naming the file that
+ * holds the claim is the only recovery instruction that always works.
+ */
+export function serveAlreadyRunningMessage(
+  owner: ServingProfileOwner,
+  metadataPath: string
+): string {
   const who = owner.pid === null ? 'another process' : `pid ${owner.pid}`
-  const qualifier = owner.reachable ? '' : ' (starting up)'
-  return `[serve] Orca is already running for this userData profile as ${who}${qualifier}; not starting a second process. Run \`orca status\` to inspect it, or stop it before serving again.`
+  if (owner.reachable) {
+    return `[serve] Orca is already running for this userData profile as ${who}; not starting a second process. Run \`orca status\` to inspect it, or stop it before serving again.`
+  }
+  return `[serve] Orca is already starting up for this userData profile as ${who}; not starting a second process. Run \`orca status\` to inspect it, or stop it before serving again. If that process is gone, delete ${metadataPath} and retry.`
 }
 
 /**
  * Why: `--json` and `--recipe-json` callers parse stdout. A refusal that only
  * writes prose to stderr looks to them like a serve that produced nothing.
  */
-export function serveAlreadyRunningFailure(owner: ServingProfileOwner): RuntimeRpcFailure {
+export function serveAlreadyRunningFailure(
+  owner: ServingProfileOwner,
+  metadataPath: string
+): RuntimeRpcFailure {
   return {
     id: 'local',
     ok: false,
     error: {
       code: 'runtime_serve_already_running',
-      message: serveAlreadyRunningMessage(owner),
-      data: { pid: owner.pid, reachable: owner.reachable }
+      message: serveAlreadyRunningMessage(owner, metadataPath),
+      data: { pid: owner.pid, reachable: owner.reachable, metadataPath }
     },
     _meta: { runtimeId: null }
   }

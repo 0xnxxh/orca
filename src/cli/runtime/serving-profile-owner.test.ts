@@ -37,35 +37,50 @@ describe('findServingProfileOwner', () => {
   })
 })
 
+const METADATA_PATH = '/profile/orca-runtime.json'
+
 describe('serveAlreadyRunningMessage', () => {
   it('names the owning pid and stays actionable', () => {
-    const message = serveAlreadyRunningMessage({ pid: 4242, reachable: true })
+    const message = serveAlreadyRunningMessage({ pid: 4242, reachable: true }, METADATA_PATH)
 
     expect(message).toContain('pid 4242')
     expect(message).toContain('not starting a second process')
     expect(message).toContain('orca status')
   })
 
-  it('flags an owner that has not answered yet', () => {
-    expect(serveAlreadyRunningMessage({ pid: 9, reachable: false })).toContain('(starting up)')
+  it('does not send a reachable owner to delete live metadata', () => {
+    expect(serveAlreadyRunningMessage({ pid: 4242, reachable: true }, METADATA_PATH)).not.toContain(
+      METADATA_PATH
+    )
+  })
+
+  it('offers a recovery path when the owner is only believed on its pid', () => {
+    // Why: an unreachable owner is trusted on a recorded pid alone, and a
+    // recycled pid would otherwise refuse every serve on this profile forever.
+    const message = serveAlreadyRunningMessage({ pid: 9, reachable: false }, METADATA_PATH)
+
+    expect(message).toContain('starting up')
+    expect(message).toContain(`delete ${METADATA_PATH}`)
   })
 
   it('stays readable when the owner pid is unknown', () => {
-    expect(serveAlreadyRunningMessage({ pid: null, reachable: true })).toContain('another process')
+    expect(serveAlreadyRunningMessage({ pid: null, reachable: true }, METADATA_PATH)).toContain(
+      'another process'
+    )
   })
 })
 
 describe('serveAlreadyRunningFailure', () => {
   it('matches the envelope shape CLI json consumers already parse', () => {
-    const failure = serveAlreadyRunningFailure({ pid: 4242, reachable: false })
+    const failure = serveAlreadyRunningFailure({ pid: 4242, reachable: false }, METADATA_PATH)
 
     expect(failure).toEqual({
       id: 'local',
       ok: false,
       error: {
         code: 'runtime_serve_already_running',
-        message: serveAlreadyRunningMessage({ pid: 4242, reachable: false }),
-        data: { pid: 4242, reachable: false }
+        message: serveAlreadyRunningMessage({ pid: 4242, reachable: false }, METADATA_PATH),
+        data: { pid: 4242, reachable: false, metadataPath: METADATA_PATH }
       },
       _meta: { runtimeId: null }
     })

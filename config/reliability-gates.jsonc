@@ -13096,6 +13096,7 @@
         "PR CI unit shards run on Linux, so the sandbox-exec scenarios are local-only until a macOS lane exists.",
         "The open-duplicate scenario reaches either runtime_open_failed or desktop_activation_blocked depending on whether the owning headless runtime already reports a blocked desktop window; the runtime_open_failed path is pinned deterministically by open-launch-failure.test.ts instead.",
         "The packaged arm is profile-safe only because the harness pins --user-data-dir through its exec wrapper; a future scenario that spawns Electron by any other route must re-establish that isolation before it may run packaged.",
+        "The CLI refusal reads an owner that already exists; two `orca serve` invocations racing on an ownerless profile can still both spawn, and the second is then rejected by the in-process single-instance lock — which is exactly the pre-JS boundary this gate is about. Narrowing that window needs a lock taken before the exec, not a status read, and is not covered here.",
         "The harness covers macOS Launch Services unavailability and does not replace Linux headless, Windows, updater, or SSH launch coverage."
       ],
       "demotionRule": "Demote if any entrypoint reaches NSApplication against a profile that already has an owner, if a fresh failure loses its classified diagnostic, if open regresses to an unclassified timeout, or if the focused vitest command flakes without an identified product or harness defect."

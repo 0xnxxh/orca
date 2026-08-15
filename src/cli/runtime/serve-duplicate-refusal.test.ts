@@ -62,7 +62,12 @@ describe('serveOrcaApp duplicate refusal', () => {
 
     await expect(serveOrcaApp()).resolves.toBe(SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE)
     expect(spawnMock).not.toHaveBeenCalled()
-    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('already running'))
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('not starting a second process'))
+    // Why: the real userData profile is the one the refusal must point at, not a
+    // generic path — that file is the whole recovery instruction.
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining(join(userDataPath, 'orca-runtime.json'))
+    )
   })
 
   // Why: `--json`/`--recipe-json` callers parse stdout; a prose-only refusal is

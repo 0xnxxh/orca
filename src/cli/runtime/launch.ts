@@ -10,6 +10,7 @@ import {
   parseEphemeralVmRecipeResult
 } from '../../shared/ephemeral-vm-recipes'
 import { SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE } from '../../shared/single-instance-exit-code'
+import { getRuntimeMetadataPath } from '../../shared/runtime-bootstrap'
 import { getDefaultUserDataPath } from './metadata'
 import { getMacAppBundlePath } from './mac-app-update-bundle'
 import {
@@ -110,10 +111,13 @@ export async function serveOrcaApp(
     // after NSApplication init, which aborts pre-JS when Launch Services is
     // unreachable (STA-4336). Refusing here keeps a supervisor's retry from
     // becoming a SIGABRT loop, and reports the exit code systemd keys off.
+    const metadataPath = getRuntimeMetadataPath(userDataPath)
     if (args.json === true || args.recipeJson === true) {
-      process.stdout.write(`${JSON.stringify(serveAlreadyRunningFailure(owner), null, 2)}\n`)
+      process.stdout.write(
+        `${JSON.stringify(serveAlreadyRunningFailure(owner, metadataPath), null, 2)}\n`
+      )
     } else {
-      process.stderr.write(`${serveAlreadyRunningMessage(owner)}\n`)
+      process.stderr.write(`${serveAlreadyRunningMessage(owner, metadataPath)}\n`)
     }
     return SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE
   }
