@@ -271,7 +271,8 @@ import {
   decideSshReattachPaintSource,
   memoizeSshReattachModelSnapshotProbe,
   resolveSshReattachModelSnapshotWithTimeout,
-  shouldFetchSshReattachModelSnapshot
+  shouldFetchSshReattachModelSnapshot,
+  sshReconnectPaintsFromModel
 } from './ssh-reattach-model-restore'
 import { readInFlightCommandCodeTurn } from './parked-terminal-command-status'
 import {
@@ -8221,10 +8222,14 @@ export function connectPanePty(
         mountFollowsTerminalPark &&
         (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))
       // An SSH reconnect remounts the pane (tab.generation is its React key), so it also paints into
-      // a fresh xterm — but unlike a park it may only use the model for a FULL-SCREEN app. See the
-      // alternate-screen gate below for why. Consumed with the flag above: directSshRetryAttempt
-      // stays true for the whole tab generation, not just this mount, so reading it directly would
-      // re-arm on every later remount.
+      // a fresh xterm — but unlike a park it may only use the model for a FULL-SCREEN app. See
+      // sshReconnectPaintsFromModel for why.
+      //
+      // NOT consume-once, unlike mountFollowsTerminalPark: followsDirectSshReconnect is captured per
+      // connectPanePty and never cleared, so this re-arms if one connect reaches handleReattachResult
+      // twice. Bounded by connectStarted and by the emptiness/alt-screen gates rather than by the
+      // read itself. It still reads the PENDING retry rather than directSshRetryAttempt, which also
+      // accepts the live binding and so stays truthy for every later remount of the generation.
       const reconnectMayUseModel = followsDirectSshReconnect && !revealFollowsTerminalPark
       mountFollowsTerminalPark = false
       // Why: ordinary parking destroys xterm. Rebuild from the authoritative
@@ -8327,14 +8332,11 @@ export function connectPanePty(
           // model still holds, but an in-place reattach (network reconnect, wake,
           // reload) already has that replay in hand, so probing would only delay its
           // paint by the timeout. Memoized, so this is never a second probe.
-          // Why an SSH reconnect may only use the model on the ALTERNATE SCREEN: the reconnect replay
-          // reaches the renderer without passing through main's model (forwardReattachReplay and the
-          // inline attach replay both bypass onPtyData), so at this moment the model is stale by
-          // exactly the outage. For a full-screen app that is the right trade — a byte tail cannot
-          // rebuild a frame it no longer contains, while a grid can, and the SIGWINCH the restore
-          // already sends makes the app repaint the delta itself. For a scrolling shell it is the
-          // wrong trade: the tail holds output the model never saw, and preferring the grid would
-          // drop it for good. A park has no such hole, so it keeps using the model either way.
+          // An SSH reconnect may use the model only under sshReconnectPaintsFromModel: the reconnect
+          // replay reaches the renderer without passing through main's model (forwardReattachReplay
+          // and the inline attach replay both bypass onPtyData), so the model is stale by exactly
+          // the outage and the replay is the only witness to it. A park has no such hole, so it
+          // keeps using the model either way.
           const revealSnapshot = revealFollowsTerminalPark
             ? (prefetchedParkModelSnapshot ??
               (isRemoteRuntimePtyId(ptyId) ? null : await fetchSshMainModelReattachSnapshot()))
@@ -8343,8 +8345,16 @@ export function connectPanePty(
             !revealSnapshot && reconnectMayUseModel
               ? await fetchSshMainModelReattachSnapshot()
               : null
+          const paintsReconnectFromModel = sshReconnectPaintsFromModel({
+            snapshot: reconnectSnapshot,
+            replay: connectResult?.replay,
+            altFrameWouldBeSkipped: shouldSkipAltFrameForWidthMismatch(
+              reconnectSnapshot?.cols,
+              readProposedTerminalCols(pane)
+            )
+          })
           const modelSnapshot =
-            revealSnapshot ?? (reconnectSnapshot?.alternateScreen ? reconnectSnapshot : null)
+            revealSnapshot ?? (paintsReconnectFromModel ? reconnectSnapshot : null)
           if (!isCurrentReattachPayload()) {
             return
           }
@@ -8373,6 +8383,13 @@ export function connectPanePty(
               kittyKeyboardFlags: modelSnapshot.kittyKeyboardFlags,
               snapshotSeq: modelSnapshot.seq
             })
+            if (paintsReconnectFromModel && connectResult?.replay) {
+              // Why after the snapshot: painting the model discards the replay, but the app's kitty
+              // pushes during the outage exist ONLY there. Snapshot first for the pre-outage
+              // baseline, then the replay layers the outage on top — otherwise Option/Alt chords
+              // encode against a stale flag stack.
+              kittyKeyboardModes.scanReplay(connectResult.replay)
+            }
             // Why shared: park+reveal of an alt-screen TUI needs the same
             // ?1049l/?1049h rebuild as applyMainBufferSnapshot (main strips
             // the ?1049h marker when splitting scrollbackAnsi) — inlined here

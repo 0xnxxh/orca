@@ -113,10 +113,16 @@ test.describe('SSH reconnect pane restore', () => {
       const freshContent = await getTerminalContent(orcaPage, 8000)
       expect(freshContent).not.toContain(marker)
 
-      // A FULL-SCREEN app is the third case, and the one a byte tail cannot serve: a tail can begin
-      // mid-escape and misses the alt-screen enter and absolute positioning that built the frame, so
-      // replaying it paints fragments. `top` is used because it is present on any Linux image and
-      // repaints on a fixed interval, so a coherent frame after the reconnect is unambiguous.
+      // A FULL-SCREEN app is the third case: a reconnect must leave a TUI pane alive and drawing,
+      // not blank or frozen.
+      //
+      // SCOPE, because it is easy to over-read: this does NOT prove which payload painted the pane.
+      // top redraws itself every few seconds, so these assertions pass whichever way the paint-source
+      // gate decided — including with it reverted. What discriminates model-vs-tail is unit-level, in
+      // ssh-reconnect-model-paint-gate.test.ts, because the interesting cases are disagreements
+      // between main's pre-outage alt-screen belief and a replay produced during the outage, which
+      // is not something this fixture can stage. Kept anyway: it is the only coverage that a
+      // reconnected TUI pane recovers at all.
       await execInTerminal(orcaPage, freshPtyId, 'top -b -n 1 > /dev/null; top')
       await waitForTerminalOutput(orcaPage, 'load average', 30_000, 8000)
 
@@ -124,8 +130,6 @@ test.describe('SSH reconnect pane restore', () => {
       await waitForActiveTerminalManager(orcaPage, 60_000)
       await waitForActivePanePtyId(orcaPage, 60_000)
 
-      // The header only survives as a whole if a grid was repainted; a tail that lost the frame
-      // start shows rows without it.
       await waitForTerminalOutput(orcaPage, 'load average', 60_000, 8000)
       const tuiContent = await getTerminalContent(orcaPage, 8000)
       expect(tuiContent).toContain('PID')

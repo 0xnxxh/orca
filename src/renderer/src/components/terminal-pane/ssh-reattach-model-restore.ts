@@ -61,6 +61,59 @@ export function decideSshReattachPaintSource(args: {
   return contentLength === 0 ? 'relay-replay' : 'main-model-snapshot'
 }
 
+/**
+ * The last alternate-screen transition in a relay replay, or null if it holds none.
+ *
+ * A reconnect replay is the ONLY record of what happened while the client was gone — main's model
+ * never saw those bytes — so it is the authority on which screen the app is on now, however stale
+ * the rest of it is. 47 and 1047 count alongside 1049: older apps still use them, and any of the
+ * three leaving reset means the frame is gone.
+ */
+export function lastAlternateScreenTransition(
+  replay: string | undefined
+): 'entered' | 'exited' | null {
+  if (!replay) {
+    return null
+  }
+  let transition: 'entered' | 'exited' | null = null
+  // A tail can begin mid-escape, so match forward rather than assuming a well-formed start.
+  for (const match of replay.matchAll(/\x1b\[\?([0-9;]*)([hl])/g)) {
+    if (match[1].split(';').some((mode) => mode === '47' || mode === '1047' || mode === '1049')) {
+      transition = match[2] === 'h' ? 'entered' : 'exited'
+    }
+  }
+  return transition
+}
+
+/**
+ * Whether an SSH RECONNECT paints main's model instead of the relay tail.
+ *
+ * Only for a full-screen app, and only when the replay does not contradict the model. A tail cannot
+ * rebuild a frame whose start it no longer contains, while a grid can; a scrolling shell is the
+ * opposite, since the tail holds outage output the model never saw and the grid would drop it.
+ *
+ * The `exited` veto is the case this gate exists to refuse: if the app left the alternate screen
+ * while the client was gone, the model still reports alternateScreen because it never consumed
+ * those bytes. Painting it would freeze a frame of an application that no longer exists AND discard
+ * the replay carrying the shell's real output — strictly worse than the fragments this fix targets.
+ */
+export function sshReconnectPaintsFromModel(args: {
+  snapshot: { alternateScreen?: boolean } | null
+  replay: string | undefined
+  altFrameWouldBeSkipped: boolean
+}): boolean {
+  if (!args.snapshot?.alternateScreen) {
+    return false
+  }
+  if (!args.replay) {
+    // Nothing to degrade to, so the vetoes below would only trade a stale frame for a blank one.
+    return true
+  }
+  // The alt frame is dropped for a width mismatch, leaving a cleared screen the app must repaint.
+  // A park could afford that with no tail to lose; here it would mean discarding a usable one.
+  return !args.altFrameWouldBeSkipped && lastAlternateScreenTransition(args.replay) !== 'exited'
+}
+
 /** Skip the snapshot fetch entirely when the paint could never use it. */
 export function shouldFetchSshReattachModelSnapshot(args: {
   ptyId: string
