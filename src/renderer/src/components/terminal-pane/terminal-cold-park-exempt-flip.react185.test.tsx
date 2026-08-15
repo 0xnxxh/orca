@@ -271,7 +271,6 @@ describe('force-park exemption flips under capability changes', () => {
       const allPtyIds = TAB_IDS.map(ptyIdFor)
       for (let flip = 0; flip < 6; flip += 1) {
         const syncCallsBefore = harness.syncCalls
-        // eslint-disable-next-line no-await-in-loop -- flips are sequential by design
         await act(async () => {
           if (flip % 2 === 0) {
             // Daemon answered: every pty has an authoritative snapshot.
