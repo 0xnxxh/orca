@@ -58,7 +58,8 @@ function createContext(args: {
     Promise,
     Set,
     performance: { now: () => 0 },
-    window: {},
+    // Electron 43 exposes this native object before the anti-detection script runs.
+    window: { chrome: {} },
     navigator: {
       userAgent:
         args.userAgent ??
@@ -83,6 +84,7 @@ describe('ANTI_DETECTION_SCRIPT', () => {
     runInNewContext(ANTI_DETECTION_SCRIPT, context)
 
     expect(context.window.chrome).toBeUndefined()
+    expect('chrome' in context.window).toBe(false)
   })
 
   it('keeps Chrome API stubs aligned with an ordinary Chrome page', () => {

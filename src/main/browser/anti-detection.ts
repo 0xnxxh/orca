@@ -16,8 +16,15 @@ export const ANTI_DETECTION_SCRIPT = `(function() {
       ]
     });
   }
-  // Why: auth hosts present Firefox, where exposing Chrome-only globals is a direct identity mismatch.
-  if (!navigator.userAgent.includes('Firefox/')) {
+  // Why: auth hosts present Firefox, where Electron's native window.chrome is an identity mismatch.
+  if (navigator.userAgent.includes('Firefox/')) {
+    try {
+      delete window.chrome;
+      if ('chrome' in window) {
+        window.chrome = undefined;
+      }
+    } catch {}
+  } else {
     // Why: Electron webviews may not have the window.chrome object that real
     // Chrome exposes. Turnstile checks for its presence. The csi() and
     // loadTimes() stubs satisfy deeper probes of Chrome-specific APIs.
