@@ -31,12 +31,12 @@ describe('terminal container geometry', () => {
     expect(terminalCss).not.toMatch(/\.xterm-container\s*{[^}]*margin-left:/s)
   })
 
-  it('matches WebGL background compositing across translucent padding bands', () => {
+  it('matches live DOM and WebGL background layers across translucent padding bands', () => {
     expect(terminalCss).toMatch(
-      /\.xterm-container\[data-terminal-renderer='webgl'\] \.xterm::before\s*{[^}]*border-color:\s*var\(--orca-terminal-pane-background, transparent\);/s
+      /\.xterm-container \.xterm::before\s*{[^}]*border-color:\s*var\(--orca-terminal-live-background, transparent\);/s
     )
     expect(terminalCss).toMatch(
-      /\.xterm-container\[data-terminal-renderer='webgl'\] \.xterm::before\s*{[^}]*border-width:\s*var\(--pane-padding-y, 4px\) var\(--pane-padding-x, 4px\);/s
+      /\.xterm-container\[data-terminal-renderer='webgl'\] \.xterm::after\s*{[^}]*border-color:\s*var\(--orca-terminal-webgl-background, transparent\);/s
     )
   })
 })

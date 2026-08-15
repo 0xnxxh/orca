@@ -44,17 +44,27 @@
   padding-left: var(--pane-padding-x, 4px);
 }
 
-/* WebGL paints the grid background once beyond the viewport background. Match
-   that layer in the padding bands so translucent terminals stay uniform. */
-.xterm-container[data-terminal-renderer='webgl'] .xterm::before {
+/* xterm paints the live viewport background again under the grid. Mirror that
+   layer in the padding bands, including runtime OSC 11 color changes. */
+.xterm-container .xterm::before,
+.xterm-container[data-terminal-renderer='webgl'] .xterm::after {
   box-sizing: border-box;
   position: absolute;
   inset: 0;
   content: '';
   pointer-events: none;
-  border-color: var(--orca-terminal-pane-background, transparent);
   border-style: solid;
   border-width: var(--pane-padding-y, 4px) var(--pane-padding-x, 4px);
+}
+
+.xterm-container .xterm::before {
+  border-color: var(--orca-terminal-live-background, transparent);
+}
+
+/* WebGL blends the same translucent color into its transparent canvas, which
+   contributes alpha² beyond the DOM renderer's layers. */
+.xterm-container[data-terminal-renderer='webgl'] .xterm::after {
+  border-color: var(--orca-terminal-webgl-background, transparent);
 }
 
 .pane-manager-root .xterm-viewport {
