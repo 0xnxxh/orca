@@ -207,6 +207,14 @@ function ensureFolderWorkspaceInitialTerminal(
   return primaryTabId
 }
 
+function canInspectAgentActivationInventory(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.api?.runtime?.call === 'function' &&
+    typeof window.api?.pty?.listSessions === 'function'
+  )
+}
+
 export function activateAndRevealFolderWorkspace(
   folderWorkspaceId: string,
   opts?: {
@@ -263,16 +271,21 @@ export function activateAndRevealFolderWorkspace(
   if (!state.isNavigatingHistory) {
     state.recordWorktreeVisit(workspaceKey)
   }
-  const shouldGateAutoResume =
-    !opts?.startup && workspaceHasSleepingAgentSessions(state, workspaceKey)
-  if (shouldGateAutoResume) {
-    void gateWorktreeAgentActivation(workspaceKey).then(() => {
-      if (useAppStore.getState().activeWorktreeId === workspaceKey) {
+  const shouldGateAgentActivation =
+    !opts?.startup &&
+    (workspaceHasSleepingAgentSessions(state, workspaceKey) ||
+      (canInspectAgentActivationInventory() &&
+        shouldAutoCreateInitialTerminal(
+          state.reconcileWorktreeTabModel(workspaceKey).renderableTabCount
+        )))
+  if (shouldGateAgentActivation) {
+    void gateWorktreeAgentActivation(workspaceKey).then((outcome) => {
+      if (outcome === 'empty' && useAppStore.getState().activeWorktreeId === workspaceKey) {
         ensureFolderWorkspaceInitialTerminal(folderWorkspace)
       }
     })
   }
-  const primaryTabId = shouldGateAutoResume
+  const primaryTabId = shouldGateAgentActivation
     ? null
     : ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
 
@@ -348,20 +361,25 @@ export function activateAndRevealWorktree(
     state.recordWorktreeVisit(worktreeId)
   }
 
-  // Why: sleeping destroys the local PTY but preserves the provider session id, so waking should restore those CLI sessions automatically.
-  const shouldGateAutoResume =
-    !hasActivationWork && workspaceHasSleepingAgentSessions(postActivationState, worktreeId)
-  if (shouldGateAutoResume) {
-    void gateWorktreeAgentActivation(worktreeId).then(() => {
+  // Why: live and structured agent inventory can hydrate after the tab model; reconcile it before an empty model authorizes a fallback terminal.
+  const shouldGateAgentActivation =
+    !hasActivationWork &&
+    (workspaceHasSleepingAgentSessions(postActivationState, worktreeId) ||
+      (canInspectAgentActivationInventory() &&
+        shouldAutoCreateInitialTerminal(
+          postActivationState.reconcileWorktreeTabModel(worktreeId).renderableTabCount
+        )))
+  if (shouldGateAgentActivation) {
+    void gateWorktreeAgentActivation(worktreeId).then((outcome) => {
       const currentState = useAppStore.getState()
-      if (currentState.activeWorktreeId === worktreeId) {
+      if (outcome === 'empty' && currentState.activeWorktreeId === worktreeId) {
         ensureWorktreeHasInitialTerminal(currentState, worktreeId)
       }
     })
   }
 
   // 4. Ensure a focusable surface exists for externally-created worktrees
-  const primaryTabId = shouldGateAutoResume
+  const primaryTabId = shouldGateAgentActivation
     ? null
     : ensureWorktreeHasInitialTerminal(
         useAppStore.getState(),

@@ -35,7 +35,12 @@ type ActivationGateDeps = {
   resume: (worktreeId: string, options?: ResumeSleepingAgentSessionsOptions) => number
 }
 
-export type WorktreeAgentActivationOutcome = 'adopted' | 'structured' | 'resumed' | 'blocked'
+export type WorktreeAgentActivationOutcome =
+  | 'adopted'
+  | 'structured'
+  | 'resumed'
+  | 'empty'
+  | 'blocked'
 
 const inFlightByWorktreeId = new Map<string, Promise<WorktreeAgentActivationOutcome>>()
 const WORKSPACE_SESSION_READY_TIMEOUT_MS = 30_000
@@ -243,7 +248,7 @@ export async function runWorktreeAgentActivationGate(
       ? 'adopted'
       : structured
         ? 'structured'
-        : 'resumed'
+        : 'empty'
 }
 
 export function gateWorktreeAgentActivation(

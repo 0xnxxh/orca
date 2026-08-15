@@ -352,7 +352,7 @@ describe('renderer startup runtime routing', () => {
     expect(gateBlock).toContain('terminalStartupRestorationReady')
     expect(gateIndex).toBeGreaterThanOrEqual(0)
     expect(gateIndex).toBeLessThan(createIndex)
-    expect(gateBlock.slice(gateIndex, createIndex)).toContain("outcome === 'blocked'")
+    expect(gateBlock.slice(gateIndex, createIndex)).toContain("outcome !== 'empty'")
   })
 
   it('does not load the terminal workbench on the no-workspace landing path', () => {

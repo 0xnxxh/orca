@@ -1496,7 +1496,7 @@ function Terminal(): React.JSX.Element | null {
     void gateWorktreeAgentActivation(activeWorktreeId).then((outcome) => {
       if (
         cancelled ||
-        outcome === 'blocked' ||
+        outcome !== 'empty' ||
         useAppStore.getState().activeWorktreeId !== activeWorktreeId
       ) {
         return
