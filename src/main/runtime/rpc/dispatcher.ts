@@ -10,6 +10,7 @@ import {
 } from './core'
 
 import type { FeatureInteractionId } from '../../../shared/feature-interactions'
+import { isOrchestrationMutation } from '../../../shared/orchestration-rpc-contract'
 import { errorResponse, successResponse } from './errors'
 import { ALL_RPC_METHODS } from './methods'
 import { emulatorProbe, emulatorProbeError } from '../../emulator/emulator-probe'
@@ -93,7 +94,7 @@ export class RpcDispatcher {
       )
       const authenticatedCallerFingerprint =
         options?.authenticatedCallerFingerprint ??
-        (request.method.startsWith('orchestration.')
+        (needsLocalCallerFingerprint(request, effectiveParams)
           ? this.orchestrationMutations.getLocalAuthenticatedCallerFingerprint()
           : undefined)
       const invoke = (mutation?: DurableMutationInvocation) => {
@@ -186,7 +187,7 @@ export class RpcDispatcher {
         )
         const authenticatedCallerFingerprint =
           options?.authenticatedCallerFingerprint ??
-          (request.method.startsWith('orchestration.')
+          (needsLocalCallerFingerprint(request, effectiveParams)
             ? this.orchestrationMutations.getLocalAuthenticatedCallerFingerprint()
             : undefined)
         const invoke = (mutation?: DurableMutationInvocation) => {
@@ -302,4 +303,11 @@ export class RpcDispatcher {
   private meta(): RpcEnvelopeMeta {
     return { runtimeId: this.runtime.getRuntimeId() }
   }
+}
+
+function needsLocalCallerFingerprint(request: RpcRequest, params: unknown): boolean {
+  return (
+    request.method.startsWith('orchestration.federation') ||
+    (!!request.orchestrationRequestId && isOrchestrationMutation(request.method, params))
+  )
 }
