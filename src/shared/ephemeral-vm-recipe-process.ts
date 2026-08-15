@@ -70,8 +70,7 @@ export async function runRecipeCommand(args: {
     let gracefulTerminationSettled = false
     let gracefulTreeKillerController: AbortController | undefined
     let stoppedResult: ProcessRunResult | undefined
-    let processExited = false
-    let processClosed = false
+    const processLifecycle = { exited: false, closed: false }
     let forceKillTimer: ReturnType<typeof setTimeout> | undefined
     let treeExitCheckTimer: ReturnType<typeof setTimeout> | undefined
     const clearTerminationTimers = (): void => {
@@ -118,7 +117,7 @@ export async function runRecipeCommand(args: {
       }
       aborted = true
       gracefulTreeKillerController?.abort()
-      if (process.platform === 'win32' && hasRecipeProcessExited(child, processExited)) {
+      if (process.platform === 'win32' && hasRecipeProcessExited(child, processLifecycle.exited)) {
         finishUnconfirmedExitedProcess()
         return
       }
@@ -137,11 +136,11 @@ export async function runRecipeCommand(args: {
       })
     }
     const finishStoppedProcessTree = (): void => {
-      if (!stoppedResult || !processClosed || settled || forceAborting) {
+      if (!stoppedResult || !processLifecycle.closed || settled || forceAborting) {
         return
       }
       if (gracefulTerminationConfirmed || !isRecipeProcessTreeAlive(child)) {
-        finish(stoppedResult)
+        finish(aborted ? { ...stoppedResult, aborted: true } : stoppedResult)
         return
       }
       if (process.platform === 'win32') {
@@ -164,7 +163,7 @@ export async function runRecipeCommand(args: {
         return
       }
       aborted = true
-      if (process.platform === 'win32' && hasRecipeProcessExited(child, processExited)) {
+      if (process.platform === 'win32' && hasRecipeProcessExited(child, processLifecycle.exited)) {
         finishUnconfirmedExitedProcess()
         return
       }
@@ -205,7 +204,7 @@ export async function runRecipeCommand(args: {
       fail(error)
     })
     child.on('exit', (exitCode, signal) => {
-      processExited = true
+      processLifecycle.exited = true
       stoppedResult = {
         stdout,
         stderr,
@@ -228,8 +227,13 @@ export async function runRecipeCommand(args: {
         signal,
         ...(aborted ? { aborted: true as const } : {})
       }
-      processClosed = true
-      if (!aborted) {
+      processLifecycle.closed = true
+      if (
+        !aborted &&
+        (process.platform === 'win32' ||
+          args.mode !== 'destroy' ||
+          !isRecipeProcessTreeAlive(child))
+      ) {
         finish(result)
         return
       }

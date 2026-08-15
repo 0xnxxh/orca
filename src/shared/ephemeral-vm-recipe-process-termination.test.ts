@@ -97,6 +97,47 @@ describe('terminateRecipeProcess', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'retains an owned destroy group after shell close until the deadline',
+    async () => {
+      const controller = new AbortController()
+      let processGroupPid = 0
+      let groupAliveAtDeadline = false
+      const spawnCommand = vi.fn((command: string, options: Parameters<typeof spawn>[1]) => {
+        const child = spawn(command, options)
+        processGroupPid = child.pid ?? 0
+        child.once('close', () => {
+          setImmediate(() => {
+            groupAliveAtDeadline = isProcessGroupAlive(processGroupPid)
+            controller.abort()
+          })
+        })
+        return child
+      })
+
+      try {
+        const result = await runRecipeCommand({
+          command: 'sleep 60 </dev/null >/dev/null 2>&1 & exit 0',
+          repoPath: process.cwd(),
+          mode: 'destroy',
+          resultSchemaVersion: 1,
+          context: { recipeId: 'cloud-sandbox', repoPath: process.cwd() },
+          forceAbortSignal: controller.signal,
+          spawnCommand: spawnCommand as never
+        })
+
+        expect(groupAliveAtDeadline).toBe(true)
+        expect(result).toMatchObject({ aborted: true })
+        expect(result).not.toHaveProperty('terminationFailed')
+        expect(isProcessGroupAlive(processGroupPid)).toBe(false)
+      } finally {
+        if (isProcessGroupAlive(processGroupPid)) {
+          process.kill(-processGroupPid, 'SIGKILL')
+        }
+      }
+    }
+  )
+
   it('waits for a force-killed POSIX process group to disappear', async () => {
     vi.useFakeTimers()
     const child = makeChild(123)
