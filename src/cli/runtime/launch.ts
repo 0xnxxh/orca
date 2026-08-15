@@ -9,8 +9,15 @@ import {
   getEphemeralVmRecipeResultConnection,
   parseEphemeralVmRecipeResult
 } from '../../shared/ephemeral-vm-recipes'
+import { SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE } from '../../shared/single-instance-exit-code'
 import { getDefaultUserDataPath } from './metadata'
 import { getMacAppBundlePath } from './mac-app-update-bundle'
+import {
+  findServingProfileOwner,
+  serveAlreadyRunningFailure,
+  serveAlreadyRunningMessage
+} from './serving-profile-owner'
+import { getCliStatus } from './status'
 import {
   readServeUpdateHandoffSync,
   resumeInterruptedServeUpdate,
@@ -20,20 +27,23 @@ import { RuntimeClientError } from './types'
 
 const IGNORED_NON_RECIPE_STDOUT = '[serve] ignored non-recipe stdout'
 
-export function launchOrcaApp(): void {
+export type OrcaAppLaunch = {
+  /** Non-null once the launched process died without producing a window. */
+  readonly failedExit: () => { code: number | null; signal: NodeJS.Signals | null } | null
+}
+
+export function launchOrcaApp(): OrcaAppLaunch {
   const overrideCommand = process.env.ORCA_OPEN_COMMAND
   if (typeof overrideCommand === 'string' && overrideCommand.trim().length > 0) {
-    spawnDetached(overrideCommand, [], { shell: true })
-    return
+    return spawnDetached(overrideCommand, [], { shell: true })
   }
 
   const overrideExecutable = process.env.ORCA_APP_EXECUTABLE
   if (typeof overrideExecutable === 'string' && overrideExecutable.trim().length > 0) {
-    spawnDetached(overrideExecutable, getExecutableAppArgs(), {
+    return spawnDetached(overrideExecutable, getExecutableAppArgs(), {
       ...getExecutableSpawnOptions(overrideExecutable),
       env: stripElectronRunAsNode(process.env)
     })
-    return
   }
 
   if (process.env.ELECTRON_RUN_AS_NODE === '1') {
@@ -43,17 +53,15 @@ export function launchOrcaApp(): void {
         // Why: launching the inner MacOS binary directly can trigger macOS app
         // launch failures and bypass normal bundle lifecycle. The public
         // packaged CLI should re-open the .app the same way Finder does.
-        spawnDetached('open', [appBundlePath], {
+        return spawnDetached('open', [appBundlePath], {
           env: stripElectronRunAsNode(process.env)
         })
-        return
       }
     }
 
-    spawnDetached(process.execPath, [], {
+    return spawnDetached(process.execPath, [], {
       env: stripElectronRunAsNode(process.env)
     })
-    return
   }
 
   throw new RuntimeClientError(
@@ -62,19 +70,29 @@ export function launchOrcaApp(): void {
   )
 }
 
-function spawnDetached(command: string, args: string[], options: SpawnOptions): void {
+function spawnDetached(command: string, args: string[], options: SpawnOptions): OrcaAppLaunch {
   const child = spawnProcess(command, args, {
     detached: true,
     stdio: 'ignore',
     ...options
   })
-  // Why: detached launch errors are reported asynchronously after this function
-  // returns; openOrca already reports the user-facing timeout if startup fails.
+  let failedExit: { code: number | null; signal: NodeJS.Signals | null } | null = null
+  // Why: a macOS pre-JS abort (STA-4336) kills this child in ~200ms. Without
+  // watching it, `orca open` can only report a 15s "no window" timeout, which
+  // blames the wrong thing. A clean exit(0) is normal — `open` returns as soon
+  // as Launch Services accepts the request.
+  child.once('exit', (code, signal) => {
+    if (signal !== null || (code !== null && code !== 0)) {
+      failedExit = { code, signal }
+    }
+  })
+  // Why: detached launch errors are reported asynchronously after this function returns.
   child.once('error', () => {})
   child.unref()
+  return { failedExit: () => failedExit }
 }
 
-export function serveOrcaApp(
+export async function serveOrcaApp(
   args: {
     json?: boolean
     port?: string | null
@@ -85,6 +103,20 @@ export function serveOrcaApp(
     projectRoot?: string | null
   } = {}
 ): Promise<number> {
+  const userDataPath = getDefaultUserDataPath()
+  const owner = findServingProfileOwner((await getCliStatus(userDataPath)).result)
+  if (owner) {
+    // Why: the Electron main enforces this same rule, but on macOS it does so
+    // after NSApplication init, which aborts pre-JS when Launch Services is
+    // unreachable (STA-4336). Refusing here keeps a supervisor's retry from
+    // becoming a SIGABRT loop, and reports the exit code systemd keys off.
+    if (args.json === true || args.recipeJson === true) {
+      process.stdout.write(`${JSON.stringify(serveAlreadyRunningFailure(owner), null, 2)}\n`)
+    } else {
+      process.stderr.write(`${serveAlreadyRunningMessage(owner)}\n`)
+    }
+    return SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE
+  }
   const executable = resolveForegroundOrcaExecutable()
   const childArgs = [...getExecutableAppArgs()]
   if (process.env.ORCA_APPIMAGE_NO_SANDBOX === '1') {
@@ -118,7 +150,7 @@ export function serveOrcaApp(
 
   const handoffPath =
     args.recipeJson !== true && getMacAppBundlePath(executable)
-      ? getServeUpdateHandoffPath(getDefaultUserDataPath())
+      ? getServeUpdateHandoffPath(userDataPath)
       : null
   const childEnv = stripElectronRunAsNode(process.env)
   delete childEnv.ORCA_APPIMAGE_NO_SANDBOX

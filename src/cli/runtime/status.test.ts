@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { getRuntimeMetadataPath } from '../../shared/runtime-bootstrap'
 import { RuntimeClient } from './client'
+import { getCliStatus } from './status'
 
 const servers = new Set<ReturnType<typeof createServer>>()
 const sockets = new Set<Socket>()
@@ -72,5 +73,27 @@ describe.skipIf(process.platform === 'win32')('CLI runtime status', () => {
       runtimeId: 'runtime-legacy',
       state: 'ready'
     })
+  })
+
+  it('treats an unreachable runtime owned by another user as running', async () => {
+    // Why: pid 1 is root-owned, so an unprivileged `process.kill(1, 0)` raises
+    // EPERM. Reading that as "dead" would let `orca serve` spawn a duplicate
+    // against a profile a root supervisor already owns (STA-4336).
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-status-eperm-'))
+    writeFileSync(
+      getRuntimeMetadataPath(userDataPath),
+      JSON.stringify({
+        runtimeId: 'runtime-foreign',
+        pid: 1,
+        transport: { kind: 'unix', endpoint: join(userDataPath, 'never-listening.sock') },
+        authToken: 'token',
+        startedAt: Date.now()
+      })
+    )
+
+    const status = await getCliStatus(userDataPath)
+
+    expect(status.result.app).toMatchObject({ running: true, pid: 1 })
+    expect(status.result.runtime.state).toBe('starting')
   })
 })

@@ -1,6 +1,32 @@
+import { basename } from 'node:path'
 import { RuntimeClientError } from './types'
 
-export const MAC_CRASH_REPORT_GLOB = '~/Library/Logs/DiagnosticReports/Orca-*.ips'
+const MAC_ABORT_CAUSE =
+  'aborted with SIGABRT on macOS before any Orca JavaScript ran. The Electron main creates NSApplication first, and _RegisterApplication calls abort() when Launch Services is unreachable — common in sandboxed agent environments, SSH sessions without a GUI login, and CI. Retrying cannot help: the abort happens before Orca can run, so every attempt fails identically.'
+
+/**
+ * Why: macOS names crash reports after the executing binary, so a packaged run
+ * writes `Orca-*.ips` while a source/dev run writes `Electron-*.ips`. Pointing
+ * at the wrong one sends people looking for a file that does not exist.
+ */
+export function macCrashReportGlob(
+  executablePath: string = process.env.ORCA_APP_EXECUTABLE ?? process.execPath
+): string {
+  const processName = basename(executablePath).trim() || 'Orca'
+  return `~/Library/Logs/DiagnosticReports/${processName}-*.ips`
+}
+
+function macAbortNextSteps(): string[] {
+  return [
+    'Re-run with an active macOS desktop login, outside the sandbox or restricted environment.',
+    'If this is an automated sandbox, allow mach-lookup for com.apple.lsd.* and com.apple.coreservices.launchservicesd.',
+    `Look for a crash report at ${macCrashReportGlob()}; its faulting stack ends in _RegisterApplication.`
+  ]
+}
+
+function isMacStartupAbort(signal: NodeJS.Signals | null, platform: NodeJS.Platform): boolean {
+  return platform === 'darwin' && signal === 'SIGABRT'
+}
 
 export function serveSignalExitError(
   signal: NodeJS.Signals | null,
@@ -12,20 +38,33 @@ export function serveSignalExitError(
       'Orca serve exited without reporting an exit code or signal.'
     )
   }
-  if (platform !== 'darwin' || signal !== 'SIGABRT') {
+  if (!isMacStartupAbort(signal, platform)) {
     return new RuntimeClientError('runtime_serve_failed', `Orca serve exited via ${signal}.`)
   }
-  // Why: the startup abort happens inside +[NSApplication sharedApplication], before any of our JS
-  // runs, so the parent CLI is the only place it can be explained. We only see the signal, never the
-  // phase, so the cause is offered as the likely one rather than asserted.
+  // Why: we only ever see the signal, never the phase, so the cause is offered as the likely one
+  // rather than asserted; the parent CLI is the only place that can explain it at all.
+  return new RuntimeClientError('runtime_serve_failed', `Orca serve ${MAC_ABORT_CAUSE}`, {
+    nextSteps: macAbortNextSteps()
+  })
+}
+
+/**
+ * Why: `orca open` spawns the desktop app detached, so a pre-JS abort used to
+ * surface only as a 15s "timed out waiting for a window" — a diagnostic that
+ * blames the wrong thing and invites a retry loop.
+ */
+export function openLaunchExitError(
+  exit: { code: number | null; signal: NodeJS.Signals | null },
+  platform: NodeJS.Platform = process.platform
+): RuntimeClientError {
+  if (isMacStartupAbort(exit.signal, platform)) {
+    return new RuntimeClientError('runtime_open_failed', `Orca ${MAC_ABORT_CAUSE}`, {
+      nextSteps: macAbortNextSteps()
+    })
+  }
+  const how = exit.signal ? `via ${exit.signal}` : `with exit code ${exit.code}`
   return new RuntimeClientError(
-    'runtime_serve_failed',
-    'Orca serve aborted with SIGABRT on macOS. This most often happens at application startup, when the process cannot register with the macOS window server, which is common in restricted or sandboxed environments, SSH sessions without a GUI login, and CI.',
-    {
-      nextSteps: [
-        'Re-run `orca serve` outside a sandboxed or restricted environment, with a macOS desktop login active.',
-        `Look for a crash report at ${MAC_CRASH_REPORT_GLOB}.`
-      ]
-    }
+    'runtime_open_failed',
+    `Orca exited ${how} while starting up, before a desktop window appeared.`
   )
 }
