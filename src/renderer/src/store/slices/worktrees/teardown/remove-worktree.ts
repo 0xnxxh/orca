@@ -15,27 +15,21 @@ import { forgetHugeRepoWarningDismissalsForWorktrees } from '@/lib/source-contro
 import { clearSessionCommitDraftForWorktree } from '@/lib/source-control-commit-draft-session'
 import { showPreservedBranchToast } from '@/components/sidebar/preserved-branch-toast'
 import {
-  getWorktreeOperationOwnerHostIds,
-  resolveWorktreeOperationRoute,
-  resolveWorktreeOperationRouteForHost,
   resolveWorktreeOperationRouteResult,
   resolveWorktreeOperationRouteResultForHost,
-  settingsForWorktreeOperationRoute,
-  type WorktreeOperationRoute
+  settingsForWorktreeOperationRoute
 } from '@/lib/worktree-operation-route'
-import { captureWorktreeOperationGenerationGuard } from '@/lib/worktree-operation-generation'
+import {
+  beginHostQualifiedRemoval,
+  completeSameIdHostScopedRemoval,
+  findWorktreeOnConfirmedHost
+} from './host-qualified-worktree-removal'
 import {
   classifyWorktreeForceDeleteReason,
   getLockedWorktreeRemovalReason,
   isLockedWorktreeRemovalError
 } from '../../../../../../shared/worktree/removal'
 import { preservedBranchCleanupKey } from '../../../../../../shared/preserved-branch-cleanup'
-import { resolveWorkspaceCleanupRemovalHostId } from '../../../../../../shared/workspace-cleanup-host-identity'
-import {
-  WORKTREE_REMOVAL_AMBIGUOUS_ERROR,
-  WORKTREE_REMOVAL_HOST_CHANGED_ERROR
-} from '../listing/worktree-slice-constants'
-import { worktreeHostMatchOptions, worktreeMatchesHost } from '../listing/worktree-host-ownership'
 import { detachedHeadAutoDerivedDisplayNames } from '../metadata/detached-head-display-name'
 import { pruneHostedReviewLinkMutationGenerations } from '../metadata/hosted-review-link-mutation'
 import { rememberAuthoritativelyRemovedWorktrees } from '../listing/authoritative-worktree-removal-memory'
@@ -56,57 +50,16 @@ export function createRemoveWorktree(
     // Why (STA-4343): a qualified caller confirmed ONE host's row; route at that
     // host instead of the active workspace's, which owns the same id elsewhere.
     const requiredExecutionHostId = options?.requiredExecutionHostId
-    const resolveRemovalRoute = (): WorktreeOperationRoute | null =>
-      requiredExecutionHostId
-        ? resolveWorktreeOperationRouteForHost(get(), worktreeId, requiredExecutionHostId)
-        : resolveWorktreeOperationRoute(get(), worktreeId)
-    const removalRoute = resolveRemovalRoute()
-    if (!forgetLocalOnly && !removalRoute) {
-      return { ok: false, error: WORKTREE_REMOVAL_AMBIGUOUS_ERROR }
+    const start = beginHostQualifiedRemoval(
+      get,
+      worktreeId,
+      requiredExecutionHostId,
+      forgetLocalOnly
+    )
+    if (!start.ok) {
+      return { ok: false, error: start.error }
     }
-    // Fail closed rather than delete on a host the caller never confirmed.
-    if (
-      requiredExecutionHostId &&
-      removalRoute &&
-      removalRoute.executionHostId !== requiredExecutionHostId
-    ) {
-      return { ok: false, error: WORKTREE_REMOVAL_HOST_CHANGED_ERROR }
-    }
-    const hostId = removalRoute?.executionHostId ?? requiredExecutionHostId ?? undefined
-    const stateBeforeRemoval = get()
-    const preservesSameIdRendererState =
-      requiredExecutionHostId !== undefined &&
-      (getWorktreeOperationOwnerHostIds(stateBeforeRemoval, worktreeId).some(
-        (ownerHostId) => ownerHostId !== requiredExecutionHostId
-      ) ||
-        (stateBeforeRemoval.activeWorktreeId === worktreeId &&
-          stateBeforeRemoval.activeWorkspaceExecutionHostId !== null &&
-          stateBeforeRemoval.activeWorkspaceExecutionHostId !== requiredExecutionHostId) ||
-        (stateBeforeRemoval.workspaceCleanupScan?.candidates.some((candidate) => {
-          const candidateHostId = resolveWorkspaceCleanupRemovalHostId(candidate)
-          return (
-            candidate.worktreeId === worktreeId &&
-            candidateHostId !== null &&
-            candidateHostId !== requiredExecutionHostId
-          )
-        }) ??
-          false))
-    const removalGenerationGuard = removalRoute
-      ? captureWorktreeOperationGenerationGuard(
-          get,
-          worktreeId,
-          removalRoute,
-          () =>
-            new Error(
-              requiredExecutionHostId
-                ? WORKTREE_REMOVAL_HOST_CHANGED_ERROR
-                : WORKTREE_REMOVAL_AMBIGUOUS_ERROR
-            ),
-          // Why: every mid-flight re-check must re-resolve at the CONFIRMED host,
-          // or the active host's route would read as "ownership changed".
-          requiredExecutionHostId ? resolveRemovalRoute : undefined
-        )
-      : null
+    const { removalRoute, hostId, removalGenerationGuard, sameIdSurvivesOnAnotherHost } = start
     set((s) => ({
       deleteStateByWorktreeId: {
         ...s.deleteStateByWorktreeId,
@@ -132,19 +85,11 @@ export function createRemoveWorktree(
             removalRoute?.runtimeEnvironmentId
           )) === 'skip'
 
-      const repoId = getRepoIdFromWorktreeId(worktreeId)
-      const worktreeBeforeRemoval = get()
-        .allWorktrees()
-        .find(
-          (entry) =>
-            entry.id === worktreeId &&
-            (!requiredExecutionHostId ||
-              worktreeMatchesHost(
-                entry,
-                requiredExecutionHostId,
-                worktreeHostMatchOptions(get(), repoId, requiredExecutionHostId)
-              ))
-        )
+      const worktreeBeforeRemoval = findWorktreeOnConfirmedHost(
+        get,
+        worktreeId,
+        requiredExecutionHostId
+      )
       const terminalPtyIdsBeforeRemoval = (get().tabsByWorktree[worktreeId] ?? []).flatMap(
         (tab) => get().ptyIdsByTabId[tab.id] ?? []
       )
@@ -252,73 +197,18 @@ export function createRemoveWorktree(
       // Why (STA-4343): another host still owns this id, so the shared renderer
       // state (tabs, terminals, browsers) belongs to that live workspace — drop
       // only the confirmed host's row instead of tearing all of it down.
-      if (preservesSameIdRendererState && requiredExecutionHostId) {
-        requestVirtualizedScrollAnchorRecord('[data-worktree-sidebar]')
-        set((state) => {
-          const nextWorktreesByRepo = { ...state.worktreesByRepo }
-          for (const [candidateRepoId, worktrees] of Object.entries(nextWorktreesByRepo)) {
-            const matchOptions = worktreeHostMatchOptions(
-              state,
-              candidateRepoId,
-              requiredExecutionHostId
-            )
-            nextWorktreesByRepo[candidateRepoId] = worktrees.filter(
-              (worktree) =>
-                worktree.id !== worktreeId ||
-                !worktreeMatchesHost(worktree, requiredExecutionHostId, matchOptions)
-            )
-          }
-          const nextDeleteState = { ...state.deleteStateByWorktreeId }
-          delete nextDeleteState[worktreeId]
-          return {
-            worktreesByRepo: nextWorktreesByRepo,
-            deleteStateByWorktreeId: nextDeleteState,
-            sortEpoch: state.sortEpoch + 1
-          }
+      if (sameIdSurvivesOnAnotherHost && requiredExecutionHostId) {
+        return completeSameIdHostScopedRemoval({
+          set,
+          get,
+          worktreeId,
+          requiredExecutionHostId,
+          removalResult,
+          removalRoute,
+          target,
+          worktreeBeforeRemoval,
+          suppressPreservedBranchToast: options?.suppressPreservedBranchToast === true
         })
-        if (parseExecutionHostId(requiredExecutionHostId)?.kind === 'ssh') {
-          rememberAuthoritativelyRemovedWorktrees(requiredExecutionHostId, [worktreeId])
-        }
-        const preservedBranch = removalResult?.preservedBranch
-        const cleanup = preservedBranch
-          ? {
-              worktreeId,
-              branchName: preservedBranch.branchName,
-              expectedHead: preservedBranch.head,
-              hostId: requiredExecutionHostId,
-              ...(removalRoute?.runtimeEnvironmentId
-                ? { runtimeEnvironmentId: removalRoute.runtimeEnvironmentId }
-                : {})
-            }
-          : null
-        if (preservedBranch && cleanup) {
-          preservedBranchRuntimeTargetByCleanupKey.set(preservedBranchCleanupKey(cleanup), {
-            cleanup,
-            target
-          })
-        }
-        if (preservedBranch && cleanup && options?.suppressPreservedBranchToast !== true) {
-          showPreservedBranchToast(removalResult, worktreeBeforeRemoval, (branch, expectedHead) => {
-            void get().forceDeletePreservedBranch(worktreeId, branch, expectedHead, {
-              hostId: requiredExecutionHostId,
-              ...(removalRoute?.runtimeEnvironmentId
-                ? { runtimeEnvironmentId: removalRoute.runtimeEnvironmentId }
-                : {})
-            })
-          })
-        }
-        return preservedBranch && cleanup
-          ? {
-              ok: true as const,
-              preservedBranch: {
-                ...preservedBranch,
-                hostId: cleanup.hostId,
-                ...(cleanup.runtimeEnvironmentId
-                  ? { runtimeEnvironmentId: cleanup.runtimeEnvironmentId }
-                  : {})
-              }
-            }
-          : { ok: true as const }
       }
 
       // Why: invalidate stale probes once deletion is authoritative, so an old toast can't mutate a same-path replacement.
