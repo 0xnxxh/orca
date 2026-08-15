@@ -234,6 +234,7 @@ const REMOTE_TERMINAL_RESYNC_TIMEOUT_MS = 10_000
 // retrying once per incoming chunk would stampede it, so back off instead.
 const REMOTE_TERMINAL_RESYNC_RETRY_BASE_MS = 500
 const REMOTE_TERMINAL_RESYNC_RETRY_MAX_MS = 5_000
+const REMOTE_TERMINAL_RESYNC_MAX_ATTEMPTS = 5
 // Why: exported so the transport can classify it as benign — the snapshot was
 // skipped but live output continues, so it must not surface a fatal red banner.
 export const REMOTE_TERMINAL_SNAPSHOT_TOO_LARGE =
@@ -1021,6 +1022,7 @@ class RemoteRuntimeTerminalMultiplexer {
   private sendResyncSnapshot(stream: RemoteRuntimeMultiplexedTerminalState): void {
     stream.resyncPendingSend = false
     this.startResyncTimer(stream)
+    stream.resyncAttempts += 1
     const sent = this.sendFrame(
       stream.streamId,
       TerminalStreamOpcode.SnapshotRequest,
@@ -1030,13 +1032,17 @@ class RemoteRuntimeTerminalMultiplexer {
       // Transport is down; the reconnect path re-subscribes from scratch.
       clearResyncTimer(stream)
       stream.resyncInFlight = false
+      stream.resyncAttempts -= 1
     }
   }
 
   // Why: keep the gate shut across the backoff — the post-gap tail is corrupt
   // either way — and heal even if the flood ends with no further output.
   private scheduleResyncRetry(stream: RemoteRuntimeMultiplexedTerminalState): void {
-    stream.resyncAttempts += 1
+    if (stream.resyncAttempts >= REMOTE_TERMINAL_RESYNC_MAX_ATTEMPTS) {
+      this.recoverStalledStream(stream)
+      return
+    }
     const delay = Math.min(
       REMOTE_TERMINAL_RESYNC_RETRY_MAX_MS,
       REMOTE_TERMINAL_RESYNC_RETRY_BASE_MS * 2 ** Math.min(stream.resyncAttempts - 1, 4)

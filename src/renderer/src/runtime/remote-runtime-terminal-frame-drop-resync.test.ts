@@ -49,8 +49,10 @@ class FakeMultiplexServer {
   holdNextRecoverySnapshot = false
   emptyNextRecoverySnapshot = false
   unavailableNextRecoverySnapshot = false
+  unavailableRecoverySnapshots = false
   pendingEscapeTailAnsiNextRecoverySnapshot: string | undefined
   snapshotRequests: (number | undefined)[] = []
+  unsubscribeRequests = 0
   private heldManualRequestId: number | null = null
   private snapshotData = 'INITIAL'
 
@@ -90,7 +92,10 @@ class FakeMultiplexServer {
         this.emptyNextRecoverySnapshot = false
         this.snapshotData = ''
       }
-      if (typeof payload?.requestId !== 'number' && this.unavailableNextRecoverySnapshot) {
+      if (
+        typeof payload?.requestId !== 'number' &&
+        (this.unavailableNextRecoverySnapshot || this.unavailableRecoverySnapshots)
+      ) {
         this.unavailableNextRecoverySnapshot = false
         this.snapshotData = ''
         recoveryOptions.unavailable = 'no-serializable-buffer'
@@ -118,6 +123,10 @@ class FakeMultiplexServer {
         return
       }
       this.sendSnapshot(payload?.requestId, recoveryOptions)
+      return
+    }
+    if (frame.opcode === TerminalStreamOpcode.Unsubscribe) {
+      this.unsubscribeRequests += 1
     }
   }
 
@@ -234,7 +243,9 @@ describe('remote terminal frame-drop resync', () => {
     vi.unstubAllGlobals()
   })
 
-  async function subscribeClient(): Promise<{
+  async function subscribeClient(
+    onTransportClose?: (event: { recoverable: boolean }) => void
+  ): Promise<{
     data: string[]
     metas: { seq?: number; rawLength?: number; transformed?: boolean }[]
     snapshots: string[]
@@ -257,7 +268,8 @@ describe('remote terminal frame-drop resync', () => {
         onSnapshot: (chunk, meta) => {
           snapshots.push(chunk)
           snapshotMetas.push(meta ?? {})
-        }
+        },
+        onTransportClose
       }
     })
     // Let the initial snapshot round-trip settle.
@@ -342,6 +354,47 @@ describe('remote terminal frame-drop resync', () => {
 
       server.output('eee')
       expect(data).toEqual(['aaa', 'eee'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('replaces the stream after five unavailable recovery attempts', async () => {
+    vi.useFakeTimers()
+    try {
+      const onTransportClose = vi.fn()
+      const first = await subscribeClient(onTransportClose)
+      const unavailableServer = server
+      unavailableServer.unavailableRecoverySnapshots = true
+
+      unavailableServer.output('aaa')
+      unavailableServer.dropNextOutput = true
+      unavailableServer.output('bbb')
+      unavailableServer.output('ccc')
+      unavailableServer.output('corrupt-live-tail')
+
+      expect(unavailableServer.snapshotRequests).toEqual([undefined])
+      expect(first.snapshots).toEqual(['INITIAL'])
+      expect(first.data).toEqual(['aaa'])
+
+      await vi.advanceTimersByTimeAsync(500 + 1_000 + 2_000 + 4_000)
+
+      expect(unavailableServer.snapshotRequests).toEqual(Array(5).fill(undefined))
+      expect(unavailableServer.unsubscribeRequests).toBe(1)
+      expect(onTransportClose).toHaveBeenCalledOnce()
+      expect(onTransportClose).toHaveBeenCalledWith({ recoverable: true })
+      expect(first.snapshots).toEqual(['INITIAL'])
+      expect(first.data).toEqual(['aaa'])
+      expect(vi.getTimerCount()).toBe(0)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(unavailableServer.snapshotRequests).toHaveLength(5)
+
+      const replacement = await subscribeClient()
+      server.output('later-live-output')
+      expect(subscribe).toHaveBeenCalledTimes(2)
+      expect(replacement.snapshots).toEqual(['INITIAL'])
+      expect(replacement.data).toEqual(['later-live-output'])
     } finally {
       vi.useRealTimers()
     }
