@@ -741,12 +741,15 @@ function queueSetupAndIssueCommands(
  * order must dispatch here — the folder branch is what enforces the path-status
  * gate that blocks a missing/unmounted/disconnected-SSH folder (#10716).
  */
-export function activateAndRevealWorkspace(workspaceId: string): ActivateAndRevealResult | false {
+export function activateAndRevealWorkspace(
+  workspaceId: string,
+  opts?: { executionHostId?: ExecutionHostId }
+): ActivateAndRevealResult | false {
   const workspaceScope = parseWorkspaceKey(workspaceId)
   if (workspaceScope?.type === 'folder') {
-    return activateAndRevealFolderWorkspace(workspaceScope.folderWorkspaceId)
+    return activateAndRevealFolderWorkspace(workspaceScope.folderWorkspaceId, opts)
   }
-  return activateAndRevealWorktree(workspaceId)
+  return activateAndRevealWorktree(workspaceId, opts)
 }
 
 // Why: break the import cycle — nav-history slice (under @/store) can't import activation directly, so register the activator here.
