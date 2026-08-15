@@ -479,6 +479,7 @@ import {
   isTuiAgent,
   TUI_AGENT_CONFIG
 } from '../../shared/tui-agent-config'
+import { resolveDraftPasteReadyTimeoutMs } from '../../shared/draft-paste-ready-timeout'
 import { createDraftPasteReadyScanner } from '../../shared/draft-paste-ready-scanner'
 import { detectInstalledAgentsWithShellPathHydration, detectRemoteAgents } from '../ipc/preflight'
 import {
@@ -1877,7 +1878,6 @@ const FOREGROUND_AGENT_WRAPPER_RETRY_TIMEOUT_MS = 6_500
 const BRACKETED_PASTE_BEGIN = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
-const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
 const AGENT_PROMPT_RENDER_TIMEOUT_MS = 8000
 const AGENT_PROMPT_RENDER_QUIET_MS = 1500
 // Why: Claude and Codex emit show-cursor while rendering pasted composer content.
@@ -22240,7 +22240,7 @@ export class OrcaRuntimeService {
       if (replay) {
         observeData(replay)
       }
-      hardTimer = setTimeout(() => finish(null), DRAFT_PASTE_READY_TIMEOUT_MS)
+      hardTimer = setTimeout(() => finish(null), resolveDraftPasteReadyTimeoutMs(agent))
     })
   }
 
