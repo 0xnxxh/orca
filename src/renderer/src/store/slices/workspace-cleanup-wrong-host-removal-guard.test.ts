@@ -27,6 +27,7 @@ import type { ExecutionHostId } from '../../../../shared/execution-host'
 const NOW = 1_700_000_000_000
 const HOST_A_HOST_ID: ExecutionHostId = 'local'
 const HOST_B_HOST_ID: ExecutionHostId = 'ssh:ssh-1'
+const HOST_COLLISION_MESSAGE = 'Error: this workspace exists on multiple hosts at the same path'
 const HOST_UNRESOLVED_MESSAGE =
   'Orca cannot tell which host owns this workspace. Refresh projects and review it again.'
 
@@ -223,7 +224,7 @@ describe('STA-4343 minimal guard: cleanup refuses a removal it cannot attribute 
     expect(routedHostIds).toEqual([])
     expect(removal.removedIds).toEqual([])
     expect(removal.failures).toEqual([
-      { worktreeId: WORKTREE_ID, displayName: 'shared-workspace', message: HOST_UNRESOLVED_MESSAGE }
+      { worktreeId: WORKTREE_ID, displayName: 'shared-workspace', message: HOST_COLLISION_MESSAGE }
     ])
     expect(store.getState().tabsByWorktree[WORKTREE_ID]).toEqual([
       expect.objectContaining({ id: 'host-a-tab' })
@@ -359,5 +360,36 @@ describe('STA-4343 minimal guard: ordinary single-host cleanup still deletes', (
     expect(removal.removedIds).toEqual([WORKTREE_ID])
     expect(routedHostIds).toEqual([HOST_B_HOST_ID])
     expect(fs.existsSync(hosts.hostBMarkerPath)).toBe(false)
+  })
+
+  it('deletes a host-qualified snapshot row after the refreshed owner matches', async () => {
+    const hosts = createHostDirectories()
+    const routedHostIds: string[] = []
+    installRemovalTransport({ [HOST_A_HOST_ID]: hosts.hostARoot }, routedHostIds)
+    const snapshotCandidate = makeHostCandidate(HOST_A_HOST_ID)
+    seedScan([makeHostCandidate(HOST_A_HOST_ID)])
+
+    const store = createTestStore()
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: WORKTREE_ID,
+            repoId: 'repo1',
+            path: WORKTREE_PATH,
+            hostId: HOST_A_HOST_ID
+          })
+        ]
+      }
+    } as Partial<AppState>)
+
+    const removal = await store.getState().removeWorkspaceCleanupCandidates([WORKTREE_ID], {
+      approvedCandidates: [snapshotCandidate]
+    })
+
+    expect(removal.failures).toEqual([])
+    expect(removal.removedIds).toEqual([WORKTREE_ID])
+    expect(routedHostIds).toEqual([HOST_A_HOST_ID])
+    expect(fs.existsSync(hosts.hostAMarkerPath)).toBe(false)
   })
 })

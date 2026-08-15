@@ -1053,11 +1053,15 @@ async function preflightWorkspaceCleanupCandidates(
     if (!preflight.ok) {
       return preflight
     }
+    const scannedHostIds = [...(scannedHostIdsByWorktreeId.get(worktreeId) ?? [])]
+    const distinctKnownHostCount = new Set(
+      scannedHostIds.filter((hostId): hostId is ExecutionHostId => hostId !== null)
+    ).size
     // STA-4343: fail closed rather than delete another host's uncommitted work.
     const hostIsCertain = isWorkspaceCleanupRemovalHostCertain({
       confirmedCandidate: approvedCandidatesByWorktreeId.get(worktreeId),
       scannedCandidate: preflight.candidate,
-      scannedHostIds: [...(scannedHostIdsByWorktreeId.get(worktreeId) ?? [])],
+      scannedHostIds,
       routeHostId: resolveWorktreeOperationRoute(getState(), worktreeId)?.executionHostId ?? null
     })
     return hostIsCertain
@@ -1067,10 +1071,16 @@ async function preflightWorkspaceCleanupCandidates(
           failure: {
             worktreeId,
             displayName: preflight.candidate.displayName,
-            message: translate(
-              'auto.store.slices.workspace.cleanup.hostUnresolved',
-              'Orca cannot tell which host owns this workspace. Refresh projects and review it again.'
-            )
+            message:
+              distinctKnownHostCount > 1
+                ? translate(
+                    'auto.store.slices.workspace.cleanup.hostCollision',
+                    'Error: this workspace exists on multiple hosts at the same path'
+                  )
+                : translate(
+                    'auto.store.slices.workspace.cleanup.hostUnresolved',
+                    'Orca cannot tell which host owns this workspace. Refresh projects and review it again.'
+                  )
           }
         }
   })
