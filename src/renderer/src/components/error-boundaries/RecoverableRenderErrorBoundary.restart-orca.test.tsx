@@ -13,8 +13,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LazyChunkLoadError } from '@/lib/lazy-with-retry'
+import {
+  isIntentionalAppRestartInProgress,
+  registerUpdaterBeforeUnloadBypass
+} from '@/lib/updater-beforeunload'
 import { RecoverableRenderErrorBoundary } from './RecoverableRenderErrorBoundary'
 import { RELAUNCH_SETTLE_GRACE_MS } from './StaleChunkRecoveryActions'
+import { ORCA_APP_RESTART_STARTED_EVENT } from '../../../../shared/updater-renderer-events'
 
 const reportCrashMock = vi.hoisted(() => vi.fn())
 
@@ -48,6 +53,7 @@ describe('RecoverableRenderErrorBoundary Restart Orca button', () => {
   let root: Root | null = null
   let container: HTMLDivElement | null = null
   let consoleError: ReturnType<typeof vi.spyOn>
+  let unregisterRestartBypass = (): void => undefined
 
   beforeEach(() => {
     reportCrashMock.mockReset()
@@ -62,6 +68,8 @@ describe('RecoverableRenderErrorBoundary Restart Orca button', () => {
     root = null
     container = null
     delete (window as unknown as { api?: unknown }).api
+    unregisterRestartBypass()
+    unregisterRestartBypass = () => undefined
     consoleError.mockRestore()
     vi.useRealTimers()
   })
@@ -146,9 +154,13 @@ describe('RecoverableRenderErrorBoundary Restart Orca button', () => {
 
   it('gives the buttons back with a notice when the document survives a resolved relaunch', async () => {
     vi.useFakeTimers()
+    unregisterRestartBypass = registerUpdaterBeforeUnloadBypass()
     // Browser-fallback host shape: relaunch is an in-place reload that resolves
     // immediately; a broken document can swallow the navigation entirely.
-    const relaunch = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    const relaunch = vi.fn<() => Promise<void>>().mockImplementation(() => {
+      window.dispatchEvent(new Event(ORCA_APP_RESTART_STARTED_EVENT))
+      return Promise.resolve()
+    })
     ;(window as unknown as { api: unknown }).api = { app: { relaunch } }
 
     renderBoundaryWith(new LazyChunkLoadError(new SyntaxError("Unexpected token '}'")))
@@ -156,6 +168,7 @@ describe('RecoverableRenderErrorBoundary Restart Orca button', () => {
     const restart = findRestartButton(container!)
     act(() => restart?.click())
     expect(restart?.disabled).toBe(true)
+    expect(isIntentionalAppRestartInProgress()).toBe(true)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(RELAUNCH_SETTLE_GRACE_MS + 1)
@@ -163,11 +176,14 @@ describe('RecoverableRenderErrorBoundary Restart Orca button', () => {
     expect(findRestartButton(container!)?.disabled).toBe(false)
     expect(findRetryButton(container!)?.disabled).toBe(false)
     expect(container!.textContent).toContain("Restarting didn't complete.")
+    expect(container!.querySelector('[role="status"]')).not.toBeNull()
+    expect(isIntentionalAppRestartInProgress()).toBe(false)
 
     // The stall cleared the guard, so a second attempt is a fresh request.
     act(() => findRestartButton(container!)?.click())
     expect(relaunch).toHaveBeenCalledTimes(2)
     expect(container!.textContent).not.toContain("Restarting didn't complete.")
+    expect(isIntentionalAppRestartInProgress()).toBe(true)
   })
 
   it('does not leak the stalled-restart notice into a later error after a resetKey reset', async () => {

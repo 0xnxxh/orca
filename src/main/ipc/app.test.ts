@@ -229,18 +229,30 @@ describe('registerAppHandlers', () => {
   })
 
   it('schedules a single relaunch exit no matter how many surfaces invoke it', async () => {
-    registerAppHandlers({} as never, {})
+    let finishCleanup!: () => void
+    const onBeforeRelaunch = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve
+        })
+    )
+    registerAppHandlers({} as never, { onBeforeRelaunch })
 
     // Two surfaces (error-boundary Restart, hydration toast) can race a relaunch;
-    // each app.relaunch() registration would start another replacement instance.
+    // they must join the same checkpoint as well as the same replacement exit.
     const first = Promise.resolve(handlers.get('app:relaunch')?.(null))
     const second = Promise.resolve(handlers.get('app:relaunch')?.(null))
-    await first
-    await second
+    expect(onBeforeRelaunch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(relaunchAppMock).not.toHaveBeenCalled()
+
+    finishCleanup()
+    await Promise.all([first, second])
     const third = Promise.resolve(handlers.get('app:relaunch')?.(null))
     await third
     await vi.advanceTimersByTimeAsync(150)
 
+    expect(onBeforeRelaunch).toHaveBeenCalledTimes(1)
     expect(relaunchAppMock).toHaveBeenCalledTimes(1)
     expect(appExitMock).toHaveBeenCalledTimes(1)
   })

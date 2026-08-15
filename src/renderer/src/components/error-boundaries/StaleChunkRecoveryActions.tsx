@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
+import { ORCA_APP_RESTART_ABORTED_EVENT } from '../../../../shared/updater-renderer-events'
 
 // How long a clicked relaunch may leave this document alive before the fallback
 // takes the buttons back. An Electron relaunch tears the window down ~150ms after
@@ -52,7 +53,13 @@ export function StaleChunkRecoveryActions({ boundaryId, onRetry }: Props): React
       clearTimeout(relaunchSettleTimerRef.current)
       relaunchSettleTimerRef.current = null
     }
+    // The preload arms global unload/checkpoint bypasses before invoking main.
+    // A surviving document must restore them before returning control to the user.
+    window.dispatchEvent(new Event(ORCA_APP_RESTART_ABORTED_EVENT))
     relaunchRequestedRef.current = false
+    if (unmountedRef.current) {
+      return
+    }
     setRelaunching(false)
     setRelaunchStalled(true)
   }
@@ -114,7 +121,7 @@ export function StaleChunkRecoveryActions({ boundaryId, onRetry }: Props): React
         </Button>
       </div>
       {relaunchStalled ? (
-        <div className="max-w-md text-xs">
+        <div role="status" className="max-w-md text-xs">
           {translate(
             'auto.components.error.boundaries.RecoverableRenderErrorBoundary.restartStalled',
             "Restarting didn't complete. Try again, or retry this part of Orca."
