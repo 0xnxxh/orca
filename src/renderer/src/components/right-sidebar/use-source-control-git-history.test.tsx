@@ -11,7 +11,7 @@ vi.mock('@/runtime/runtime-git-client', () => ({
 }))
 vi.mock('@/lib/connection-context', () => ({ getConnectionId: () => undefined }))
 
-import { useSourceControlGitHistory } from './use-source-control-git-history'
+import { useSourceControlGitHistory } from './source-control/sync/use-git-history'
 import { deferred, flush, mountProbe, unmountProbes } from './source-control-hook-test-harness'
 import type { GitHistoryResult } from '../../../../shared/git-history-types'
 
