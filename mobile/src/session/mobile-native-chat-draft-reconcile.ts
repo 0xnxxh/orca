@@ -234,10 +234,7 @@ export function findLandedUnconfirmedSends(
   // (`[Image: source: …]` or no text) keys under '' so an empty-text send can
   // claim it.
   const messageIndexById = new Map<string, number>()
-  const userMessagesByText = new Map<
-    string,
-    Array<{ id: string; index: number; imageCount: number }>
-  >()
+  const userMessagesByText = new Map<string, { id: string; index: number; imageCount: number }[]>()
   for (const [index, message] of messages.entries()) {
     messageIndexById.set(message.id, index)
     if (message.role !== 'user') {
