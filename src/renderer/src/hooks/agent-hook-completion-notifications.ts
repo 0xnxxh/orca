@@ -11,6 +11,7 @@ import { collectLeafIdsInOrder } from '@/components/terminal-pane/layout-seriali
 import { createCodexAutoApprovalHookCompletionSuppressor } from '@/components/terminal-pane/codex-auto-approval-notification-suppression'
 import { dispatchAgentHookTerminalLifecycle } from '@/components/terminal-pane/agent-hook-terminal-lifecycle'
 import {
+  isAgentHookCompletionTrackingEnabled,
   shouldSyncAgentHookCompletionForStoreUpdate,
   type AgentHookCompletionStoreSnapshot
 } from './agent-hook-completion-store-sync'
@@ -33,8 +34,8 @@ type PaneCoordinatorLivenessSnapshot = Pick<
 
 const coordinatorsByPaneKey = new Map<string, CoordinatorEntry>()
 const paneKeysRequiringFreshWorking = new Set<string>()
-let wasAgentTaskCompleteTrackingEnabled = isAgentTaskCompleteTrackingEnabled()
-let requireFreshWorkingForNewTrackingCoordinators = !wasAgentTaskCompleteTrackingEnabled
+let wasAgentTaskCompleteTrackingEnabled: boolean | undefined
+let requireFreshWorkingForNewTrackingCoordinators = false
 let lastPrunedLivenessSnapshot: PaneCoordinatorLivenessSnapshot | null = null
 
 function disposeCoordinatorForPaneKey(paneKey: string): void {
@@ -111,9 +112,12 @@ function isAgentTaskCompleteTrackingEnabled(): boolean {
   return isAgentTaskCompleteNotificationEnabled() || isTerminalAttentionEnabled()
 }
 
-export function syncAgentHookCompletionNotificationSettings(): boolean {
-  pruneClosedPaneCoordinators()
-  const enabled = isAgentTaskCompleteTrackingEnabled()
+function syncAgentTaskCompleteTrackingEnabled(enabled: boolean): void {
+  if (wasAgentTaskCompleteTrackingEnabled === undefined) {
+    wasAgentTaskCompleteTrackingEnabled = enabled
+    requireFreshWorkingForNewTrackingCoordinators = !enabled
+    return
+  }
   if (enabled !== wasAgentTaskCompleteTrackingEnabled) {
     requireFreshWorkingForNewTrackingCoordinators = true
     for (const paneKey of coordinatorsByPaneKey.keys()) {
@@ -121,6 +125,12 @@ export function syncAgentHookCompletionNotificationSettings(): boolean {
     }
   }
   wasAgentTaskCompleteTrackingEnabled = enabled
+}
+
+export function syncAgentHookCompletionNotificationSettings(): boolean {
+  pruneClosedPaneCoordinators()
+  const enabled = isAgentTaskCompleteTrackingEnabled()
+  syncAgentTaskCompleteTrackingEnabled(enabled)
   return enabled
 }
 
@@ -132,6 +142,9 @@ export function syncAgentHookCompletionNotificationsForStoreUpdate(
   // module-scoped completion coordinators stale.
   if (!shouldSyncAgentHookCompletionForStoreUpdate(current, previous)) {
     return false
+  }
+  if (wasAgentTaskCompleteTrackingEnabled === undefined) {
+    syncAgentTaskCompleteTrackingEnabled(isAgentHookCompletionTrackingEnabled(previous))
   }
   syncAgentHookCompletionNotificationSettings()
   return true
@@ -289,10 +302,12 @@ export function observeAgentHookCompletionForNotification({
     }
   }
 
-  const trackingEnabled =
-    seedOnly === true
-      ? isAgentTaskCompleteTrackingEnabled()
-      : syncAgentHookCompletionNotificationSettings()
+  const trackingEnabled = isAgentTaskCompleteTrackingEnabled()
+  if (seedOnly === true) {
+    syncAgentTaskCompleteTrackingEnabled(trackingEnabled)
+  } else {
+    syncAgentHookCompletionNotificationSettings()
+  }
 
   let entry = coordinatorsByPaneKey.get(paneKey)
   if (!entry || entry.worktreeId !== worktreeId) {
