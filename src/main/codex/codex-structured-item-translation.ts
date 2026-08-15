@@ -74,6 +74,10 @@ export class CodexTurnOrdinals {
   }
 }
 
+function readRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
 /**
  * Durable identity for a Codex item, or null for one that has none.
  *
@@ -196,6 +200,40 @@ function commandItem(item: CodexThreadItem): CodexJournalItem {
   }
 }
 
+function fileChangeItem(item: CodexThreadItem): CodexJournalItem {
+  const changes = Array.isArray(item.changes)
+    ? item.changes.flatMap((change) => {
+        const record = typeof change === 'object' && change !== null ? readRecord(change) : {}
+        const path = readString(record, 'path')
+        const diff = readString(record, 'diff')
+        return path && diff ? [{ path, diff }] : []
+      })
+    : []
+  if (changes.length === 0) {
+    return {
+      body: {
+        kind: 'tool-call',
+        name: 'apply_patch',
+        input: { changes: item.changes ?? null },
+        state: commandState(item)
+      },
+      blobs: [],
+      handled: true
+    }
+  }
+  const patch = changes.map((change) => change.diff).join('\n')
+  const bounded = boundInlineText(patch, DEFAULT_JOURNAL_PAYLOAD_LIMITS).bounded
+  return {
+    body: {
+      kind: 'diff',
+      path: changes.length === 1 ? changes[0]!.path : `${changes.length} files`,
+      patch: bounded
+    },
+    blobs: bounded.truncated ? [{ digest: bounded.digest, payload: patch }] : [],
+    handled: true
+  }
+}
+
 /**
  * Journal body for a Codex item, or null for one with nothing to render.
  *
@@ -218,18 +256,9 @@ export function codexJournalItem(item: CodexThreadItem): CodexJournalItem {
     return commandItem(item)
   }
   if (item.type === 'fileChange') {
-    return {
-      body: {
-        kind: 'tool-call',
-        name: 'apply_patch',
-        input: { changes: item.changes ?? null },
-        state: commandState(item)
-      },
-      blobs: [],
-      handled: true
-    }
+    return fileChangeItem(item)
   }
-  if (item.type === 'reasoning') {
+  if (item.type === 'reasoning' || item.type === 'plan') {
     const text =
       readTextContent(item, 'text') ??
       readTextContent(item, 'summary') ??
@@ -254,4 +283,27 @@ export function codexItemBody(item: CodexThreadItem): AgentJournalItemBody | nul
 /** Snapshot body for text still streaming, before its item completes. */
 export function codexStreamingMessageBody(text: string): AgentJournalItemBody {
   return { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }
+}
+
+/** Snapshot body for any item-level stream, keyed onto its parent item. */
+export function codexStreamingJournalItem(item: CodexThreadItem, text: string): CodexJournalItem {
+  if (item.type === 'agentMessage') {
+    return { body: codexStreamingMessageBody(text), blobs: [], handled: true }
+  }
+  if (item.type === 'commandExecution') {
+    return commandItem({ ...item, aggregatedOutput: text })
+  }
+  if (item.type === 'fileChange') {
+    const path = Array.isArray(item.changes)
+      ? readString(readRecord(item.changes[0]), 'path')
+      : null
+    const bounded = boundInlineText(text, DEFAULT_JOURNAL_PAYLOAD_LIMITS).bounded
+    return {
+      body: { kind: 'diff', path: path ?? 'pending patch', patch: bounded },
+      blobs: bounded.truncated ? [{ digest: bounded.digest, payload: text }] : [],
+      handled: true
+    }
+  }
+  const bounded = boundInlineText(text, DEFAULT_JOURNAL_PAYLOAD_LIMITS)
+  return { body: { kind: 'status', text: bounded.text }, blobs: [], handled: true }
 }

@@ -3,6 +3,7 @@ import type { ClaudeStreamJsonFrameKind } from './claude-stream-json-frame-schem
 
 export type ProviderFrameClassification =
   | 'timeline-substantive'
+  | 'stream-into-item'
   | 'status-chrome'
   | 'suppressed-benign'
   | 'error-surface'
@@ -41,15 +42,15 @@ export const PROVIDER_FRAME_CLASSIFICATIONS = {
     'item/completed': 'timeline-substantive',
     'rawResponseItem/completed': 'suppressed-benign',
     'rawResponse/completed': 'suppressed-benign',
-    'item/agentMessage/delta': 'timeline-substantive',
-    'item/plan/delta': 'timeline-substantive',
-    'command/exec/outputDelta': 'timeline-substantive',
-    'process/outputDelta': 'timeline-substantive',
+    'item/agentMessage/delta': 'stream-into-item',
+    'item/plan/delta': 'stream-into-item',
+    'command/exec/outputDelta': 'stream-into-item',
+    'process/outputDelta': 'stream-into-item',
     'process/exited': 'timeline-substantive',
-    'item/commandExecution/outputDelta': 'timeline-substantive',
-    'item/commandExecution/terminalInteraction': 'timeline-substantive',
-    'item/fileChange/outputDelta': 'timeline-substantive',
-    'item/fileChange/patchUpdated': 'timeline-substantive',
+    'item/commandExecution/outputDelta': 'stream-into-item',
+    'item/commandExecution/terminalInteraction': 'stream-into-item',
+    'item/fileChange/outputDelta': 'stream-into-item',
+    'item/fileChange/patchUpdated': 'stream-into-item',
     'serverRequest/resolved': 'suppressed-benign',
     'item/mcpToolCall/progress': 'status-chrome',
     'mcpServer/oauthLogin/completed': 'status-chrome',
@@ -61,9 +62,9 @@ export const PROVIDER_FRAME_CLASSIFICATIONS = {
     'externalAgentConfig/import/progress': 'status-chrome',
     'externalAgentConfig/import/completed': 'status-chrome',
     'fs/changed': 'suppressed-benign',
-    'item/reasoning/summaryTextDelta': 'timeline-substantive',
-    'item/reasoning/summaryPartAdded': 'timeline-substantive',
-    'item/reasoning/textDelta': 'timeline-substantive',
+    'item/reasoning/summaryTextDelta': 'stream-into-item',
+    'item/reasoning/summaryPartAdded': 'stream-into-item',
+    'item/reasoning/textDelta': 'stream-into-item',
     'thread/compacted': 'status-chrome',
     'model/rerouted': 'status-chrome',
     'model/verification': 'status-chrome',
@@ -77,9 +78,9 @@ export const PROVIDER_FRAME_CLASSIFICATIONS = {
     'fuzzyFileSearch/sessionCompleted': 'suppressed-benign',
     'thread/realtime/started': 'status-chrome',
     'thread/realtime/itemAdded': 'timeline-substantive',
-    'thread/realtime/transcript/delta': 'timeline-substantive',
+    'thread/realtime/transcript/delta': 'stream-into-item',
     'thread/realtime/transcript/done': 'timeline-substantive',
-    'thread/realtime/outputAudio/delta': 'timeline-substantive',
+    'thread/realtime/outputAudio/delta': 'stream-into-item',
     'thread/realtime/sdp': 'suppressed-benign',
     'thread/realtime/error': 'error-surface',
     'thread/realtime/closed': 'status-chrome',
@@ -93,10 +94,10 @@ export const PROVIDER_FRAME_CLASSIFICATIONS = {
     'message:result': 'status-chrome',
     'message:system:init': 'status-chrome',
     'message:stream_event:message_start': 'status-chrome',
-    'message:stream_event:message_delta': 'status-chrome',
+    'message:stream_event:message_delta': 'stream-into-item',
     'message:stream_event:message_stop': 'status-chrome',
     'message:stream_event:content_block_start': 'status-chrome',
-    'message:stream_event:content_block_delta': 'timeline-substantive',
+    'message:stream_event:content_block_delta': 'stream-into-item',
     'message:stream_event:content_block_stop': 'status-chrome',
     'message:system:compact_boundary': 'status-chrome',
     'message:system:status': 'status-chrome',
@@ -183,6 +184,10 @@ function notificationKind(kind: string): string {
   return kind.startsWith('notification:') ? kind.slice('notification:'.length) : kind
 }
 
+export function isDeltaShapedProviderFrameKind(kind: string): boolean {
+  return notificationKind(kind).toLowerCase().endsWith('delta')
+}
+
 function catalogClassification(
   provider: string,
   kind: string
@@ -203,6 +208,9 @@ export function classifyProviderFrame(
   kind: string,
   payload: unknown
 ): ProviderFrameClassification {
+  if (isDeltaShapedProviderFrameKind(kind)) {
+    return 'stream-into-item'
+  }
   if (hasProviderError(payload)) {
     return 'error-surface'
   }

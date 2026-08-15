@@ -72,6 +72,20 @@ describe('unhandled provider frame journal fallback', () => {
     ).toBeNull()
   })
 
+  it('never creates generic rows for known or unknown delta-shaped frames', () => {
+    expect(
+      unhandledProviderFrameJournalItem('codex', 'notification:item/commandExecution/outputDelta', {
+        itemId: 'exec-1',
+        delta: 'x'
+      })
+    ).toBeNull()
+    expect(
+      unhandledProviderFrameJournalItem('codex', 'notification:item/future/outputDelta', {
+        error: 'still a delta'
+      })
+    ).toBeNull()
+  })
+
   it('renders codex systemError and Claude error result variants', () => {
     const codex = unhandledProviderFrameJournalItem('codex', 'notification:thread/status/changed', {
       threadId: 'thread-1',

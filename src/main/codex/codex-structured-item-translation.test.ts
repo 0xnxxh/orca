@@ -171,6 +171,24 @@ describe('codex item bodies', () => {
     ).toMatchObject({ state: 'failed' })
   })
 
+  it('maps file changes to one bounded diff item', () => {
+    expect(
+      codexItemBody({
+        type: 'fileChange',
+        id: 'patch-1',
+        status: 'completed',
+        changes: [
+          { path: 'src/a.ts', diff: '@@ a @@' },
+          { path: 'src/b.ts', diff: '@@ b @@' }
+        ]
+      })
+    ).toMatchObject({
+      kind: 'diff',
+      path: '2 files',
+      patch: { head: '@@ a @@\n@@ b @@', truncated: false }
+    })
+  })
+
   it('renders reasoning as status and exposes an unknown item as a provider frame', () => {
     expect(codexItemBody({ type: 'reasoning', id: 'r', text: 'thinking' })).toEqual({
       kind: 'status',
