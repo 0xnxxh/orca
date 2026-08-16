@@ -42,10 +42,20 @@ export function normalizeNotificationSettings(value: unknown): NotificationSetti
     typeof rawVolume === 'number' && Number.isFinite(rawVolume)
       ? Math.min(100, Math.max(0, rawVolume))
       : defaults.customSoundVolume
+  // Why field-by-field: a blanket spread let a type-flipped value on disk through, so `enabled: "false"`
+  // stayed truthy and `customSoundPath: 42` reached the sound loader.
+  const booleanOr = (raw: unknown, fallback: boolean): boolean =>
+    typeof raw === 'boolean' ? raw : fallback
   return {
-    ...defaults,
-    ...candidate,
+    enabled: booleanOr(candidate.enabled, defaults.enabled),
+    agentTaskComplete: booleanOr(candidate.agentTaskComplete, defaults.agentTaskComplete),
+    terminalBell: booleanOr(candidate.terminalBell, defaults.terminalBell),
+    suppressWhenFocused: booleanOr(candidate.suppressWhenFocused, defaults.suppressWhenFocused),
     customSoundId,
+    customSoundPath:
+      typeof candidate.customSoundPath === 'string'
+        ? candidate.customSoundPath
+        : defaults.customSoundPath,
     customSoundVolume
   }
 }

@@ -67,6 +67,10 @@ export function getCanonicalUserDataPath(): string {
  * Copy legacy mobile pairing credentials into the canonical userData directory.
  *
  * Copies the registry and E2EE keypair forward as a pair so an update doesn't force a re-pair or mix devices with the wrong key.
+ *
+ * Sources are deliberately left in place: a copy-then-delete has no atomic form across the userData
+ * dirs, and losing the originals to a crash mid-migration would strand every paired device. They stay
+ * readable by an older build the user rolls back to; removing them is a separate cleanup decision.
  */
 export function migrateMobilePairingDataToCanonicalUserDataPath(sourceUserDataDir: string): void {
   const targetUserDataDir = getCanonicalUserDataPath()

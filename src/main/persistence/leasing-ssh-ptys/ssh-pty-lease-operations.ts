@@ -38,9 +38,14 @@ export function upsertSshRemotePtyLease(
   )
   const existing =
     existingIndex !== -1 ? operations.state.sshRemotePtyLeases[existingIndex] : undefined
+  // Why: callers pass optional fields as explicit `undefined`, which would blank the stored tabId/leafId
+  // (and friends) when re-upserting an existing lease.
+  const definedLease = Object.fromEntries(
+    Object.entries(normalizedLease).filter(([, value]) => value !== undefined)
+  ) as typeof normalizedLease
   const next: SshRemotePtyLease = {
     ...existing,
-    ...normalizedLease,
+    ...definedLease,
     createdAt: existing?.createdAt ?? normalizedLease.createdAt ?? now,
     updatedAt: normalizedLease.updatedAt ?? now
   }

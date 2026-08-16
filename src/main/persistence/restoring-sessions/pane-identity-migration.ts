@@ -1,7 +1,6 @@
 import type { LegacyPaneKeyAliasEntry } from '../../../shared/persisted-state-types'
 import type { TerminalLayoutSnapshot } from '../../../shared/terminal-tab-types'
 import type { WorkspaceSessionState } from '../../../shared/workspace-session-state-types'
-import type { MigrationUnsupportedPtyEntry } from '../../../shared/agent-status-types'
 import { isTerminalLeafId, makePaneKey } from '../../../shared/stable-pane-id'
 import { agentHookServer } from '../../agent-hooks/server'
 import { collectLayoutLeafIdsInOrder, firstLayoutLeafId } from './terminal-layout-normalization'
@@ -18,18 +17,14 @@ export function findWorktreeIdForTab(
   return undefined
 }
 
-export type PaneIdentityMigrationEntries = {
-  migrationUnsupportedEntries: MigrationUnsupportedPtyEntry[]
-  legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[]
-}
-
-export function collectMigrationUnsupportedPtyEntries(args: {
+/** Bridges a tab's legacy numeric pane keys to stable ones; returns the alias rows worth persisting. */
+export function registerLegacyPaneKeyAliasesForTab(args: {
   session: WorkspaceSessionState
   tabId: string
   inputLayout: TerminalLayoutSnapshot
   normalizedLayout: TerminalLayoutSnapshot
   leafIdByInputLeafId: Map<string, string>
-}): PaneIdentityMigrationEntries {
+}): LegacyPaneKeyAliasEntry[] {
   const worktreeId = findWorktreeIdForTab(args.session, args.tabId)
   const tab = worktreeId
     ? args.session.tabsByWorktree?.[worktreeId]?.find((entry) => entry.id === args.tabId)
@@ -111,6 +106,5 @@ export function collectMigrationUnsupportedPtyEntries(args: {
       }
     }
   }
-  // Why: legacy numeric pane keys are now bridged by aliases, not persisted as restart-required rows.
-  return { migrationUnsupportedEntries: [], legacyPaneKeyAliasEntries }
+  return legacyPaneKeyAliasEntries
 }

@@ -159,6 +159,9 @@ export function migrateWorktreeIdentity(
   const movedLineage = state.worktreeLineageById[newWorktreeId]
   if (movedLineage && movedLineage.worktreeId === oldWorktreeId) {
     movedLineage.worktreeId = newWorktreeId
+    // Why: moveKey reports nothing when the record already sat under the new key, so flag the repair
+    // ourselves or the caller skips the save and the stale id comes back on reload.
+    changed = true
   }
   // Why: children carry this as parentWorktreeId; keep the denormalized path-derived id consistent (parentWorktreeInstanceId is stable).
   for (const lineage of Object.values(state.worktreeLineageById)) {

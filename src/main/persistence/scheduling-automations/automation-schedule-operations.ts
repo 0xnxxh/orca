@@ -17,7 +17,7 @@ export function advanceAutomationNextRun(
   }
   const current = state.automations[index]
   const nextRunAt = nextAutomationOccurrenceAfter(current.rrule, current.dtstart, now)
-  const updated = { ...current, nextRunAt, updatedAt: Date.now() }
+  const updated = { ...current, nextRunAt, updatedAt: now }
   state.automations[index] = updated
   flush()
   return updated

@@ -15,6 +15,7 @@ import { getRepoExecutionHostId, normalizeExecutionHostId } from '../../../share
 import { normalizeProjectRuntimePreference } from '../../../shared/project-execution-runtime'
 import type { StoreOwnedPersistedState } from '../loading-store/store-owned-state'
 import { makeProjectHostSetupId } from './project-host-compatibility'
+import { repoGitUsernameCacheKey } from './repo-hydration'
 
 export type ProjectHostMutationOperations = {
   state: StoreOwnedPersistedState
@@ -214,8 +215,9 @@ export class ProjectHostPersistenceOperations {
     if (!repo) {
       return false
     }
-    const previous = this.gitUsernameCache.get(repo.path) ?? repo.gitUsername ?? ''
-    this.gitUsernameCache.set(repo.path, username)
+    const cacheKey = repoGitUsernameCacheKey(repo)
+    const previous = this.gitUsernameCache.get(cacheKey) ?? repo.gitUsername ?? ''
+    this.gitUsernameCache.set(cacheKey, username)
     if (previous === username) {
       return false
     }
