@@ -167,24 +167,37 @@ export function matchesWorkspaceCleanupLocation(
     return false
   }
   const prefix = filter.pathPrefix.trim()
-  return prefix.length === 0 || matchesWorkspaceCleanupPathPrefix(facets.comparisonPath, prefix)
+  return (
+    prefix.length === 0 ||
+    matchesWorkspaceCleanupPathPrefix(facets.path, facets.comparisonPath, prefix)
+  )
 }
 
 /**
- * Compares a typed prefix against a candidate's comparison path.
+ * Compares a typed prefix against one candidate, by literal spelling then by
+ * normalized spelling.
  *
- * Why not raw `startsWith`: the same workspace has several valid spellings —
- * Windows drive/UNC case and backslashes, doubled separators, and the NFD form
- * macOS file pickers hand back for a path Orca stored as NFC. Any of those would
- * silently hide rows the user can see on disk.
+ * Why normalize at all: the same workspace has several valid spellings — Windows
+ * drive/UNC case and backslashes, doubled separators, and the NFD form macOS file
+ * pickers hand back for a path Orca stored as NFC. Any of those silently hid rows.
+ *
+ * Why still accept the literal spelling: normalizing may only ever reveal rows,
+ * never hide one the literal comparison showed. A half-typed Windows prefix (`C`,
+ * `C:`, a first `\`) cannot prove its own flavor, and a WSL comparison key folds
+ * only the distro segment — so a normalized-only test would blank the list
+ * mid-keystroke on exactly the rows the user is aiming at.
  *
  * `comparisonPath` must already be normalized; `normalizeRuntimePathForComparison`
  * is not idempotent for WSL UNC paths.
  */
 export function matchesWorkspaceCleanupPathPrefix(
+  rawPath: string,
   comparisonPath: string,
   typedPrefix: string
 ): boolean {
+  if (rawPath.startsWith(typedPrefix)) {
+    return true
+  }
   // Why: a trailing separator is how a user pins the prefix to a whole segment,
   // so `/repo/` must not start matching `/repository`. Without one this stays a
   // free-text prefix, which is what the "Path starts with" control promises.

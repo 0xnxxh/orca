@@ -576,3 +576,54 @@ describe('path prefix spelling', () => {
     expect(showsPath('/repo/alpha', '/other')).toBe(false)
   })
 })
+
+describe('path prefix never hides a literally-matching row', () => {
+  function showsPath(candidatePath: string, pathPrefix: string): boolean {
+    return matchesWorkspaceCleanupFilters(
+      makeFacets({
+        candidate: { worktreeId: `repo-1::${candidatePath}`, path: candidatePath },
+        worktree: { id: `repo-1::${candidatePath}` }
+      }),
+      filters((s) => {
+        s.safety.dismissed = 'any'
+        s.location.pathPrefix = pathPrefix
+      }),
+      FACET_NOW
+    )
+  }
+
+  // Why: these arrive one keystroke at a time and cannot prove Windows syntax on
+  // their own, so flavor-inferring from the typed text alone blanks the drive.
+  it('keeps matching half-typed Windows drive prefixes', () => {
+    for (const prefix of ['C', 'C:', 'C:\\', 'C:\\U', 'C:\\Users']) {
+      expect(showsPath('C:\\Users\\Alice\\repo', prefix)).toBe(true)
+    }
+  })
+
+  it('keeps matching a UNC candidate from the first typed backslash', () => {
+    for (const prefix of ['\\', '\\\\', '\\\\server', '\\\\server\\share']) {
+      expect(showsPath('\\\\server\\share\\x', prefix)).toBe(true)
+    }
+  })
+
+  // Why: backslash is a legal POSIX filename character, including on SSH and
+  // folder workspaces, so it must not be read as a segment separator there.
+  it('keeps matching a POSIX prefix ending in a literal backslash', () => {
+    expect(showsPath('/repo/foo\\bar', '/repo/foo\\')).toBe(true)
+    expect(showsPath('/repo/foo\\bar', '/repo/foo')).toBe(true)
+  })
+
+  // Why: only the distro segment of a WSL comparison key is case-folded, so the
+  // remainder must keep comparing case-sensitively against the literal path.
+  it('keeps matching a WSL UNC candidate below the distro alias', () => {
+    const wsl = '//wsl.localhost/Ubuntu/home/Ada/Repo'
+    expect(showsPath(wsl, '//wsl.localhost/Ubuntu/home/Ada')).toBe(true)
+    expect(showsPath(wsl, '//wsl.localhost/ubuntu/home/Ada')).toBe(true)
+  })
+
+  it('still refuses a prefix that matches neither spelling', () => {
+    expect(showsPath('C:\\Users\\Alice\\repo', 'D:')).toBe(false)
+    expect(showsPath('/repo/foo\\bar', '/other\\')).toBe(false)
+    expect(showsPath('/repository/x', '/repo/')).toBe(false)
+  })
+})
