@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
+import { FAKE_RUNTIME_DIR } from './daemon-init-test-harness'
 
 const {
   probeSocketExistsMock,
@@ -54,6 +55,10 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
         if (event === 'connect') {
           queueMicrotask(() => cb())
         }
+        return this
+      },
+      off(event: string, cb: () => void) {
+        handlers[event] = handlers[event]?.filter((handler) => handler !== cb) ?? []
         return this
       },
       removeListener(event: string, cb: () => void) {
