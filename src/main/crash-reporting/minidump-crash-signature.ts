@@ -113,12 +113,12 @@ function findEmbeddedCheckMessage(dump: Buffer): LocatedCheckMessage | undefined
     let from = 0
     for (let inspected = 0; inspected < MAX_MARKERS_PER_SEVERITY; inspected += 1) {
       const markerAt = dump.indexOf(marker, from)
-      if (markerAt < 0) {
+      if (markerAt === -1) {
         break
       }
       from = markerAt + marker.length
       const start = dump.lastIndexOf(0x5b, markerAt)
-      if (start < 0 || markerAt - start > MAX_LOG_PREFIX_BYTES) {
+      if (start === -1 || markerAt - start > MAX_LOG_PREFIX_BYTES) {
         continue
       }
       let end = markerAt + marker.length
