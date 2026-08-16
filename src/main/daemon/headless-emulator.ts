@@ -302,6 +302,23 @@ export class HeadlessEmulator {
     return lines
   }
 
+  getVisibleTextBeforeCursor(): string {
+    const buffer = this.terminal.buffer.active
+    const cursorRow = buffer.baseY + buffer.cursorY
+    const startRow = buffer.viewportY
+    let text = ''
+    for (let row = startRow; row <= cursorRow; row += 1) {
+      const line = buffer.getLine(row)
+      if (!line) {
+        continue
+      }
+      const end = row === cursorRow ? buffer.cursorX : undefined
+      const rowText = line.translateToString(true, 0, end)
+      text += row > startRow && !line.isWrapped ? `\n${rowText}` : rowText
+    }
+    return text
+  }
+
   getBufferTailLines(limit: number): string[] {
     const buffer = this.terminal.buffer.active
     const start = Math.max(0, buffer.length - Math.max(0, Math.floor(limit)))

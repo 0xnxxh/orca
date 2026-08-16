@@ -101,6 +101,11 @@ import {
   buildAgentPromptPasteBytes
 } from '../../shared/agent-prompt-injection'
 import {
+  agentPromptActivityChanged,
+  type AgentPromptActivity,
+  verifyAgentPromptSubmission
+} from './agent-prompt-submission-verification'
+import {
   awaitWindowsHostGitEnvironmentReady,
   gitExecFileAsync,
   gitSpawnAfterWindowsEnvironmentReady,
@@ -1726,6 +1731,7 @@ export type RuntimeTerminalDataMeta = Readonly<{
 
 type RuntimeVisibleTerminalState = {
   lines: string[]
+  textBeforeCursor: string
   isAlternateScreen: boolean
   sequence: number
   generation: number
@@ -3129,6 +3135,10 @@ export class OrcaRuntimeService {
   private titleObservationSequence = 0
   private headlessTerminals = new Map<string, RuntimeHeadlessTerminal>()
   private ptyOutputSequenceById = new Map<string, number>()
+  private agentPromptLifecycleByPtyId = new Map<
+    string,
+    { status: AgentStatus | null; sequence: number }
+  >()
   private providerSequenceInitializedPtys = new Set<string>()
   private providerSequenceOffsetByPtyId = new Map<string, number>()
   private providerSnapshotPreferredPtys = new Set<string>()
@@ -11466,6 +11476,7 @@ export class OrcaRuntimeService {
     const identityOnlyTitle = this.isLiveCursorNativeTitle(rawTitle, meta)
     const recordedTitle = identityOnlyTitle ? null : normalizedTitle
     const agentStatus = identityOnlyTitle ? null : detectAgentStatusFromTitle(rawTitle)
+    this.recordAgentPromptLifecycleState(ptyId, agentStatus)
     let ptyRecordChanged = false
     const pty = this.ptysById.get(ptyId)
     if (pty) {
@@ -11581,6 +11592,7 @@ export class OrcaRuntimeService {
     this.oscTitleScanTailByPtyId.delete(ptyId)
     this.osc7ScanTailByPtyId.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
+    this.agentPromptLifecycleByPtyId.delete(ptyId)
     const pty = this.ptysById.get(ptyId)
     if (pty) {
       pty.lastOscTitle = null
@@ -11739,6 +11751,10 @@ export class OrcaRuntimeService {
     }
     let retainedChanged = false
     for (const payload of chunk.payloads) {
+      this.recordAgentPromptLifecycleState(
+        ptyId,
+        mapExplicitAgentStateToRuntimeTerminalStatus(payload.state)
+      )
       for (const target of targets.values()) {
         retainedChanged =
           this.retainAgentRowSnapshot(
@@ -11822,6 +11838,18 @@ export class OrcaRuntimeService {
     return this.ptyOutputSequenceById.get(ptyId) ?? 0
   }
 
+  private recordAgentPromptLifecycleState(ptyId: string, status: AgentStatus | null): void {
+    const current = this.agentPromptLifecycleByPtyId.get(ptyId)
+    if (!current) {
+      this.agentPromptLifecycleByPtyId.set(ptyId, { status, sequence: 0 })
+    } else if (current.status !== status) {
+      this.agentPromptLifecycleByPtyId.set(ptyId, {
+        status,
+        sequence: current.sequence + 1
+      })
+    }
+  }
+
   private getPtyLifecycleGeneration(ptyId: string): number {
     const existing = this.ptyLifecycleGenerationById.get(ptyId)
     if (existing !== undefined) {
@@ -11834,6 +11862,7 @@ export class OrcaRuntimeService {
 
   private advancePtyLifecycleGeneration(ptyId: string): void {
     this.ptyLifecycleGenerationById.set(ptyId, this.nextPtyLifecycleGeneration++)
+    this.agentPromptLifecycleByPtyId.delete(ptyId)
     this.legacyWorkerRecoveredPtys.delete(ptyId)
     // Why: a respawn under the same session id needs its own subscriber-driven attach.
     this.subscriberDrivenProviderAttachesByPtyId.delete(ptyId)
@@ -13048,6 +13077,7 @@ export class OrcaRuntimeService {
         ? { ...headlessState, isAlternateScreen: false }
         : {
             lines: [],
+            textBeforeCursor: '',
             isAlternateScreen: false,
             sequence: outputSequence,
             generation
@@ -13075,12 +13105,12 @@ export class OrcaRuntimeService {
         return liveState
       }
     }
-    const lines = await this.parseVisibleSnapshotLines(snapshot)
+    const parsed = await this.parseVisibleSnapshotContent(snapshot)
     if (this.getPtyLifecycleGeneration(ptyId) !== generation) {
       return null
     }
     const visibleState: RuntimeVisibleTerminalState = {
-      lines,
+      ...parsed,
       isAlternateScreen: snapshot.alternateScreen ?? false,
       sequence: snapshot.seq,
       generation
@@ -13108,19 +13138,20 @@ export class OrcaRuntimeService {
     }
     return {
       lines: visibleNonBlankTerminalLines(state.emulator.getVisibleLines()),
+      textBeforeCursor: state.emulator.getVisibleTextBeforeCursor(),
       isAlternateScreen: state.emulator.isAlternateScreen,
       sequence: state.outputSequence,
       generation
     }
   }
 
-  private async parseVisibleSnapshotLines(snapshot: {
+  private async parseVisibleSnapshotContent(snapshot: {
     data: string
     cols: number
     rows: number
-  }): Promise<string[]> {
+  }): Promise<Pick<RuntimeVisibleTerminalState, 'lines' | 'textBeforeCursor'>> {
     if (snapshot.data.length === 0) {
-      return []
+      return { lines: [], textBeforeCursor: '' }
     }
     const emulator = new HeadlessEmulator({
       cols: snapshot.cols,
@@ -13129,10 +13160,21 @@ export class OrcaRuntimeService {
     })
     try {
       await emulator.write(`\x1b[2J\x1b[3J\x1b[H${snapshot.data}`)
-      return visibleNonBlankTerminalLines(emulator.getVisibleLines())
+      return {
+        lines: visibleNonBlankTerminalLines(emulator.getVisibleLines()),
+        textBeforeCursor: emulator.getVisibleTextBeforeCursor()
+      }
     } finally {
       emulator.dispose()
     }
+  }
+
+  private async parseVisibleSnapshotLines(snapshot: {
+    data: string
+    cols: number
+    rows: number
+  }): Promise<string[]> {
+    return (await this.parseVisibleSnapshotContent(snapshot)).lines
   }
 
   private async readRendererVisibleSnapshotLines(ptyId: string): Promise<string[]> {
@@ -17847,14 +17889,20 @@ export class OrcaRuntimeService {
     } = {}
   ): Promise<RuntimeTerminalSend> {
     const payload = buildAgentPromptPasteBytes(prompt)
-    const bytesWritten = Buffer.byteLength(`${payload}${AGENT_PROMPT_SUBMIT}`, 'utf8')
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
       if (!pty.pty.connected) {
         throw new Error('terminal_not_writable')
       }
       await assertTerminalInputWithinLimitWithYield(payload)
-      await this.writeTerminalAgentPrompt(pty.pty.ptyId, payload, options)
+      const submits = await this.writeTerminalAgentPrompt(
+        handle,
+        pty.pty.ptyId,
+        prompt,
+        payload,
+        options
+      )
+      const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
       return { handle, accepted: true, bytesWritten }
     }
 
@@ -17868,7 +17916,14 @@ export class OrcaRuntimeService {
     if (await this.isLeafPtyProvenAbsent(leaf.ptyId)) {
       throw new Error('terminal_not_writable')
     }
-    await this.writeTerminalAgentPrompt(leaf.ptyId, payload, options)
+    const submits = await this.writeTerminalAgentPrompt(
+      handle,
+      leaf.ptyId,
+      prompt,
+      payload,
+      options
+    )
+    const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
     return { handle, accepted: true, bytesWritten }
   }
 
@@ -18424,13 +18479,15 @@ export class OrcaRuntimeService {
   }
 
   private async writeTerminalAgentPrompt(
+    handle: string,
     ptyId: string,
+    prompt: string,
     pastePayload: string,
     options: {
       beforeWrite?: (ptyId: string) => void | Promise<void>
       suffixFailureError?: string
     } = {}
-  ): Promise<void> {
+  ): Promise<number> {
     const renderGate = this.createAgentPromptRenderGate(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false
@@ -18476,9 +18533,62 @@ export class OrcaRuntimeService {
       }
       throw error
     }
+    const baseline = this.getAgentPromptActivity(handle, ptyId)
+    if (baseline.status === 'permission') {
+      throw new Error('agent_prompt_blocked')
+    }
     const suffixWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
     if (!suffixWrote) {
       throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
+    }
+    const verification = await verifyAgentPromptSubmission({
+      baseline,
+      prompt,
+      readActivity: () => this.getAgentPromptActivity(handle, ptyId),
+      readTextBeforeCursor: async () => {
+        const visible = await this.readVisibleTerminalState(ptyId)
+        const current = this.getAgentPromptActivity(handle, ptyId)
+        if (current.generation !== baseline.generation) {
+          throw new Error('terminal_handle_stale')
+        }
+        return visible?.generation === baseline.generation ? visible.textBeforeCursor : null
+      },
+      retrySubmit: async (expected) => {
+        try {
+          await options.beforeWrite?.(ptyId)
+        } catch (error) {
+          if (options.suffixFailureError) {
+            throw new Error(options.suffixFailureError)
+          }
+          throw error
+        }
+        const current = this.getAgentPromptActivity(handle, ptyId)
+        if (current.generation !== expected.generation) {
+          throw new Error('terminal_handle_stale')
+        }
+        if (agentPromptActivityChanged(expected, current)) {
+          return 'activity'
+        }
+        const retryWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
+        if (!retryWrote) {
+          throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
+        }
+        return 'retried'
+      }
+    })
+    return verification.retried ? 2 : 1
+  }
+
+  private getAgentPromptActivity(handle: string, ptyId: string): AgentPromptActivity {
+    this.assertLiveTerminalHandleTargetsPty(handle, ptyId)
+    const explicit = this.getFreshExplicitAgentStatusForHandle(handle)?.status
+    const ptyStatus = this.ptysById.get(ptyId)?.lastAgentStatus ?? null
+    const lifecycle = this.agentPromptLifecycleByPtyId.get(ptyId)
+    return {
+      generation: this.getPtyLifecycleGeneration(ptyId),
+      lifecycleSequence: lifecycle?.sequence ?? 0,
+      outputSequence: this.getPtyOutputSequence(ptyId),
+      status: explicit ?? ptyStatus ?? lifecycle?.status ?? null
     }
   }
 
