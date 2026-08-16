@@ -6,6 +6,7 @@ import { sanitizeRecentTabIds } from '../../tab-group-state'
 import {
   nextActiveIdAfterRemoval,
   removeEmptyEditorGroups,
+  removeTabIdsFromGroup,
   rekeyFileIdRecord
 } from '../file-ids/open-file-path-rekey'
 import type {
@@ -44,6 +45,7 @@ export function buildRestoredEditorOwnerTransition(
       movedTabs.map((tab) => [tab.id, migrations.get(tab.id) ?? tab.id])
     )
     const mappedMovedTabIds = movedTabs.map((tab) => tabIdMigration.get(tab.id) ?? tab.id)
+    const mappedMovedTabIdSet = new Set(mappedMovedTabIds)
     const mappedMovedTabBarIds = movedTabs.map(
       (tab) => migrations.get(tab.entityId) ?? tab.entityId
     )
@@ -93,16 +95,27 @@ export function buildRestoredEditorOwnerTransition(
         destinationOrder
       )
     }
+    // Why: the migrated ids land in targetGroup only, so any sibling group holding the same id is left dangling.
     const nextTargetGroups = targetGroups.some((group) => group.id === targetGroupId)
-      ? targetGroups.map((group) => (group.id === targetGroupId ? updatedTargetGroup : group))
-      : [...targetGroups, updatedTargetGroup]
+      ? targetGroups.map((group) =>
+          group.id === targetGroupId
+            ? updatedTargetGroup
+            : removeTabIdsFromGroup(group, mappedMovedTabIdSet)
+        )
+      : [
+          ...targetGroups.map((group) => removeTabIdsFromGroup(group, mappedMovedTabIdSet)),
+          updatedTargetGroup
+        ]
 
     const nextUnifiedTabsByWorktree = { ...s.unifiedTabsByWorktree }
     nextUnifiedTabsByWorktree[sourceWorktreeId] = (
       nextUnifiedTabsByWorktree[sourceWorktreeId] ?? []
     ).filter((tab) => !movedTabIds.has(tab.id))
     nextUnifiedTabsByWorktree[targetWorktreeId] = [
-      ...(nextUnifiedTabsByWorktree[targetWorktreeId] ?? []),
+      // Why: a leftover target tab carrying a migrated id would duplicate the id that destinationOrder keeps only once.
+      ...(nextUnifiedTabsByWorktree[targetWorktreeId] ?? []).filter(
+        (tab) => !mappedMovedTabIdSet.has(tab.id)
+      ),
       ...movedTabs.map((tab) => ({
         ...tab,
         id: tabIdMigration.get(tab.id) ?? tab.id,

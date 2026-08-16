@@ -76,7 +76,10 @@ export function toOpenConflictMetadata(entry: GitStatusEntry): OpenConflictMetad
           'auto.store.slices.editor.dcb521ed29',
           'This file is in a conflict state, but no working-tree file is available to edit.'
         ),
-        guidance: 'Resolve the conflict in Git or restore one side before reopening it.'
+        guidance: translate(
+          'auto.store.slices.editor.conflictPlaceholderGuidance',
+          'Resolve the conflict in Git or restore one side before reopening it.'
+        )
       }
 }
 

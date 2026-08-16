@@ -15,6 +15,7 @@ export function createOpenConflictReview(
       const reviewTab = (get().unifiedTabsByWorktree?.[worktreeId] ?? []).find(
         (tab) => tab.entityId === reviewFileId && tab.contentType === 'conflict-review'
       )
+      let openedConflictFile = true
       set((s) => {
         const conflict = toOpenConflictMetadata(entry)
         const existing = s.openFiles.find((f) => f.id === absolutePath)
@@ -27,6 +28,7 @@ export function createOpenConflictReview(
             : s.trackedConflictPathsByWorktree[worktreeId]
 
         if (!conflict) {
+          openedConflictFile = false
           return s
         }
 
@@ -91,6 +93,10 @@ export function createOpenConflictReview(
         }
       })
 
+      // Why: no conflict metadata means no OpenFile was added, so a workspace tab would point at nothing.
+      if (!openedConflictFile) {
+        return
+      }
       // Why: the conflict file needs a normal editor backing tab for save/close, but selecting from Conflict Review must keep the review tab visible; restore focus after.
       void openWorkspaceEditorItem(
         get(),

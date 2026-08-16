@@ -196,6 +196,7 @@
         },
         "editor": {
           "dcb521ed29": "이 파일은 충돌 상태에 있지만 편집할 수 있는 작업 트리 파일이 없습니다.",
+          "conflictPlaceholderGuidance": "Git에서 충돌을 해결하거나 한쪽을 복원한 후 다시 여세요.",
           "51f15c37d3": "디렉터리를 열 수 없습니다: {{value0}}",
           "f2e00db373": "파일을 찾을 수 없습니다: {{value0}}",
           "checkRunDetailsUnavailable": "이 체크에 사용할 수 있는 세부 정보가 없습니다.",

@@ -262,6 +262,7 @@
         },
         "editor": {
           "dcb521ed29": "This file is in a conflict state, but no working-tree file is available to edit.",
+          "conflictPlaceholderGuidance": "Resolve the conflict in Git or restore one side before reopening it.",
           "51f15c37d3": "Cannot open directory: {{value0}}",
           "f2e00db373": "File not found: {{value0}}",
           "checkRunDetailsUnavailable": "No details are available for this check.",
