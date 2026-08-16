@@ -4597,6 +4597,8 @@ const api = {
       timeoutMs?: number
     }): Promise<RuntimeRpcResponse<RuntimeStatus>> =>
       ipcRenderer.invoke('runtimeEnvironments:getStatus', args),
+    prepareBrowserClientHostPlacement: (args) =>
+      ipcRenderer.invoke('runtimeEnvironments:prepareBrowserClientHostPlacement', args),
     retryConnectionsNow: (): Promise<void> =>
       ipcRenderer.invoke('runtimeEnvironments:retryConnectionsNow'),
     call: (args: {
