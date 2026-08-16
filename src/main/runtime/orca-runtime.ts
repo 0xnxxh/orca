@@ -1876,6 +1876,8 @@ const MOBILE_TERMINAL_CREATE_RESULT_TTL_MS = 60_000
 const WORKTREE_CREATE_RESULT_TTL_MS = 60_000
 const FOREGROUND_AGENT_WRAPPER_RETRY_INTERVAL_MS = 150
 const FOREGROUND_AGENT_WRAPPER_RETRY_TIMEOUT_MS = 6_500
+// Bounded so a PTY emitting titles in a tight loop cannot re-poll forever.
+const OPENCODE_COMMAND_FINISHED_STALE_TITLE_RETRIES = 2
 const BRACKETED_PASTE_BEGIN = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
@@ -12742,7 +12744,10 @@ export class OrcaRuntimeService {
     }
   }
 
-  private retirePtyAgentLaunchAuthorityAfterCommandFinished(ptyId: string): void {
+  private retirePtyAgentLaunchAuthorityAfterCommandFinished(
+    ptyId: string,
+    remainingStaleTitleRetries = OPENCODE_COMMAND_FINISHED_STALE_TITLE_RETRIES
+  ): void {
     const pty = this.ptysById.get(ptyId)
     if (pty?.launchAgent !== 'opencode') {
       this.retirePtyAgentLaunchAuthority(ptyId)
@@ -12760,9 +12765,20 @@ export class OrcaRuntimeService {
       if (
         current !== pty ||
         current.incarnationId !== incarnationId ||
-        current.lastOscTitleAt !== titleObservedAt ||
         result.controller !== this.ptyController
       ) {
+        return
+      }
+      if (current.lastOscTitleAt !== titleObservedAt) {
+        // Why: a newer title raced this read, so the result proves nothing. Drop
+        // it but re-poll, otherwise authority survives an OpenCode exit until
+        // the next command-finished event.
+        if (remainingStaleTitleRetries > 0) {
+          this.retirePtyAgentLaunchAuthorityAfterCommandFinished(
+            ptyId,
+            remainingStaleTitleRetries - 1
+          )
+        }
         return
       }
       if (result.available && recognizeAgentProcess(result.process)?.agent === 'opencode') {

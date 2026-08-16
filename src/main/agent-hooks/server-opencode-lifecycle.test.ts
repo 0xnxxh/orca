@@ -20,7 +20,8 @@ describe('AgentHookServer OpenCode lifecycle', () => {
     post: (
       payload: Record<string, unknown>,
       launchToken: string,
-      paneKey?: string
+      paneKey?: string,
+      source?: 'opencode' | 'mimo-code'
     ) => Promise<Response>
   }> {
     const server = new AgentHookServer()
@@ -29,8 +30,8 @@ describe('AgentHookServer OpenCode lifecycle', () => {
     const env = server.buildPtyEnv()
     return {
       server,
-      post: (payload, launchToken, paneKey = PANE) =>
-        fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/opencode`, {
+      post: (payload, launchToken, paneKey = PANE, source = 'opencode') =>
+        fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/${source}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -127,7 +128,7 @@ describe('AgentHookServer OpenCode lifecycle', () => {
     ])
   })
 
-  it('replaces a destination token fence when pane authority transfers', async () => {
+  it('clears the destination token fence when pane authority transfers', async () => {
     const { server, post } = await setup()
     await post(
       { hook_event_name: 'SessionBusy', sessionID: 'target-old' },
@@ -142,6 +143,16 @@ describe('AgentHookServer OpenCode lifecycle', () => {
     )
     await post({ hook_event_name: 'SessionBusy', sessionID: 'source' }, 'source-token')
 
+    // The destination fence rejects the source token until the transfer removes it.
+    await post(
+      { hook_event_name: 'SessionBusy', sessionID: 'source-before-transfer' },
+      'source-token',
+      TARGET_PANE
+    )
+    expect(
+      server.getStatusSnapshot().find((entry) => entry.paneKey === TARGET_PANE)?.providerSession
+    ).toEqual({ key: 'session_id', id: 'target-fresh' })
+
     server.transferPaneAuthority(PANE, TARGET_PANE, 'pty-opencode')
     await post(
       { hook_event_name: 'SessionBusy', sessionID: 'source-after-transfer' },
@@ -154,6 +165,97 @@ describe('AgentHookServer OpenCode lifecycle', () => {
         paneKey: TARGET_PANE,
         providerSession: { key: 'session_id', id: 'source-after-transfer' }
       })
+    ])
+  })
+
+  it('re-fences on a new SessionStart while the pane stays authorized', async () => {
+    const { server, post } = await setup()
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'old' }, 'old-token')
+    server.retirePaneAuthority(PANE)
+    await post({ hook_event_name: 'SessionStart', sessionID: 'restart' }, 'restart-token')
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'restart' }, 'restart-token')
+    // The stale old-token follow-up stays fenced out.
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'old' }, 'old-token')
+    expect(server.getStatusSnapshot()).toEqual([
+      expect.objectContaining({ providerSession: { key: 'session_id', id: 'restart' } })
+    ])
+
+    // Why: the runtime defers retirement while an agent stays in the foreground, so a
+    // genuinely new process can start in a still-authorized pane. Its SessionStart must
+    // replace the stale fence — not be swallowed as a stale event (rowless reuse).
+    await post({ hook_event_name: 'SessionStart', sessionID: 'fresh' }, 'fresh-token')
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'fresh' }, 'fresh-token')
+
+    expect(server.getStatusSnapshot()).toEqual([
+      expect.objectContaining({ providerSession: { key: 'session_id', id: 'fresh' } })
+    ])
+  })
+
+  it('keeps the fence when a live pane sees a tokenless SessionStart', async () => {
+    const { server, post } = await setup()
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'old' }, 'old-token')
+    server.retirePaneAuthority(PANE)
+    await post({ hook_event_name: 'SessionStart', sessionID: 'restart' }, 'restart-token')
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'restart' }, 'restart-token')
+
+    // Why: an untokened boundary cannot prove which process it belongs to, so dropping
+    // the fence for it would reopen the pane to every stale token.
+    await post({ hook_event_name: 'SessionStart', sessionID: 'tokenless' }, '')
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'old' }, 'old-token')
+
+    expect(server.getStatusSnapshot()).toEqual([
+      expect.objectContaining({ providerSession: { key: 'session_id', id: 'restart' } })
+    ])
+  })
+
+  it('does not let a stale explicit prompt re-fence a live pane', async () => {
+    const { server, post } = await setup()
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'old' }, 'old-token')
+    server.retirePaneAuthority(PANE)
+    await post({ hook_event_name: 'SessionStart', sessionID: 'restart' }, 'restart-token')
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'restart' }, 'restart-token')
+
+    // Why: prompts recur mid-session, so honoring one as a process boundary would hand
+    // the pane back to any still-live stale process.
+    await post(
+      {
+        hook_event_name: 'MessagePart',
+        role: 'user',
+        text: 'stale prompt',
+        messageID: 'message-stale',
+        sessionID: 'old'
+      },
+      'old-token'
+    )
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'old' }, 'old-token')
+
+    expect(server.getStatusSnapshot()).toEqual([
+      expect.objectContaining({ providerSession: { key: 'session_id', id: 'restart' }, prompt: '' })
+    ])
+  })
+
+  it('restarts a retired mimo-code pane on an explicit user prompt', async () => {
+    const { server, post } = await setup()
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'old' }, 'old-token', PANE, 'mimo-code')
+    server.retirePaneAuthority(PANE)
+
+    // Why: mimo-code emits no SessionStart, so the explicit prompt is its only restart
+    // boundary — excluding it would strand every retired mimo-code pane.
+    await post(
+      {
+        hook_event_name: 'MessagePart',
+        role: 'user',
+        text: 'continue the task',
+        messageID: 'message-resumed',
+        sessionID: 'resumed'
+      },
+      'resume-token',
+      PANE,
+      'mimo-code'
+    )
+
+    expect(server.getStatusSnapshot()).toEqual([
+      expect.objectContaining({ state: 'working', prompt: 'continue the task' })
     ])
   })
 })

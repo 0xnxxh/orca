@@ -13095,7 +13095,11 @@ describe('OrcaRuntimeService', () => {
   it('keeps OpenCode launch authority while command-finished leaves it in foreground', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-opencode', incarnationId: 'process-1' })
     const retireAuthority = vi.fn()
-    const getForegroundProcess = vi.fn(async () => 'opencode')
+    let resolveForegroundProcess: ((process: string | null) => void) | undefined
+    const foregroundProcess = new Promise<string | null>((resolve) => {
+      resolveForegroundProcess = resolve
+    })
+    const getForegroundProcess = vi.fn(() => foregroundProcess)
     const runtime = new OrcaRuntimeService(store, undefined, {
       attestAgentHookCompatibilityAuthority: (candidate) => ({
         paneKey: candidate.paneKey,
@@ -13141,19 +13145,23 @@ describe('OrcaRuntimeService', () => {
 
     runtime.onPtyData('pty-opencode', '\x1b]133;D;0\x07', 100)
     await vi.waitFor(() => expect(getForegroundProcess).toHaveBeenCalled())
+    resolveForegroundProcess?.('opencode')
+    await new Promise<void>((resolve) => setImmediate(resolve))
 
     expect(retireAuthority).not.toHaveBeenCalled()
     expect(runtime.verifyOrchestrationCompatibilityCaller(evidence)).not.toBeNull()
   })
 
-  it('ignores a stale OpenCode foreground result after a newer title observation', async () => {
-    let resolveForegroundProcess: ((process: string | null) => void) | undefined
-    const foregroundProcess = new Promise<string | null>((resolve) => {
-      resolveForegroundProcess = resolve
+  it('re-polls after a newer title observation instead of trusting the stale read', async () => {
+    let resolveStaleForegroundProcess: ((process: string | null) => void) | undefined
+    const staleForegroundProcess = new Promise<string | null>((resolve) => {
+      resolveStaleForegroundProcess = resolve
     })
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-opencode-race', incarnationId: 'process-1' })
     const retireAuthority = vi.fn()
-    const getForegroundProcess = vi.fn(() => foregroundProcess)
+    const getForegroundProcess = vi
+      .fn(async (): Promise<string | null> => 'opencode')
+      .mockReturnValueOnce(staleForegroundProcess)
     const runtime = new OrcaRuntimeService(store, undefined, {
       retireAgentHookCompatibilityAuthority: retireAuthority
     })
@@ -13187,13 +13195,66 @@ describe('OrcaRuntimeService', () => {
     })
 
     runtime.onPtyData('pty-opencode-race', '\x1b]133;D;0\x07', 100)
-    await vi.waitFor(() => expect(getForegroundProcess).toHaveBeenCalled())
+    await vi.waitFor(() => expect(getForegroundProcess).toHaveBeenCalledTimes(1))
     runtime.onPtyData('pty-opencode-race', '\x1b]0;OpenCode working\x07', 101)
-    resolveForegroundProcess?.(null)
-    await foregroundProcess
-    await Promise.resolve()
+    resolveStaleForegroundProcess?.(null)
+    // Settles the discarded stale read and the re-poll it schedules.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await new Promise<void>((resolve) => setImmediate(resolve))
 
     expect(retireAuthority).not.toHaveBeenCalled()
+  })
+
+  it('retires OpenCode launch authority when the re-poll finds no agent in foreground', async () => {
+    let resolveStaleForegroundProcess: ((process: string | null) => void) | undefined
+    const staleForegroundProcess = new Promise<string | null>((resolve) => {
+      resolveStaleForegroundProcess = resolve
+    })
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-opencode-gone', incarnationId: 'process-1' })
+    const retireAuthority = vi.fn()
+    const getForegroundProcess = vi
+      .fn(async (): Promise<string | null> => 'bash')
+      .mockReturnValueOnce(staleForegroundProcess)
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      retireAgentHookCompatibilityAuthority: retireAuthority
+    })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess
+    })
+    runtime.setNotifier({
+      worktreesChanged: vi.fn(),
+      reposChanged: vi.fn(),
+      activateWorktree: vi.fn(),
+      createTerminal: vi.fn(),
+      revealTerminalSession: vi.fn().mockResolvedValue({ tabId: 'tab-opencode-gone' }),
+      splitTerminal: vi.fn(),
+      renameTerminal: vi.fn(),
+      focusTerminal: vi.fn(),
+      closeTerminal: vi.fn(),
+      sleepWorktree: vi.fn(),
+      terminalFitOverrideChanged: vi.fn(),
+      terminalDriverChanged: vi.fn()
+    })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+
+    await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      command: 'opencode',
+      launchConfig: { agentCommand: 'opencode', agentArgs: '', agentEnv: {} },
+      launchAgent: 'opencode'
+    })
+    const spawnEnv =
+      (spawn.mock.calls[0]?.[0] as { env?: Record<string, string> } | undefined)?.env ?? {}
+
+    runtime.onPtyData('pty-opencode-gone', '\x1b]133;D;0\x07', 100)
+    await vi.waitFor(() => expect(getForegroundProcess).toHaveBeenCalledTimes(1))
+    runtime.onPtyData('pty-opencode-gone', '\x1b]0;OpenCode working\x07', 101)
+    resolveStaleForegroundProcess?.(null)
+
+    await vi.waitFor(() => expect(retireAuthority).toHaveBeenCalledWith(spawnEnv.ORCA_PANE_KEY))
   })
 
   it('retires only receipted restored PTY authority on command completion and exit', () => {

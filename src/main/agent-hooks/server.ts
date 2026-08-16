@@ -1015,6 +1015,22 @@ export class AgentHookServer {
     }
     if (!paneRetired) {
       const tokenFence = this.restartedStatusLaunchTokenHashByPaneKey.get(ownerPaneKey)
+      // Why: deferred retirement lets a new process start in a still-authorized pane, so
+      // its tokened SessionStart re-fences; prompts recur, so a stale process would win.
+      if (
+        event?.hookEventName === 'SessionStart' &&
+        event.isReplay !== true &&
+        tokenFence !== undefined
+      ) {
+        const startedLaunchToken = event.launchToken?.trim()
+        if (startedLaunchToken) {
+          this.restartedStatusLaunchTokenHashByPaneKey.set(
+            ownerPaneKey,
+            createHash('sha256').update(startedLaunchToken).digest('hex')
+          )
+          return 'accept'
+        }
+      }
       if (event && tokenFence) {
         const launchToken = event.launchToken?.trim()
         if (!launchToken || createHash('sha256').update(launchToken).digest('hex') !== tokenFence) {
@@ -1025,16 +1041,17 @@ export class AgentHookServer {
     }
     // Why: a new session boundary or explicit prompt proves a live lifecycle, while its
     // token fences follow-up status without restoring retired orchestration authority.
-    const freshOpenCodePrompt =
-      event?.source === 'opencode' &&
+    // OpenCode-family vendors carry that boundary in an explicit-prompt MessagePart —
+    // mimo-code emits no SessionStart at all, so excluding it strands its retired panes.
+    const freshOpenCodeFamilyPrompt =
+      (event?.source === 'opencode' || event?.source === 'mimo-code') &&
       event.hookEventName === 'MessagePart' &&
       event.hasExplicitPrompt === true
-    if (
-      (event?.hookEventName === 'UserPromptSubmit' ||
-        event?.hookEventName === 'SessionStart' ||
-        freshOpenCodePrompt) &&
-      event?.isReplay !== true
-    ) {
+    const isRestartBoundary =
+      event?.hookEventName === 'UserPromptSubmit' ||
+      event?.hookEventName === 'SessionStart' ||
+      freshOpenCodeFamilyPrompt
+    if (isRestartBoundary && event?.isReplay !== true) {
       this.closedAgentStatusPaneKeys.delete(paneKey)
       this.closedAgentStatusPaneKeys.delete(ownerPaneKey)
       const launchToken = event.launchToken?.trim()
