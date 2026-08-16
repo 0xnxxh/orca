@@ -4571,6 +4571,13 @@
           "skillMissing": "Missing",
           "versionCurrent": "{{date}} (installed)",
           "installElsewhere": "Install elsewhere…"
+        },
+        "skillWarningPreview": {
+          "bundleDescription": "A preview bundle covering every warning level.",
+          "instructionsOnlyDescription": "Instructions contained entirely in SKILL.md.",
+          "supportingFilesDescription": "Includes readable reference files beyond the main instructions.",
+          "runnableFilesDescription": "Includes scripts that an agent may run with your access.",
+          "binaryFilesDescription": "Includes opaque assets and an executable binary."
         }
       },
       "sidebar": {
