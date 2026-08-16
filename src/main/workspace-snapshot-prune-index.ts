@@ -5,9 +5,22 @@ export type WorkspaceSnapshotPruneTarget = {
   executionHostId?: ExecutionHostId
 }
 
+/**
+ * `holders` is the retirement gate (STA-4451): the writers that could still resurrect this row.
+ * `producerDeadline` bounds only the producer holders — see the tombstone registry.
+ */
 export type WorkspaceSnapshotPruneTombstone = WorkspaceSnapshotPruneTarget & {
   prunedAt: number
+  producerDeadline: number
+  holders: Set<string>
 }
+
+/**
+ * Bounded fallback for a producer that never reports back — a scan wedged on an unreachable SSH
+ * host, or a renderer torn down mid-scan. Deliberately longer than the removal batch's idle
+ * timeout so it can never preempt a pending flush, which it does not police.
+ */
+export const WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS = 10 * 60 * 1000
 
 export function workspaceSnapshotPruneKey(
   worktreeId: string,
@@ -39,19 +52,27 @@ export function activeWorkspaceSnapshotPruneKeys(
   return keys
 }
 
+/** A tombstone nobody holds can no longer stop anything, so it is never stored. */
 export function registerWorkspaceSnapshotPrunesForFile(
-  tombstonesByFile: Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>,
-  file: string,
-  targets: readonly WorkspaceSnapshotPruneTarget[]
+  tombstones: Map<string, WorkspaceSnapshotPruneTombstone>,
+  targets: readonly WorkspaceSnapshotPruneTarget[],
+  holders: Iterable<string>
 ): void {
-  const tombstones = tombstonesByFile.get(file) ?? new Map()
   const prunedAt = Date.now()
   for (const { worktreeId, executionHostId } of targets) {
-    tombstones.set(workspaceSnapshotPruneKey(worktreeId, executionHostId), {
+    const key = workspaceSnapshotPruneKey(worktreeId, executionHostId)
+    // Union, never replace: a re-registered target may still be held by an earlier batch.
+    const merged = new Set([...(tombstones.get(key)?.holders ?? []), ...holders])
+    if (merged.size === 0) {
+      tombstones.delete(key)
+      continue
+    }
+    tombstones.set(key, {
       worktreeId,
       ...(executionHostId ? { executionHostId } : {}),
-      prunedAt
+      prunedAt,
+      producerDeadline: prunedAt + WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS,
+      holders: merged
     })
   }
-  tombstonesByFile.set(file, tombstones)
 }

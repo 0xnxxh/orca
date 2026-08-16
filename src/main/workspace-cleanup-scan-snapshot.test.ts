@@ -28,14 +28,18 @@ vi.mock('./sidecar-snapshot-file', async (importOriginal) => {
 })
 
 import {
+  beginWorkspaceCleanupScanSnapshotProducer,
   finalizeWorkspaceCleanupScanSnapshotPrunes,
+  finishWorkspaceCleanupScanSnapshotProducer,
   persistWorkspaceCleanupScanResult,
   pruneWorkspaceCleanupScanSnapshot,
   pruneWorkspaceCleanupScanSnapshots,
   readWorkspaceCleanupScanSnapshot,
   registerWorkspaceCleanupScanSnapshotPruneTombstones,
-  workspaceCleanupScanSnapshotFingerprint
+  workspaceCleanupScanSnapshotFingerprint,
+  workspaceCleanupScanSnapshotTombstoneCountForTests
 } from './workspace-cleanup-scan-snapshot'
+import { WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS } from './workspace-snapshot-prune-index'
 
 const SNAPSHOT_FILE = 'orca-workspace-cleanup-scan.json'
 const NOW = 1_700_000_000_000
@@ -354,6 +358,8 @@ describe('workspace cleanup scan snapshot', () => {
       ...makeBroadResult([local, remote]),
       scannedAt: Date.now() - 1
     }
+    // The scan is in flight before the removal, so it is a fenced producer of this sidecar.
+    beginWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir)
     await pruneWorkspaceCleanupScanSnapshots(userDataDirHolder.dir, [
       { worktreeId: local.worktreeId, executionHostId: 'local' },
       { worktreeId: remote.worktreeId, executionHostId: 'ssh:ssh-1' }
@@ -412,6 +418,138 @@ describe('workspace cleanup scan snapshot', () => {
       candidate
     ])
     now.mockRestore()
+  })
+
+  it('retains no tombstone when a removal races no scan at all', async () => {
+    const candidate = makeCandidate()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    await pruneWorkspaceCleanupScanSnapshot(
+      userDataDirHolder.dir,
+      candidate.worktreeId,
+      candidate.executionHostId
+    )
+
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+    // Nothing was fenced, so a result predating the prune is no longer suppressed.
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      { ...makeBroadResult([candidate]), scannedAt: 99 }
+    )
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
+      candidate
+    ])
+    now.mockRestore()
+  })
+
+  it('does not accumulate tombstones as workspaces are removed', async () => {
+    for (let index = 0; index < 25; index += 1) {
+      await pruneWorkspaceCleanupScanSnapshot(
+        userDataDirHolder.dir,
+        `repo-1::/repo-removed-${index}`,
+        'local'
+      )
+    }
+
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+  })
+
+  it('holds a tombstone until the scan in flight when it was pruned settles', async () => {
+    const candidate = makeCandidate()
+    const producer = beginWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(200)
+    await pruneWorkspaceCleanupScanSnapshot(
+      userDataDirHolder.dir,
+      candidate.worktreeId,
+      candidate.executionHostId
+    )
+
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      { ...makeBroadResult([candidate]), scannedAt: 100 }
+    )
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([])
+
+    finishWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir, producer)
+
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      { ...makeBroadResult([candidate]), scannedAt: 100 }
+    )
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
+      candidate
+    ])
+    now.mockRestore()
+  })
+
+  it('retires a tombstone whose scan never settles once the producer timeout passes', async () => {
+    const candidate = makeCandidate()
+    beginWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(200)
+    await pruneWorkspaceCleanupScanSnapshot(
+      userDataDirHolder.dir,
+      candidate.worktreeId,
+      candidate.executionHostId
+    )
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
+
+    now.mockReturnValue(201 + WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS)
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      { ...makeBroadResult([candidate]), scannedAt: 100 }
+    )
+
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
+      candidate
+    ])
+    now.mockRestore()
+  })
+
+  it('flushes a batched tombstone even when a scan settles before the batch closes', async () => {
+    const candidate = makeCandidate()
+    const target = { worktreeId: candidate.worktreeId, executionHostId: 'local' as const }
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      makeBroadResult([candidate])
+    )
+    const producer = beginWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir)
+    registerWorkspaceCleanupScanSnapshotPruneTombstones(userDataDirHolder.dir, [target])
+    finishWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir, producer)
+
+    // The deferred flush still holds it, so finalize can still find and prune the row.
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
+    await finalizeWorkspaceCleanupScanSnapshotPrunes(userDataDirHolder.dir, [target])
+
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([])
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+  })
+
+  it('does not let one removal batch flush retire another batch tombstone', async () => {
+    const first = makeCandidate()
+    const second = makeCandidate({ worktreeId: 'repo-1::/repo-second', path: '/repo-second' })
+    const firstTarget = { worktreeId: first.worktreeId, executionHostId: 'local' as const }
+    const secondTarget = { worktreeId: second.worktreeId, executionHostId: 'local' as const }
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      makeBroadResult([first, second])
+    )
+    registerWorkspaceCleanupScanSnapshotPruneTombstones(userDataDirHolder.dir, [firstTarget])
+    registerWorkspaceCleanupScanSnapshotPruneTombstones(userDataDirHolder.dir, [secondTarget])
+
+    await finalizeWorkspaceCleanupScanSnapshotPrunes(userDataDirHolder.dir, [firstTarget])
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
+
+    await finalizeWorkspaceCleanupScanSnapshotPrunes(userDataDirHolder.dir, [secondTarget])
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([])
+    expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
   })
 
   it('patches and prunes host-colliding workspace ids independently', async () => {

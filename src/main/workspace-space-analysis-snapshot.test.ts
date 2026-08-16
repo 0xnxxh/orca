@@ -28,13 +28,17 @@ vi.mock('./sidecar-snapshot-file', async (importOriginal) => {
 })
 
 import {
+  beginWorkspaceSpaceAnalysisSnapshotProducer,
   finalizeWorkspaceSpaceAnalysisSnapshotPrunes,
+  finishWorkspaceSpaceAnalysisSnapshotProducer,
   persistWorkspaceSpaceAnalysisSnapshot,
   pruneWorkspaceSpaceAnalysisSnapshot,
   pruneWorkspaceSpaceAnalysisSnapshots,
   readWorkspaceSpaceAnalysisSnapshot,
-  registerWorkspaceSpaceAnalysisSnapshotPruneTombstones
+  registerWorkspaceSpaceAnalysisSnapshotPruneTombstones,
+  workspaceSpaceAnalysisSnapshotTombstoneCountForTests
 } from './workspace-space-analysis-snapshot'
+import { WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS } from './workspace-snapshot-prune-index'
 
 const SNAPSHOT_FILE = 'orca-workspace-space-analysis.json'
 const NOW = 1_700_000_000_000
@@ -327,6 +331,8 @@ describe('workspace space analysis snapshot', () => {
       ...makeAnalysis([local, remote]),
       scannedAt: Date.now() - 1
     }
+    // The analysis is in flight before the removal, so it is a fenced producer of this sidecar.
+    beginWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir)
     await pruneWorkspaceSpaceAnalysisSnapshots(userDataDirHolder.dir, [
       { worktreeId: local.worktreeId, executionHostId: 'local' },
       { worktreeId: remote.worktreeId, executionHostId: 'ssh:ssh-1' }
@@ -372,6 +378,107 @@ describe('workspace space analysis snapshot', () => {
       { ...row, topLevelItems: [] }
     ])
     now.mockRestore()
+  })
+
+  it('retains no tombstone when a removal races no analysis at all', async () => {
+    const row = makeWorktreeRow()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    await pruneWorkspaceSpaceAnalysisSnapshot(
+      userDataDirHolder.dir,
+      row.worktreeId,
+      row.executionHostId
+    )
+
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 99
+    })
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([
+      row
+    ])
+    now.mockRestore()
+  })
+
+  it('does not accumulate tombstones as workspaces are removed', async () => {
+    for (let index = 0; index < 25; index += 1) {
+      await pruneWorkspaceSpaceAnalysisSnapshot(
+        userDataDirHolder.dir,
+        `repo-1::/repo-removed-${index}`,
+        'local'
+      )
+    }
+
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+  })
+
+  it('holds a tombstone until the analysis in flight when it was pruned settles', async () => {
+    const row = makeWorktreeRow()
+    const producer = beginWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(200)
+    await pruneWorkspaceSpaceAnalysisSnapshot(
+      userDataDirHolder.dir,
+      row.worktreeId,
+      row.executionHostId
+    )
+
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 100
+    })
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([])
+
+    finishWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir, producer)
+
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 100
+    })
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([
+      row
+    ])
+    now.mockRestore()
+  })
+
+  it('retires a tombstone whose analysis never settles once the producer timeout passes', async () => {
+    const row = makeWorktreeRow()
+    beginWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(200)
+    await pruneWorkspaceSpaceAnalysisSnapshot(
+      userDataDirHolder.dir,
+      row.worktreeId,
+      row.executionHostId
+    )
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
+
+    now.mockReturnValue(201 + WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS)
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 100
+    })
+
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([
+      row
+    ])
+    now.mockRestore()
+  })
+
+  it('flushes a batched tombstone even when an analysis settles before the batch closes', async () => {
+    const row = makeWorktreeRow()
+    const target = { worktreeId: row.worktreeId, executionHostId: 'local' as const }
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, makeAnalysis([row]))
+    const producer = beginWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir)
+    registerWorkspaceSpaceAnalysisSnapshotPruneTombstones(userDataDirHolder.dir, [target])
+    finishWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir, producer)
+
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
+    await finalizeWorkspaceSpaceAnalysisSnapshotPrunes(userDataDirHolder.dir, [target])
+
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([])
+    expect(workspaceSpaceAnalysisSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(0)
   })
 
   it('prunes host-colliding workspace ids without corrupting surviving totals', async () => {

@@ -18,6 +18,8 @@ import { parseExecutionHostId } from '../../shared/execution-host'
 import { scanWorkspaceCleanup } from './workspace-cleanup-scan'
 import { hasTargetedWorkspaceCleanupScan } from './workspace-cleanup-scan-targets'
 import {
+  beginWorkspaceCleanupScanSnapshotProducer,
+  finishWorkspaceCleanupScanSnapshotProducer,
   persistWorkspaceCleanupScanResult,
   readWorkspaceCleanupScanSnapshot
 } from '../workspace-cleanup-scan-snapshot'
@@ -72,6 +74,11 @@ export function registerWorkspaceCleanupHandlers(
         activeScans.set(scanKey, controller)
       }
       const targeted = hasTargetedWorkspaceCleanupScan(scanArgs)
+      // Only a broad scan persists, so only a broad scan can resurrect a row pruned while it ran.
+      const snapshotProducer = targeted
+        ? undefined
+        : beginWorkspaceCleanupScanSnapshotProducer(snapshotDirectory)
+      let snapshotPersistence: Promise<void> | undefined
       const broadScanKey = getBroadScanModeKey(sender.id, scanArgs)
       if (!targeted) {
         // Why: two same-mode broad fleet scans from one renderer can only be a
@@ -99,10 +106,22 @@ export function registerWorkspaceCleanupHandlers(
         // fleet snapshot. worktreeIds: [] is still targeted — persisting its
         // empty result would wipe the fleet cache.
         if (!targeted) {
-          void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result)
+          snapshotPersistence = persistWorkspaceCleanupScanResult(
+            snapshotDirectory,
+            scanArgs,
+            result
+          )
+          void snapshotPersistence
         }
         return result
       } finally {
+        // Settle the fence only once this scan can no longer write: after its persist resolves, or
+        // immediately when it ended (cancelled, aborted, threw) without starting one.
+        if (snapshotProducer !== undefined) {
+          void Promise.allSettled([snapshotPersistence]).then(() =>
+            finishWorkspaceCleanupScanSnapshotProducer(snapshotDirectory, snapshotProducer)
+          )
+        }
         if (!sender.isDestroyed()) {
           sender.removeListener('destroyed', onSenderDestroyed)
         }

@@ -24,6 +24,8 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('../workspace-cleanup-scan-snapshot', () => ({
+  beginWorkspaceCleanupScanSnapshotProducer: vi.fn(() => 'producer:1'),
+  finishWorkspaceCleanupScanSnapshotProducer: vi.fn(),
   persistWorkspaceCleanupScanResult: persistScanResultMock,
   readWorkspaceCleanupScanSnapshot: readScanSnapshotMock
 }))

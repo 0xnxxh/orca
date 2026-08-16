@@ -42,6 +42,8 @@ vi.mock('../workspace-space-analysis', () => ({
 }))
 
 vi.mock('../workspace-space-analysis-snapshot', () => ({
+  beginWorkspaceSpaceAnalysisSnapshotProducer: vi.fn(() => 'producer:1'),
+  finishWorkspaceSpaceAnalysisSnapshotProducer: vi.fn(),
   persistWorkspaceSpaceAnalysisSnapshot: persistAnalysisSnapshotMock,
   readWorkspaceSpaceAnalysisSnapshot: readAnalysisSnapshotMock
 }))

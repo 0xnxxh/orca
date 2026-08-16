@@ -11,6 +11,8 @@ import {
   WorkspaceSpaceScanCancelledError
 } from '../workspace-space-analysis'
 import {
+  beginWorkspaceSpaceAnalysisSnapshotProducer,
+  finishWorkspaceSpaceAnalysisSnapshotProducer,
   persistWorkspaceSpaceAnalysisSnapshot,
   readWorkspaceSpaceAnalysisSnapshot
 } from '../workspace-space-analysis-snapshot'
@@ -32,6 +34,8 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
   ipcMain.removeHandler('workspaceSpace:getCachedAnalysis')
   ipcMain.handle('workspaceSpace:analyze', async (event): Promise<WorkspaceSpaceAnalyzeResult> => {
     if (!inFlightScan) {
+      const snapshotProducer = beginWorkspaceSpaceAnalysisSnapshotProducer(snapshotDirectory)
+      let snapshotPersistence: Promise<void> | undefined
       const controller = new AbortController()
       const scanId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       let latestProgress: WorkspaceSpaceScanProgress = {
@@ -98,7 +102,8 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
         .then((analysis): WorkspaceSpaceAnalyzeResult => {
           // Fire-and-forget: a ~6-minute cold analysis must survive reload/restart, but
           // persistence must never delay or fail the reply.
-          void persistWorkspaceSpaceAnalysisSnapshot(snapshotDirectory, analysis)
+          snapshotPersistence = persistWorkspaceSpaceAnalysisSnapshot(snapshotDirectory, analysis)
+          void snapshotPersistence
           return { ok: true, analysis }
         })
         .catch((error: unknown): WorkspaceSpaceAnalyzeResult => {
@@ -108,6 +113,11 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
           throw error
         })
         .finally(() => {
+          // Settle the fence only once this analysis can no longer write: after its persist
+          // resolves, or immediately when it ended (cancelled, failed) without starting one.
+          void Promise.allSettled([snapshotPersistence]).then(() =>
+            finishWorkspaceSpaceAnalysisSnapshotProducer(snapshotDirectory, snapshotProducer)
+          )
           inFlightScan = null
         })
     }
