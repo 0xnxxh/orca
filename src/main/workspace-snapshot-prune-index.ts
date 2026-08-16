@@ -36,7 +36,7 @@ export function activeWorkspaceSnapshotPruneKeys(
 ): Set<string> {
   const keys = new Set<string>()
   for (const [key, entry] of tombstones ?? []) {
-    if (entry.prunedAt >= scannedAt) {
+    if (entry.pendingProducerIds.size > 0 || entry.prunedAt >= scannedAt) {
       keys.add(key)
     }
   }
@@ -69,11 +69,17 @@ export function expireWorkspaceSnapshotPrunes(
   now = Date.now()
 ): void {
   const tombstones = tombstonesByFile.get(file)
-  if (!tombstones) return
-  for (const [key, entry] of tombstones) {
-    if (entry.expiresAt <= now) tombstones.delete(key)
+  if (!tombstones) {
+    return
   }
-  if (tombstones.size === 0) tombstonesByFile.delete(file)
+  for (const [key, entry] of tombstones) {
+    if (entry.expiresAt <= now) {
+      tombstones.delete(key)
+    }
+  }
+  if (tombstones.size === 0) {
+    tombstonesByFile.delete(file)
+  }
 }
 
 export function settleWorkspaceSnapshotPruneProducer(
@@ -82,10 +88,48 @@ export function settleWorkspaceSnapshotPruneProducer(
   producerId: number
 ): void {
   const tombstones = tombstonesByFile.get(file)
-  if (!tombstones) return
+  if (!tombstones) {
+    return
+  }
   for (const [key, entry] of tombstones) {
     entry.pendingProducerIds.delete(producerId)
-    if (entry.pendingProducerIds.size === 0) tombstones.delete(key)
+    if (entry.pendingProducerIds.size === 0) {
+      tombstones.delete(key)
+    }
   }
-  if (tombstones.size === 0) tombstonesByFile.delete(file)
+  if (tombstones.size === 0) {
+    tombstonesByFile.delete(file)
+  }
+}
+
+export function createWorkspaceSnapshotPruneProducerFence(
+  tombstonesByFile: Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>,
+  resolveFile: (snapshotDirectory: string) => string
+): {
+  begin: (snapshotDirectory: string) => number
+  finish: (snapshotDirectory: string, producerId: number) => void
+  activeIds: (file: string) => ReadonlySet<number> | undefined
+} {
+  const activeProducerIdsByFile = new Map<string, Set<number>>()
+  let nextProducerId = 1
+  return {
+    begin(snapshotDirectory) {
+      const file = resolveFile(snapshotDirectory)
+      const producerId = nextProducerId++
+      const producers = activeProducerIdsByFile.get(file) ?? new Set()
+      producers.add(producerId)
+      activeProducerIdsByFile.set(file, producers)
+      return producerId
+    },
+    finish(snapshotDirectory, producerId) {
+      const file = resolveFile(snapshotDirectory)
+      const producers = activeProducerIdsByFile.get(file)
+      producers?.delete(producerId)
+      if (producers?.size === 0) {
+        activeProducerIdsByFile.delete(file)
+      }
+      settleWorkspaceSnapshotPruneProducer(tombstonesByFile, file, producerId)
+    },
+    activeIds: (file) => activeProducerIdsByFile.get(file)
+  }
 }

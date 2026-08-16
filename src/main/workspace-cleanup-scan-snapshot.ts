@@ -13,9 +13,9 @@ import {
 import type { ExecutionHostId } from '../shared/execution-host'
 import {
   activeWorkspaceSnapshotPruneKeys,
+  createWorkspaceSnapshotPruneProducerFence,
   expireWorkspaceSnapshotPrunes,
   registerWorkspaceSnapshotPrunesForFile,
-  settleWorkspaceSnapshotPruneProducer,
   workspaceSnapshotPruneKey,
   workspaceSnapshotPruneTargetKeys,
   type WorkspaceSnapshotPruneTarget,
@@ -28,8 +28,12 @@ const SNAPSHOT_VERSION = 2
 export type WorkspaceCleanupScanSnapshotPruneTarget = WorkspaceSnapshotPruneTarget
 
 const prunedWorkspacesByFile = new Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>()
-const activeProducerIdsByFile = new Map<string, Set<number>>()
-let nextProducerId = 1
+const snapshotProducerFence = createWorkspaceSnapshotPruneProducerFence(
+  prunedWorkspacesByFile,
+  (directory) => sidecarSnapshotFile(directory, SNAPSHOT_FILE_NAME)
+)
+export const beginWorkspaceCleanupScanSnapshotProducer = snapshotProducerFence.begin
+export const finishWorkspaceCleanupScanSnapshotProducer = snapshotProducerFence.finish
 
 type PersistedWorkspaceCleanupScanSnapshot = {
   version: number
@@ -145,28 +149,8 @@ export function registerWorkspaceCleanupScanSnapshotPruneTombstones(
     prunedWorkspacesByFile,
     file,
     targets,
-    activeProducerIdsByFile.get(file)
+    snapshotProducerFence.activeIds(file)
   )
-}
-
-export function beginWorkspaceCleanupScanSnapshotProducer(snapshotDirectory: string): number {
-  const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
-  const producerId = nextProducerId++
-  const producers = activeProducerIdsByFile.get(file) ?? new Set()
-  producers.add(producerId)
-  activeProducerIdsByFile.set(file, producers)
-  return producerId
-}
-
-export function finishWorkspaceCleanupScanSnapshotProducer(
-  snapshotDirectory: string,
-  producerId: number
-): void {
-  const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
-  const producers = activeProducerIdsByFile.get(file)
-  producers?.delete(producerId)
-  if (producers?.size === 0) activeProducerIdsByFile.delete(file)
-  settleWorkspaceSnapshotPruneProducer(prunedWorkspacesByFile, file, producerId)
 }
 
 function excludeRowsPrunedDuringScan(
@@ -289,7 +273,7 @@ async function pruneWorkspaceCleanupScanSnapshotsWithRegisteredTombstones(
       prunedWorkspacesByFile,
       file,
       targets,
-      activeProducerIdsByFile.get(file)
+      snapshotProducerFence.activeIds(file)
     )
   }
   try {

@@ -1,7 +1,4 @@
-import type {
-  WorkspaceSpaceAnalysis,
-  WorkspaceSpaceWorktree
-} from '../shared/workspace-space-types'
+import type { WorkspaceSpaceAnalysis } from '../shared/workspace-space-types'
 import {
   readSidecarSnapshot,
   sidecarSnapshotFile,
@@ -11,14 +8,15 @@ import {
 import type { ExecutionHostId } from '../shared/execution-host'
 import {
   activeWorkspaceSnapshotPruneKeys,
+  createWorkspaceSnapshotPruneProducerFence,
   expireWorkspaceSnapshotPrunes,
   registerWorkspaceSnapshotPrunesForFile,
-  settleWorkspaceSnapshotPruneProducer,
   workspaceSnapshotPruneKey,
   workspaceSnapshotPruneTargetKeys,
   type WorkspaceSnapshotPruneTarget,
   type WorkspaceSnapshotPruneTombstone
 } from './workspace-snapshot-prune-index'
+import { withoutWorktreeRows } from './workspace-space-analysis-row-pruning'
 
 const SNAPSHOT_FILE_NAME = 'orca-workspace-space-analysis.json'
 const SNAPSHOT_VERSION = 2
@@ -26,8 +24,12 @@ const SNAPSHOT_VERSION = 2
 export type WorkspaceSpaceAnalysisSnapshotPruneTarget = WorkspaceSnapshotPruneTarget
 
 const prunedWorkspacesByFile = new Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>()
-const activeProducerIdsByFile = new Map<string, Set<number>>()
-let nextProducerId = 1
+const snapshotProducerFence = createWorkspaceSnapshotPruneProducerFence(
+  prunedWorkspacesByFile,
+  (directory) => sidecarSnapshotFile(directory, SNAPSHOT_FILE_NAME)
+)
+export const beginWorkspaceSpaceAnalysisSnapshotProducer = snapshotProducerFence.begin
+export const finishWorkspaceSpaceAnalysisSnapshotProducer = snapshotProducerFence.finish
 
 type PersistedWorkspaceSpaceAnalysisSnapshot = {
   version: number
@@ -125,91 +127,6 @@ export async function persistWorkspaceSpaceAnalysisSnapshot(
   }
 }
 
-function withoutWorktreeRows(
-  analysis: WorkspaceSpaceAnalysis,
-  shouldRemove: (row: WorkspaceSpaceWorktree) => boolean
-): WorkspaceSpaceAnalysis {
-  const worktrees: WorkspaceSpaceWorktree[] = []
-  const removedByRepo = new Map<
-    string,
-    {
-      worktreeCount: number
-      scannedWorktreeCount: number
-      unavailableWorktreeCount: number
-      totalSizeBytes: number
-      reclaimableBytes: number
-    }
-  >()
-  let removedCount = 0
-  let scannedDelta = 0
-  let unavailableDelta = 0
-  let totalSizeDelta = 0
-  let reclaimableDelta = 0
-
-  for (const row of analysis.worktrees) {
-    if (!shouldRemove(row)) {
-      worktrees.push(row)
-      continue
-    }
-    const scanned = row.status === 'ok' ? 1 : 0
-    const unavailable = row.status === 'ok' ? 0 : 1
-    removedCount += 1
-    scannedDelta += scanned
-    unavailableDelta += unavailable
-    totalSizeDelta += row.sizeBytes
-    reclaimableDelta += row.reclaimableBytes
-    const key = analysisRepoKey(row)
-    const delta = removedByRepo.get(key) ?? {
-      worktreeCount: 0,
-      scannedWorktreeCount: 0,
-      unavailableWorktreeCount: 0,
-      totalSizeBytes: 0,
-      reclaimableBytes: 0
-    }
-    delta.worktreeCount += 1
-    delta.scannedWorktreeCount += scanned
-    delta.unavailableWorktreeCount += unavailable
-    delta.totalSizeBytes += row.sizeBytes
-    delta.reclaimableBytes += row.reclaimableBytes
-    removedByRepo.set(key, delta)
-  }
-  if (removedCount === 0) {
-    return analysis
-  }
-  return {
-    ...analysis,
-    worktrees,
-    worktreeCount: Math.max(0, analysis.worktreeCount - removedCount),
-    scannedWorktreeCount: Math.max(0, analysis.scannedWorktreeCount - scannedDelta),
-    unavailableWorktreeCount: Math.max(0, analysis.unavailableWorktreeCount - unavailableDelta),
-    totalSizeBytes: Math.max(0, analysis.totalSizeBytes - totalSizeDelta),
-    reclaimableBytes: Math.max(0, analysis.reclaimableBytes - reclaimableDelta),
-    repos: analysis.repos.map((repo) => {
-      const delta = removedByRepo.get(analysisRepoKey(repo))
-      return delta
-        ? {
-            ...repo,
-            worktreeCount: Math.max(0, repo.worktreeCount - delta.worktreeCount),
-            scannedWorktreeCount: Math.max(
-              0,
-              repo.scannedWorktreeCount - delta.scannedWorktreeCount
-            ),
-            unavailableWorktreeCount: Math.max(
-              0,
-              repo.unavailableWorktreeCount - delta.unavailableWorktreeCount
-            ),
-            totalSizeBytes: Math.max(0, repo.totalSizeBytes - delta.totalSizeBytes),
-            reclaimableBytes: Math.max(0, repo.reclaimableBytes - delta.reclaimableBytes)
-          }
-        : repo
-    })
-  }
-}
-
-function analysisRepoKey(entry: { repoId: string; executionHostId?: ExecutionHostId }): string {
-  return JSON.stringify([entry.executionHostId, entry.repoId])
-}
-
 /** Register anti-resurrection tombstones without scheduling a sidecar rewrite. */
 export function registerWorkspaceSpaceAnalysisSnapshotPruneTombstones(
   snapshotDirectory: string,
@@ -224,28 +141,8 @@ export function registerWorkspaceSpaceAnalysisSnapshotPruneTombstones(
     prunedWorkspacesByFile,
     file,
     targets,
-    activeProducerIdsByFile.get(file)
+    snapshotProducerFence.activeIds(file)
   )
-}
-
-export function beginWorkspaceSpaceAnalysisSnapshotProducer(snapshotDirectory: string): number {
-  const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
-  const producerId = nextProducerId++
-  const producers = activeProducerIdsByFile.get(file) ?? new Set()
-  producers.add(producerId)
-  activeProducerIdsByFile.set(file, producers)
-  return producerId
-}
-
-export function finishWorkspaceSpaceAnalysisSnapshotProducer(
-  snapshotDirectory: string,
-  producerId: number
-): void {
-  const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
-  const producers = activeProducerIdsByFile.get(file)
-  producers?.delete(producerId)
-  if (producers?.size === 0) activeProducerIdsByFile.delete(file)
-  settleWorkspaceSnapshotPruneProducer(prunedWorkspacesByFile, file, producerId)
 }
 
 function excludeRowsPrunedDuringScan(
@@ -296,7 +193,7 @@ async function pruneWorkspaceSpaceAnalysisSnapshotsWithRegisteredTombstones(
       prunedWorkspacesByFile,
       file,
       targets,
-      activeProducerIdsByFile.get(file)
+      snapshotProducerFence.activeIds(file)
     )
   }
   try {
