@@ -11119,7 +11119,7 @@ export class OrcaRuntimeService {
         this.recordTerminalSideEffectFact(ptyId, { kind: 'bell' })
         return
       case 'command-finished':
-        this.retirePtyAgentLaunchAuthority(ptyId)
+        this.retirePtyAgentLaunchAuthorityAfterCommandFinished(ptyId)
         this.recordTerminalSideEffectFact(ptyId, {
           kind: 'command-finished',
           exitCode: fact.exitCode
@@ -11408,7 +11408,7 @@ export class OrcaRuntimeService {
           this.confirmPtyAgentExit(ptyId)
         },
         onCommandFinished: (exitCode: number | null) => {
-          this.retirePtyAgentLaunchAuthority(ptyId)
+          this.retirePtyAgentLaunchAuthorityAfterCommandFinished(ptyId)
           this.recordTerminalSideEffectFact(ptyId, { kind: 'command-finished', exitCode })
         },
         onBell: () => {
@@ -13534,6 +13534,36 @@ export class OrcaRuntimeService {
     for (const paneKey of paneKeys) {
       this.retireAgentHookCompatibilityAuthorityFn?.(paneKey)
     }
+  }
+
+  private retirePtyAgentLaunchAuthorityAfterCommandFinished(ptyId: string): void {
+    const pty = this.ptysById.get(ptyId)
+    if (pty?.launchAgent !== 'opencode') {
+      this.retirePtyAgentLaunchAuthority(ptyId)
+      return
+    }
+    const titleObservedAt = pty.lastOscTitleAt ?? null
+    const foregroundRead = this.readPtyForegroundProcessFromController(ptyId, titleObservedAt ?? 0)
+    if (!foregroundRead) {
+      this.retirePtyAgentLaunchAuthority(ptyId)
+      return
+    }
+    const incarnationId = pty.incarnationId
+    void foregroundRead.then((result) => {
+      const current = this.ptysById.get(ptyId)
+      if (
+        current !== pty ||
+        current.incarnationId !== incarnationId ||
+        current.lastOscTitleAt !== titleObservedAt ||
+        result.controller !== this.ptyController
+      ) {
+        return
+      }
+      if (result.available && recognizeAgentProcess(result.process)?.agent === 'opencode') {
+        return
+      }
+      this.retirePtyAgentLaunchAuthority(ptyId)
+    })
   }
 
   async resolveTerminalCwd(handle: string): Promise<string | null> {
