@@ -493,9 +493,11 @@ describe('workspace cleanup scan snapshot', () => {
       candidate.worktreeId,
       candidate.executionHostId
     )
+    // Anchor on the real clock: NOW is a fixture constant in the past, so offsetting it would
+    // step the clock backwards instead of forwards.
     const now = vi
       .spyOn(Date, 'now')
-      .mockReturnValue(NOW + WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS * 48)
+      .mockReturnValue(Date.now() + WORKSPACE_SNAPSHOT_PRUNE_PRODUCER_TIMEOUT_MS * 48)
 
     expect(workspaceCleanupScanSnapshotTombstoneCountForTests(userDataDirHolder.dir)).toBe(1)
     await persistWorkspaceCleanupScanResult(
