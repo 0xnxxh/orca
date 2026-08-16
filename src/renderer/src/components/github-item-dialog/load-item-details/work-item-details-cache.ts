@@ -41,9 +41,16 @@ export function getWorkItemDetailsCacheKey(args: {
   number: number
 }): string {
   // Why: key on every axis that changes which (repo, item) the IPC resolves to; `\0` separator avoids ambiguity with fields containing `:` or `/`.
+  // Why: repoPath is the second part so match-based invalidation can find entries from a cross-window event that carries only the path.
   const keyParts = args.sourceCacheScope
-    ? [args.repoId, args.sourceCacheScope, args.issueSourcePreference ?? 'auto', args.type]
-    : [args.repoId, args.issueSourcePreference ?? 'auto', args.type]
+    ? [
+        args.repoId,
+        args.repoPath,
+        args.sourceCacheScope,
+        args.issueSourcePreference ?? 'auto',
+        args.type
+      ]
+    : [args.repoId, args.repoPath, args.issueSourcePreference ?? 'auto', args.type]
   return [...keyParts, args.number].join('\0')
 }
 
@@ -81,11 +88,20 @@ export function invalidateWorkItemDetailsCacheByMatch(args: {
   type: 'issue' | 'pr'
   number: number
 }): void {
+  if (!args.repoId && !args.repoPath) {
+    // Why: an empty path would otherwise match every runtime-only entry of that type/number across repos.
+    return
+  }
   const suffix = `\0${args.type}\0${args.number}`
-  const prefix = `${args.repoId ?? args.repoPath}\0`
   let removed = false
   for (const key of Array.from(workItemDetailsCache.keys())) {
-    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+    if (!key.endsWith(suffix)) {
+      continue
+    }
+    // Why: repoId identifies the entry exactly; repoPath is the only handle a cross-window event carries, so match either side of the key head.
+    const [keyRepoId, keyRepoPath] = key.split('\0')
+    const matches = args.repoId ? keyRepoId === args.repoId : keyRepoPath === args.repoPath
+    if (matches) {
       workItemDetailsCache.delete(key)
       removed = true
     }

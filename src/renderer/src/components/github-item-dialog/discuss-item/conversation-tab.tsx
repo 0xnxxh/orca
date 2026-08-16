@@ -57,6 +57,7 @@ import { ConversationTabPRSidebar } from './conversation-tab-pr-sidebar'
 export function ConversationTab({
   item,
   repoPath,
+  repoId,
   sourceContext,
   body,
   comments,
@@ -208,7 +209,7 @@ export function ConversationTab({
       const result = isReviewThreadReply
         ? await addPRReviewCommentReplyForRepo({
             repoPath: repoPath ?? '',
-            repoId: item.repoId,
+            repoId: repoId ?? item.repoId,
             sourceContext,
             prNumber: item.number,
             prRepo,
@@ -220,7 +221,7 @@ export function ConversationTab({
           })
         : await addIssueCommentForRepo({
             repoPath: repoPath ?? '',
-            repoId: item.repoId,
+            repoId: repoId ?? item.repoId,
             sourceContext,
             number: item.number,
             // Why: a GitHub App login carries a [bot] suffix that never resolves as a mention.
@@ -250,6 +251,7 @@ export function ConversationTab({
       item.type,
       onCommentAdded,
       prRepo,
+      repoId,
       repoPath,
       sourceContext
     ]
@@ -257,7 +259,7 @@ export function ConversationTab({
 
   const commentCardProps = {
     repoPath,
-    repoId: item.repoId,
+    repoId: repoId ?? item.repoId,
     sourceContext,
     prNumber: item.number,
     prRepo,
@@ -320,7 +322,7 @@ export function ConversationTab({
           <GHCommentComposer
             className="mt-1"
             repoPath={repoPath ?? ''}
-            repoId={item.repoId}
+            repoId={repoId ?? item.repoId}
             sourceContext={sourceContext}
             issueNumber={item.number}
             itemType={item.type}

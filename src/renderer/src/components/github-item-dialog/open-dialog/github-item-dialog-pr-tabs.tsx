@@ -6,6 +6,7 @@ import {
   resolvePullRequestRepo,
   type ItemDialogTab
 } from '@/components/github/github-work-item-identity'
+import { canUseGitHubRepoContext } from '@/lib/github-source-runtime-context'
 import { translate } from '@/i18n/i18n'
 import type { PRComment } from '../../../../../shared/github/comment-types'
 import type { GitHubAssignableUser } from '../../../../../shared/github/pull-request-types'
@@ -73,6 +74,7 @@ export function GitHubItemDialogPRTabs({
   const timelineItems = details?.timelineItems ?? []
   const files = details?.files ?? []
   const filesUnavailable = details?.filesUnavailable ?? false
+  const canUseFilesRepoContext = canUseGitHubRepoContext(repoPath, sourceContext)
   const checks = details?.checks ?? []
 
   return (
@@ -176,6 +178,14 @@ export function GitHubItemDialogPRTabs({
               {loading && files.length === 0 ? (
                 <div className="flex items-center justify-center py-10">
                   <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : !canUseFilesRepoContext ? (
+                // Why: without a repo path or runtime host the viewer would call IPC with empty ids; diff loads and review comments both fail silently.
+                <div className="px-4 py-10 text-center text-[12px] text-muted-foreground">
+                  {translate(
+                    'auto.components.GitHubItemDialog.00f55cc17b',
+                    'Repository access is unavailable for this pull request.'
+                  )}
                 </div>
               ) : filesUnavailable && files.length === 0 ? (
                 // Why: file fetch failed (rate limit, auth, unresolved remote); offer a retry instead of implying the PR is empty.

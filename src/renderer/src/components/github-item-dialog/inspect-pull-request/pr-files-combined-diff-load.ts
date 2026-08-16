@@ -120,7 +120,10 @@ export function loadPRFilesCombinedDiffSection({
         modifiedIsBinary: false
       } as GitDiffResult,
       resultContents: undefined,
-      error: error instanceof Error ? error.message : 'Failed to load diff.'
+      error:
+        error instanceof Error
+          ? error.message
+          : translate('auto.components.GitHubItemDialog.d9fa90b625', 'Failed to load diff.')
     }))
     .then(({ result, resultContents, error }) => {
       loadingIndicesRef.current.delete(index)

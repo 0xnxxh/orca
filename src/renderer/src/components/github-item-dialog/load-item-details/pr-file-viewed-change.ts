@@ -70,6 +70,20 @@ export async function syncPRFileViewedState(args: {
       return false
     }
     return true
+  } catch (err) {
+    // Why: an RPC timeout or IPC throw must roll the optimistic patch back, else the shared cache keeps claiming the file is viewed.
+    if (detailsCacheKey && previousState) {
+      patchCachedPRFileViewedState(detailsCacheKey, path, previousState)
+    }
+    toast.error(
+      err instanceof Error
+        ? err.message
+        : translate(
+            'auto.components.GitHubItemDialog.b7bf31b8de',
+            'Failed to sync viewed state with GitHub.'
+          )
+    )
+    return false
   } finally {
     setPendingViewedPaths((prev) => {
       const next = new Set(prev)

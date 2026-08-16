@@ -55,7 +55,7 @@ export function PRFilesCombinedDiffToolbar({
       <div className="flex shrink-0 items-center gap-2">
         <button
           type="button"
-          className="w-20 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+          className="min-w-20 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
           onClick={onToggleAllCollapsed}
         >
           {allSectionsCollapsed
@@ -64,7 +64,7 @@ export function PRFilesCombinedDiffToolbar({
         </button>
         <button
           type="button"
-          className="w-24 rounded border border-border px-2 py-0.5 text-center text-xs text-muted-foreground transition-colors hover:text-foreground"
+          className="min-w-24 rounded border border-border px-2 py-0.5 text-center text-xs text-muted-foreground transition-colors hover:text-foreground"
           onClick={onToggleSideBySide}
         >
           {sideBySide

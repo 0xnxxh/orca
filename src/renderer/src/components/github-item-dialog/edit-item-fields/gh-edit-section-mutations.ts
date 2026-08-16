@@ -61,7 +61,8 @@ export function runGHEditStateChange({
     options: { sourceContext?: TaskSourceContext | null }
   ) => void
 }): void {
-  if (newState === localState) {
+  // Why: a close reason still has to reach GitHub even when the item already reads as closed locally.
+  if (newState === localState && !closeAction) {
     return
   }
   const prevState = localState
@@ -267,6 +268,8 @@ export function runGHEditAssigneeToggle({
         patchProjectRowIfNeeded({ assignees: newAssignees })
       },
       onRevert: () => {
+        // Why: leaving the guard set after a failed toggle suppresses assignee prop syncs indefinitely.
+        editedAssigneesItemKeyRef.current = null
         setLocalAssignees(prevAssignees)
         patchProjectRowIfNeeded({ assignees: prevAssignees })
       },
@@ -297,6 +300,8 @@ export function runGHEditAssigneeToggle({
       onMutated()
     },
     onRevert: () => {
+      // Why: leaving the guard set after a failed toggle suppresses assignee prop syncs indefinitely.
+      editedAssigneesItemKeyRef.current = null
       setLocalAssignees(prevAssignees)
       patchProjectRowIfNeeded({ assignees: prevAssignees })
     },

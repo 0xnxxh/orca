@@ -93,7 +93,10 @@ export function PRActionsPanel({
     if (!canMutateState || statePending) {
       return
     }
-    const label = nextState === 'closed' ? 'Close' : 'Reopen'
+    const label =
+      nextState === 'closed'
+        ? translate('auto.components.GitHubItemDialog.4aecf121e7', 'Close')
+        : translate('auto.components.GitHubItemDialog.8812225174', 'Reopen')
     const confirmed = await confirm({
       title: translate(
         'auto.components.GitHubItemDialog.03d7216d62',
@@ -148,12 +151,19 @@ export function PRActionsPanel({
       if (authority.revert()) {
         applyStatePatch(previousState)
       }
+      // Why: full sentences per branch — interpolating a lowercased label breaks locales with different casing rules.
       toast.error(
         err instanceof Error
           ? err.message
-          : translate('auto.components.GitHubItemDialog.e9b7cb7d17', 'Failed to {{value0}} PR', {
-              value0: label.toLowerCase()
-            })
+          : nextState === 'closed'
+            ? translate(
+                'auto.components.GitHubItemDialog.09d67a0f9b',
+                'Failed to close pull request'
+              )
+            : translate(
+                'auto.components.GitHubItemDialog.88809e79db',
+                'Failed to reopen pull request'
+              )
       )
     } finally {
       setStatePending(false)
@@ -204,7 +214,10 @@ export function PRActionsPanel({
               prRepo
             })
       if (!result.ok) {
-        toast.error(result.error)
+        toast.error(
+          result.error ||
+            translate('auto.components.GitHubItemDialog.aba792c8b3', 'Failed to merge pull request')
+        )
         return
       }
       // Why: merge is confirmed here; hold 'merged' against search-lagged refetches.
@@ -270,7 +283,18 @@ export function PRActionsPanel({
               prRepo
             })
       if (!result.ok) {
-        toast.error(result.error)
+        toast.error(
+          result.error ||
+            (enabled
+              ? translate(
+                  'auto.components.GitHubItemDialog.825a8fb8cd',
+                  'Failed to enable auto-merge'
+                )
+              : translate(
+                  'auto.components.GitHubItemDialog.ce360fc318',
+                  'Failed to disable auto-merge'
+                ))
+        )
         return
       }
       if (mergeTarget.kind === 'environment') {

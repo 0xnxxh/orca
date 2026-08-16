@@ -2,6 +2,7 @@ import React from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 import type { editor as monacoEditor } from 'monaco-editor'
 import { DiffSectionItem } from '@/components/editor/DiffSectionItem'
+import { translate } from '@/i18n/i18n'
 import type { DecoratedDiffComment } from '@/components/diff-comments/decorated-diff-comment'
 import { CombinedDiffFileTree } from '@/components/editor/CombinedDiffFileTree'
 import type { DiffSection } from '@/components/editor/diff-section-types'
@@ -135,11 +136,20 @@ export function PRFilesCombinedDiffBody({
                     retrySection={retrySection}
                     toggleSection={toggleSection}
                     openSection={openFilesOnGitHub}
-                    openSectionTitle="Open files on GitHub"
+                    openSectionTitle={translate(
+                      'auto.components.GitHubItemDialog.85a2b66f54',
+                      'Open files on GitHub'
+                    )}
                     renderHeaderTrailingContent={renderViewedCheckbox}
                     onAddLineComment={handleAddLineComment}
-                    addLineCommentLabel="Comment"
-                    addLineCommentPlaceholder="Add a review comment"
+                    addLineCommentLabel={translate(
+                      'auto.components.GitHubItemDialog.bf43425540',
+                      'Comment'
+                    )}
+                    addLineCommentPlaceholder={translate(
+                      'auto.components.GitHubItemDialog.86d84a17ca',
+                      'Add a review comment'
+                    )}
                     getCommentableLineNumbers={(section) =>
                       fileByPath.get(section.path)?.reviewCommentLineNumbers
                     }

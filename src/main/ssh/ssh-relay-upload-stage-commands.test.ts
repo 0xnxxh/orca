@@ -170,33 +170,37 @@ describe.each([
       expect(existsSync(join(pool, 'delete-0'))).toBe(false)
     })
 
-    it('rejects a payload reparse point without copying or deleting it', () => {
-      const pool = createPool()
-      const destination = join(pool, 'destination')
-      const foreign = join(pool, 'foreign.js')
-      mkdirSync(destination)
-      const stagePath = createStage(host, pool, 0)
-      rmSync(join(stagePath, 'payload', 'relay.js'))
-      writeFileSync(foreign, 'foreign')
-      symlinkSync(foreign, join(stagePath, 'payload', 'relay.js'))
-      const stage = parseReservedRelayUploadStage(
-        host,
-        pool,
-        owner,
-        `__ORCA_UPLOAD_STAGE_SLOT__${owner}:slot-0`
-      )
+    // Why: symlink creation in the fixture needs privileges Windows CI doesn't grant.
+    it.skipIf(process.platform === 'win32')(
+      'rejects a payload reparse point without copying or deleting it',
+      () => {
+        const pool = createPool()
+        const destination = join(pool, 'destination')
+        const foreign = join(pool, 'foreign.js')
+        mkdirSync(destination)
+        const stagePath = createStage(host, pool, 0)
+        rmSync(join(stagePath, 'payload', 'relay.js'))
+        writeFileSync(foreign, 'foreign')
+        symlinkSync(foreign, join(stagePath, 'payload', 'relay.js'))
+        const stage = parseReservedRelayUploadStage(
+          host,
+          pool,
+          owner,
+          `__ORCA_UPLOAD_STAGE_SLOT__${owner}:slot-0`
+        )
 
-      const result = runCommand(
-        host,
-        promoteOwnedRelayUploadStageCommand(host, stage, owner, destination)
-      )
+        const result = runCommand(
+          host,
+          promoteOwnedRelayUploadStageCommand(host, stage, owner, destination)
+        )
 
-      expect(result.status, result.stderr).toBe(0)
-      expect(relayUploadStagePromotionConfirmed(owner, result.stdout)).toBe(false)
-      expect(existsSync(join(destination, 'relay.js'))).toBe(false)
-      expect(lstatSync(join(pool, 'slot-0', 'payload', 'relay.js')).isSymbolicLink()).toBe(true)
-      expect(readFileSync(foreign, 'utf8')).toBe('foreign')
-    })
+        expect(result.status, result.stderr).toBe(0)
+        expect(relayUploadStagePromotionConfirmed(owner, result.stdout)).toBe(false)
+        expect(existsSync(join(destination, 'relay.js'))).toBe(false)
+        expect(lstatSync(join(pool, 'slot-0', 'payload', 'relay.js')).isSymbolicLink()).toBe(true)
+        expect(readFileSync(foreign, 'utf8')).toBe('foreign')
+      }
+    )
 
     it('reclaims one stale owned stage but preserves fresh and foreign stages', () => {
       const pool = createPool()

@@ -234,7 +234,7 @@ export function GitHubItemDialogIssueHeader({
               {translate('auto.components.GitHubItemDialog.55962099bc', 'opened this issue')}
             </span>
             <span className="text-muted-foreground/80">
-              {translate('auto.components.GitHubItemDialog.10ef1afb8e', '· updated')}
+              {translate('auto.components.GitHubItemDialog.10ef1afb8e', '· updated')}{' '}
               {formatRelativeTime(workItem.updatedAt)}
             </span>
           </span>
