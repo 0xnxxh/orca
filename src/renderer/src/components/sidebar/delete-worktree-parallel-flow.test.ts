@@ -136,12 +136,22 @@ describe('runWorktreeDeletesInParallel', () => {
     ])
 
     expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(2)
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(1, 'wt-1', false, {
-      suppressPreservedBranchToast: true
-    })
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(2, 'wt-2', false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      1,
+      { id: 'wt-1', executionHostId: null },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      2,
+      { id: 'wt-2', executionHostId: null },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
     expect(mocks.state.markWorktreesDeleting).toHaveBeenCalledWith(['wt-1', 'wt-2'])
 
     second.resolve({ ok: true })
@@ -172,16 +182,26 @@ describe('runWorktreeDeletesInParallel', () => {
       canForceDelete: false
     })
     expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(1)
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(1, 'child', false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      1,
+      { id: 'child', executionHostId: null },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
 
     childDelete.resolve({ ok: true })
 
     await expect(deleted).resolves.toEqual(['parent', 'child'])
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(2, 'parent', false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      2,
+      { id: 'parent', executionHostId: null },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
   })
 
   it('deletes nested workspaces before their parent within the same repo', async () => {
@@ -190,12 +210,22 @@ describe('runWorktreeDeletesInParallel', () => {
       { id: 'child', displayName: 'child', repoId: 'repo-a', path: '/workspaces/parent/child' }
     ])
 
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(1, 'child', false, {
-      suppressPreservedBranchToast: true
-    })
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(2, 'parent', false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      1,
+      { id: 'child', executionHostId: null },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      2,
+      { id: 'parent', executionHostId: null },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
   })
 
   it('passes confirmed force to each delete', async () => {
@@ -207,12 +237,22 @@ describe('runWorktreeDeletesInParallel', () => {
       { force: true }
     )
 
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(1, 'wt-1', true, {
-      suppressPreservedBranchToast: true
-    })
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(2, 'wt-2', true, {
-      suppressPreservedBranchToast: true
-    })
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      1,
+      { id: 'wt-1', executionHostId: null },
+      true,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      2,
+      { id: 'wt-2', executionHostId: null },
+      true,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
   })
 
   it('deletes a duplicated target identity only once', async () => {
@@ -230,19 +270,24 @@ describe('runWorktreeDeletesInParallel', () => {
 
     expect(mocks.state.markWorktreesDeleting).toHaveBeenCalledWith(['wt-1'])
     expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(1)
-    expect(mocks.state.removeWorktree).toHaveBeenCalledWith('wt-1', false)
+    expect(mocks.state.removeWorktree).toHaveBeenCalledWith(
+      { id: 'wt-1', executionHostId: null },
+      false
+    )
     expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('clears a pending ancestor when a nested descendant delete fails', async () => {
-    mocks.state.removeWorktree.mockImplementationOnce(async (worktreeId: string) => {
-      mocks.state.deleteStateByWorktreeId[worktreeId] = {
-        isDeleting: false,
-        error: 'changed files',
-        canForceDelete: true
+    mocks.state.removeWorktree.mockImplementationOnce(
+      async ({ id: worktreeId }: { id: string }) => {
+        mocks.state.deleteStateByWorktreeId[worktreeId] = {
+          isDeleting: false,
+          error: 'changed files',
+          canForceDelete: true
+        }
+        return { ok: false, error: 'changed files' }
       }
-      return { ok: false, error: 'changed files' }
-    })
+    )
 
     await expect(
       runDeletesForCurrentWorktrees([
@@ -252,9 +297,14 @@ describe('runWorktreeDeletesInParallel', () => {
     ).resolves.toEqual([])
 
     expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(1)
-    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(1, 'child', false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      1,
+      { id: 'child', executionHostId: null },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
     expect(mocks.state.clearWorktreeDeleteState).toHaveBeenCalledWith('parent')
     expect(mocks.state.deleteStateByWorktreeId['parent']).toBeUndefined()
   })

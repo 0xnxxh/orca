@@ -10,7 +10,6 @@ import type {
   CreateWorktreeArgs,
   CreateWorktreeResult,
   ForceDeleteWorktreeBranchResult,
-  RemoveWorktreeResult,
   SetupDecision
 } from '../../../../shared/worktree/create-types'
 import type { WorktreeStartupLaunch } from '../../../../shared/worktree/launch-types'
@@ -25,7 +24,10 @@ import type {
   Worktree
 } from '../../../../shared/worktree/types'
 import type { TaskSourceContext } from '../../../../shared/task-source-context'
-import type { WorktreeForceDeleteReason } from '../../../../shared/worktree/removal'
+import type {
+  WorktreeForceDeleteReason,
+  WorktreeRemovalTarget
+} from '../../../../shared/worktree/removal'
 import type { TerminalGitHubPRLink } from '../../../../shared/terminal-github-pr-link-detector'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type {
@@ -40,6 +42,7 @@ import type {
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import type { AppState } from '../types'
 import type { WorktreeRefreshAllOptions } from './worktree-refresh-options'
+import type { RendererRemoveWorktreeResult } from './worktree-removal-result'
 export { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 
 export type WorktreeDeleteState = {
@@ -49,13 +52,6 @@ export type WorktreeDeleteState = {
   canForceDelete: boolean
   forceDeleteReason: WorktreeForceDeleteReason | null
   lockReason?: string | null
-}
-
-type RendererRemoveWorktreeResult = Omit<RemoveWorktreeResult, 'preservedBranch'> & {
-  preservedBranch?: NonNullable<RemoveWorktreeResult['preservedBranch']> & {
-    hostId?: ExecutionHostId
-    runtimeEnvironmentId?: string
-  }
 }
 
 export type WorktreeFetchOptions = {
@@ -243,8 +239,10 @@ export type WorktreeSlice = {
   /** Point the content panel at a pending creation (or clear it with null). */
   setActivePendingWorktreeCreation: (creationId: string | null) => void
   prefetchWorktreeCreateBase: (repoId: string, baseBranch?: string) => Promise<void>
+  /** Destructive: takes a host-qualified target because `id` alone repeats
+   *  across hosts and would delete another host's checkout (STA-4448). */
   removeWorktree: (
-    worktreeId: string,
+    target: WorktreeRemovalTarget,
     force?: boolean,
     // 'forget-local' drops the workspace from Orca only (no remote Git/FS work)
     // for workspaces pinned to a removed/disconnected SSH host. Reuses the same

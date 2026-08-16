@@ -48,9 +48,11 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { repo1: [wt] }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(wt.id, false, {
-      snapshotPruneBatchId: 'batch-1'
-    })
+    const result = await store
+      .getState()
+      .removeWorktree({ id: wt.id, executionHostId: null }, false, {
+        snapshotPruneBatchId: 'batch-1'
+      })
 
     expect(result).toEqual({ ok: true })
     expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
@@ -109,7 +111,7 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { 'repo-ssh': [wt] }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(wt.id)
+    const result = await store.getState().removeWorktree({ id: wt.id, executionHostId: null })
 
     expect(result).toEqual({
       ok: true,
@@ -191,11 +193,11 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { 'repo-shared': [localWorktree] }
     } as Partial<AppState>)
 
-    await store.getState().removeWorktree(worktreeId)
+    await store.getState().removeWorktree({ id: worktreeId, executionHostId: null })
     store.setState({
       worktreesByRepo: { 'repo-shared': [remoteWorktree] }
     } as Partial<AppState>)
-    await store.getState().removeWorktree(worktreeId)
+    await store.getState().removeWorktree({ id: worktreeId, executionHostId: null })
 
     await store
       .getState()
@@ -261,11 +263,11 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { 'repo-shared': [localWorktree] }
     } as Partial<AppState>)
 
-    await store.getState().removeWorktree(worktreeId)
+    await store.getState().removeWorktree({ id: worktreeId, executionHostId: 'local' })
     store.setState({
       worktreesByRepo: { 'repo-shared': [remoteWorktree] }
     } as Partial<AppState>)
-    await store.getState().removeWorktree(worktreeId)
+    await store.getState().removeWorktree({ id: worktreeId, executionHostId: 'ssh:shared-target' })
 
     const result = await store
       .getState()
@@ -306,7 +308,7 @@ describe('worktree remote runtime mutations', () => {
       }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(worktreeId)
+    const result = await store.getState().removeWorktree({ id: worktreeId, executionHostId: null })
 
     expect(result).toEqual({
       ok: false,
@@ -337,7 +339,7 @@ describe('worktree remote runtime mutations', () => {
         worktreesByRepo: { 'repo-gone': [wt] }
       } as Partial<AppState>)
 
-      const result = await store.getState().removeWorktree(wt.id)
+      const result = await store.getState().removeWorktree({ id: wt.id, executionHostId: null })
 
       expect(result).toEqual({ ok: true })
       expect(mockApi.worktrees.forgetLocal).toHaveBeenCalledWith({
@@ -376,7 +378,7 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { 'repo-shared': [original] }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(worktreeId)
+    const result = await store.getState().removeWorktree({ id: worktreeId, executionHostId: null })
 
     expect(result).toEqual({
       ok: false,
@@ -408,7 +410,7 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { repo1: [wt] }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(wt.id)
+    const result = await store.getState().removeWorktree({ id: wt.id, executionHostId: null })
 
     expect(result).toEqual({
       ok: false,
@@ -426,7 +428,7 @@ describe('worktree remote runtime mutations', () => {
     const wt = makeWorktree({ id: 'repo1::/w/one', repoId: 'repo1', path: '/w/one' })
     store.setState({ worktreesByRepo: { repo1: [wt] } } as Partial<AppState>)
 
-    await store.getState().removeWorktree(wt.id, true)
+    await store.getState().removeWorktree({ id: wt.id, executionHostId: null }, true)
     expect(mockApi.worktrees.remove).toHaveBeenLastCalledWith(
       expect.objectContaining({ force: true, allowUnverifiedPtyStop: false })
     )
@@ -436,7 +438,9 @@ describe('worktree remote runtime mutations', () => {
     const retry = makeWorktree({ id: 'repo1::/w/two', repoId: 'repo1', path: '/w/two' })
     store.setState({ worktreesByRepo: { repo1: [retry] } } as Partial<AppState>)
 
-    await store.getState().removeWorktree(retry.id, true, { allowUnverifiedPtyStop: true })
+    await store.getState().removeWorktree({ id: retry.id, executionHostId: null }, true, {
+      allowUnverifiedPtyStop: true
+    })
     expect(mockApi.worktrees.remove).toHaveBeenLastCalledWith(
       expect.objectContaining({ force: true, allowUnverifiedPtyStop: true })
     )
@@ -464,7 +468,7 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { 'repo-ssh': [wt] }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(wt.id)
+    const result = await store.getState().removeWorktree({ id: wt.id, executionHostId: null })
 
     expect(result).toEqual({ ok: true })
     expect(mockApi.worktrees.remove).toHaveBeenCalledWith({
@@ -502,7 +506,7 @@ describe('worktree remote runtime mutations', () => {
       }
     } as Partial<AppState>)
 
-    const result = await store.getState().removeWorktree(worktreeId)
+    const result = await store.getState().removeWorktree({ id: worktreeId, executionHostId: null })
 
     expect(result).toEqual({
       ok: false,

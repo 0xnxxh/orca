@@ -1,5 +1,6 @@
 import { useAppStore } from '@/store'
 import { getAllWorktreesFromState, getWorktreeMapFromState } from '@/store/selectors'
+import { toWorktreeRemovalTarget } from '../../../../shared/worktree/removal'
 import { findRepoForHost } from '@/store/slices/repo-host-identity'
 import {
   showNoDeletableWorkspacesToast,
@@ -93,7 +94,7 @@ export function runWorktreeDelete(worktreeId: string, options: WorktreeDeleteOpt
   const hasLineageChildren = deleteLineage.descendants.length > 0
   const skipConfirm = state.settings?.skipDeleteWorktreeConfirm ?? false
   if (skipConfirm && !hasLineageChildren) {
-    void runWorktreeDeleteWithToast(worktreeId, target.displayName)
+    void runWorktreeDeleteWithToast(toWorktreeRemovalTarget(target), target.displayName)
     return
   }
   state.openModal('delete-worktree', {

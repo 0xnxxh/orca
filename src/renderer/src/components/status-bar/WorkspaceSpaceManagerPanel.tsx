@@ -1624,7 +1624,13 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
       // discarded silently; a failed row gets this explicit recovery path.
       const commitFocus = prepareActiveWorktreeFocusAfterDelete(worktree.worktreeId)
       // Why (#11960): explicit force recovery, so it may also waive PTY-stop proof.
-      void removeWorktree(worktree.worktreeId, true, { allowUnverifiedPtyStop: true })
+      // Why the host (STA-4448): the Space scan lists one row per host, so a bare
+      // id would let this force delete another host's checkout at the same path.
+      void removeWorktree(
+        { id: worktree.worktreeId, executionHostId: worktree.executionHostId ?? null },
+        true,
+        { allowUnverifiedPtyStop: true }
+      )
         .then((result) => {
           if (!result.ok) {
             toast.error(

@@ -74,6 +74,33 @@ function ownerRecordsOnHost(
 }
 
 /**
+ * Every host that currently claims `worktreeId`. Unqualified rows contribute
+ * nothing: a row with no `hostId` may well be the same host as a qualified one,
+ * so counting it as its own owner would invent collisions during migration.
+ */
+export function collectWorktreeOwnerExecutionHostIds(
+  state: WorktreeOperationRouteState,
+  worktreeId: string
+): ExecutionHostId[] {
+  const hostIds = new Set<ExecutionHostId>()
+  for (const worktrees of Object.values(state.worktreesByRepo ?? {})) {
+    for (const worktree of worktrees) {
+      const hostId = worktree.id === worktreeId ? parseExecutionHostId(worktree.hostId)?.id : null
+      if (hostId) {
+        hostIds.add(hostId)
+      }
+    }
+  }
+  for (const worktree of findIndexedDetectedWorktrees(state.detectedWorktreesByRepo, worktreeId)) {
+    const hostId = parseExecutionHostId(worktree.hostId)?.id
+    if (hostId) {
+      hostIds.add(hostId)
+    }
+  }
+  return Array.from(hostIds)
+}
+
+/**
  * The active workspace's host selection is authoritative identity, but it carries no transport:
  * an `ssh:` host reached through a paired HUB names the target, not the HUB that proxies it. Keep
  * the selected host and recover the runtime owner from the matching owner rows (#11346).

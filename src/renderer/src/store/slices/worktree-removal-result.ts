@@ -1,0 +1,16 @@
+import type { ExecutionHostId } from '../../../../shared/execution-host'
+import type { RemoveWorktreeResult } from '../../../../shared/worktree/create-types'
+
+/**
+ * What `removeWorktree` resolves with on success.
+ *
+ * The renderer widens main's result: a preserved branch has to name the host (and
+ * paired-runtime transport) it was preserved on, or the follow-up force-delete
+ * cannot find it again on a multi-host repo.
+ */
+export type RendererRemoveWorktreeResult = Omit<RemoveWorktreeResult, 'preservedBranch'> & {
+  preservedBranch?: NonNullable<RemoveWorktreeResult['preservedBranch']> & {
+    hostId?: ExecutionHostId
+    runtimeEnvironmentId?: string
+  }
+}

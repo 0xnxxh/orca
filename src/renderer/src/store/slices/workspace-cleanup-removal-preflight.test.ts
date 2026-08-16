@@ -49,7 +49,7 @@ describe('workspace cleanup removal and protection', () => {
     })
     installWorkspaceCleanupApi(scan)
 
-    const removeWorktree = vi.fn(async (worktreeId: string) => {
+    const removeWorktree = vi.fn(async ({ id: worktreeId }: { id: string }) => {
       deleteOrder.push(worktreeId)
       activeDeletes += 1
       maxActiveDeletes = Math.max(maxActiveDeletes, activeDeletes)
@@ -79,9 +79,13 @@ describe('workspace cleanup removal and protection', () => {
       'repo-a::/repo/parent',
       'repo-c::/other'
     ])
-    expect(removeWorktree).toHaveBeenCalledWith('repo-c::/other', true, {
-      suppressPreservedBranchToast: true
-    })
+    expect(removeWorktree).toHaveBeenCalledWith(
+      { id: 'repo-c::/other', executionHostId: 'local' },
+      true,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
     expect(store.getState().workspaceCleanupScan?.candidates).toEqual([])
   })
 
@@ -112,9 +116,13 @@ describe('workspace cleanup removal and protection', () => {
         }
       ]
     })
-    expect(removeWorktree).toHaveBeenCalledWith(candidate.worktreeId, false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(removeWorktree).toHaveBeenCalledWith(
+      { id: candidate.worktreeId, executionHostId: 'local' },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
   })
 
   it('forwards the snapshot batch through each successful removal', async () => {
@@ -129,10 +137,11 @@ describe('workspace cleanup removal and protection', () => {
       snapshotPruneBatchId: 'batch-1'
     })
 
-    expect(removeWorktree).toHaveBeenCalledWith(candidate.worktreeId, false, {
-      suppressPreservedBranchToast: true,
-      snapshotPruneBatchId: 'batch-1'
-    })
+    expect(removeWorktree).toHaveBeenCalledWith(
+      { id: candidate.worktreeId, executionHostId: 'ssh:ssh-1' },
+      false,
+      { suppressPreservedBranchToast: true, snapshotPruneBatchId: 'batch-1' }
+    )
   })
 
   it('demotes an active suggested workspace when it was not viewed from cleanup', async () => {
@@ -244,9 +253,13 @@ describe('workspace cleanup removal and protection', () => {
       removedIds: [WORKTREE_ID],
       failures: []
     })
-    expect(removeWorktree).toHaveBeenCalledWith(WORKTREE_ID, false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(removeWorktree).toHaveBeenCalledWith(
+      { id: WORKTREE_ID, executionHostId: 'local' },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
   })
 
   it('defers git checks for locally active workspaces on initial scans', async () => {
@@ -358,9 +371,13 @@ describe('workspace cleanup removal and protection', () => {
         failures: []
       }
     )
-    expect(removeWorktree).toHaveBeenCalledWith(WORKTREE_ID, false, {
-      suppressPreservedBranchToast: true
-    })
+    expect(removeWorktree).toHaveBeenCalledWith(
+      { id: WORKTREE_ID, executionHostId: 'local' },
+      false,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
   })
 
   it('fails a queued removal that now needs a force the user never approved', async () => {
@@ -416,9 +433,13 @@ describe('workspace cleanup removal and protection', () => {
         approvedCandidates: [approvedCandidate]
       })
     ).resolves.toEqual({ removedIds: [WORKTREE_ID], failures: [] })
-    expect(removeWorktree).toHaveBeenCalledWith(WORKTREE_ID, true, {
-      suppressPreservedBranchToast: true
-    })
+    expect(removeWorktree).toHaveBeenCalledWith(
+      { id: WORKTREE_ID, executionHostId: 'local' },
+      true,
+      {
+        suppressPreservedBranchToast: true
+      }
+    )
   })
 
   it('fails a removal that reveals concrete git risk after an unverified force approval', async () => {

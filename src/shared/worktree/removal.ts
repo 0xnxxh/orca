@@ -1,4 +1,5 @@
-import type { GitWorktreeInfo } from './types'
+import type { ExecutionHostId } from '../execution-host'
+import type { GitWorktreeInfo, Worktree } from './types'
 
 export const LOCKED_WORKTREE_REMOVAL_PREFIX = 'Worktree is locked by Git.'
 
@@ -121,4 +122,65 @@ export function classifyWorktreeForceDeleteReason(
     return 'dirty'
   }
   return null
+}
+
+// ─── Host qualification (STA-4448) ───────────────────────────────────
+//
+// A workspace id is `repoId::path` with no host component, so the local host, an
+// SSH host and a paired runtime can all publish the SAME id. Removing by that id
+// alone destroys whichever checkout routing happens to pick — and routing prefers
+// the ACTIVE workspace's host, which is usually not the row the user confirmed.
+//
+// So a destructive removal travels as a host-qualified target, and the chokepoint
+// refuses whenever the confirmed host is not where the removal would actually
+// land. Fail closed, never reroute: rerouting a colliding row to its right host is
+// #14606's job and needs evidence this layer does not have.
+
+/**
+ * Identity for a destructive workspace removal.
+ *
+ * `executionHostId` is required but nullable on purpose: `null` states that the
+ * confirmed row itself declares no host (a pre-host-qualified snapshot row), so
+ * a caller has to make that claim deliberately instead of omitting the field.
+ */
+export type WorktreeRemovalTarget = {
+  id: string
+  executionHostId: ExecutionHostId | null
+}
+
+export function toWorktreeRemovalTarget(
+  worktree: Pick<Worktree, 'id' | 'hostId'>
+): WorktreeRemovalTarget {
+  return { id: worktree.id, executionHostId: worktree.hostId ?? null }
+}
+
+export type WorktreeRemovalHostVerdict =
+  | { kind: 'allowed' }
+  /** `collision`: two hosts own the id. `unresolved`: one owner, but not the confirmed one. */
+  | { kind: 'refused'; reason: 'collision' | 'unresolved' }
+
+/**
+ * Allows a removal only when it provably lands on the host whose row was
+ * confirmed.
+ *
+ * An unqualified target still deletes while the id has at most one declared
+ * owner — that keeps legacy/snapshot rows and folder workspaces working — but
+ * it can never resolve a collision, so it is refused as soon as one exists.
+ */
+export function verifyWorktreeRemovalHost(args: {
+  /** Host the confirmed row declared, or null when it declared none. */
+  confirmedExecutionHostId: ExecutionHostId | null
+  /** Every host that currently claims this id; unqualified rows contribute nothing. */
+  ownerExecutionHostIds: readonly ExecutionHostId[]
+  /** Host the removal would actually reach, as resolved by operation routing. */
+  routeExecutionHostId: ExecutionHostId | null
+}): WorktreeRemovalHostVerdict {
+  const collides = new Set(args.ownerExecutionHostIds).size > 1
+  if (!args.confirmedExecutionHostId) {
+    return collides ? { kind: 'refused', reason: 'collision' } : { kind: 'allowed' }
+  }
+  if (args.routeExecutionHostId === args.confirmedExecutionHostId) {
+    return { kind: 'allowed' }
+  }
+  return { kind: 'refused', reason: collides ? 'collision' : 'unresolved' }
 }

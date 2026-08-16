@@ -405,7 +405,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
         continue
       }
       const result = await get().removeWorktree(
-        candidate.worktreeId,
+        { id: candidate.worktreeId, executionHostId: scannedHostId },
         shouldForceWorkspaceCleanupRemoval(candidate),
         // Why: cleanup reports outcomes in its own summary toasts; per-row
         // preserved-branch warnings would stack one toast per removed row.

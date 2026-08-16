@@ -19,6 +19,7 @@ import {
   resolveWorktreeOperationRouteResult,
   settingsForWorktreeOperationRoute
 } from '@/lib/worktree-operation-route'
+import { refuseWrongHostWorktreeRemoval } from './remove-worktree-host-guard'
 import { captureWorktreeOperationGenerationGuard } from '@/lib/worktree-operation-generation'
 import {
   classifyWorktreeForceDeleteReason,
@@ -42,13 +43,28 @@ export function createRemoveWorktree(
   set: WorktreeSliceSet,
   get: WorktreeSliceGet
 ): WorktreeSlice['removeWorktree'] {
-  return async (worktreeId, force, options) => {
+  return async (removalTarget, force, options) => {
+    const worktreeId = removalTarget.id
     const forgetLocalOnly = options?.mode === 'forget-local'
     const removalRoute = resolveWorktreeOperationRoute(get(), worktreeId)
     if (!forgetLocalOnly && !removalRoute) {
       return { ok: false, error: WORKTREE_REMOVAL_AMBIGUOUS_ERROR }
     }
-    const hostId = removalRoute?.executionHostId ?? undefined
+    // Why (STA-4448): this is the ONE chokepoint every delete entry point shares,
+    // so host qualification is enforced here rather than at any single caller —
+    // a guard bolted onto the sidebar would drift from the cleanup dialog's.
+    // forget-local is exempt: it removes no files or Git state (see
+    // `worktrees:forgetLocal`), and it must stay available precisely when the
+    // owning host is gone and routing can no longer resolve.
+    const wrongHostRefusal = forgetLocalOnly
+      ? null
+      : refuseWrongHostWorktreeRemoval(get(), removalTarget, removalRoute?.executionHostId ?? null)
+    if (wrongHostRefusal) {
+      return { ok: false, error: wrongHostRefusal }
+    }
+    // The confirmed host outranks the route: they can only differ on the
+    // forget-local path, where the confirmed row is the better evidence.
+    const hostId = removalTarget.executionHostId ?? removalRoute?.executionHostId ?? undefined
     const removalGenerationGuard = removalRoute
       ? captureWorktreeOperationGenerationGuard(
           get,
