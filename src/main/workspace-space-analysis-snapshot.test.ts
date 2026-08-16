@@ -28,7 +28,9 @@ vi.mock('./sidecar-snapshot-file', async (importOriginal) => {
 })
 
 import {
+  beginWorkspaceSpaceAnalysisSnapshotProducer,
   finalizeWorkspaceSpaceAnalysisSnapshotPrunes,
+  finishWorkspaceSpaceAnalysisSnapshotProducer,
   persistWorkspaceSpaceAnalysisSnapshot,
   pruneWorkspaceSpaceAnalysisSnapshot,
   pruneWorkspaceSpaceAnalysisSnapshots,
@@ -389,6 +391,37 @@ describe('workspace space analysis snapshot', () => {
       scannedAt: 99
     })
 
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([
+      row
+    ])
+    now.mockRestore()
+  })
+
+  it('retires a tombstone after every pre-prune producer settles', async () => {
+    const row = makeWorktreeRow()
+    const producerId = beginWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(200)
+    await pruneWorkspaceSpaceAnalysisSnapshot(
+      userDataDirHolder.dir,
+      row.worktreeId,
+      row.executionHostId
+    )
+
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 300
+    })
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 100
+    })
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([])
+
+    finishWorkspaceSpaceAnalysisSnapshotProducer(userDataDirHolder.dir, producerId)
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 100
+    })
     expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([
       row
     ])

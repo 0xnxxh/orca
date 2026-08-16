@@ -11,7 +11,9 @@ import {
 import type { ExecutionHostId } from '../shared/execution-host'
 import {
   activeWorkspaceSnapshotPruneKeys,
+  expireWorkspaceSnapshotPrunes,
   registerWorkspaceSnapshotPrunesForFile,
+  settleWorkspaceSnapshotPruneProducer,
   workspaceSnapshotPruneKey,
   workspaceSnapshotPruneTargetKeys,
   type WorkspaceSnapshotPruneTarget,
@@ -24,6 +26,8 @@ const SNAPSHOT_VERSION = 2
 export type WorkspaceSpaceAnalysisSnapshotPruneTarget = WorkspaceSnapshotPruneTarget
 
 const prunedWorkspacesByFile = new Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>()
+const activeProducerIdsByFile = new Map<string, Set<number>>()
+let nextProducerId = 1
 
 type PersistedWorkspaceSpaceAnalysisSnapshot = {
   version: number
@@ -214,17 +218,41 @@ export function registerWorkspaceSpaceAnalysisSnapshotPruneTombstones(
   if (targets.length === 0) {
     return
   }
+  const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
+  expireWorkspaceSnapshotPrunes(prunedWorkspacesByFile, file)
   registerWorkspaceSnapshotPrunesForFile(
     prunedWorkspacesByFile,
-    sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME),
-    targets
+    file,
+    targets,
+    activeProducerIdsByFile.get(file)
   )
+}
+
+export function beginWorkspaceSpaceAnalysisSnapshotProducer(snapshotDirectory: string): number {
+  const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
+  const producerId = nextProducerId++
+  const producers = activeProducerIdsByFile.get(file) ?? new Set()
+  producers.add(producerId)
+  activeProducerIdsByFile.set(file, producers)
+  return producerId
+}
+
+export function finishWorkspaceSpaceAnalysisSnapshotProducer(
+  snapshotDirectory: string,
+  producerId: number
+): void {
+  const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
+  const producers = activeProducerIdsByFile.get(file)
+  producers?.delete(producerId)
+  if (producers?.size === 0) activeProducerIdsByFile.delete(file)
+  settleWorkspaceSnapshotPruneProducer(prunedWorkspacesByFile, file, producerId)
 }
 
 function excludeRowsPrunedDuringScan(
   file: string,
   analysis: WorkspaceSpaceAnalysis
 ): WorkspaceSpaceAnalysis {
+  expireWorkspaceSnapshotPrunes(prunedWorkspacesByFile, file)
   const prunedKeys = activeWorkspaceSnapshotPruneKeys(
     prunedWorkspacesByFile.get(file),
     analysis.scannedAt
@@ -243,7 +271,7 @@ function clearSupersededPrunes(file: string, analysis: WorkspaceSpaceAnalysis): 
     return
   }
   for (const [key, entry] of pruned) {
-    if (entry.prunedAt < analysis.scannedAt) {
+    if (entry.pendingProducerIds.size === 0 && entry.prunedAt < analysis.scannedAt) {
       pruned.delete(key)
     }
   }
@@ -263,7 +291,13 @@ async function pruneWorkspaceSpaceAnalysisSnapshotsWithRegisteredTombstones(
   const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
   const targetKeys = workspaceSnapshotPruneTargetKeys(targets)
   if (registerTombstones) {
-    registerWorkspaceSnapshotPrunesForFile(prunedWorkspacesByFile, file, targets)
+    expireWorkspaceSnapshotPrunes(prunedWorkspacesByFile, file)
+    registerWorkspaceSnapshotPrunesForFile(
+      prunedWorkspacesByFile,
+      file,
+      targets,
+      activeProducerIdsByFile.get(file)
+    )
   }
   try {
     await withSidecarSnapshotQueue(file, async () => {

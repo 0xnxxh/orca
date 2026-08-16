@@ -28,7 +28,9 @@ vi.mock('./sidecar-snapshot-file', async (importOriginal) => {
 })
 
 import {
+  beginWorkspaceCleanupScanSnapshotProducer,
   finalizeWorkspaceCleanupScanSnapshotPrunes,
+  finishWorkspaceCleanupScanSnapshotProducer,
   persistWorkspaceCleanupScanResult,
   pruneWorkspaceCleanupScanSnapshot,
   pruneWorkspaceCleanupScanSnapshots,
@@ -430,6 +432,40 @@ describe('workspace cleanup scan snapshot', () => {
       { ...makeBroadResult([candidate]), scannedAt: 99 }
     )
 
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
+      candidate
+    ])
+    now.mockRestore()
+  })
+
+  it('retires a tombstone after every pre-prune producer settles', async () => {
+    const candidate = makeCandidate()
+    const producerId = beginWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(200)
+    await pruneWorkspaceCleanupScanSnapshot(
+      userDataDirHolder.dir,
+      candidate.worktreeId,
+      candidate.executionHostId
+    )
+
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      { ...makeBroadResult([candidate]), scannedAt: 300 }
+    )
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { worktreeId: candidate.worktreeId },
+      { ...makeBroadResult([candidate]), scannedAt: 100 }
+    )
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([])
+
+    finishWorkspaceCleanupScanSnapshotProducer(userDataDirHolder.dir, producerId)
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { worktreeId: candidate.worktreeId },
+      { ...makeBroadResult([candidate]), scannedAt: 100 }
+    )
     expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
       candidate
     ])

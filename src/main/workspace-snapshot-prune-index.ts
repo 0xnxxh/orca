@@ -7,7 +7,11 @@ export type WorkspaceSnapshotPruneTarget = {
 
 export type WorkspaceSnapshotPruneTombstone = WorkspaceSnapshotPruneTarget & {
   prunedAt: number
+  expiresAt: number
+  pendingProducerIds: Set<number>
 }
+
+export const WORKSPACE_SNAPSHOT_PRUNE_TOMBSTONE_TTL_MS = 10 * 60 * 1000
 
 export function workspaceSnapshotPruneKey(
   worktreeId: string,
@@ -42,7 +46,8 @@ export function activeWorkspaceSnapshotPruneKeys(
 export function registerWorkspaceSnapshotPrunesForFile(
   tombstonesByFile: Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>,
   file: string,
-  targets: readonly WorkspaceSnapshotPruneTarget[]
+  targets: readonly WorkspaceSnapshotPruneTarget[],
+  activeProducerIds: ReadonlySet<number> = new Set()
 ): void {
   const tombstones = tombstonesByFile.get(file) ?? new Map()
   const prunedAt = Date.now()
@@ -50,8 +55,37 @@ export function registerWorkspaceSnapshotPrunesForFile(
     tombstones.set(workspaceSnapshotPruneKey(worktreeId, executionHostId), {
       worktreeId,
       ...(executionHostId ? { executionHostId } : {}),
-      prunedAt
+      prunedAt,
+      expiresAt: prunedAt + WORKSPACE_SNAPSHOT_PRUNE_TOMBSTONE_TTL_MS,
+      pendingProducerIds: new Set(activeProducerIds)
     })
   }
   tombstonesByFile.set(file, tombstones)
+}
+
+export function expireWorkspaceSnapshotPrunes(
+  tombstonesByFile: Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>,
+  file: string,
+  now = Date.now()
+): void {
+  const tombstones = tombstonesByFile.get(file)
+  if (!tombstones) return
+  for (const [key, entry] of tombstones) {
+    if (entry.expiresAt <= now) tombstones.delete(key)
+  }
+  if (tombstones.size === 0) tombstonesByFile.delete(file)
+}
+
+export function settleWorkspaceSnapshotPruneProducer(
+  tombstonesByFile: Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>,
+  file: string,
+  producerId: number
+): void {
+  const tombstones = tombstonesByFile.get(file)
+  if (!tombstones) return
+  for (const [key, entry] of tombstones) {
+    entry.pendingProducerIds.delete(producerId)
+    if (entry.pendingProducerIds.size === 0) tombstones.delete(key)
+  }
+  if (tombstones.size === 0) tombstonesByFile.delete(file)
 }
