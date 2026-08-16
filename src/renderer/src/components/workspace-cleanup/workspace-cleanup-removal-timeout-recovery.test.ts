@@ -253,7 +253,7 @@ describe('workspace cleanup removal timeout recovery', () => {
       removedIdentities: [parent.worktreeId],
       failures: []
     })
-    expect(toast.success).toHaveBeenLastCalledWith('Removed workspaces: 1')
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('hardens a provisional parent skip after the child late-fails post-batch', async () => {
