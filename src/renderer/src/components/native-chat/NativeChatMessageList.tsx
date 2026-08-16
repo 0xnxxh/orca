@@ -17,6 +17,7 @@ import { stripNoiseMessages } from './native-chat-noise'
 import { foldToolMessages, splitNativeChatBlocks } from './native-chat-tool-fold'
 import { isNearBottom, shouldShowJumpToLatest, type ScrollGeometry } from './native-chat-autoscroll'
 import { isNativeChatPastedImagePath } from './native-chat-image-paste'
+import { escapeNativeChatUserMarkdown } from './native-chat-user-markdown'
 import { NativeChatToolRun } from './NativeChatToolRun'
 import { NativeChatCopyButton } from './NativeChatCopyButton'
 import { NATIVE_CHAT_STREAMING_ID } from '../../../../shared/native-chat-streaming'
@@ -174,7 +175,7 @@ function MessageRow({
             <>
               <ImageAttachmentRefs blocks={prose} />
               <CommentMarkdown
-                content={markdown}
+                content={escapeNativeChatUserMarkdown(markdown)}
                 variant="document"
                 className="text-sm"
                 onLinkClick={onLinkClick}
