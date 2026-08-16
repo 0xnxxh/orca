@@ -421,6 +421,7 @@ import {
   type RuntimeTerminalSplit,
   type RuntimeTerminalFocus,
   type RuntimeTerminalClose,
+  type RuntimeTerminalListHostScope,
   type RuntimeTerminalListResult,
   type RuntimeTerminalOrphanAdoptionRequest,
   type RuntimeTerminalOrphanAdoptionResult,
@@ -516,6 +517,7 @@ import {
   parsePaneKey
 } from '../../shared/stable-pane-id'
 import { parseAppSshPtyId } from '../../shared/ssh-pty-id'
+import { getPtyExecutionHost } from '../../shared/terminal-execution-host'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../shared/terminal-tab-id'
 import { isWslHookRelayConnectionId } from '../../shared/wsl-hook-relay-contract'
 import {
@@ -5816,6 +5818,19 @@ export class OrcaRuntimeService {
     return worktreeIds
   }
 
+  // Every execution host this runtime can answer for; 'local' is always one of
+  // them because the runtime itself runs somewhere.
+  private listKnownExecutionHostIds(): Set<ExecutionHostId> {
+    const hostIds = new Set<ExecutionHostId>([LOCAL_EXECUTION_HOST_ID])
+    for (const repo of this.store?.getRepos?.() ?? []) {
+      hostIds.add(getRepoExecutionHostId(repo))
+    }
+    for (const hostId of this.store?.getWorkspaceSessionHostIds?.() ?? []) {
+      hostIds.add(hostId)
+    }
+    return hostIds
+  }
+
   private getWorkspaceSessionHydrationTargets(
     includeAllPersistedWorktrees: boolean
   ): Map<string, WorkspaceSessionState> {
@@ -5832,13 +5847,7 @@ export class OrcaRuntimeService {
         ] as const
       })
     )
-    const hostIds = new Set<ExecutionHostId>(['local'])
-    for (const repo of repos) {
-      hostIds.add(getRepoExecutionHostId(repo))
-    }
-    for (const hostId of this.store?.getWorkspaceSessionHostIds?.() ?? []) {
-      hostIds.add(hostId)
-    }
+    const hostIds = this.listKnownExecutionHostIds()
 
     const targets = new Map<string, WorkspaceSessionState>()
     for (const hostId of hostIds) {
@@ -16644,6 +16653,7 @@ export class OrcaRuntimeService {
 
     return {
       terminals: listedTerminals,
+      hostScope: this.buildTerminalListHostScope(targetWorktreeId, matchingTerminals),
       ...(visualLayouts.length > 0 ? { visualLayouts } : {}),
       topologyRevisions: Object.fromEntries(
         [...new Set(matchingTerminals.map((terminal) => terminal.worktreeId))].map((worktreeId) => [
@@ -16653,6 +16663,32 @@ export class OrcaRuntimeService {
       ),
       totalCount: matchingTerminals.length,
       truncated: matchingTerminals.length > limit
+    }
+  }
+
+  // A worktree-scoped request answers for one host only, so name the hosts it
+  // skipped: absence from a scoped listing is not evidence a worker died.
+  private buildTerminalListHostScope(
+    targetWorktreeId: string | null,
+    terminals: readonly RuntimeTerminalSummary[]
+  ): RuntimeTerminalListHostScope {
+    const knownHostIds = this.listKnownExecutionHostIds()
+    const scopedHostId = targetWorktreeId
+      ? this.tryGetWorkspaceSessionHostIdForWorktree(targetWorktreeId)
+      : null
+    const coveredHostIds = new Set<ExecutionHostId>(
+      targetWorktreeId ? (scopedHostId ? [scopedHostId] : []) : knownHostIds
+    )
+    // A listed row's host is covered by definition, even when it is a paired
+    // runtime this host would not otherwise enumerate.
+    for (const terminal of terminals) {
+      if (terminal.executionHostId) {
+        coveredHostIds.add(terminal.executionHostId)
+      }
+    }
+    return {
+      hostIds: [...coveredHostIds].sort(),
+      omittedHostIds: [...knownHostIds].filter((hostId) => !coveredHostIds.has(hostId)).sort()
     }
   }
 
@@ -31678,8 +31714,24 @@ export class OrcaRuntimeService {
       connected: provenAbsent ? false : leaf.connected,
       writable: provenAbsent ? false : leaf.writable,
       lastOutputAt: leaf.lastOutputAt,
-      preview: leaf.preview
+      preview: leaf.preview,
+      ...this.terminalExecutionHostField(leaf.ptyId, leaf.worktreeId)
     }
+  }
+
+  // Why: the PTY id names its own host when it has one; only a host-less id may
+  // fall back to the worktree's. A foreign id with no owner stays unset rather
+  // than inheriting a local worktree's host and reading as local.
+  private terminalExecutionHostField(
+    ptyId: string | null,
+    worktreeId: string
+  ): { executionHostId?: ExecutionHostId } {
+    const fromPtyId = getPtyExecutionHost(ptyId)
+    if (fromPtyId === 'foreign') {
+      return {}
+    }
+    const hostId = fromPtyId ?? this.tryGetWorkspaceSessionHostIdForWorktree(worktreeId)
+    return hostId ? { executionHostId: hostId } : {}
   }
 
   // Returns the worktrees whose stored snapshot object changed during this
@@ -33601,7 +33653,8 @@ export class OrcaRuntimeService {
       connected: pty.connected,
       writable: pty.connected,
       lastOutputAt: pty.lastOutputAt,
-      preview: pty.preview
+      preview: pty.preview,
+      ...this.terminalExecutionHostField(pty.ptyId, pty.worktreeId)
     }
   }
 
