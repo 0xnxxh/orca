@@ -6,7 +6,7 @@ import { discoverSkillsInWsl } from './skill-discovery-wsl'
 import type { SkillProviderRootOverrides } from './skill-provider-destinations'
 import { stablePathId } from './skill-discovery-sources'
 import { getRepoExecutionHostId } from '../../shared/execution-host'
-import { SkillScanCoalescer } from './skill-scan-coalescer'
+import { isSkillRootUnavailableError, SkillScanCoalescer } from './skill-scan-coalescer'
 
 // Why: on WSL the unit of cost is the wsl.exe boot plus one `find` per skill, so
 // the whole result is what must be shared. The native path shares at root level
@@ -112,31 +112,44 @@ export async function discoverSkillsOnTarget(
   options: { refresh?: boolean; providerRootOverrides?: SkillProviderRootOverrides } = {}
 ): Promise<SkillDiscoveryResult> {
   const refresh = options.refresh === true
-  const outcome = await targetScans.run(
-    scanKey(target, repos, options.providerRootOverrides),
-    { ttlMs: target.kind === 'wsl' ? WSL_RESULT_TTL_MS : 0, refresh },
-    async () => {
-      if (target.kind === 'wsl') {
-        return discoverSkillsInWsl({
-          distro: target.distro,
-          homeDir: target.homeDir,
-          cwd: target.cwd,
-          providerRootOverrides: options.providerRootOverrides
-        })
-      }
-      return target.cwd
-        ? discoverSkills({
-            repos: [],
+  try {
+    const outcome = await targetScans.run(
+      scanKey(target, repos, options.providerRootOverrides),
+      { ttlMs: target.kind === 'wsl' ? WSL_RESULT_TTL_MS : 0, refresh },
+      async () => {
+        if (target.kind === 'wsl') {
+          return discoverSkillsInWsl({
+            distro: target.distro,
+            homeDir: target.homeDir,
             cwd: target.cwd,
-            refresh,
             providerRootOverrides: options.providerRootOverrides
           })
-        : discoverSkills({
-            repos: [...repos],
-            refresh,
-            providerRootOverrides: options.providerRootOverrides
-          })
+        }
+        return target.cwd
+          ? discoverSkills({
+              repos: [],
+              cwd: target.cwd,
+              refresh,
+              providerRootOverrides: options.providerRootOverrides
+            })
+          : discoverSkills({
+              repos: [...repos],
+              refresh,
+              providerRootOverrides: options.providerRootOverrides
+            })
+      }
+    )
+    return outcome.value
+  } catch (error) {
+    if (!isSkillRootUnavailableError(error)) {
+      throw error
     }
-  )
-  return outcome.value
+    // Why not an empty result: this layer scans whole targets, so it has no
+    // partial answer to degrade to, and returning zero skills would read as
+    // "nothing is installed" and re-offer installs for skills that are present.
+    // An error keeps the picker's retry affordance and says something true.
+    throw new Error('Skill discovery is still reading a slow location. Try again.', {
+      cause: error
+    })
+  }
 }
