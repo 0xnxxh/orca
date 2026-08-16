@@ -82,6 +82,11 @@ export function updateAutomation(
     throw new Error('Automation not found.')
   }
   const current = operations.state.automations[index]
+  // Why: the renderer forwards a Partial verbatim, so `{ enabled: undefined }` survives structuredClone
+  // and would blank the stored value in the spread below. Explicit clears go through the `null` branches.
+  const definedUpdates = Object.fromEntries(
+    Object.entries(updates).filter(([, value]) => value !== undefined)
+  ) as AutomationUpdateInput
   const repoId = updates.projectId ?? current.projectId
   const repo = operations.state.repos.find((entry) => entry.id === repoId)
   const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
@@ -93,7 +98,7 @@ export function updateAutomation(
   const workspaceMode = updates.workspaceMode ?? current.workspaceMode
   const updated: Automation = {
     ...current,
-    ...updates,
+    ...definedUpdates,
     name: updates.name !== undefined ? updates.name.trim() || 'Untitled automation' : current.name,
     precheck: Object.hasOwn(updates, 'precheck')
       ? normalizeAutomationPrecheck(updates.precheck)

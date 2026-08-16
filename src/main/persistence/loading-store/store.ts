@@ -210,6 +210,7 @@ import {
   stripRetiredGlobalSettings
 } from '../applying-settings/terminal-settings-migrations'
 import {
+  normalizeRightSidebarExplorerView,
   normalizeRightSidebarTab,
   normalizeShowDotfilesByWorktree,
   normalizeSortBy
@@ -1410,6 +1411,12 @@ export class Store {
               // Why: migrate once from the retired Appearance setting only when no explicit chrome preference exists yet.
               rightSidebarOpen,
               rightSidebarTab: normalizeRightSidebarTab(parsed.ui?.rightSidebarTab),
+              // Why here and not in getPersistedUI: only the raw payload still shows the legacy
+              // "Search tab, no explorer view" shape — the defaults spread above fills in 'files'.
+              rightSidebarExplorerView: normalizeRightSidebarExplorerView(
+                parsed.ui?.rightSidebarExplorerView,
+                parsed.ui?.rightSidebarTab
+              ),
               setupGuideSidebarDismissed,
               usagePercentageDisplayChangeNoticeDismissed,
               setupGuideBrowserMilestoneMigrated:

@@ -4,6 +4,7 @@ import type { ExecutionHostId } from '../../../shared/execution-host'
 import { getRepoExecutionHostId } from '../../../shared/execution-host'
 import { isLegacyRepoForExternalWorktreeVisibility } from '../../../shared/external-worktree-visibility'
 import { normalizeRepoSourceControlAiOverrides } from '../../../shared/source-control-ai'
+import { normalizeWorktreeVisibilitySourcePreferences } from '../../../shared/worktree/visibility-sources'
 import type { StoreOwnedPersistedState } from '../loading-store/store-owned-state'
 import { sanitizeRepoUpdatesForPersistence } from './repo-sanitization'
 
@@ -82,12 +83,17 @@ export class RepoUpdatePersistenceOperations {
       (sanitizedUpdates.agentWorktreeVisibility === 'hide' ||
         sanitizedUpdates.agentWorktreeVisibility === 'show')
     ) {
-      sanitizedUpdates.worktreeVisibilitySourcePreferences = {
+      // Why normalize: the stored value is spread in as-is, so a legacy/corrupt custom map would be
+      // written straight back without passing the same validation as a renderer-supplied patch.
+      const preferences = normalizeWorktreeVisibilitySourcePreferences({
         ...repo.worktreeVisibilitySourcePreferences,
         builtIn: {
           claude: sanitizedUpdates.agentWorktreeVisibility,
           gsd: sanitizedUpdates.agentWorktreeVisibility
         }
+      })
+      if (preferences) {
+        sanitizedUpdates.worktreeVisibilitySourcePreferences = preferences
       }
     }
     if ('projectGroupId' in sanitizedUpdates) {

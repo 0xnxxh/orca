@@ -4,7 +4,7 @@ import type { WorkspaceSessionState } from '../../../shared/workspace-session-st
 import type { MigrationUnsupportedPtyEntry } from '../../../shared/agent-status-types'
 import type { SshRemotePtyLease } from '../../../shared/ssh-types'
 import { isTerminalLeafId, makePaneKey, parsePaneKey } from '../../../shared/stable-pane-id'
-import { collectMigrationUnsupportedPtyEntries } from './pane-identity-migration'
+import { registerLegacyPaneKeyAliasesForTab } from './pane-identity-migration'
 import { normalizeTerminalLayoutSnapshotForPersistence } from './terminal-layout-normalization'
 import {
   legacyMigrationUnsupportedRowsToAliasEntries,
@@ -28,6 +28,8 @@ export function normalizeWorkspaceSessionPaneIdentities(
   let changed = false
   const leafIdByInputLeafIdByTabId = new Map<string, Map<string, string>>()
   const leafIdByPtyIdByTabId = new Map<string, Map<string, string>>()
+  // Why always empty: legacy numeric pane keys are bridged by aliases now, not persisted as
+  // restart-required rows; the field stays so callers keep clearing stale rows written by old builds.
   const migrationUnsupportedEntries: MigrationUnsupportedPtyEntry[] = []
   const legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[] = []
   const terminalLayoutsByTabId: Record<string, TerminalLayoutSnapshot> = {}
@@ -38,7 +40,7 @@ export function normalizeWorkspaceSessionPaneIdentities(
     )
     terminalLayoutsByTabId[tabId] = normalized.snapshot
     leafIdByInputLeafIdByTabId.set(tabId, normalized.leafIdByInputLeafId)
-    const migrationEntries = collectMigrationUnsupportedPtyEntries({
+    const tabAliasEntries = registerLegacyPaneKeyAliasesForTab({
       session,
       tabId,
       inputLayout: layout,
@@ -46,10 +48,7 @@ export function normalizeWorkspaceSessionPaneIdentities(
       leafIdByInputLeafId: normalized.leafIdByInputLeafId
     })
     // Why: old split layouts can generate enough alias rows to exceed V8's argument limit if spread into push().
-    for (const entry of migrationEntries.migrationUnsupportedEntries) {
-      migrationUnsupportedEntries.push(entry)
-    }
-    for (const entry of migrationEntries.legacyPaneKeyAliasEntries) {
+    for (const entry of tabAliasEntries) {
       legacyPaneKeyAliasEntries.push(entry)
     }
     const leafIdByPtyId = new Map<string, string>()
@@ -107,6 +106,19 @@ export function remapSshRemotePtyLeaseLeafIds(
   return { leases: nextLeases, changed }
 }
 
+/** Combines per-tab leaf maps from separate host partitions; an already-mapped tab keeps its mapping. */
+function mergeLeafIdMapsByTabId(
+  target: Map<string, Map<string, string>>,
+  source: Map<string, Map<string, string>>
+): Map<string, Map<string, string>> {
+  const merged = new Map(target)
+  for (const [tabId, leafIds] of source) {
+    const existing = merged.get(tabId)
+    merged.set(tabId, existing ? new Map([...leafIds, ...existing]) : new Map(leafIds))
+  }
+  return merged
+}
+
 export function normalizePersistedPaneIdentityState(state: PersistedState): {
   state: PersistedState
   changed: boolean
@@ -114,20 +126,54 @@ export function normalizePersistedPaneIdentityState(state: PersistedState): {
   legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[]
 } {
   const normalizedSession = normalizeWorkspaceSessionPaneIdentities(state.workspaceSession, {})
+  let leafIdByInputLeafIdByTabId = normalizedSession.leafIdByInputLeafIdByTabId
+  let leafIdByPtyIdByTabId = normalizedSession.leafIdByPtyIdByTabId
+  const hostSessionLegacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[] = []
+  // Why: SSH/runtime hosts keep their own session blob, and their legacy leaves need the same UUID
+  // rewrite — otherwise their leases and read markers still point at `pane:1` after migration.
+  const normalizedHostSessions = state.workspaceSessionsByHostId
+    ? { ...state.workspaceSessionsByHostId }
+    : undefined
+  let hostSessionsChanged = false
+  if (normalizedHostSessions) {
+    for (const hostId of Object.keys(
+      normalizedHostSessions
+    ) as (keyof typeof normalizedHostSessions)[]) {
+      const hostSession = normalizedHostSessions[hostId]
+      if (!hostSession) {
+        continue
+      }
+      const normalizedHostSession = normalizeWorkspaceSessionPaneIdentities(hostSession, {})
+      normalizedHostSessions[hostId] = normalizedHostSession.session
+      leafIdByInputLeafIdByTabId = mergeLeafIdMapsByTabId(
+        leafIdByInputLeafIdByTabId,
+        normalizedHostSession.leafIdByInputLeafIdByTabId
+      )
+      leafIdByPtyIdByTabId = mergeLeafIdMapsByTabId(
+        leafIdByPtyIdByTabId,
+        normalizedHostSession.leafIdByPtyIdByTabId
+      )
+      for (const entry of normalizedHostSession.legacyPaneKeyAliasEntries) {
+        hostSessionLegacyPaneKeyAliasEntries.push(entry)
+      }
+      hostSessionsChanged ||= normalizedHostSession.changed
+    }
+  }
   const remappedLeases = remapSshRemotePtyLeaseLeafIds(
     state.sshRemotePtyLeases ?? [],
-    normalizedSession.leafIdByInputLeafIdByTabId,
-    normalizedSession.leafIdByPtyIdByTabId
+    leafIdByInputLeafIdByTabId,
+    leafIdByPtyIdByTabId
   )
   const mergedMigrationUnsupportedEntries: MigrationUnsupportedPtyEntry[] = []
   const mergedLegacyPaneKeyAliasEntries = mergeLegacyPaneKeyAliasEntries([
     ...normalizeLegacyPaneKeyAliasEntries(state.legacyPaneKeyAliasEntries),
     ...legacyMigrationUnsupportedRowsToAliasEntries(state.migrationUnsupportedPtyEntries ?? []),
-    ...normalizedSession.legacyPaneKeyAliasEntries
+    ...normalizedSession.legacyPaneKeyAliasEntries,
+    ...hostSessionLegacyPaneKeyAliasEntries
   ])
   const remappedAcknowledgements = remapAcknowledgedAgentPaneKeys(
     state.ui?.acknowledgedAgentsByPaneKey,
-    normalizedSession.leafIdByInputLeafIdByTabId
+    leafIdByInputLeafIdByTabId
   )
   const migrationUnsupportedChanged = !migrationUnsupportedEntriesEqual(
     state.migrationUnsupportedPtyEntries ?? [],
@@ -139,6 +185,7 @@ export function normalizePersistedPaneIdentityState(state: PersistedState): {
   )
   if (
     !normalizedSession.changed &&
+    !hostSessionsChanged &&
     !remappedLeases.changed &&
     !migrationUnsupportedChanged &&
     !legacyAliasesChanged &&
@@ -155,6 +202,7 @@ export function normalizePersistedPaneIdentityState(state: PersistedState): {
     state: {
       ...state,
       workspaceSession: normalizedSession.session,
+      ...(normalizedHostSessions ? { workspaceSessionsByHostId: normalizedHostSessions } : {}),
       sshRemotePtyLeases: remappedLeases.leases,
       migrationUnsupportedPtyEntries: mergedMigrationUnsupportedEntries,
       legacyPaneKeyAliasEntries: mergedLegacyPaneKeyAliasEntries,
