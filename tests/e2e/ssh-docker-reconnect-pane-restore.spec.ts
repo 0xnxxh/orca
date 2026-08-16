@@ -11,6 +11,7 @@ import {
 } from './helpers/terminal'
 import {
   cleanupDockerSshRelayTarget,
+  enableDockerSshRelayTargetShellTitle,
   startDockerSshRelayTarget,
   type DockerSshRelayTarget
 } from './helpers/docker-ssh-relay-target'
@@ -61,7 +62,18 @@ async function openTerminalTab(page: Page): Promise<void> {
     if (!store) {
       throw new Error('Store unavailable')
     }
-    await store.getState().openNewTerminalTabInActiveWorkspace()
+    const state = store.getState()
+    const worktreeId = state.activeWorktreeId
+    if (!worktreeId) {
+      throw new Error('No active worktree to open a terminal tab in')
+    }
+    // Why: the tab-bar caller only invokes this with the group it is opening into; passing the
+    // active group is what makes the new tab land beside the existing one instead of nowhere.
+    const groupId = state.activeGroupIdByWorktree[worktreeId]
+    if (!groupId) {
+      throw new Error(`No active tab group for worktree ${worktreeId}`)
+    }
+    await state.openNewTerminalTabInActiveWorkspace(groupId)
   })
 }
 
@@ -75,9 +87,12 @@ test.describe('SSH reconnect pane restore', () => {
     let target: DockerSshRelayTarget | null = null
     try {
       target = startDockerSshRelayTarget(testInfo)
+      // The fixture image's shell emits no OSC 0, so without this every tab keeps its placeholder
+      // title regardless of shell health and the title assertion below could never pass.
+      enableDockerSshRelayTargetShellTitle(target)
       await waitForSessionReady(orcaPage)
       await waitForActiveWorktree(orcaPage)
-      await connectDockerSshRelayTarget(orcaPage, target)
+      const remote = await connectDockerSshRelayTarget(orcaPage, target)
       await ensureTerminalVisible(orcaPage, 45_000)
       await waitForActiveTerminalManager(orcaPage, 60_000)
       const ptyId = await waitForActivePanePtyId(orcaPage, 60_000)
@@ -89,7 +104,7 @@ test.describe('SSH reconnect pane restore', () => {
       await execInTerminal(orcaPage, ptyId, `echo ${marker}`)
       await waitForTerminalOutput(orcaPage, marker, 30_000)
 
-      await reconnectDockerSshRelayTarget(orcaPage, target.targetId)
+      await reconnectDockerSshRelayTarget(orcaPage, remote.targetId)
       await waitForActiveTerminalManager(orcaPage, 60_000)
       await waitForActivePanePtyId(orcaPage, 60_000)
 
@@ -126,7 +141,7 @@ test.describe('SSH reconnect pane restore', () => {
       await execInTerminal(orcaPage, freshPtyId, 'top -b -n 1 > /dev/null; top')
       await waitForTerminalOutput(orcaPage, 'load average', 30_000, 8000)
 
-      await reconnectDockerSshRelayTarget(orcaPage, target.targetId)
+      await reconnectDockerSshRelayTarget(orcaPage, remote.targetId)
       await waitForActiveTerminalManager(orcaPage, 60_000)
       await waitForActivePanePtyId(orcaPage, 60_000)
 
