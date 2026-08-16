@@ -58,10 +58,15 @@ export function matchesRuntimePathPrefix(key: RuntimePathPrefixKey, typedPrefix:
 }
 
 function canonicalizeForPrefixMatch(value: string, windows: boolean): string {
-  const nfc = value.normalize('NFC')
+  // Why NFD and not the NFC the equality helpers use: both give the same
+  // canonical equivalence, but only NFD is prefix-preserving. Composing `e` +
+  // U+0301 into `é` destroys the boundary of a prefix that stops at the `e`, so
+  // an NFC key hides the row for `/repo/e` against `/repo/e` + U+0301 + `x`.
+  // Decomposition never merges code points, so every prefix survives it.
+  const decomposed = value.normalize('NFD')
   // Why: backslash is a legal POSIX filename character, including on SSH and
   // folder workspaces, so fold it only when the candidate proves Windows syntax.
-  const separators = windows ? nfc.replace(/\\/g, '/') : nfc
+  const separators = windows ? decomposed.replace(/\\/g, '/') : decomposed
   // Why the negative lookahead: a leading `//` is UNC syntax, not a doubled
   // separator, so only interior runs collapse.
   const collapsed = separators.replace(/(?!^)\/+/g, '/')

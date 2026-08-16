@@ -640,6 +640,7 @@ describe('path prefix never hides a literally-matching row', () => {
   // the literal branch keeps this row visible.
   it('keeps matching a prefix that stops before a combining mark', () => {
     expect(showsPath('/repo/e\u0301x', '/repo/e')).toBe(true)
+    expect(showsPath('/repo/e\u0301x', '/repo//e')).toBe(true)
   })
 
   it('still refuses a prefix that matches neither spelling', () => {

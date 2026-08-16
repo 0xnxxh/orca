@@ -66,6 +66,17 @@ describe('runtime path prefix match', () => {
     expect(matches('C:\\x', 'C:/')).toBe(true)
   })
 
+  // Why: NFC composition destroys the boundary of a prefix that stops at the base
+  // character, so a decomposed candidate must stay reachable even when the prefix
+  // also needs separator or case preparation.
+  it('keeps a prefix that stops before a combining mark reachable', () => {
+    expect(matches('/repo/e\u0301x', '/repo/e')).toBe(true)
+    expect(matches('/repo/e\u0301x', '/repo//e')).toBe(true)
+    expect(matches('C:\\repo\\E\u0301x', 'c:/repo/e')).toBe(true)
+    expect(matches('/repo/\u00e9x', '/repo/e')).toBe(true)
+    expect(matches('/repo/e\u0301x', '/repo/f')).toBe(false)
+  })
+
   it('refuses a prefix longer than the candidate', () => {
     expect(matches('/repo', '/repo/alpha')).toBe(false)
   })
