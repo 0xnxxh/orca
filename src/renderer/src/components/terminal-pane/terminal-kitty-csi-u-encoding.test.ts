@@ -60,4 +60,29 @@ describe('terminal kitty CSI-u encoding', () => {
       '\x1b[113;7u'
     )
   })
+
+  it('omits control codepoints from associated text', () => {
+    expect(
+      encodeTerminalKittyCsiU({
+        ...optionQ,
+        flags: 24,
+        type: 'press',
+        primaryCodePoint: 97,
+        altKey: false,
+        associatedText: 'A\0B\x7fC\u0085D'
+      })
+    ).toBe('\x1b[97;;65:66:67:68u')
+  })
+
+  it('encodes lock modifier state', () => {
+    expect(
+      encodeTerminalKittyCsiU({
+        ...optionQ,
+        flags: 24,
+        type: 'press',
+        capsLock: true,
+        numLock: true
+      })
+    ).toBe('\x1b[113;195;64u')
+  })
 })

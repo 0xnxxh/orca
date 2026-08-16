@@ -29,18 +29,27 @@ let cachedLayoutCharacters: LayoutCharacterCache = {
   nativeKeyCharacters: null
 }
 let focusListenerAttached = false
+let attachedWindow: Window | null = null
+let unsubscribeLayoutChange: (() => void) | null = null
 let refreshGeneration = 0
+
+type KeyboardLayoutAppApi = {
+  getKeyboardLayoutSnapshot?: () => Promise<KeyboardLayoutSnapshot | null>
+  onKeyboardLayoutChanged?: (callback: () => void) => () => void
+}
+
+function getKeyboardLayoutAppApi(): KeyboardLayoutAppApi | undefined {
+  return (
+    globalThis as {
+      window?: { api?: { app?: KeyboardLayoutAppApi } }
+    }
+  ).window?.api?.app
+}
 
 async function refreshLayoutMap(): Promise<void> {
   const generation = ++refreshGeneration
   const keyboard = (window.navigator as NavigatorWithKeyboard).keyboard
-  const snapshotReader = (
-    globalThis as {
-      window?: {
-        api?: { app?: { getKeyboardLayoutSnapshot?: () => Promise<KeyboardLayoutSnapshot | null> } }
-      }
-    }
-  ).window?.api?.app?.getKeyboardLayoutSnapshot
+  const snapshotReader = getKeyboardLayoutAppApi()?.getKeyboardLayoutSnapshot
   const [layoutResult, snapshotResult] = await Promise.allSettled([
     keyboard?.getLayoutMap?.() ?? Promise.resolve(null),
     snapshotReader?.() ?? Promise.resolve(null)
@@ -57,6 +66,12 @@ async function refreshLayoutMap(): Promise<void> {
   }
 }
 
+function refreshAfterKeyboardLayoutChange(): void {
+  ++refreshGeneration
+  cachedLayoutCharacters = { layoutMap: null, nativeKeyCharacters: null }
+  void refreshLayoutMap()
+}
+
 /** Idempotent. Kicks off the initial fetch and keeps the cache fresh across
  *  layout switches. Call from terminal keyboard setup so the map is resolved
  *  before the first Option chord. */
@@ -65,9 +80,14 @@ export function prefetchLayoutCharacters(): void {
     return
   }
   focusListenerAttached = true
-  window.addEventListener('focus', () => {
-    void refreshLayoutMap()
-  })
+  attachedWindow = window
+  window.addEventListener('focus', refreshOnFocus)
+  unsubscribeLayoutChange =
+    getKeyboardLayoutAppApi()?.onKeyboardLayoutChanged?.(refreshAfterKeyboardLayoutChange) ?? null
+  void refreshLayoutMap()
+}
+
+function refreshOnFocus(): void {
   void refreshLayoutMap()
 }
 
@@ -87,7 +107,7 @@ function normalizeLayoutCharacter(value: string | null | undefined): string | un
     return undefined
   }
   const codePoint = value.codePointAt(0) as number
-  return codePoint <= 0x20 ? undefined : value
+  return codePoint < 0x20 ? undefined : value
 }
 
 /** The active layout's unshifted character for a physical key code, or
@@ -144,3 +164,12 @@ export function _setLayoutSnapshotForTests(snapshot: KeyboardLayoutSnapshot | nu
 }
 
 export const _refreshLayoutCharactersForTests = refreshLayoutMap
+
+export function _resetLayoutCharacterListenersForTests(): void {
+  attachedWindow?.removeEventListener('focus', refreshOnFocus)
+  unsubscribeLayoutChange?.()
+  attachedWindow = null
+  unsubscribeLayoutChange = null
+  focusListenerAttached = false
+  ++refreshGeneration
+}

@@ -23,6 +23,9 @@ export type TerminalShortcutEvent = {
   altKey: boolean
   shiftKey: boolean
   repeat?: boolean
+  isComposing?: boolean
+  keyCode?: number
+  getModifierState?: (key: string) => boolean
 }
 
 // Shared close-chord predicate: the terminal pane (L3) and the floating panel's focused-terminal

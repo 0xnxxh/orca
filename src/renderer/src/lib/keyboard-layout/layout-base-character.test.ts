@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   _refreshLayoutCharactersForTests,
+  _resetLayoutCharacterListenersForTests,
   _setLayoutMapForTests,
   _setLayoutSnapshotForTests,
   getLayoutBaseCharacterForCode,
   getLayoutCharacterForCode,
-  normalizeLayoutBaseCharacter
+  normalizeLayoutBaseCharacter,
+  prefetchLayoutCharacters
 } from './layout-base-character'
+import type { KeyboardLayoutSnapshot } from '../../../../shared/keyboard-layout-snapshot'
 
 describe('normalizeLayoutBaseCharacter', () => {
   it('accepts a single printable codepoint, lowercased', () => {
@@ -14,6 +17,7 @@ describe('normalizeLayoutBaseCharacter', () => {
     expect(normalizeLayoutBaseCharacter('P')).toBe('p')
     expect(normalizeLayoutBaseCharacter('ö')).toBe('ö')
     expect(normalizeLayoutBaseCharacter(';')).toBe(';')
+    expect(normalizeLayoutBaseCharacter(' ')).toBe(' ')
   })
 
   it('rejects empty, named-key, multi-codepoint, and control values', () => {
@@ -22,7 +26,6 @@ describe('normalizeLayoutBaseCharacter', () => {
     expect(normalizeLayoutBaseCharacter('Dead')).toBeUndefined()
     expect(normalizeLayoutBaseCharacter('İ')).toBeUndefined()
     expect(normalizeLayoutBaseCharacter('\t')).toBeUndefined()
-    expect(normalizeLayoutBaseCharacter(' ')).toBeUndefined()
   })
 })
 
@@ -30,6 +33,7 @@ describe('getLayoutBaseCharacterForCode', () => {
   afterEach(() => {
     _setLayoutMapForTests(null)
     _setLayoutSnapshotForTests(null)
+    _resetLayoutCharacterListenersForTests()
     vi.unstubAllGlobals()
   })
 
@@ -135,5 +139,65 @@ describe('getLayoutBaseCharacterForCode', () => {
     })
 
     expect(getLayoutBaseCharacterForCode('KeyQ')).toBeUndefined()
+  })
+
+  it('invalidates synchronously and fences an older refresh after a layout change', async () => {
+    _setLayoutSnapshotForTests({
+      inputSourceId: 'old',
+      keyCharacters: {
+        KeyQ: { unmodified: 'q', shifted: 'Q', optionUnmodified: null }
+      }
+    })
+    let notifyLayoutChanged: (() => void) | undefined
+    let resolveOldSnapshot!: (snapshot: KeyboardLayoutSnapshot) => void
+    let resolveNewSnapshot!: (snapshot: KeyboardLayoutSnapshot) => void
+    const oldSnapshot = new Promise<KeyboardLayoutSnapshot>((resolve) => {
+      resolveOldSnapshot = resolve
+    })
+    const newSnapshot = new Promise<KeyboardLayoutSnapshot>((resolve) => {
+      resolveNewSnapshot = resolve
+    })
+    const getKeyboardLayoutSnapshot = vi
+      .fn<() => Promise<KeyboardLayoutSnapshot>>()
+      .mockReturnValueOnce(oldSnapshot)
+      .mockReturnValueOnce(newSnapshot)
+    vi.stubGlobal('window', {
+      navigator: { keyboard: { getLayoutMap: async () => null } },
+      api: {
+        app: {
+          getKeyboardLayoutSnapshot,
+          onKeyboardLayoutChanged: (callback: () => void) => {
+            notifyLayoutChanged = callback
+            return vi.fn()
+          }
+        }
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    })
+
+    prefetchLayoutCharacters()
+    notifyLayoutChanged?.()
+    expect(getLayoutBaseCharacterForCode('KeyQ')).toBeUndefined()
+
+    resolveOldSnapshot({
+      inputSourceId: 'stale',
+      keyCharacters: {
+        KeyQ: { unmodified: 'x', shifted: 'X', optionUnmodified: null }
+      }
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(getLayoutBaseCharacterForCode('KeyQ')).toBeUndefined()
+
+    resolveNewSnapshot({
+      inputSourceId: 'new',
+      keyCharacters: {
+        KeyQ: { unmodified: 'a', shifted: 'A', optionUnmodified: null }
+      }
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(getLayoutBaseCharacterForCode('KeyQ')).toBe('a')
   })
 })

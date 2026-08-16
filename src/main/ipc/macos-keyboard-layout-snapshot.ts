@@ -78,6 +78,12 @@ export function readMacKeyboardLayoutSnapshot(): Promise<KeyboardLayoutSnapshot 
   return readInFlight
 }
 
+export async function waitForMacKeyboardLayoutSnapshotIdle(): Promise<void> {
+  while (readInFlight) {
+    await readInFlight
+  }
+}
+
 function runHelper(helperPath: string): Promise<KeyboardLayoutSnapshot | null> {
   return new Promise((resolve) => {
     execFile(

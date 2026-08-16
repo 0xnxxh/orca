@@ -17,6 +17,8 @@ export type TerminalKittyCsiUEvent = {
   altKey: boolean
   ctrlKey: boolean
   metaKey: boolean
+  capsLock?: boolean
+  numLock?: boolean
   associatedText?: string
 }
 
@@ -28,6 +30,9 @@ type TerminalOptionKeyboardEvent = {
   ctrlKey: boolean
   metaKey: boolean
   repeat?: boolean
+  getModifierState?: (key: string) => boolean
+  capsLock?: boolean
+  numLock?: boolean
 }
 
 type LayoutCharacterResolver = (
@@ -47,7 +52,8 @@ const PC_101_PUNCTUATION_BY_CODE: Readonly<Record<string, string>> = {
   BracketRight: ']',
   Minus: '-',
   Equal: '=',
-  Backquote: '`'
+  Backquote: '`',
+  Space: ' '
 }
 
 export function pc101CharacterForCode(code: string | undefined): string | undefined {
@@ -81,6 +87,12 @@ function encodeModifiers(event: TerminalKittyCsiUEvent): number {
   if (event.metaKey) {
     modifiers += 8
   }
+  if (event.capsLock) {
+    modifiers += 64
+  }
+  if (event.numLock) {
+    modifiers += 128
+  }
   return modifiers
 }
 
@@ -94,7 +106,9 @@ function associatedTextCodePoints(event: TerminalKittyCsiUEvent): string | undef
   ) {
     return undefined
   }
-  const codePoints = [...event.associatedText].map((character) => character.codePointAt(0))
+  const codePoints = [...event.associatedText]
+    .map((character) => character.codePointAt(0) as number)
+    .filter((codePoint) => codePoint > 0x1f && (codePoint < 0x7f || codePoint > 0x9f))
   return codePoints.length > 0 ? codePoints.join(':') : undefined
 }
 
@@ -152,7 +166,10 @@ export function encodeTerminalOptionKittyEvent(
     return null
   }
   const shiftedCharacter =
-    event.shiftKey && event.code ? context.layoutCharacterForCode?.(event.code, true) : undefined
+    event.shiftKey && event.code
+      ? (context.layoutCharacterForCode?.(event.code, true) ??
+        (!event.altKey ? event.key : undefined))
+      : undefined
   return encodeTerminalKittyCsiU({
     flags: context.flags,
     type: context.type,
@@ -163,6 +180,8 @@ export function encodeTerminalOptionKittyEvent(
     altKey: event.altKey,
     ctrlKey: event.ctrlKey,
     metaKey: event.metaKey,
+    capsLock: event.capsLock ?? event.getModifierState?.('CapsLock') === true,
+    numLock: event.numLock ?? event.getModifierState?.('NumLock') === true,
     associatedText: context.associatedText
   })
 }

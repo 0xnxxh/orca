@@ -647,7 +647,7 @@ describe('resolveTerminalShortcutAction', () => {
     ).toBeNull()
   })
 
-  it('sends Esc+letter for any Option+letter when right Option acts as alt', () => {
+  it('handles side-specific Alt and leaves global legacy Alt with the terminal engine', () => {
     // Right Option (optionKeyLocations=2) in 'right' mode: full Meta, including punctuation
     expect(
       resolveTerminalShortcutAction(
@@ -676,11 +676,6 @@ describe('resolveTerminalShortcutAction', () => {
         1
       )
     ).toBeNull()
-  })
-
-  it('does not intercept Option+letter in true mode (xterm handles it)', () => {
-    // In 'true' mode, macOptionIsMeta is enabled in xterm, so no compensation needed
-    // Our handler still fires but is gated by macOptionAsAlt !== 'true'
     expect(
       resolveTerminalShortcutAction(event({ key: 'b', code: 'KeyB', altKey: true }), true, 'true')
     ).toBeNull()
@@ -784,7 +779,7 @@ describe('kitty keyboard protocol panes', () => {
     })
   })
 
-  it('encodes Option+digit and mapped Option+punctuation', () => {
+  it('encodes Option+digit, punctuation, and configured Alt', () => {
     expect(resolveKitty(event({ key: '¡', code: 'Digit1', altKey: true }))).toEqual({
       type: 'sendInput',
       data: '\x1b[49;3u'
@@ -793,14 +788,14 @@ describe('kitty keyboard protocol panes', () => {
       type: 'sendInput',
       data: '\x1b[46;3u'
     })
+    expect(resolveKitty(event({ key: 'p', code: 'KeyP', altKey: true }), 'true')).toEqual({
+      type: 'sendInput',
+      data: '\x1b[112;3u'
+    })
   })
 
   it('exempts dead keys so Option composition still starts', () => {
     expect(resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }))).toBeNull()
-  })
-
-  it('defers to xterm in macOptionAsAlt=true mode (native kitty encoding is correct there)', () => {
-    expect(resolveKitty(event({ key: 'p', code: 'KeyP', altKey: true }), 'true')).toBeNull()
   })
 
   it('keeps shift+Option composition untouched in non-kitty panes', () => {

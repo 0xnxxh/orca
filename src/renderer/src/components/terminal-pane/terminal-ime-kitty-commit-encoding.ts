@@ -1,23 +1,8 @@
-// Reuses xterm's own kitty encoder rather than hand-rolling CSI-u. It lives in
-// the package's `src/` tree and is absent from the public typings, so this is a
-// deep import into a pinned dependency — acceptable here because the version is
-// already pinned by a patch that would fail to apply across a bump.
-import { KittyKeyboard } from '@xterm/xterm/src/common/input/KittyKeyboard'
 import {
   KITTY_REPORT_EVENT_TYPES,
   kittyReportsAllKeysAsEscapeCodes
 } from '../../../../shared/terminal-kitty-keyboard-flags'
-
-/**
- * `KittyKeyboardEventType.PRESS` / `.REPEAT` / `.RELEASE`. Inlined because the
- * upstream enum is a `const enum`, which does not survive an import across
- * module boundaries.
- */
-const KITTY_EVENT_TYPE_PRESS = 1
-const KITTY_EVENT_TYPE_REPEAT = 2
-const KITTY_EVENT_TYPE_RELEASE = 3
-
-const kittyKeyboardEncoder = new KittyKeyboard()
+import { encodeTerminalOptionKittyEvent } from './terminal-kitty-csi-u-encoding'
 
 /** The physical keydown that produced a commit, captured before the input event. */
 export type ImeCommitKeyPress = {
@@ -26,6 +11,8 @@ export type ImeCommitKeyPress = {
   shiftKey: boolean
   /** An auto-repeat keydown; the protocol distinguishes it from a fresh press. */
   repeat?: boolean
+  capsLock?: boolean
+  numLock?: boolean
 }
 
 /**
@@ -43,6 +30,8 @@ export type ImeReleaseKeyEvent = {
   ctrlKey?: boolean
   altKey?: boolean
   metaKey?: boolean
+  capsLock?: boolean
+  numLock?: boolean
 }
 
 /**
@@ -59,29 +48,6 @@ export type ImeCommitKittyEncoding = {
   release: ImeCommitReleaseObligation | null
 }
 
-function evaluateKittyReport(
-  press: { key: string; code?: string; shiftKey: boolean },
-  modifiers: { ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean },
-  kittyKeyboardFlags: number,
-  eventType: number
-): string | null {
-  const encoded = kittyKeyboardEncoder.evaluate(
-    {
-      type: eventType === KITTY_EVENT_TYPE_RELEASE ? 'keyup' : 'keydown',
-      key: press.key,
-      code: press.code ?? '',
-      keyCode: 0,
-      shiftKey: press.shiftKey,
-      altKey: modifiers.altKey === true,
-      ctrlKey: modifiers.ctrlKey === true,
-      metaKey: modifiers.metaKey === true
-    },
-    kittyKeyboardFlags,
-    eventType
-  )
-  return encoded.key ?? null
-}
-
 /**
  * A pane that negotiated bit 3 asked for every printable key as a CSI-u report,
  * so writing IME-committed text raw hands it the legacy byte stream it declined.
@@ -93,31 +59,35 @@ function evaluateKittyReport(
  * substituted character. Bit 1 (`report_event_types`) is independent — it makes
  * even a raw-text commit owe exactly one release report.
  *
- * Known limit: the report carries the *physical* key's codepoint, not the
- * committed glyph — bit 3 is the app declaring it does not want text, and bit 4
- * (`report_associated_text`) is how it asks for text back. xterm's encoder
- * derives that text field from the same `key` it derives the keycode from, so
- * carrying the committed glyph under bit 4 needs an encoder change, not a flag.
+ * The physical key remains the report identity; bit 4 carries the committed
+ * text independently, including multi-codepoint commits.
  */
 export function encodeImeCommitForKitty(
   press: ImeCommitKeyPress | null,
-  kittyKeyboardFlags: number
+  kittyKeyboardFlags: number,
+  context: {
+    committedText: string
+    layoutCharacterForCode?: (code: string, shifted: boolean) => string | undefined
+  }
 ): ImeCommitKittyEncoding {
   if (!press) {
     return { report: null, release: null }
   }
   const report = !kittyReportsAllKeysAsEscapeCodes(kittyKeyboardFlags)
     ? null
-    : evaluateKittyReport(
-        press,
-        // Why: the forwarder only claims presses with no control chord, so the
-        // modifier fields are known-false rather than read from a live event.
-        {},
-        kittyKeyboardFlags,
-        // Why: a held key emits repeated keydowns, and the protocol reports those as REPEAT.
-        // Defaulting them all to PRESS would make one held key look like N separate strikes to
-        // an app that counts presses or filters repeats.
-        press.repeat === true ? KITTY_EVENT_TYPE_REPEAT : KITTY_EVENT_TYPE_PRESS
+    : encodeTerminalOptionKittyEvent(
+        {
+          ...press,
+          altKey: false,
+          ctrlKey: false,
+          metaKey: false
+        },
+        {
+          flags: kittyKeyboardFlags,
+          type: press.repeat === true ? 'repeat' : 'press',
+          layoutCharacterForCode: context.layoutCharacterForCode,
+          associatedText: context.committedText
+        }
       )
   return {
     report,
@@ -138,6 +108,7 @@ export function encodeImeReleaseForKitty(
     press?: { key: string; code?: string }
     /** The pane's flags at RELEASE time, deciding whether a release is still wanted. */
     currentKittyKeyboardFlags: number
+    layoutCharacterForCode?: (code: string, shifted: boolean) => string | undefined
   }
 ): string | null {
   // Why the current-flags gate: the app can pop kitty mode between commit and
@@ -158,5 +129,17 @@ export function encodeImeReleaseForKitty(
     release.key.length === 1 || context.press === undefined
       ? release
       : { ...release, key: context.press.key, code: context.press.code ?? release.code }
-  return evaluateKittyReport(releaseKey, release, obligation.flags, KITTY_EVENT_TYPE_RELEASE)
+  return encodeTerminalOptionKittyEvent(
+    {
+      ...releaseKey,
+      altKey: release.altKey === true,
+      ctrlKey: release.ctrlKey === true,
+      metaKey: release.metaKey === true
+    },
+    {
+      flags: obligation.flags,
+      type: 'release',
+      layoutCharacterForCode: context.layoutCharacterForCode
+    }
+  )
 }

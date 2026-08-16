@@ -4,6 +4,7 @@ import {
   ORCA_APP_RESTART_ABORTED_EVENT,
   ORCA_APP_RESTART_STARTED_EVENT
 } from '../shared/updater-renderer-events'
+import { KEYBOARD_LAYOUT_CHANGED_CHANNEL } from '../shared/keyboard-layout-events'
 
 const { exposeInMainWorld, invoke, on, removeListener, send, sendSync } = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
@@ -97,8 +98,17 @@ describe('native preload destructive app actions', () => {
 
     await api.app.getMacCapturedDigitRowChords()
     await api.app.getKeyboardLayoutSnapshot()
+    const onKeyboardLayoutChanged = vi.fn()
+    const unsubscribe = api.app.onKeyboardLayoutChanged(onKeyboardLayoutChanged)
+    const listener = on.mock.calls.find(
+      ([channel]) => channel === KEYBOARD_LAYOUT_CHANGED_CHANNEL
+    )?.[1] as (() => void) | undefined
+    listener?.()
+    unsubscribe()
 
     expect(invoke).toHaveBeenCalledWith('app:getMacCapturedDigitRowChords')
     expect(invoke).toHaveBeenCalledWith('app:getKeyboardLayoutSnapshot')
+    expect(onKeyboardLayoutChanged).toHaveBeenCalledOnce()
+    expect(removeListener).toHaveBeenCalledWith(KEYBOARD_LAYOUT_CHANGED_CHANNEL, listener)
   })
 })

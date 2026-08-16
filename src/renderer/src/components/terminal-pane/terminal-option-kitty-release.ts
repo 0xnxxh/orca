@@ -11,6 +11,7 @@ type OptionKeyboardEvent = {
   ctrlKey: boolean
   metaKey: boolean
   repeat?: boolean
+  getModifierState?: (key: string) => boolean
 }
 
 type PendingRelease = {

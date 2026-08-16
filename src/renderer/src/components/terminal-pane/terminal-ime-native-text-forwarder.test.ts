@@ -414,6 +414,15 @@ describe('installTerminalImeNativeTextForwarder', () => {
       expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
     })
 
+    it('reports the authoritative multi-codepoint committed text', () => {
+      const { forwarder, sendInput } = installWithFlags(() => 24)
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'a', code: 'KeyA' }))).toBe(true)
+
+      dispatchInsertText(textarea, 'á')
+
+      expect(sendInput).toHaveBeenCalledExactlyOnceWith('\x1b[97;;97:769u')
+    })
+
     it('leaves a composing keystroke to the composition path even under bit 3', () => {
       // Scope boundary: a composing IME (Hangul, kana) is never claimed here, so
       // its commit is not this path's to re-encode. Bit 3 fidelity for

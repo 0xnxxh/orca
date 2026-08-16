@@ -59,6 +59,9 @@ describe('web UI preload API', () => {
 
     await expect(api.app.getMacCapturedDigitRowChords()).resolves.toEqual([])
     await expect(api.app.getKeyboardLayoutSnapshot()).resolves.toBeNull()
+    const listener = vi.fn()
+    expect(api.app.onKeyboardLayoutChanged(listener)).toEqual(expect.any(Function))
+    expect(listener).not.toHaveBeenCalled()
   })
 
   it('migrates missing right sidebar visibility from the effective web legacy default', async () => {

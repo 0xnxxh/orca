@@ -157,6 +157,31 @@ describe('createOptionAsAltProbe', () => {
     probe.dispose()
   })
 
+  it('invalidates immediately and refreshes on a native layout-change notification', async () => {
+    let activeInputSourceId = 'com.apple.keylayout.US'
+    let notifyLayoutChanged: (() => void) | undefined
+    const unsubscribe = vi.fn()
+    const probe = createOptionAsAltProbe(makeMockWindow(US_MAP) as unknown as Window, {
+      readInputSourceId: async () => activeInputSourceId,
+      subscribeKeyboardLayoutChanged: (callback) => {
+        notifyLayoutChanged = callback
+        return unsubscribe
+      }
+    })
+    await probe.refresh()
+    expect(probe.getCurrent()).toBe('us')
+
+    activeInputSourceId = 'com.apple.keylayout.ABC'
+    notifyLayoutChanged?.()
+    expect(probe.getCurrent()).toBe('unknown')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(probe.getCurrent()).toBe('non-us')
+
+    probe.dispose()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
   it('stays unknown if navigator.keyboard is unavailable', async () => {
     const win = makeMockWindow(null)
     const probe = createOptionAsAltProbe(win as unknown as Window)

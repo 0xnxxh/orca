@@ -24,7 +24,7 @@ let domKeyCodes: [(String, UInt16)] = [
   ("BracketLeft", 33), ("KeyI", 34), ("KeyP", 35), ("KeyL", 37), ("KeyJ", 38),
   ("Quote", 39), ("KeyK", 40), ("Semicolon", 41), ("Backslash", 42), ("Comma", 43),
   ("Slash", 44), ("KeyN", 45), ("KeyM", 46), ("Period", 47), ("Space", 49),
-  ("Backquote", 50)
+  ("Backquote", 50), ("IntlBackslash", 10), ("IntlYen", 93), ("IntlRo", 94)
 ]
 
 func inputSourceId(_ source: TISInputSource?) -> String? {

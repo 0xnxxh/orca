@@ -1,5 +1,6 @@
 import type { OptionKeyLocationState } from '../../lib/keyboard-layout/option-key-location-state'
 import {
+  KITTY_DISAMBIGUATE_ESCAPE_CODES,
   KITTY_REPORT_EVENT_TYPES,
   kittyReportsAllKeysAsEscapeCodes
 } from '../../../../shared/terminal-kitty-keyboard-flags'
@@ -19,6 +20,9 @@ type TerminalOptionShortcutEvent = {
   altKey: boolean
   shiftKey: boolean
   repeat?: boolean
+  isComposing?: boolean
+  keyCode?: number
+  getModifierState?: (key: string) => boolean
 }
 
 export type TerminalOptionShortcutAction = {
@@ -51,31 +55,51 @@ function isLayoutComposedAsciiCharacter(key: string, characterWithoutOption: str
   )
 }
 
+function isImeOwnedKey(event: TerminalOptionShortcutEvent): boolean {
+  return (
+    event.isComposing === true ||
+    event.keyCode === 229 ||
+    event.key === 'Dead' ||
+    event.key === 'Process' ||
+    event.key === 'Unidentified'
+  )
+}
+
+function kittyEncodesModifiedTextKeys(flags: number): boolean {
+  return (
+    kittyReportsAllKeysAsEscapeCodes(flags) ||
+    (flags & (KITTY_DISAMBIGUATE_ESCAPE_CODES | KITTY_REPORT_EVENT_TYPES)) !== 0
+  )
+}
+
 export function resolveTerminalOptionShortcutAction(
   event: TerminalOptionShortcutEvent,
   context: TerminalOptionShortcutContext
 ): TerminalOptionShortcutAction | null {
-  if (
-    !context.isMac ||
-    event.metaKey ||
-    event.ctrlKey ||
-    !event.altKey ||
-    context.macOptionAsAlt === 'true'
-  ) {
+  if (!context.isMac || event.metaKey || event.ctrlKey || !event.altKey) {
     return null
   }
   const isLeftOption = (context.optionKeyLocations & 1) !== 0
   const isRightOption = (context.optionKeyLocations & 2) !== 0
   const shouldActAsMeta =
+    context.macOptionAsAlt === 'true' ||
     (context.macOptionAsAlt === 'left' && isLeftOption) ||
     (context.macOptionAsAlt === 'right' && isRightOption)
   const canSendComposedText =
     context.macOptionAsAlt === 'false' ||
     (context.macOptionAsAlt === 'left' && !isLeftOption && isRightOption) ||
     (context.macOptionAsAlt === 'right' && isLeftOption && !isRightOption)
+  const configuredSideOwnsDeadKey =
+    event.key === 'Dead' && context.macOptionAsAlt !== 'true' && shouldActAsMeta
+  if (isImeOwnedKey(event) && !configuredSideOwnsDeadKey) {
+    return null
+  }
 
   const flags = context.getKittyKeyboardFlags()
-  if (event.key !== 'Dead' && flags > 0) {
+  if (context.macOptionAsAlt === 'true' && flags === 0) {
+    return null
+  }
+  if (event.key !== 'Dead' && kittyEncodesModifiedTextKeys(flags)) {
     const baseCharacter =
       (event.code ? context.layoutCharacterForCode?.(event.code, false) : undefined) ??
       pc101CharacterForCode(event.code)
@@ -108,7 +132,9 @@ export function resolveTerminalOptionShortcutAction(
 
   if (!event.shiftKey) {
     if (shouldActAsMeta) {
-      const character = pc101CharacterForCode(event.code)
+      const character =
+        (event.code ? context.layoutCharacterForCode?.(event.code, false) : undefined) ??
+        pc101CharacterForCode(event.code)
       if (character) {
         return { type: 'sendInput', data: `\x1b${character}` }
       }

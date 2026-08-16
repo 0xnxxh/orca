@@ -582,17 +582,18 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
-      const shortcutEvent = imeProcessEnter
-        ? {
-            key: 'Enter',
-            code: e.code,
-            metaKey: e.metaKey,
-            ctrlKey: e.ctrlKey,
-            altKey: e.altKey,
-            shiftKey: e.shiftKey,
-            repeat: e.repeat
-          }
-        : e
+      const shortcutEvent = {
+        key: imeProcessEnter ? 'Enter' : e.key,
+        code: e.code,
+        metaKey: e.metaKey,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        repeat: e.repeat,
+        isComposing: e.isComposing || hasPendingImeComposition,
+        keyCode: e.keyCode,
+        getModifierState: (key: string) => e.getModifierState(key)
+      }
       const action = resolveShortcutEvent(shortcutEvent)
       if (!action) {
         return

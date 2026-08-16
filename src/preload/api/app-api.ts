@@ -49,6 +49,8 @@ export type AppApi = {
   getMacCapturedDigitRowChords: () => Promise<MacCapturedDigitRowChord[]>
   /** Active macOS layout characters without Option, or null off macOS or when the native probe fails. */
   getKeyboardLayoutSnapshot: () => Promise<KeyboardLayoutSnapshot | null>
+  /** Subscribes to active macOS input-source changes. No-op in the browser fallback. */
+  onKeyboardLayoutChanged: (callback: () => void) => () => void
   /** Updates the macOS Dock unread badge. No-op on Windows/Linux. */
   setUnreadDockBadgeCount: (count: number) => Promise<void>
   /** Resolves the launch directory for global Floating Terminal tabs. */

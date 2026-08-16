@@ -113,6 +113,17 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     ).toBeNull()
   })
 
+  it.each([
+    { key: 'Process', code: 'KeyQ' },
+    { key: 'Unidentified', code: 'KeyQ' },
+    { key: '@', code: 'KeyQ', isComposing: true },
+    { key: '@', code: 'KeyQ', keyCode: 229 }
+  ])('leaves IME-owned events to the text-input path', (overrides) => {
+    expect(
+      resolveKitty(event({ ...overrides, altKey: true }), 'false', 0, undefined, 30)
+    ).toBeNull()
+  })
+
   it('still reports non-ASCII Option chords as kitty CSI-u hotkeys', () => {
     // #8031: compose layouts must keep reaching TUI Option hotkeys, and every
     // glyph those layouts compose on a bound key is non-ASCII.
@@ -152,6 +163,44 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     expect(resolveKitty(event({ key: '@', code: 'KeyQ', altKey: true }), 'left', 2)).toEqual({
       type: 'sendInput',
       data: '@'
+    })
+    expect(resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }), 'left', 1)).toEqual({
+      type: 'sendInput',
+      data: '\x1be'
+    })
+  })
+
+  it('keeps global Option-as-Alt in the centralized encoder without associated text', () => {
+    expect(
+      resolveKitty(event({ key: '@', code: 'KeyQ', altKey: true }), 'true', 0, undefined, 24)
+    ).toEqual({
+      type: 'sendInput',
+      data: '\x1b[113;3u'
+    })
+  })
+
+  it('uses the active layout for side-specific Option-as-Alt without kitty reporting', () => {
+    const layout = (code: string): string | undefined => (code === 'KeyN' ? 'b' : undefined)
+    expect(
+      resolveKitty(event({ key: '∫', code: 'KeyN', altKey: true }), 'left', 1, layout, 0)
+    ).toEqual({ type: 'sendInput', data: '\x1bb' })
+  })
+
+  it('leaves global legacy Option-as-Alt with the terminal engine', () => {
+    expect(
+      resolveKitty(event({ key: '∫', code: 'KeyN', altKey: true }), 'true', 0, undefined, 0)
+    ).toBeNull()
+  })
+
+  it.each([4, 16])('keeps configured Alt legacy encoding for form-only flag %i', (flags) => {
+    const chord = event({ key: '@', code: 'KeyQ', altKey: true })
+    expect(resolveKitty(chord, 'true', 0, undefined, flags)).toEqual({
+      type: 'sendInput',
+      data: '\x1bq'
+    })
+    expect(resolveKitty(chord, 'left', 1, undefined, flags)).toEqual({
+      type: 'sendInput',
+      data: '\x1bq'
     })
   })
 
@@ -223,6 +272,42 @@ describe('Option-composed characters in kitty keyboard panes', () => {
       data: '\x1b[55:47;4;92u',
       optionKittyRelease: { flags: 30 }
     })
+  })
+
+  it('encodes ISO and Space keys from the active layout', () => {
+    const layout = (code: string, shifted: boolean): string | undefined =>
+      code === 'IntlBackslash' ? (shifted ? '>' : '<') : code === 'Space' ? ' ' : undefined
+    expect(
+      resolveKitty(event({ key: '|', code: 'IntlBackslash', altKey: true }), 'false', 0, layout, 30)
+    ).toEqual({
+      type: 'sendInput',
+      data: '\x1b[60;3;124u',
+      optionKittyRelease: { flags: 30 }
+    })
+    expect(
+      resolveKitty(event({ key: '\u00a0', code: 'Space', altKey: true }), 'false', 0, layout, 30)
+    ).toEqual({
+      type: 'sendInput',
+      data: '\x1b[32;3;160u',
+      optionKittyRelease: { flags: 30 }
+    })
+  })
+
+  it('includes CapsLock in Option protocol modifiers', () => {
+    expect(
+      resolveKitty(
+        event({
+          key: '@',
+          code: 'KeyQ',
+          altKey: true,
+          getModifierState: (modifier) => modifier === 'CapsLock'
+        }),
+        'false',
+        0,
+        undefined,
+        24
+      )
+    ).toEqual({ type: 'sendInput', data: '\x1b[113;67;64u' })
   })
 
   it('types shifted ASCII when the Option layer is unavailable but keyup can resolve physically', () => {
