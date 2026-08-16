@@ -76,12 +76,11 @@ heads from origin** rather than trusting these two rows:
 > I verified the repair: `git diff fae8802099 c30c9890f2` over those two files is **empty**, so
 > that pair cancels out cleanly and there is no residue on that branch.
 >
-> **`brennanb2025/fix-4472-4473` did not get that luck.** It received four teardown snapshots and
-> the lane was stopped immediately afterwards, so **no one repaired any torn writes there**. Any
-> of those commits may hold a half-written file. Do not read that branch as a coherent sequence
-> of intended states. Treat it as a bag of salvaged fragments: diff it, expect breakage, and
-> rebuild rather than resume. `git diff origin/main...HEAD` on it is the honest starting point,
-> not any individual commit.
+> **`brennanb2025/fix-4472-4473` received four such snapshots**, so any *intermediate* commit on
+> it may hold a half-written file — **do not bisect through them**. Its **head is fine, and I
+> checked rather than assumed**: at `efeec371c8` it typechecks (exit 0) and its 63 tests pass. So
+> `git diff origin/main...HEAD` is the honest unit of work on that branch; individual commits are
+> not.
 >
 > **On the `wip(...) — UNVERIFIED WIP` commits.** The two lanes working on STA-4472/4473 and the
 > STA-4482 reland were still mid-edit when the box was torn down. Rather than lose that work I
