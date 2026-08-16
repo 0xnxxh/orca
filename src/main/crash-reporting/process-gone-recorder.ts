@@ -17,10 +17,8 @@ import {
   type ExpectedTeardownScope,
   type ProcessGoneSource
 } from './process-gone-classification'
-import {
-  buildProcessGoneCrashDetails,
-  buildSuppressedProcessGoneBreadcrumbData
-} from './process-gone-diagnostics'
+import { buildProcessGoneCrashDetails } from './process-gone-diagnostics'
+import { buildSuppressedProcessGoneBreadcrumbData } from './suppressed-process-gone-breadcrumb'
 import {
   getProcessGoneDedupeKey,
   processGoneDedupe,
@@ -192,10 +190,13 @@ export function recordProcessGoneCrash(
     return
   }
   const mainProcessLifecycle = getMainProcessLifecycleIdentity()
-  const crashDetails = buildProcessGoneCrashDetails({
-    ...event.details,
-    ...mainProcessLifecycle
-  })
+  const crashDetails = buildProcessGoneCrashDetails(
+    {
+      ...event.details,
+      ...mainProcessLifecycle
+    },
+    event.processType
+  )
   const breadcrumbs = getCrashBreadcrumbSnapshot()
   const span = startSpan('electron.process_gone', {
     attributes: {
