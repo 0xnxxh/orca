@@ -261,6 +261,23 @@ describe('markWorktreeVisited', () => {
     expect(store.getState().activeWorkspaceKey).toBe(folderWorkspaceKey('folder-1'))
     expect(store.getState().activeWorkspaceExecutionHostId).toBeNull()
   })
+
+  it('pruneLastVisitedTimestamps preserves an active workspace key pointing at a different live worktree', () => {
+    const store = createTestStore()
+    const wt = makeWorktree({ id: 'repo1::/a', repoId: 'repo1', path: '/a' })
+    store.setState({
+      worktreesByRepo: { repo1: [wt] },
+      activeWorktreeId: 'repo1::/gone',
+      activeWorkspaceKey: worktreeWorkspaceKey('repo1::/a'),
+      lastVisitedAtByWorktreeId: {}
+    } as Partial<AppState>)
+
+    store.getState().pruneLastVisitedTimestamps()
+
+    expect(store.getState().activeWorktreeId).toBeNull()
+    // Only the stale worktree's own derived key is dropped.
+    expect(store.getState().activeWorkspaceKey).toBe(worktreeWorkspaceKey('repo1::/a'))
+  })
 })
 
 describe('setRenamingWorktreeId', () => {

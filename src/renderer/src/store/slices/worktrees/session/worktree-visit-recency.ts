@@ -1,7 +1,7 @@
 import type { WorktreeSlice } from '../../worktree-helpers'
 import type { WorktreeSliceGet, WorktreeSliceSet } from '../listing/worktree-slice-types'
 import { getRepoIdFromWorktreeId } from '../../worktree-helpers'
-import { parseWorkspaceKey } from '../../../../../../shared/workspace-scope'
+import { worktreeWorkspaceKey } from '../../../../../../shared/workspace-scope'
 
 export function createMarkWorktreeVisited(
   set: WorktreeSliceSet,
@@ -86,9 +86,9 @@ export function createPruneLastVisitedTimestamps(
         if (activeRepoWorktreeIds && !activeRepoWorktreeIds.has(activeId)) {
           patch.activeWorktreeId = null
           // Leaving the derived workspace key behind would keep the phantom workspace selected.
-          // Scope-checked like the removal paths so a folder-scoped key is never dropped.
-          const activeScope = s.activeWorkspaceKey ? parseWorkspaceKey(s.activeWorkspaceKey) : null
-          if (activeScope?.type !== 'folder') {
+          // Only the stale worktree's own key is dropped (same equality check as the rename path),
+          // so a folder key or a key pointing at another live worktree survives.
+          if (s.activeWorkspaceKey === worktreeWorkspaceKey(activeId)) {
             patch.activeWorkspaceKey = null
           }
           patch.activeWorkspaceExecutionHostId = null
