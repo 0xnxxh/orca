@@ -173,3 +173,37 @@ export function ConnectHostButton({
     </Button>
   )
 }
+
+/** Inline Set location action on a host that still needs a project path. */
+export function SetLocationButton({
+  hostLabel,
+  onSetLocation
+}: {
+  hostLabel: string
+  onSetLocation: () => void
+}): React.JSX.Element {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      className="ml-1 shrink-0 self-center text-muted-foreground/70 hover:text-foreground"
+      aria-label={translate(
+        'auto.components.NewWorkspaceComposerCard.setLocationOnHost',
+        'Set project location on {{host}}',
+        { host: hostLabel }
+      )}
+      onMouseDown={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+      }}
+      onClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onSetLocation()
+      }}
+    >
+      {translate('auto.components.NewWorkspaceComposerCard.setLocation', 'Set location')}
+    </Button>
+  )
+}

@@ -36,6 +36,9 @@ export type ProjectHostSetupOption =
       // Why: only a genuine connection error warrants an alarm glyph; a dormant
       // disconnected host is merely not-yet-connected, not broken.
       attention: boolean
+      // Why: available hosts without a path can be set up in place; connecting or
+      // in-progress/unsupported hosts need a different next step.
+      canSetLocation: boolean
       connectAction?: { kind: 'ssh'; targetId: string } | { kind: 'runtime'; environmentId: string }
     }
 
@@ -187,6 +190,7 @@ function buildNeedsSetupOptions({
           : availability.detail,
         isAvailable: availability.isAvailable,
         attention: host.health === 'error',
+        canSetLocation: canSetProjectLocation(availability.isAvailable, pendingSetup),
         ...(connectAction ? { connectAction } : {})
       }
     })
@@ -261,6 +265,19 @@ function getHostHealthUnavailableDetail(
     case 'local':
       return null
   }
+}
+
+function canSetProjectLocation(
+  isAvailable: boolean,
+  pendingSetup: ProjectHostSetup | undefined
+): boolean {
+  if (!isAvailable) {
+    return false
+  }
+  if (!pendingSetup) {
+    return true
+  }
+  return pendingSetup.setupState === 'not-set-up' || pendingSetup.setupState === 'error'
 }
 
 function getHostConnectAction(

@@ -270,7 +270,8 @@ describe('buildProjectHostSetupOptions', () => {
         kind: 'needs-setup',
         label: 'Builder',
         detail: 'Project location not set',
-        isAvailable: true
+        isAvailable: true,
+        canSetLocation: true
       })
     ])
   })
@@ -407,7 +408,8 @@ describe('buildProjectHostSetupOptions', () => {
         kind: 'needs-setup',
         label: 'GPU VM',
         detail: 'Project setup is in progress',
-        isAvailable: true
+        isAvailable: true,
+        canSetLocation: false
       })
     ])
   })
@@ -437,7 +439,10 @@ describe('buildProjectHostSetupOptions', () => {
           })
         ]
       }).at(-1)
-    ).toMatchObject({ detail: 'Project tracked on this host but not set up' })
+    ).toMatchObject({
+      detail: 'Project tracked on this host but not set up',
+      canSetLocation: true
+    })
 
     expect(
       buildProjectHostSetupOptions({
@@ -457,7 +462,7 @@ describe('buildProjectHostSetupOptions', () => {
           })
         ]
       }).at(-1)
-    ).toMatchObject({ detail: 'Project setup needs attention' })
+    ).toMatchObject({ detail: 'Project setup needs attention', canSetLocation: true })
 
     expect(
       buildProjectHostSetupOptions({
@@ -477,7 +482,10 @@ describe('buildProjectHostSetupOptions', () => {
           })
         ]
       }).at(-1)
-    ).toMatchObject({ detail: 'Project is unsupported on this host' })
+    ).toMatchObject({
+      detail: 'Project is unsupported on this host',
+      canSetLocation: false
+    })
   })
 
   it('marks incompatible runtime hosts as visible but unavailable', () => {

@@ -12,7 +12,8 @@ import {
   ConnectHostButton,
   HostRowIcon,
   NeedsSetupHostIcon,
-  RunTargetRow
+  RunTargetRow,
+  SetLocationButton
 } from './RunTargetComboboxRow'
 import {
   buildRunTargetRows,
@@ -34,6 +35,7 @@ type RunTargetComboboxProps = {
   onAddRemoteServer?: () => void
   onAddSshHost?: () => void
   onConnectHost?: (option: NeedsSetupProjectHostOption) => Promise<void> | void
+  onSetLocation?: (option: NeedsSetupProjectHostOption) => void
 }
 
 const ROOT_ATTRIBUTE = 'data-run-target-combobox-root'
@@ -56,7 +58,8 @@ export default function RunTargetCombobox({
   onRecipeChange,
   onAddRemoteServer,
   onAddSshHost,
-  onConnectHost
+  onConnectHost,
+  onSetLocation
 }: RunTargetComboboxProps): React.JSX.Element {
   const [submenu, setSubmenu] = useState<'recipes' | 'add-host' | null>(null)
   // Track in-flight connects per host so one stalling connect never blocks the others.
@@ -146,12 +149,15 @@ export default function RunTargetCombobox({
         return
       }
       if (row.kind === 'needs-setup') {
-        // Not ready: selecting is a no-op, the Connect action is the way forward.
+        if (row.option.canSetLocation && onSetLocation) {
+          close()
+          onSetLocation(row.option)
+        }
         return
       }
       setSubmenu(row.kind === 'recipes' ? 'recipes' : 'add-host')
     },
-    [rows, selectHost]
+    [close, onSetLocation, rows, selectHost]
   )
 
   const handleKeyDown = useCallback(
@@ -291,6 +297,7 @@ export default function RunTargetCombobox({
               if (row.kind === 'needs-setup') {
                 const connecting = connectingHostIds.has(row.option.hostId)
                 const hasConnect = Boolean(row.option.connectAction && onConnectHost)
+                const hasSetLocation = Boolean(row.option.canSetLocation && onSetLocation)
                 return (
                   <RunTargetRow
                     key={row.key}
@@ -314,12 +321,25 @@ export default function RunTargetCombobox({
                       arm(row.key)
                       setSubmenu(null)
                     }}
-                    onCommit={() => {}}
+                    onCommit={() => {
+                      if (hasSetLocation) {
+                        close()
+                        onSetLocation?.(row.option)
+                      }
+                    }}
                     trailing={
-                      row.option.connectAction && onConnectHost ? (
+                      hasConnect ? (
                         <ConnectHostButton
                           connecting={connecting}
                           onConnect={() => void connectHost(row.option)}
+                        />
+                      ) : hasSetLocation ? (
+                        <SetLocationButton
+                          hostLabel={row.option.label}
+                          onSetLocation={() => {
+                            close()
+                            onSetLocation?.(row.option)
+                          }}
                         />
                       ) : undefined
                     }
