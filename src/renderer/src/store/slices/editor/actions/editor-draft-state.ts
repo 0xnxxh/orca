@@ -1,33 +1,32 @@
 import type { EditorGet, EditorSet } from '../types/editor-set-get'
-import type { EditorSlice } from '../types/editor-slice'
+import type { EditorViewMode, MarkdownViewMode } from '../types/open-file'
 import { clampMarkdownTocPanelWidth } from '../../../../../../shared/markdown-toc-panel-width'
 import {
   clampCombinedDiffFileTreeWidth,
   COMBINED_DIFF_FILE_TREE_DEFAULT_WIDTH
 } from '../../../../../../shared/combined-diff-file-tree-width'
 
-export function createEditorDraftState(
-  set: EditorSet,
-  _get: EditorGet
-): Pick<
-  EditorSlice,
-  | 'editorDrafts'
-  | 'setEditorDraft'
-  | 'clearEditorDraft'
-  | 'clearEditorDrafts'
-  | 'markdownViewMode'
-  | 'setMarkdownViewMode'
-  | 'editorViewMode'
-  | 'setEditorViewMode'
-  | 'markdownFrontmatterVisible'
-  | 'setMarkdownFrontmatterVisible'
-  | 'markdownTableOfContentsVisible'
-  | 'setMarkdownTableOfContentsVisible'
-  | 'markdownTocPanelWidth'
-  | 'setMarkdownTocPanelWidth'
-  | 'combinedDiffFileTreeWidth'
-  | 'setCombinedDiffFileTreeWidth'
-> {
+export type EditorDraftState = {
+  // Why: drafts live in the store (not a hidden mounted EditorPanel, #300) so the editor UI can unmount without losing edits.
+  editorDrafts: Record<string, string>
+  setEditorDraft: (fileId: string, content: string) => void
+  clearEditorDraft: (fileId: string) => void
+  clearEditorDrafts: (fileIds: string[]) => void
+  markdownViewMode: Record<string, MarkdownViewMode>
+  setMarkdownViewMode: (fileId: string, mode: MarkdownViewMode) => void
+  editorViewMode: Record<string, EditorViewMode>
+  setEditorViewMode: (fileId: string, mode: EditorViewMode) => void
+  markdownFrontmatterVisible: Record<string, boolean>
+  setMarkdownFrontmatterVisible: (fileId: string, visible: boolean) => void
+  markdownTableOfContentsVisible: Record<string, boolean>
+  setMarkdownTableOfContentsVisible: (fileId: string, visible: boolean) => void
+  markdownTocPanelWidth: number
+  setMarkdownTocPanelWidth: (width: number) => void
+  combinedDiffFileTreeWidth: number
+  setCombinedDiffFileTreeWidth: (width: number) => void
+}
+
+export function createEditorDraftState(set: EditorSet, _get: EditorGet): EditorDraftState {
   return {
     editorDrafts: {},
     setEditorDraft: (fileId, content) =>

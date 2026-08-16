@@ -1,20 +1,22 @@
 import type { EditorGet, EditorSet } from '../types/editor-set-get'
-import type { EditorSlice } from '../types/editor-slice'
 import { isPathInsideOrEqual } from '../../../../../../shared/cross-platform-path'
 
-export function createExplorerDirState(
-  set: EditorSet,
-  _get: EditorGet
-): Pick<
-  EditorSlice,
-  | 'expandedDirs'
-  | 'collapseAllDirs'
-  | 'collapseDirSubtree'
-  | 'toggleDir'
-  | 'pendingExplorerReveal'
-  | 'revealInExplorer'
-  | 'clearPendingExplorerReveal'
-> {
+export type ExplorerDirState = {
+  expandedDirs: Record<string, Set<string>>
+  collapseAllDirs: (worktreeId: string) => void
+  collapseDirSubtree: (worktreeId: string, dirPath: string) => void
+  toggleDir: (worktreeId: string, dirPath: string) => void
+  pendingExplorerReveal: {
+    worktreeId: string
+    filePath: string
+    requestId: number
+    flash?: boolean
+  } | null
+  revealInExplorer: (worktreeId: string, filePath: string) => void
+  clearPendingExplorerReveal: () => void
+}
+
+export function createExplorerDirState(set: EditorSet, _get: EditorGet): ExplorerDirState {
   return {
     expandedDirs: {},
     collapseAllDirs: (worktreeId) =>

@@ -1,29 +1,34 @@
 import type { EditorGet, EditorSet } from '../types/editor-set-get'
-import type { EditorSlice } from '../types/editor-slice'
+import type { ActivityBarPosition } from '../types/open-file'
+import type {
+  ActiveRightSidebarTab,
+  RightSidebarExplorerView
+} from '../../../../../../shared/ui-chrome-types'
 import { defaultFileSearchState } from '../search/file-search-state'
 
-export function createRightSidebarState(
-  set: EditorSet,
-  _get: EditorGet
-): Pick<
-  EditorSlice,
-  | 'rightSidebarOpen'
-  | 'rightSidebarWidth'
-  | 'rightSidebarTab'
-  | 'rightSidebarExplorerView'
-  | 'rightSidebarRouteRequestId'
-  | 'rightSidebarTabByWorktree'
-  | 'rightSidebarExplorerViewByWorktree'
-  | 'activityBarPosition'
-  | 'toggleRightSidebar'
-  | 'setRightSidebarOpen'
-  | 'setRightSidebarWidth'
-  | 'setRightSidebarTab'
-  | 'setRightSidebarExplorerView'
-  | 'showRightSidebarFiles'
-  | 'showRightSidebarSearch'
-  | 'setActivityBarPosition'
-> {
+export type RightSidebarState = {
+  rightSidebarOpen: boolean
+  rightSidebarWidth: number
+  rightSidebarTab: ActiveRightSidebarTab
+  rightSidebarExplorerView: RightSidebarExplorerView
+  rightSidebarRouteRequestId: number
+  rightSidebarTabByWorktree: Record<string, ActiveRightSidebarTab>
+  rightSidebarExplorerViewByWorktree: Record<string, RightSidebarExplorerView>
+  activityBarPosition: ActivityBarPosition
+  toggleRightSidebar: () => void
+  setRightSidebarOpen: (open: boolean) => void
+  setRightSidebarWidth: (width: number) => void
+  setRightSidebarTab: (tab: ActiveRightSidebarTab) => void
+  setRightSidebarExplorerView: (view: RightSidebarExplorerView) => void
+  showRightSidebarFiles: () => void
+  showRightSidebarSearch: (payload?: {
+    query?: string | null
+    includePattern?: string | null
+  }) => void
+  setActivityBarPosition: (position: ActivityBarPosition) => void
+}
+
+export function createRightSidebarState(set: EditorSet, _get: EditorGet): RightSidebarState {
   return {
     rightSidebarOpen: false,
     rightSidebarWidth: 280,
