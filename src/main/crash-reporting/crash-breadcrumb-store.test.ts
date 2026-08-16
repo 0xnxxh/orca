@@ -104,12 +104,22 @@ describe('crash breadcrumb store', () => {
     ).toEqual(['surface-1', 'surface-2', 'surface-3', 'surface-4'])
   })
 
-  it('keeps four memory profiles alongside parking census across many surfaces', () => {
+  it('keeps memory profiles and parking census from starving each other', () => {
+    recordCrashBreadcrumb('terminal_parking_pass', { managers: 1, panes: 1 })
     for (let index = 0; index < 12; index += 1) {
       recordCrashBreadcrumb('renderer_memory_highwater', {
         rendererSurface: `surface-${index}`,
         thresholdPct: 80
       })
+    }
+
+    expect(
+      getCrashBreadcrumbSnapshot().filter(
+        (breadcrumb) => breadcrumb.name === 'terminal_parking_pass'
+      )
+    ).toHaveLength(1)
+
+    for (let index = 0; index < 12; index += 1) {
       recordCrashBreadcrumb('terminal_parking_pass', { managers: index, panes: index + 1 })
     }
 
