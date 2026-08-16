@@ -318,7 +318,7 @@ export function createMainWindow(
       // OS shutdown; this is the only positive OS-shutdown signal bundles get.
       recordDurableCrashBreadcrumb('system_session_end', {
         reasons: Array.isArray(event?.reasons)
-          ? event.reasons.filter((reason): reason is string => typeof reason === 'string').join(',')
+          ? event.reasons.filter((reason) => typeof reason === 'string').join(',')
           : ''
       })
     })
