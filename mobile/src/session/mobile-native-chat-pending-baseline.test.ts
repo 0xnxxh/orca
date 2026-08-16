@@ -30,7 +30,13 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
 
   it('returns the same array when every baseline is already resolved', () => {
     const pending: MobileNativeChatPendingMessage[] = [
-      { id: 'p1', text: 'hi', expectedOccurrence: 1, baselineTailMessageId: 'm2', baselineResolved: true }
+      {
+        id: 'p1',
+        text: 'hi',
+        expectedOccurrence: 1,
+        baselineTailMessageId: 'm2',
+        baselineResolved: true
+      }
     ]
     expect(rebaseMobileNativeChatPendingBaselines(history, pending)).toBe(pending)
   })
@@ -52,7 +58,13 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
 
   it('pins to null when the authoritative transcript is empty', () => {
     expect(rebaseMobileNativeChatPendingBaselines([], [unresolved('p1', 'hi')])).toEqual([
-      { id: 'p1', text: 'hi', expectedOccurrence: 1, baselineTailMessageId: null, baselineResolved: true }
+      {
+        id: 'p1',
+        text: 'hi',
+        expectedOccurrence: 1,
+        baselineTailMessageId: null,
+        baselineResolved: true
+      }
     ])
   })
 
@@ -67,9 +79,8 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
 
   it('normalizes whitespace when counting a send against the loaded rows', () => {
     expect(
-      rebaseMobileNativeChatPendingBaselines(history, [
-        unresolved('p1', '  run   the tests \n')
-      ])[0]?.expectedOccurrence
+      rebaseMobileNativeChatPendingBaselines(history, [unresolved('p1', '  run   the tests \n')])[0]
+        ?.expectedOccurrence
     ).toBe(2)
   })
 
