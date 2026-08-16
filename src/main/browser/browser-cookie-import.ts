@@ -93,7 +93,7 @@ import {
 import { openCookieClearStore } from './browser-cookie-clear-store'
 import {
   readChromiumRowPartition,
-  readFirefoxOriginAttributesPartition,
+  readFirefoxRowPartition,
   readJsonCookiePartition,
   type SourcePartitionRead
 } from './browser-cookie-source-partition'
@@ -1325,7 +1325,7 @@ async function importCookiesFromFirefox(
 
   try {
     const db = new DatabaseSync(tmpCookiesPath, { readOnly: true })
-    type FirefoxRow = {
+    type FirefoxRow = Record<string, unknown> & {
       name: string
       value: string
       host: string
@@ -1334,17 +1334,18 @@ async function importCookiesFromFirefox(
       isSecure: number
       isHttpOnly: number
       sameSite: number
-      originAttributes?: string | null
+      isPartitionedAttributeSet?: number
     }
-    // Why (STA-4300): originAttributes carries the partition, but selecting a column an older
-    // moz_cookies schema lacks throws and would fail the whole import. A schema without it predates
-    // partitioning, so its rows are genuinely unpartitioned.
+    // Why: selecting a column an older moz_cookies schema lacks fails the whole import. A schema
+    // without the server-declared partition flag predates that cookie identity.
     const firefoxColumns = new Set(
       (db.prepare('PRAGMA table_info(moz_cookies)').all() as { name: string }[]).map(
         (column) => column.name
       )
     )
-    const partitionColumn = firefoxColumns.has('originAttributes') ? ', originAttributes' : ''
+    const partitionColumn = firefoxColumns.has('isPartitionedAttributeSet')
+      ? ', isPartitionedAttributeSet'
+      : ''
     const rows = db
       .prepare(
         `SELECT name, value, host, path, expiry, isSecure, isHttpOnly, sameSite${partitionColumn} FROM moz_cookies`
@@ -1385,7 +1386,7 @@ async function importCookiesFromFirefox(
         httpOnly: row.isHttpOnly === 1,
         sameSite: firefoxSameSite(row.sameSite),
         expirationDate: row.expiry > 0 ? row.expiry : undefined,
-        partition: readFirefoxOriginAttributesPartition(row.originAttributes)
+        partition: readFirefoxRowPartition(row, firefoxColumns)
       })
     }
 

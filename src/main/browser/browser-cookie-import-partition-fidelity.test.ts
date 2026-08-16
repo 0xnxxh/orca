@@ -383,12 +383,14 @@ describe('Firefox import partition fidelity', () => {
         isSecure INTEGER,
         isHttpOnly INTEGER,
         sameSite INTEGER,
-        originAttributes TEXT
+        originAttributes TEXT,
+        isPartitionedAttributeSet INTEGER
       );
       INSERT INTO moz_cookies VALUES
         ('chips-auth', 'keep-me', '.app.example', '/', 0, 1, 1, 0,
-         '^partitionKey=(https,top.example,f)'),
-        ('plain', 'plain-ok', '.plain.example', '/', 0, 1, 0, 0, '')
+         '^partitionKey=(https,top.example)', 1),
+        ('dfpi', 'dfpi-ok', '.dfpi.example', '/', 0, 1, 0, 0,
+         '^partitionKey=(https,top.example,f)', 0)
     `)
     sourceDb.close()
     const get = vi.fn().mockResolvedValue([
@@ -418,5 +420,17 @@ describe('Firefox import partition fidelity', () => {
     expect(get).not.toHaveBeenCalled()
     expect(remove).not.toHaveBeenCalled()
     expect(writeCookieIdentityMock).not.toHaveBeenCalled()
+
+    get.mockResolvedValue([])
+    const supportedResult = await importCookiesFromBrowser(
+      firefoxBrowser(sourceCookiesPath),
+      'persist:test'
+    )
+
+    expect(supportedResult.ok).toBe(true)
+    expect(supportedResult.ok && supportedResult.summary?.partitionSkippedCookies).toBe(1)
+    expect(supportedResult.ok && supportedResult.summary?.importedCookies).toBe(1)
+    expect(writeCookieIdentityMock).toHaveBeenCalledOnce()
+    expect(writeCookieIdentityMock.mock.calls[0][0].name).toBe('dfpi')
   })
 })

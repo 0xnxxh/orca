@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   readChromiumRowPartition,
-  readFirefoxOriginAttributesPartition,
+  readFirefoxRowPartition,
   readJsonCookiePartition
 } from './browser-cookie-source-partition'
 
@@ -129,44 +129,49 @@ describe('readJsonCookiePartition', () => {
   })
 })
 
-describe('readFirefoxOriginAttributesPartition', () => {
-  it('reads an empty or absent originAttributes as unpartitioned', () => {
-    expect(readFirefoxOriginAttributesPartition('')).toEqual({ status: 'unpartitioned' })
-    expect(readFirefoxOriginAttributesPartition(null)).toEqual({ status: 'unpartitioned' })
-  })
-
-  it('reads a suffix with no partitionKey as unpartitioned', () => {
-    expect(readFirefoxOriginAttributesPartition('^userContextId=3')).toEqual({
-      status: 'unpartitioned'
-    })
-  })
-
-  // Why: dFPI is storage isolation Firefox imposed on an ordinary cookie. The cookie the server set
-  // is genuinely unpartitioned, and Chromium re-derives its own third-party isolation after import,
-  // so importing it unpartitioned is faithful — skipping it would drop cookies that work today.
-  it('reads a two-part dFPI partitionKey as unpartitioned', () => {
-    expect(readFirefoxOriginAttributesPartition('^partitionKey=(https,example.com)')).toEqual({
-      status: 'unpartitioned'
-    })
-  })
-
-  it('reads a percent-encoded dFPI partitionKey as unpartitioned', () => {
+describe('readFirefoxRowPartition', () => {
+  // Why: originAttributes partitionKey components describe Firefox storage isolation, not whether
+  // the server declared the cookie Partitioned.
+  it('keeps a dFPI row unpartitioned even with ancestor context', () => {
     expect(
-      readFirefoxOriginAttributesPartition('%5EpartitionKey%3D%28https%2Cexample.com%29')
+      readFirefoxRowPartition(
+        {
+          originAttributes: '^partitionKey=(https,example.com,f)',
+          isPartitionedAttributeSet: 0n
+        },
+        new Set(['originAttributes', 'isPartitionedAttributeSet'])
+      )
     ).toEqual({ status: 'unpartitioned' })
   })
 
-  // Why (STA-4300): the extra component is isPartitionedAttributeSet — the server sent
-  // `Partitioned`, so this is a real CHIPS cookie. Firefox has no cross-site-ancestor bit, so its
-  // Chromium identity cannot be rebuilt and the cookie must be skipped, never written unpartitioned.
-  it('refuses a partitioned-attribute (CHIPS) partitionKey', () => {
-    const result = readFirefoxOriginAttributesPartition('^partitionKey=(https,example.com,f)')
+  it('refuses a server-declared partitioned cookie', () => {
+    const result = readFirefoxRowPartition(
+      {
+        originAttributes: '^partitionKey=(https,example.com)',
+        isPartitionedAttributeSet: 1n
+      },
+      new Set(['originAttributes', 'isPartitionedAttributeSet'])
+    )
 
     expect(result.status).toBe('unreadable')
     expect(result).toHaveProperty('reason', expect.stringContaining('cross-site-ancestor'))
   })
 
-  it('refuses an originAttributes value that is not text', () => {
-    expect(readFirefoxOriginAttributesPartition(42).status).toBe('unreadable')
+  it('reads a schema without the partitioned-attribute column as unpartitioned', () => {
+    expect(
+      readFirefoxRowPartition(
+        { originAttributes: '^partitionKey=(https,example.com,f)' },
+        new Set(['originAttributes'])
+      )
+    ).toEqual({ status: 'unpartitioned' })
+  })
+
+  it('refuses an invalid partitioned-attribute flag', () => {
+    expect(
+      readFirefoxRowPartition(
+        { isPartitionedAttributeSet: null },
+        new Set(['isPartitionedAttributeSet'])
+      ).status
+    ).toBe('unreadable')
   })
 })

@@ -66,35 +66,27 @@ export function readChromiumRowPartition(
   return { status: 'partitioned', partitionKey: { topLevelSite: rawSite, hasCrossSiteAncestor } }
 }
 
-const FIREFOX_PARTITION_KEY_PATTERN = /(?:^|&|\^)partitionKey=\(([^)]*)\)/
+const FIREFOX_PARTITIONED_ATTRIBUTE_COLUMN = 'isPartitionedAttributeSet'
 
 /**
- * Reads a Firefox cookie's partition identity from its `originAttributes` suffix.
+ * Reads whether Firefox recorded the server-declared `Partitioned` attribute.
  *
- * Firefox encodes two different things in the same field. A two-part key —
- * `^partitionKey=(https,example.com)` — is dFPI: storage isolation *the browser imposed* on an
- * ordinary cookie, which Chromium re-derives for itself, so the cookie the server sent is genuinely
- * unpartitioned. A longer key carries `isPartitionedAttributeSet`, meaning the server sent
- * `Partitioned` — a real CHIPS cookie. That identity cannot be rebuilt for Chromium, because Firefox
- * records no cross-site-ancestor bit, so it is skipped and reported rather than downgraded.
+ * `originAttributes.partitionKey` is Firefox storage isolation and may include port or ancestor
+ * context. The separate `isPartitionedAttributeSet` column is the server-declared CHIPS signal.
  */
-export function readFirefoxOriginAttributesPartition(raw: unknown): SourcePartitionRead {
-  if (raw === undefined || raw === null || raw === '') {
+export function readFirefoxRowPartition(
+  sourceRow: Record<string, unknown>,
+  sourceColumns: ReadonlySet<string>
+): SourcePartitionRead {
+  if (!sourceColumns.has(FIREFOX_PARTITIONED_ATTRIBUTE_COLUMN)) {
     return UNPARTITIONED
   }
-  if (typeof raw !== 'string') {
-    return { status: 'unreadable', reason: 'originAttributes was not text' }
-  }
-
-  let suffix = raw
-  try {
-    suffix = decodeURIComponent(raw)
-  } catch {
-    // Why: a malformed escape is not proof of a partition; fall back to the raw suffix.
-  }
-  const match = FIREFOX_PARTITION_KEY_PATTERN.exec(suffix)
-  if (!match || match[1].split(',').length <= 2) {
+  const partitionedAttribute = readSqliteFlag(sourceRow[FIREFOX_PARTITIONED_ATTRIBUTE_COLUMN])
+  if (partitionedAttribute === false) {
     return UNPARTITIONED
+  }
+  if (partitionedAttribute === null) {
+    return { status: 'unreadable', reason: 'partitioned-attribute column was not an integer flag' }
   }
   return {
     status: 'unreadable',
