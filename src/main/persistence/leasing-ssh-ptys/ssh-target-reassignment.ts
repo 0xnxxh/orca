@@ -7,12 +7,38 @@ import {
 } from '../../ssh/ssh-target-id-migration'
 import type { ProtectedSecretPersistence } from '../../protected-secret-persistence'
 import { sshPtyOwnerLeaseSecretSlot } from '../../protected-secret-persistence'
+import {
+  migrateRetirementNamespaceHostIdentity,
+  sshHostIdentity
+} from '../../worktree-retirement-namespace'
 
 export type SshTargetReassignmentOperations = {
   state: StoreOwnedPersistedState
   protectedSecrets: Pick<ProtectedSecretPersistence, 'removeRetainedBlob'>
   syncProjectHostSetupCompatibilityState: () => void
   scheduleSave: () => void
+}
+
+/** Retirement namespaces key on the endpoint a target reaches, so a rotation moves them only when
+ *  the endpoint itself changed — plus any pre-identity key that embedded the row id. */
+function migrateRetirementNamespaces(
+  state: StoreOwnedPersistedState,
+  oldTargetId: string,
+  newTargetId: string
+): boolean {
+  const newTarget = state.sshTargets.find((target) => target.id === newTargetId)
+  if (!newTarget) {
+    return false
+  }
+  // The removal tombstone is the only record of what endpoint the old id reached.
+  const tombstone = state.removedSshTargetTombstones?.find(
+    (entry) => entry.oldTargetId === oldTargetId
+  )
+  return migrateRetirementNamespaceHostIdentity(
+    state.retiredWorktreeNamesByNamespace,
+    [toSshExecutionHostId(oldTargetId), ...(tombstone ? [sshHostIdentity(tombstone)] : [])],
+    sshHostIdentity(newTarget)
+  )
 }
 
 /**
@@ -73,6 +99,9 @@ export function reassignSshTargetId(
     carrierChanged = true
   }
   if (migrateUiHostScopeSshTargetId(operations.state.ui, oldTargetId, newTargetId)) {
+    carrierChanged = true
+  }
+  if (migrateRetirementNamespaces(operations.state, oldTargetId, newTargetId)) {
     carrierChanged = true
   }
   for (const lease of operations.state.sshRemotePtyLeases ?? []) {
