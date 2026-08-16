@@ -55,6 +55,75 @@ describe('validateWorkingDirectoryAsync', () => {
     expect(ticked).toBe(true)
   })
 
+  describe('cancellation', () => {
+    // Unique per test: the dedupe map is module-level, and a never-settling
+    // probe would otherwise leak into later cases.
+    const deadShare = (name: string): string => `\\\\wsl.localhost\\Ubuntu\\dead-${name}`
+
+    beforeEach(() => {
+      vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('lets an aborted caller give up on a probe that never answers', async () => {
+      // fs.stat takes no signal, so the caller leaves; the probe keeps running.
+      wslUncDirectoryExistsAsyncMock.mockReturnValue(new Promise<boolean>(() => {}))
+      const abort = new AbortController()
+
+      const pending = validateWorkingDirectoryAsync(deadShare('abort'), { signal: abort.signal })
+      abort.abort()
+
+      await expect(pending).rejects.toThrow('was canceled')
+    })
+
+    it('rejects immediately when the signal is already aborted', async () => {
+      wslUncDirectoryExistsAsyncMock.mockReturnValue(new Promise<boolean>(() => {}))
+
+      await expect(
+        validateWorkingDirectoryAsync(deadShare('pre-aborted'), { signal: AbortSignal.abort() })
+      ).rejects.toThrow('was canceled')
+    })
+
+    it('leaves the shared probe intact for callers that are still waiting', async () => {
+      let releaseProbe: () => void = () => {}
+      wslUncDirectoryExistsAsyncMock.mockReturnValue(
+        new Promise<boolean>((resolve) => {
+          releaseProbe = () => resolve(true)
+        })
+      )
+      const abort = new AbortController()
+
+      const shared = deadShare('shared')
+      const staying = validateWorkingDirectoryAsync(shared)
+      const leaving = validateWorkingDirectoryAsync(shared, { signal: abort.signal })
+      abort.abort()
+      await expect(leaving).rejects.toThrow('was canceled')
+
+      releaseProbe()
+      await expect(staying).resolves.toBeUndefined()
+      expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledOnce()
+    })
+
+    it('stops a never-settling probe from poisoning the path forever', async () => {
+      vi.useFakeTimers()
+      try {
+        wslUncDirectoryExistsAsyncMock.mockReturnValue(new Promise<boolean>(() => {}))
+
+        const poisoned = deadShare('evicted')
+        void validateWorkingDirectoryAsync(poisoned).catch(() => {})
+        await vi.advanceTimersByTimeAsync(30_000)
+        void validateWorkingDirectoryAsync(poisoned).catch(() => {})
+
+        expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
   describe('WSL UNC paths', () => {
     const wslPath = '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo'
 

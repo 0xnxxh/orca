@@ -135,6 +135,8 @@ export type PtySubprocessOptions = {
   terminalWindowsWslDistro?: string | null
   terminalWindowsPowerShellImplementation?: 'auto' | 'powershell.exe' | 'pwsh.exe'
   isCanceled?: () => boolean
+  /** Aborts in-progress cwd validation; `isCanceled` is only polled between steps. */
+  cancelSignal?: AbortSignal
   onMacosTccSpawnStrategy?: (strategy: 'wrapped' | 'direct') => void
 }
 
@@ -388,6 +390,7 @@ function isNativeWindowsPath(path: string): boolean {
 async function preflightWindowsPtySpawnEnvironment(args: {
   validationCwd: string
   cwdWasExplicit: boolean
+  signal?: AbortSignal
 }): Promise<void> {
   if (process.platform !== 'win32' || !args.cwdWasExplicit) {
     return
@@ -397,17 +400,23 @@ async function preflightWindowsPtySpawnEnvironment(args: {
     return
   }
 
-  await validateWorkingDirectoryAsync(args.validationCwd)
+  await validateWorkingDirectoryAsync(
+    args.validationCwd,
+    args.signal ? { signal: args.signal } : {}
+  )
 }
 
 /**
  * Validates POSIX spawn cwd before node-pty can fail with an opaque ENOENT.
  */
-async function preflightPosixPtySpawnEnvironment(validationCwd: string): Promise<void> {
+async function preflightPosixPtySpawnEnvironment(
+  validationCwd: string,
+  signal?: AbortSignal
+): Promise<void> {
   if (process.platform === 'win32') {
     return
   }
-  await validateWorkingDirectoryAsync(validationCwd)
+  await validateWorkingDirectoryAsync(validationCwd, signal ? { signal } : {})
 }
 
 /**
@@ -857,10 +866,11 @@ export async function createPtySubprocess(opts: PtySubprocessOptions): Promise<S
   // Why: asar packaging can strip +x from node-pty's spawn-helper; the daemon is a separate forked process from the main-process fix.
   ensureNodePtySpawnHelperExecutable()
   preflightUnixPtySpawnEnvironment()
-  await preflightPosixPtySpawnEnvironment(validationCwd)
+  await preflightPosixPtySpawnEnvironment(validationCwd, opts.cancelSignal)
   await preflightWindowsPtySpawnEnvironment({
     validationCwd,
-    cwdWasExplicit: opts.cwd !== undefined
+    cwdWasExplicit: opts.cwd !== undefined,
+    ...(opts.cancelSignal ? { signal: opts.cancelSignal } : {})
   })
   if (opts.isCanceled?.()) {
     throw new TerminalAttachCanceledError(opts.sessionId)
