@@ -309,10 +309,9 @@ export default function RunTargetCombobox({
                       />
                     }
                     label={row.option.label}
-                    // Why: a Connect button on the row already says the host
-                    // isn't connected, so its detail line only repeats that.
-                    // Rows without the action still need theirs to explain why.
-                    detail={hasConnect ? '' : row.option.detail}
+                    // Why: Connect / Set project location already say the next
+                    // step, so the detail line would only repeat that.
+                    detail={hasConnect || hasSetLocation ? '' : row.option.detail}
                     armed={isArmed}
                     current={false}
                     dimmed

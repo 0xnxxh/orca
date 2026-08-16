@@ -45,6 +45,12 @@ vi.mock('@/components/ui/tooltip', () => ({
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>
 }))
 
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>
+}))
+
 vi.mock('@/components/agent/AgentCombobox', () => ({
   default: () => <button type="button">Agent picker</button>
 }))
@@ -214,7 +220,7 @@ describe('NewWorkspaceComposerCard set location', () => {
       container?.querySelector<HTMLElement>('div[data-run-target-combobox-root="true"]')?.click()
     })
     const setLocation = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.textContent?.includes('Set location')
+      (button) => button.textContent?.includes('Set project location')
     )
     expect(setLocation).toBeTruthy()
     act(() => setLocation?.click())
