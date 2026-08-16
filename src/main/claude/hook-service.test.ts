@@ -399,6 +399,36 @@ describe('ClaudeHookService.install', () => {
       }
     }
   )
+
+  // Why (#14818): cursor-agent's Claude-hooks-compat layer treats clean, empty PreToolUse stdout
+  // as an invalid permission verdict and fails closed. Every exit path of the managed .cmd —
+  // the three env guards, the main success path, and the Devin-skip stdin-drain epilogue — must
+  // emit a bare `{}` so that consumer sees a valid (empty) decision instead of nothing.
+  it.skipIf(process.platform !== 'win32')(
+    'emits {} on stdout from every exit path of the managed .cmd (#14818)',
+    () => {
+      const tmpHome = mkdtempSync(join(tmpdir(), 'orca-claude-emptyjson-'))
+      vi.stubEnv('HOME', tmpHome)
+      vi.stubEnv('USERPROFILE', tmpHome)
+      try {
+        expect(new ClaudeHookService().install().state).toBe('installed')
+        const script = readFileSync(
+          join(tmpHome, '.orca', 'agent-hooks', CLAUDE_SCRIPT_FILE_NAME),
+          'utf-8'
+        )
+        for (const guardVar of ['ORCA_AGENT_HOOK_PORT', 'ORCA_AGENT_HOOK_TOKEN', 'ORCA_PANE_KEY']) {
+          expect(script).toContain(`if "%${guardVar}%"=="" (echo {}& exit /b 0)`)
+        }
+        // Why: the curl call itself is silenced (`>nul 2>&1`), so `echo {}` is the only thing the
+        // success path writes to stdout.
+        expect(script).toMatch(/>nul 2>&1\r\necho \{\}\r\nexit \/b 0/)
+        expect(script).toMatch(/orca_agent_hook_drain_stdin[\s\S]*echo \{\}\r\nexit \/b 0/)
+      } finally {
+        vi.unstubAllEnvs()
+        rmSync(tmpHome, { recursive: true, force: true })
+      }
+    }
+  )
 })
 
 describe('ClaudeHookService.installRemote', () => {

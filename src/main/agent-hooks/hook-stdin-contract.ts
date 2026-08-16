@@ -35,14 +35,24 @@ export const WINDOWS_HOOK_STDIN_DRAIN_COMMAND = `${WINDOWS_HOOK_STDIN_READER} >n
 // that path anyway. This applies to .cmd, the copilot .ps1, and the Git Bash kimi .sh alike.
 // POSIX hooks keep capture-first: their callers close stdin, and exiting mid-write there
 // surfaces as EPIPE the agent can see (#8110).
-export function buildWindowsHookEnvironmentGuardLines(): string[] {
+export function buildWindowsHookEnvironmentGuardLines(
+  options: { emitEmptyJsonStdout?: boolean } = {}
+): string[] {
+  const exitCommand = options.emitEmptyJsonStdout ? '(echo {}& exit /b 0)' : 'exit /b 0'
   return [
-    'if "%ORCA_AGENT_HOOK_PORT%"=="" exit /b 0',
-    'if "%ORCA_AGENT_HOOK_TOKEN%"=="" exit /b 0',
-    'if "%ORCA_PANE_KEY%"=="" exit /b 0'
+    `if "%ORCA_AGENT_HOOK_PORT%"=="" ${exitCommand}`,
+    `if "%ORCA_AGENT_HOOK_TOKEN%"=="" ${exitCommand}`,
+    `if "%ORCA_PANE_KEY%"=="" ${exitCommand}`
   ]
 }
 
-export function buildWindowsHookStdinDrainEpilogue(): string[] {
-  return [`:${WINDOWS_HOOK_STDIN_DRAIN_LABEL}`, WINDOWS_HOOK_STDIN_DRAIN_COMMAND, 'exit /b 0']
+export function buildWindowsHookStdinDrainEpilogue(
+  options: { emitEmptyJsonStdout?: boolean } = {}
+): string[] {
+  return [
+    `:${WINDOWS_HOOK_STDIN_DRAIN_LABEL}`,
+    WINDOWS_HOOK_STDIN_DRAIN_COMMAND,
+    ...(options.emitEmptyJsonStdout ? ['echo {}'] : []),
+    'exit /b 0'
+  ]
 }

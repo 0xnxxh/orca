@@ -69,7 +69,10 @@ function getManagedScript(
       'if defined ORCA_AGENT_HOOK_ENDPOINT if exist "%ORCA_AGENT_HOOK_ENDPOINT%" call "%ORCA_AGENT_HOOK_ENDPOINT%" 2>nul',
       // Why (#11549): the env guards must outrank the Devin skip — the Devin skip parks in more.com,
       // and outside an Orca pane the caller can abandon stdin, so more.com never returns.
-      ...buildWindowsHookEnvironmentGuardLines(),
+      // Why emitEmptyJsonStdout (#14818): a third-party Claude-hooks-compat consumer (cursor-agent)
+      // treats a clean, empty stdout on PreToolUse as an invalid permission verdict and fails
+      // closed; a bare `{}` is a no-op for real Claude Code but satisfies that consumer's parser.
+      ...buildWindowsHookEnvironmentGuardLines({ emitEmptyJsonStdout: true }),
       ...(options.skipWhenDevinImportsClaude
         ? [
             // Why: Devin imports .claude hooks by default; skip Orca's managed hook there so status posts stay attributed to Devin.
@@ -78,8 +81,9 @@ function getManagedScript(
         : []),
       // Why: use curl.exe to avoid an extra PowerShell startup per hook.
       buildWindowsAgentHookCurlPostCommand('claude'),
+      'echo {}',
       'exit /b 0',
-      ...buildWindowsHookStdinDrainEpilogue(),
+      ...buildWindowsHookStdinDrainEpilogue({ emitEmptyJsonStdout: true }),
       ''
     ].join('\r\n')
   }
