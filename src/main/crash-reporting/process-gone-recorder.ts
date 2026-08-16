@@ -2,6 +2,7 @@ import os from 'node:os'
 import { app } from 'electron'
 import {
   isCrashReportReason,
+  sanitizeCrashReportDetails,
   sanitizeCrashReportString,
   type CrashReportBreadcrumbData
 } from '../../shared/crash-reporting'
@@ -42,7 +43,25 @@ export type ProcessGoneCrashEvent = {
 type CrashReportRecorderStore = Pick<CrashReportStore, 'record' | 'attachDetails'>
 
 /** Injectable so tests can drive the pairing without a Crashpad handler. */
-export type MinidumpCapture = (crashedAtMs: number) => Promise<CapturedMinidump | null>
+export type MinidumpCapture = (
+  crashedAtMs: number,
+  expectedProcessType: string
+) => Promise<CapturedMinidump | null>
+
+const CHILD_CRASHPAD_PROCESS_TYPES: Readonly<Record<string, string>> = {
+  gpu: 'gpu-process',
+  utility: 'utility',
+  zygote: 'zygote'
+}
+
+function expectedCrashpadProcessType(event: ProcessGoneCrashEvent): string | null {
+  return event.source === 'renderer'
+    ? 'renderer'
+    : (CHILD_CRASHPAD_PROCESS_TYPES[event.processType.trim().toLowerCase()] ?? null)
+}
+
+const captureProcessMinidump: MinidumpCapture = (crashedAtMs, expectedProcessType) =>
+  captureMinidumpSignature(crashedAtMs, { expectedProcessType })
 
 // Why: the coalesce map prunes every key against the calling window, so a shorter
 // one here would weaken the other 30s coalescers. Stay uniform with them.
@@ -91,14 +110,15 @@ async function attachMinidumpSignature(
   store: CrashReportRecorderStore,
   reportId: string,
   crashedAtMs: number,
+  expectedProcessType: string | null,
   capture: MinidumpCapture
 ): Promise<void> {
-  const captured = await capture(crashedAtMs)
+  const captured = expectedProcessType ? await capture(crashedAtMs, expectedProcessType) : null
   if (!captured) {
     await store.attachDetails(reportId, { minidumpStatus: 'absent' })
     return
   }
-  const signatureDetails = minidumpSignatureDetails(captured.signature)
+  const signatureDetails = sanitizeCrashReportDetails(minidumpSignatureDetails(captured.signature))
   await store.attachDetails(reportId, {
     ...signatureDetails,
     minidumpStatus: 'captured',
@@ -122,7 +142,7 @@ export function recordProcessGoneCrash(
   store: CrashReportRecorderStore | null,
   event: ProcessGoneCrashEvent,
   dedupe: ProcessGoneDedupe = processGoneDedupe,
-  capture: MinidumpCapture = captureMinidumpSignature
+  capture: MinidumpCapture = captureProcessMinidump
 ): void {
   if (!isCrashReportReason(event.reason)) {
     return
@@ -197,6 +217,7 @@ export function recordProcessGoneCrash(
   flushActiveSink()
 
   const crashedAtMs = Date.now()
+  const expectedProcessType = expectedCrashpadProcessType(event)
   void store
     .record({
       source: event.source,
@@ -215,7 +236,13 @@ export function recordProcessGoneCrash(
     .then((report) => {
       // Why: kept off the returned chain so a minidump failure can never reach
       // the persist-failure handler below and release a claim that did persist.
-      void attachMinidumpSignature(store, report.id, crashedAtMs, capture).catch((error) => {
+      void attachMinidumpSignature(
+        store,
+        report.id,
+        crashedAtMs,
+        expectedProcessType,
+        capture
+      ).catch((error) => {
         console.error('[crash-reporting] Failed to attach minidump signature:', error)
         recordDurableCrashBreadcrumb(
           'minidump_signature_attach_failed',

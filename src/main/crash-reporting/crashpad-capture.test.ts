@@ -3,9 +3,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const parseMinidumpCrashSignatureMock = vi.hoisted(() => vi.fn())
+
 vi.mock('electron', () => ({
   app: { getPath: () => '/unused-in-tests' },
   crashReporter: { start: vi.fn() }
+}))
+vi.mock('./minidump-crash-signature', () => ({
+  parseMinidumpCrashSignature: parseMinidumpCrashSignatureMock
 }))
 
 import {
@@ -38,6 +43,8 @@ async function writeDump(relativePath: string, mtimeMs: number, contents = empty
 const CRASHED_AT = 1_700_000_000_000
 
 beforeEach(async () => {
+  parseMinidumpCrashSignatureMock.mockReset()
+  parseMinidumpCrashSignatureMock.mockReturnValue({ annotations: {} })
   dumpDir = await mkdtemp(path.join(os.tmpdir(), 'orca-crashpad-'))
   _setCrashpadCaptureStateForTest({ dumpDirectory: dumpDir, started: true })
 })
@@ -159,10 +166,78 @@ describe('captureMinidumpSignature', () => {
 
   it('returns null when the file on disk is not a minidump', async () => {
     await writeDump(path.join('reports', 'garbage.dmp'), CRASHED_AT + 100, Buffer.from('nope'))
+    parseMinidumpCrashSignatureMock.mockReturnValueOnce(null)
 
-    const captured = await captureMinidumpSignature(CRASHED_AT, { now: () => CRASHED_AT })
+    const captured = await captureMinidumpSignature(CRASHED_AT, {
+      timeoutMs: 0,
+      now: () => CRASHED_AT
+    })
 
     expect(captured).toBeNull()
+  })
+
+  it('claims a dump once so another report cannot reuse it', async () => {
+    const expected = await writeDump(path.join('reports', 'crash.dmp'), CRASHED_AT + 100)
+
+    const first = await captureMinidumpSignature(CRASHED_AT, {
+      timeoutMs: 0,
+      now: () => CRASHED_AT
+    })
+    const second = await captureMinidumpSignature(CRASHED_AT, {
+      timeoutMs: 0,
+      now: () => CRASHED_AT
+    })
+
+    expect(first?.filePath).toBe(expected)
+    expect(second).toBeNull()
+  })
+
+  it('skips a newer dump from the wrong process type', async () => {
+    const rendererDump = await writeDump(
+      path.join('reports', 'renderer.dmp'),
+      CRASHED_AT + 100,
+      Buffer.from('renderer')
+    )
+    await writeDump(path.join('reports', 'gpu.dmp'), CRASHED_AT + 200, Buffer.from('gpu-process'))
+    parseMinidumpCrashSignatureMock.mockImplementation((dump: Buffer) => ({
+      processType: dump.toString('utf8'),
+      annotations: {}
+    }))
+
+    const captured = await captureMinidumpSignature(CRASHED_AT, {
+      expectedProcessType: 'renderer',
+      timeoutMs: 0,
+      now: () => CRASHED_AT
+    })
+
+    expect(captured?.filePath).toBe(rendererDump)
+    expect(captured?.signature.processType).toBe('renderer')
+  })
+
+  it('leaves a mismatched dump available for its own process report', async () => {
+    const gpuDump = await writeDump(
+      path.join('reports', 'gpu.dmp'),
+      CRASHED_AT + 100,
+      Buffer.from('gpu-process')
+    )
+    parseMinidumpCrashSignatureMock.mockReturnValue({
+      processType: 'gpu-process',
+      annotations: {}
+    })
+
+    const renderer = await captureMinidumpSignature(CRASHED_AT, {
+      expectedProcessType: 'renderer',
+      timeoutMs: 0,
+      now: () => CRASHED_AT
+    })
+    const gpu = await captureMinidumpSignature(CRASHED_AT, {
+      expectedProcessType: 'gpu-process',
+      timeoutMs: 0,
+      now: () => CRASHED_AT
+    })
+
+    expect(renderer).toBeNull()
+    expect(gpu?.filePath).toBe(gpuDump)
   })
 
   it('returns null rather than throwing when no dump was produced', async () => {

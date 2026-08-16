@@ -411,15 +411,17 @@ describe('minidump signature attachment', () => {
   it('names the failing CHECK on the report that only had an exit code', async () => {
     const record = vi.fn().mockResolvedValue({ id: 'report-1' })
     const attach = vi.fn().mockResolvedValue(null)
+    const capture = vi.fn().mockResolvedValue(capturedRendererCheck)
 
     recordProcessGoneCrash(
       { record, attachDetails: attach } as never,
       event({ exitCode: -2147483645 }),
       new ProcessGoneDedupe(),
-      async () => capturedRendererCheck
+      capture
     )
 
     await vi.waitFor(() => expect(attach).toHaveBeenCalledOnce())
+    expect(capture).toHaveBeenCalledWith(expect.any(Number), 'renderer')
     expect(attach).toHaveBeenCalledWith(
       'report-1',
       expect.objectContaining({
@@ -431,6 +433,49 @@ describe('minidump signature attachment', () => {
         minidumpBytes: 2_400_000
       })
     )
+  })
+
+  it('maps Electron child types to Crashpad process identities', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    const attach = vi.fn().mockResolvedValue(null)
+    const capture = vi.fn().mockResolvedValue(null)
+
+    recordProcessGoneCrash(
+      { record, attachDetails: attach } as never,
+      event({
+        source: 'child',
+        processType: 'Utility',
+        // A utility outside the recoverable-service allowlist still reports.
+        details: { type: 'Utility', serviceName: 'storage.mojom.StorageService' }
+      }),
+      new ProcessGoneDedupe(),
+      capture
+    )
+
+    await vi.waitFor(() => expect(attach).toHaveBeenCalledOnce())
+    expect(capture).toHaveBeenCalledWith(expect.any(Number), 'utility')
+  })
+
+  it('never looks for a dump for a GPU child, which is suppressed upstream', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    const capture = vi.fn().mockResolvedValue(null)
+
+    recordProcessGoneCrash(
+      { record, attachDetails: async () => null } as never,
+      event({ source: 'child', processType: 'GPU', details: { type: 'GPU' } }),
+      new ProcessGoneDedupe(),
+      capture
+    )
+
+    // Why: GPU exits are recoverable Chromium churn (process-gone-classification.ts),
+    // so they never become a report — and must not burn an 8s dump poll either.
+    await vi.waitFor(() =>
+      expect(getCrashBreadcrumbSnapshot()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'process_gone_suppressed' })])
+      )
+    )
+    expect(record).not.toHaveBeenCalled()
+    expect(capture).not.toHaveBeenCalled()
   })
 
   it('exports the signature as a span so it is countable in the bundle', async () => {
@@ -456,6 +501,32 @@ describe('minidump signature attachment', () => {
         ])
       )
     )
+  })
+
+  it('sanitizes dump annotations before writing the diagnostic span', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    const attach = vi.fn().mockResolvedValue(null)
+    const captured = {
+      ...capturedRendererCheck,
+      signature: {
+        ...capturedRendererCheck.signature,
+        checkMessage:
+          '[FATAL:node.cc(123)] path=/Users/alice/private-project\nCheck failed: token=abc123'
+      }
+    }
+
+    recordProcessGoneCrash(
+      { record, attachDetails: attach } as never,
+      event(),
+      new ProcessGoneDedupe(),
+      async () => captured
+    )
+
+    await vi.waitFor(() => expect(attach).toHaveBeenCalledOnce())
+    expect(JSON.stringify(attach.mock.calls[0]?.[1])).not.toContain('alice')
+    expect(JSON.stringify(attach.mock.calls[0]?.[1])).not.toContain('abc123')
+    expect(JSON.stringify(sink.records)).not.toContain('alice')
+    expect(JSON.stringify(sink.records)).not.toContain('abc123')
   })
 
   it('marks the report when no dump was produced, so absence is visible', async () => {

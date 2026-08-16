@@ -41,9 +41,12 @@ class MinidumpBuilder {
     return this.append(buf)
   }
 
-  rawString(value: string): { size: number; rva: number } {
+  byteArray(value: string): number {
     const data = Buffer.from(value, 'utf8')
-    return { size: data.length, rva: this.append(data) }
+    const buf = Buffer.alloc(4 + data.length)
+    buf.writeUInt32LE(data.length, 0)
+    data.copy(buf, 4)
+    return this.append(buf)
   }
 
   build(streams: { type: number; size: number; rva: number }[]): Buffer {
@@ -96,17 +99,16 @@ function buildDump(options: {
   const annotationEntries = Object.entries(options.annotations ?? {})
   const annotationRecords = annotationEntries.map(([name, value]) => ({
     nameRva: builder.utf8String(name),
-    value: builder.rawString(value)
+    valueRva: builder.byteArray(value)
   }))
-  const annotationListBuf = Buffer.alloc(4 + annotationRecords.length * 16)
+  const annotationListBuf = Buffer.alloc(4 + annotationRecords.length * 12)
   annotationListBuf.writeUInt32LE(annotationRecords.length, 0)
   annotationRecords.forEach((record, index) => {
-    const at = 4 + index * 16
+    const at = 4 + index * 12
     annotationListBuf.writeUInt32LE(record.nameRva, at)
     annotationListBuf.writeUInt16LE(1, at + 4) // kString
     annotationListBuf.writeUInt16LE(0, at + 6)
-    annotationListBuf.writeUInt32LE(record.value.size, at + 8)
-    annotationListBuf.writeUInt32LE(record.value.rva, at + 12)
+    annotationListBuf.writeUInt32LE(record.valueRva, at + 8)
   })
   const annotationListRva = builder.append(annotationListBuf)
 

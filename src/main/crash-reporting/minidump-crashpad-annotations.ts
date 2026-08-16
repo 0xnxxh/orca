@@ -26,7 +26,7 @@ const MODULE_CRASHPAD_INFO_MIN_SIZE = 28
 const MODULE_CRASHPAD_INFO_SIMPLE_ANNOTATIONS_OFFSET = 12
 const MODULE_CRASHPAD_INFO_ANNOTATION_OBJECTS_OFFSET = 20
 
-const ANNOTATION_RECORD_SIZE = 16
+const ANNOTATION_RECORD_SIZE = 12
 const ANNOTATION_TYPE_STRING = 1
 
 /**
@@ -69,7 +69,7 @@ function readSimpleAnnotations(
     return
   }
   const count = view.u32(location.rva)
-  if (count === null || count > MAX_ANNOTATIONS) {
+  if (count === null || count > MAX_ANNOTATIONS || 4 + count * 8 > location.size) {
     return
   }
   for (let index = 0; index < count; index += 1) {
@@ -100,25 +100,29 @@ function readAnnotationObjects(
     return
   }
   const count = view.u32(location.rva)
-  if (count === null || count > MAX_ANNOTATIONS) {
+  if (
+    count === null ||
+    count > MAX_ANNOTATIONS ||
+    4 + count * ANNOTATION_RECORD_SIZE > location.size
+  ) {
     return
   }
   for (let index = 0; index < count; index += 1) {
     const entry = location.rva + 4 + index * ANNOTATION_RECORD_SIZE
     const nameRva = view.u32(entry)
     const type = view.u16(entry + 4)
-    const value = view.location(entry + 8)
-    if (nameRva === null || type === null) {
+    const valueRva = view.u32(entry + 8)
+    if (nameRva === null || type === null || valueRva === null) {
       return
     }
-    if (type !== ANNOTATION_TYPE_STRING || !value) {
+    if (type !== ANNOTATION_TYPE_STRING || valueRva === 0) {
       continue
     }
     const name = view.utf8String(nameRva, 256)
     if (name === null || !ANNOTATION_ALLOWLIST.has(name)) {
       continue
     }
-    const raw = view.bytes(value)
+    const raw = view.byteArray(valueRva)
     if (raw) {
       // Annotation strings are not NUL-terminated; trim a trailing one anyway.
       into[name] = raw.toString('utf8').replace(/\0+$/, '')

@@ -64,15 +64,7 @@ export class MinidumpView {
 
   /** MinidumpUTF8String: u32 byte length, then NUL-terminated UTF-8. */
   utf8String(rva: number, maxBytes = MAX_ANNOTATION_VALUE_BYTES): string | null {
-    const length = this.u32(rva)
-    if (length === null || length > maxBytes) {
-      return null
-    }
-    const start = rva + 4
-    if (start + length > this.buf.length) {
-      return null
-    }
-    return this.buf.toString('utf8', start, start + length)
+    return this.byteArray(rva, maxBytes)?.toString('utf8') ?? null
   }
 
   /** MINIDUMP_STRING: u32 byte length, then UTF-16LE. Used for module names. */
@@ -93,6 +85,15 @@ export class MinidumpView {
       return null
     }
     return this.buf.subarray(location.rva, location.rva + location.size)
+  }
+
+  /** MinidumpByteArray: u32 byte length, then the bytes. */
+  byteArray(rva: number, maxBytes = MAX_ANNOTATION_VALUE_BYTES): Buffer | null {
+    const length = this.u32(rva)
+    if (length === null || length > maxBytes) {
+      return null
+    }
+    return this.bytes({ size: length, rva: rva + 4 }, maxBytes)
   }
 }
 

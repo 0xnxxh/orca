@@ -59,6 +59,17 @@ describe('crash-reporting shared helpers', () => {
     )
   })
 
+  it('preserves the failing CHECK at the end of a long fatal line', () => {
+    const fatalLine = `[FATAL:node.cc(123)] ${'context '.repeat(80)}Check failed: !is_detached_.`
+
+    const sanitized = String(
+      sanitizeCrashReportDetails({ minidumpCheckMessage: fatalLine }).minidumpCheckMessage
+    )
+
+    expect(sanitized.length).toBeGreaterThan(240)
+    expect(sanitized).toContain('Check failed: !is_detached_.')
+  })
+
   it('sanitizes breadcrumb data and caps to the latest thirty entries', () => {
     const breadcrumbs = sanitizeCrashReportBreadcrumbs(
       Array.from({ length: 32 }, (_, index) => ({

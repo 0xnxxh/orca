@@ -35,6 +35,9 @@ type DumpCandidate = {
 // app.setName runs at whenReady. Snapshot where Crashpad was actually pointed.
 let crashpadDumpDirectory: string | null = null
 let captureStarted = false
+let captureStartedAtMs: number | null = null
+const claimedDumpPaths = new Map<string, number>()
+const reservedDumpPaths = new Set<string>()
 
 export type CrashpadCaptureOptions = {
   /** Overrides Electron's default so tests need no real Crashpad handler. */
@@ -60,6 +63,7 @@ export function startCrashpadCapture(options: CrashpadCaptureOptions = {}): bool
       compress: false
     })
     captureStarted = true
+    captureStartedAtMs = Date.now()
   } catch (error) {
     console.error('[crash-reporting] Crashpad start failed:', error)
     return false
@@ -82,10 +86,13 @@ export function getCrashpadDumpDirectory(): string | null {
 
 /** Test seam; production callers go through startCrashpadCapture. */
 export function _setCrashpadCaptureStateForTest(
-  state: { dumpDirectory: string | null; started: boolean } | null
+  state: { dumpDirectory: string | null; started: boolean; startedAtMs?: number } | null
 ): void {
   crashpadDumpDirectory = state?.dumpDirectory ?? null
   captureStarted = state?.started ?? false
+  captureStartedAtMs = state?.started ? (state.startedAtMs ?? Number.NEGATIVE_INFINITY) : null
+  claimedDumpPaths.clear()
+  reservedDumpPaths.clear()
 }
 
 async function collectDumpCandidates(directory: string): Promise<DumpCandidate[]> {
@@ -115,19 +122,36 @@ async function collectDumpCandidates(directory: string): Promise<DumpCandidate[]
   return candidates
 }
 
-/**
- * Waits for the dump Crashpad writes for a crash observed at `crashedAtMs`.
- * Resolves null when capture is off, the handler wrote nothing, or the only
- * dumps on disk predate this crash.
- */
-export async function waitForCrashMinidump(
+type DumpPollingOptions = {
+  readonly timeoutMs?: number
+  readonly now?: () => number
+  readonly sleep?: (ms: number) => Promise<void>
+}
+
+export type CrashMinidumpCaptureOptions = DumpPollingOptions & {
+  readonly expectedProcessType?: string
+}
+
+function freshDumpCandidates(candidates: DumpCandidate[], crashedAtMs: number): DumpCandidate[] {
+  const floorMs = Math.max(
+    crashedAtMs - DUMP_RECENCY_WINDOW_MS,
+    captureStartedAtMs ?? Number.NEGATIVE_INFINITY
+  )
+  for (const [filePath, mtimeMs] of claimedDumpPaths) {
+    if (mtimeMs < floorMs) {
+      claimedDumpPaths.delete(filePath)
+    }
+  }
+  return candidates
+    .filter((candidate) => candidate.mtimeMs >= floorMs && candidate.size <= MAX_DUMP_BYTES)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+}
+
+async function pollDumpCandidates<T>(
   crashedAtMs: number,
-  options: {
-    timeoutMs?: number
-    now?: () => number
-    sleep?: (ms: number) => Promise<void>
-  } = {}
-): Promise<DumpCandidate | null> {
+  options: DumpPollingOptions,
+  select: (candidate: DumpCandidate) => Promise<T | null>
+): Promise<T | null> {
   const directory = crashpadDumpDirectory
   if (!directory) {
     return null
@@ -136,23 +160,33 @@ export async function waitForCrashMinidump(
   const now = options.now ?? Date.now
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
-  // Why: a dump can land microseconds before Electron delivers process-gone,
-  // so the floor has to sit behind the observed crash time, not on it.
-  const floorMs = crashedAtMs - DUMP_RECENCY_WINDOW_MS
   const deadline = now() + timeoutMs
 
   for (;;) {
-    const fresh = (await collectDumpCandidates(directory))
-      .filter((candidate) => candidate.mtimeMs >= floorMs && candidate.size <= MAX_DUMP_BYTES)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    if (fresh.length > 0) {
-      return fresh[0]
+    const fresh = freshDumpCandidates(await collectDumpCandidates(directory), crashedAtMs)
+    for (const candidate of fresh) {
+      const selected = await select(candidate)
+      if (selected !== null) {
+        return selected
+      }
     }
     if (now() >= deadline) {
       return null
     }
     await sleep(DUMP_POLL_INTERVAL_MS)
   }
+}
+
+/**
+ * Waits for the dump Crashpad writes for a crash observed at `crashedAtMs`.
+ * Resolves null when capture is off, the handler wrote nothing, or the only
+ * dumps on disk predate this crash.
+ */
+export async function waitForCrashMinidump(
+  crashedAtMs: number,
+  options: DumpPollingOptions = {}
+): Promise<DumpCandidate | null> {
+  return pollDumpCandidates(crashedAtMs, options, async (candidate) => candidate)
 }
 
 export type CapturedMinidump = {
@@ -164,18 +198,35 @@ export type CapturedMinidump = {
 /** Finds the dump for a crash and parses its signature. Never throws. */
 export async function captureMinidumpSignature(
   crashedAtMs: number,
-  options: Parameters<typeof waitForCrashMinidump>[1] = {}
+  options: CrashMinidumpCaptureOptions = {}
 ): Promise<CapturedMinidump | null> {
+  const rejectedDumpPaths = new Set<string>()
   try {
-    const dump = await waitForCrashMinidump(crashedAtMs, options)
-    if (!dump) {
-      return null
-    }
-    const signature = parseMinidumpCrashSignature(await readFile(dump.filePath))
-    if (!signature) {
-      return null
-    }
-    return { filePath: dump.filePath, sizeBytes: dump.size, signature }
+    return await pollDumpCandidates(crashedAtMs, options, async (dump) => {
+      if (
+        rejectedDumpPaths.has(dump.filePath) ||
+        claimedDumpPaths.has(dump.filePath) ||
+        reservedDumpPaths.has(dump.filePath)
+      ) {
+        return null
+      }
+      reservedDumpPaths.add(dump.filePath)
+      try {
+        const signature = parseMinidumpCrashSignature(await readFile(dump.filePath))
+        if (
+          !signature ||
+          (options.expectedProcessType !== undefined &&
+            signature.processType !== options.expectedProcessType)
+        ) {
+          rejectedDumpPaths.add(dump.filePath)
+          return null
+        }
+        claimedDumpPaths.set(dump.filePath, dump.mtimeMs)
+        return { filePath: dump.filePath, sizeBytes: dump.size, signature }
+      } finally {
+        reservedDumpPaths.delete(dump.filePath)
+      }
+    })
   } catch (error) {
     console.error('[crash-reporting] minidump signature capture failed:', error)
     return null
