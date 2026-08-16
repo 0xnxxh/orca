@@ -17,6 +17,7 @@ import {
   attachStreamEventReader
 } from './daemon-client-ndjson-readers'
 import { writeNotifyWithSettlement } from './daemon-client-notify-settlement'
+import { requestDaemonRpc } from './daemon-client-rpc-request'
 
 const CONNECT_TIMEOUT_MS = 5000
 const CONNECTION_ATTEMPT_WAIT_MS = CONNECT_TIMEOUT_MS * 4
@@ -197,29 +198,29 @@ export class DaemonClient {
   async request<T = unknown>(
     type: string,
     payload: unknown,
-    timeoutMs = REQUEST_TIMEOUT_MS
+    timeoutMs = REQUEST_TIMEOUT_MS,
+    signal?: AbortSignal
   ): Promise<T> {
     if (!this.connected || !this.controlSocket) {
       throw new DaemonProtocolError('Not connected')
     }
+    const generation = this.connectionGeneration
 
-    const id = `req-${++this.requestCounter}`
-    const msg = { id, type, ...(payload !== undefined ? { payload } : {}) }
-    const encoded = encodeNdjson(msg)
-
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingRequests.drop(id)
-        reject(new DaemonProtocolError(`Request ${type} timed out after ${timeoutMs}ms`))
-      }, timeoutMs)
-
-      this.pendingRequests.add(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
-        timer
-      })
-
-      this.controlSocket!.write(encoded)
+    return requestDaemonRpc<T>({
+      socket: this.controlSocket,
+      pendingRequests: this.pendingRequests,
+      id: `req-${++this.requestCounter}`,
+      type,
+      payload,
+      timeoutMs,
+      ...(signal ? { signal } : {}),
+      onCreateCancellationFailure: () => this.handleDisconnect(generation),
+      settleCreateCancellation: (sessionId, requestId) =>
+        this.request<{ canceled: boolean }>(
+          'cancelCreateOrAttach',
+          { sessionId, requestId },
+          NOTIFY_SETTLEMENT_TIMEOUT_MS
+        )
     })
   }
 
