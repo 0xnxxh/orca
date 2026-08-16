@@ -21,6 +21,12 @@ export type RuntimePathPrefixKey = {
    * a boundary between two marks moves. `decomposed` buys canonical equivalence
    * across NFC/NFD spellings, `ordered` keeps the candidate's own mark order, and
    * a prefix only has to survive one of them.
+   *
+   * Known boundary: this covers the candidate's own mark order plus its NFD
+   * order. A prefix cut mid-sequence from some third canonically equivalent
+   * ordering still misses. Exhausting that needs a normalization-boundary-aware
+   * comparator, which is not worth its cost for a path filter — no more
+   * whole-string spellings can close it.
    */
   decomposedPath: string
   orderedPath: string

@@ -635,9 +635,10 @@ describe('path prefix never hides a literally-matching row', () => {
     expect(showsPath(wsl, '//wsl.localhost/Ubuntu/HOME')).toBe(false)
   })
 
-  // Why: NFC is not prefix-preserving. A prefix ending right before a combining
-  // mark matches the literal path but not the composed comparison key, so only
-  // the literal branch keeps this row visible.
+  // Why: a prefix ending right before a combining mark is the boundary that
+  // composing normalization destroys — an NFC key would hide both of these, and
+  // the second cannot fall back on the literal spelling because of its doubled
+  // separator.
   it('keeps matching a prefix that stops before a combining mark', () => {
     expect(showsPath('/repo/e\u0301x', '/repo/e')).toBe(true)
     expect(showsPath('/repo/e\u0301x', '/repo//e')).toBe(true)
