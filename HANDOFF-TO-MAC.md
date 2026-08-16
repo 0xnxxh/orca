@@ -50,17 +50,17 @@ All nine branches below are **pushed to origin**. Head SHAs are the pushed heads
 |---|---|---|---|
 | `brennanb2025/fix-4449-4491` | `46294c668d` | **PR #14917 OPEN** — verified | STA-4449 + STA-4491. Squashed, clean single commit, all gates green. |
 | `brennanb2025/fix-4471` | `7dd1413a66` | WIP, **stacked on the above** | STA-4471. Lane's own commit on top of `46294c668d`. Not verified by me. |
-| `brennanb2025/fix-4472-4473` | `76e918f7c7` | **UNVERIFIED WIP** | STA-4472/4473 backfill scan + discovery extraction. Two teardown snapshots I committed on the lane's behalf mid-edit — **may not compile**. |
-| `brennanb2025/fix-glue-cluster` | `ff83d0c8d5` | Mixed | STA-4477 fix (committed by the lane) + **UNVERIFIED WIP** reland tests I snapshotted at teardown. |
+| `brennanb2025/fix-4472-4473` | `bb98c84e77` | **UNVERIFIED WIP** | STA-4472/4473 backfill scan + discovery extraction. Two teardown snapshots I committed on the lane's behalf mid-edit — **may not compile**. |
+| `brennanb2025/fix-glue-cluster` | `c30c9890f2` | Mixed | STA-4477 fix (committed by the lane) + **UNVERIFIED WIP** reland tests I snapshotted at teardown. |
 | `brennanb2025/fix-4451` | `2d2326e07c` | **UNVERIFIED**, rescued WIP | STA-4451. Predecessor's work. I audited it but never ran it. |
 | `brennanb2025/repro-4449-4491` | `e5f7adf8c9` | Reference only | Original repro test + REPRO-FINDINGS.md. Superseded by PR #14917. |
 | `brennanb2025/readiness-baseline` | `4413d59810` | Complete | `READINESS-BASELINE.md`, 622 lines. Read it — it is high quality. |
 | `brennanb2025/review-4363-scratch` | `c7f5903a10` | Scratch, **NOT FOR MERGE** | PR #14581's head + a 21-mutation review harness. |
-| `brennanb2025/blocker-pipeline-coordinator` | `03cf410459`+ | Coordination | This file, `PIPELINE-STATUS.html`, `LINEAR-TICKETS.md`, `scripts/runtime-watchdog.sh`. |
+| `brennanb2025/blocker-pipeline-coordinator` | latest on branch | Coordination | This file, `PIPELINE-STATUS.html`, `LINEAR-TICKETS.md`, `scripts/runtime-watchdog.sh`. |
 
 > **On the `wip(...) — UNVERIFIED WIP` commits.** The two lanes working on STA-4472/4473 and the
 > STA-4482 reland were still mid-edit when the box was torn down. Rather than lose that work I
-> committed their trees myself, twice, as clearly-labelled teardown snapshots. They were captured
+> committed their trees myself, four times, as clearly-labelled teardown snapshots. They were captured
 > mid-edit: they are not verified, not proven RED→GREEN, and may not compile. Treat them as
 > salvage material, not as a starting point you can trust. Their authors' reasoning did **not**
 > survive — only the files did.
@@ -217,8 +217,8 @@ STA-4477 is the one glue ticket that **should still reproduce on `origin/main` t
 
 ### STA-4482 reland — in progress, salvaged at teardown
 
-The lane pushed its own work up to `077b276895`, and I snapshotted two further rounds of
-in-flight edits on its behalf (`83590ec82a`, `ff83d0c8d5`). The reland introduced:
+The lane pushed its own work up to `077b276895`, and I snapshotted further rounds of in-flight
+edits on its behalf up to `c30c9890f2`. The reland introduced:
 
 ```
 mobile/src/session/mobile-native-chat-pending-baseline.ts
