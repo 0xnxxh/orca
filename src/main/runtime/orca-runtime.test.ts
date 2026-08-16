@@ -4457,8 +4457,10 @@ describe('OrcaRuntimeService', () => {
     expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus')
   })
 
-  it('neither skips nor retires a name the user typed', async () => {
-    // Why: the pool contains ordinary words. Retirement only ever applies to generated names.
+  it('skips a retired cwd when an older client omits nameWasGenerated', async () => {
+    // Why: a still-supported older paired/mobile client never sends the provenance bit. The retired
+    // set holds only cwds this host already spent, so honouring it here cannot strand a name the
+    // user coined — it can only stop the new workspace inheriting the old one's agent history.
     const addRetiredWorktreeName = vi.fn()
     const runtime = new OrcaRuntimeService({
       ...store,
@@ -4466,9 +4468,9 @@ describe('OrcaRuntimeService', () => {
       getRetiredWorktreeNameRegistry: () => ({ exhaustedTiers: 0, names: ['nautilus'] })
     })
     const createdWorktree = {
-      path: '/tmp/workspaces/nautilus',
+      path: '/tmp/workspaces/nautilus-2',
       head: 'def',
-      branch: 'nautilus',
+      branch: 'nautilus-2',
       isBare: false,
       isMainWorktree: false
     }
@@ -4484,6 +4486,42 @@ describe('OrcaRuntimeService', () => {
     })
 
     expect(result.worktree.path).toBe(createdWorktree.path)
+    expect(computeWorktreePathMock).toHaveBeenCalledWith(
+      'nautilus-2',
+      expect.anything(),
+      expect.anything()
+    )
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus-2')
+  })
+
+  it('never consults the retirement registry for a name outside the creature pool', async () => {
+    // Why: the pool contains ordinary words, so only pool-shaped names may be redirected. A name
+    // the user coined must not even pay for the registry read, which can hit disk.
+    const addRetiredWorktreeName = vi.fn()
+    const getRetiredWorktreeNameRegistry = vi.fn(() => ({ exhaustedTiers: 0, names: ['nautilus'] }))
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      addRetiredWorktreeName,
+      getRetiredWorktreeNameRegistry
+    })
+    const createdWorktree = {
+      path: '/tmp/workspaces/fix-login',
+      head: 'def',
+      branch: 'fix-login',
+      isBare: false,
+      isMainWorktree: false
+    }
+    computeWorktreePathMock.mockReturnValue(createdWorktree.path)
+    ensurePathWithinWorkspaceMock.mockReturnValue(createdWorktree.path)
+    vi.mocked(listWorktrees).mockResolvedValue([...MOCK_GIT_WORKTREES, createdWorktree])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'fix-login'
+    })
+
+    expect(result.worktree.path).toBe(createdWorktree.path)
+    expect(getRetiredWorktreeNameRegistry).not.toHaveBeenCalled()
     expect(addRetiredWorktreeName).not.toHaveBeenCalled()
   })
 
