@@ -297,6 +297,66 @@ instinct, since that flag is precisely what STA-4492 says becomes a permanent gl
   mobile-only.
 - STA-4388 is a related mobile ghost-queued report and is **not** this work.
 
+### RECONSTRUCTED: what #14665 did and how each regression was caused
+
+The lane that did this work went idle without reporting, so I reconstructed the following from
+the revert diff and from the code it left behind. **This is my reconstruction, not the lane's
+account** — it is evidence-backed but was not confirmed by its author.
+
+**Regression (a) — rejected send drops draft text.** #14665 changed the send entry point from
+`sendMessage(text, …)` to `sendMessage(rawText, …)` with `const text = rawText.trimEnd()` as the
+first statement. The trim exists for a real reason: the host writes trailing whitespace verbatim
+onto the agent's input line, where it glues the next rapid send onto this one (#14262). But the
+rejection path then restored the composer from the **trimmed** `text` rather than the original
+`rawText`, so a rejected send silently ate whatever the user had typed past the trim point.
+Confirmed by `git show b8dc393c18 -- mobile/src/session/use-mobile-native-chat-message-send.ts`.
+
+**Regression (b) — loading-time glued sends stay queued forever (this is STA-4492).** #14665
+added a `glueBaselineTrusted: !transcriptLoading` field to each pending record. A send issued
+while the transcript was still hydrating got `glueBaselineTrusted: false`, and the retirement
+matcher then refused it outright:
+
+```
+    return excludedPendingIds.has(item.id) ||
+      !item.glueBaselineTrusted ||          // ← permanent disqualification
+      item.images?.length ||
+      ...
+```
+
+Because the flag was captured once at send time and never re-evaluated, the send was
+*permanently* untrustworthy — it could never retire, so it stayed a visible queued bubble **and**
+acted as a glue barrier for its neighbours for the rest of the session.
+
+### The lane's fix, recovered from its code
+
+**(a) is fixed on the branch.** It renamed the parameter to `draftText`, kept
+`const text = draftText.trimEnd()` for the bytes that go out, and restores `draftText` on
+rejection, with the contract written down in the code:
+
+> *The host writes trailing whitespace verbatim onto the agent's input line, where it can glue
+> the next rapid send onto this one (#14262). Only the bytes that go out are trimmed:
+> `draftText` is what the user typed, and a rejected send has to put back exactly that (#14819).*
+
+Note this file is **untouched on `origin/main`** — main carries the pre-#14665 signature. The
+`draftText` contract is the lane's own work and exists only on `brennanb2025/fix-glue-cluster`.
+
+**(b) is addressed by replacing the flag, not restoring it.** `glueBaselineTrusted` appears
+**nowhere** on the branch. In its place is a new `mobile-native-chat-pending-baseline.ts`
+exporting `rebaseMobileNativeChatPendingBaselines(messages, current)`, which *rebases* a
+hydration-time send onto the first authoritative read of the session's history instead of
+condemning it. Its own docstring states the reasoning:
+
+> *Such a send has no usable baseline at capture time: `messages` was empty, or still the
+> previously active tab's, so both its tail and its occurrence count describe somebody else's
+> transcript. Rebasing them here — rather than marking the send permanently untrustworthy, which
+> stranded it as a queued bubble and as a glue barrier for its neighbours for the rest of the
+> session — leaves it matching exactly the rows that arrive from now on.*
+
+It carries a `baselineResolved` flag, recomputes `expectedOccurrence` against the real transcript,
+and keeps ordinals relative to the queue so earlier still-pending sends of the same text claim the
+earlier rows. **This is the right shape** and directly answers STA-4492. It is **unverified** —
+no RED→GREEN proof was ever produced for it.
+
 ### Mobile QA: NOT DONE
 
 Never attempted. It must go through `orca emulator` via `/orca-mobile-emulator-qa`.
