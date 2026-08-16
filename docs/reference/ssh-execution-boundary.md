@@ -73,7 +73,7 @@ Fixed (PRs open): client-git fallback in `src/main/github/client.ts` (#14945), r
 
 Outstanding, roughly by impact on reaching a wrong conclusion:
 
-- **`restoreRequired` is relabeled `SSH_SESSION_EXPIRED`** (`src/main/providers/ssh-pty-provider.ts:104-108`). A delivery-layer "cannot resume your output stream" becomes a claim the session died; the lease is marked `expired`, filtered from all future reattaches, and a duplicate agent is cold-started over the same worktree while the original may still be running. Highest-impact open item. `abandonPtySourceRecovery` (`src/main/ssh/ssh-relay-session.ts:3006-3008`) handles the same relay answer correctly and is the model to copy.
+- **`restoreRequired` is relabeled `SSH_SESSION_EXPIRED`** in `reattachSshPtySessionForSpawn` (`src/main/providers/ssh-pty-session-reattach.ts:276`). A delivery-layer "cannot resume your output stream" becomes a claim the session died; the lease is marked `expired`, filtered from all future reattaches, and a duplicate agent is cold-started over the same worktree while the original may still be running. Highest-impact open item. `abandonPtySourceRecovery` (`src/main/ssh/ssh-relay-session.ts:3006-3008`) handles the same relay answer correctly and is the model to copy.
 - **No `unverifiable` verdict** in the signals table above. Necessary but not sufficient on its own — the lease is often already destroyed before any verdict is rendered.
 - **`orca terminal list` has no host field**, and a runtime-scoped listing does not mark itself partial.
 - **No way to observe a target's effective grace period.** At 17 hours since last output, "unlimited" and "24h with 7 hours left" demand opposite actions, and nothing reports which applies.
