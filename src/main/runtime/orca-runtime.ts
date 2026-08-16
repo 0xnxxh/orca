@@ -926,21 +926,21 @@ import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
 import { isENOENT } from '../ipc/filesystem-path-containment'
 import { invalidateAuthorizedRootsCache } from '../ipc/registered-worktree-roots-cache'
 import {
-  createSetupRunnerScript,
-  getDefaultTabCommandTrustContent,
-  getDefaultTabsLaunch,
   getEffectiveHooks,
-  getEffectiveSetupRunPolicy,
   hasUnrecognizedOrcaYamlKeys,
   hasHooksFile,
   loadHooks,
   parseOrcaYaml,
-  readIssueCommand,
-  resolveSetupRunnerShell,
-  runHook,
-  shouldRunSetupForCreate,
-  writeIssueCommand
+  runHook
 } from '../hooks'
+import { createSetupRunnerScript, resolveSetupRunnerShell } from '../worktree-runner-script'
+import {
+  getDefaultTabCommandTrustContent,
+  getDefaultTabsLaunch,
+  getEffectiveSetupRunPolicy,
+  shouldRunSetupForCreate
+} from '../effective-hook-config'
+import { readIssueCommand, writeIssueCommand } from '../issue-command-file'
 import {
   DEFAULT_REPO_BADGE_COLOR,
   FLOATING_TERMINAL_WORKTREE_ID,
