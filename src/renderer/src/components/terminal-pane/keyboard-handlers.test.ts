@@ -121,7 +121,7 @@ describe('resolveTerminalKeyboardShortcutAction', () => {
         true,
         undefined,
         () => true,
-        () => false,
+        () => 0,
         undefined,
         () => 'alt-enter',
         () => true,

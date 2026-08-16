@@ -539,6 +539,7 @@ const api = {
       ipcRenderer.invoke('app:getKeyboardInputSourceId'),
     getMacCapturedDigitRowChords: (): Promise<MacCapturedDigitRowChord[]> =>
       ipcRenderer.invoke('app:getMacCapturedDigitRowChords'),
+    getKeyboardLayoutSnapshot: () => ipcRenderer.invoke('app:getKeyboardLayoutSnapshot'),
     setUnreadDockBadgeCount: (count: number): Promise<void> =>
       ipcRenderer.invoke('app:setUnreadDockBadgeCount', count),
     getFloatingTerminalCwd: (args?: FloatingTerminalCwdRequest): Promise<string> =>

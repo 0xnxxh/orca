@@ -6,6 +6,14 @@ import {
   type TerminalShortcutPolicy
 } from '../../../../shared/keybindings'
 import type { WindowsShiftEnterEncoding } from './terminal-windows-shift-enter'
+import {
+  resolveTerminalOptionShortcutAction,
+  type MacOptionAsAlt
+} from './terminal-option-shortcut-policy'
+import type { OptionKeyLocationState } from '../../lib/keyboard-layout/option-key-location-state'
+import type { TerminalOptionKittyRelease } from './terminal-option-kitty-release'
+
+export type { MacOptionAsAlt } from './terminal-option-shortcut-policy'
 
 export type TerminalShortcutEvent = {
   key: string
@@ -16,8 +24,6 @@ export type TerminalShortcutEvent = {
   shiftKey: boolean
   repeat?: boolean
 }
-
-export type MacOptionAsAlt = 'true' | 'false' | 'left' | 'right'
 
 // Shared close-chord predicate: the terminal pane (L3) and the floating panel's focused-terminal
 // branch (L2) both treat terminal.closePane OR a terminal-scope tab.close as "close the active
@@ -36,21 +42,6 @@ export function isTerminalPaneCloseChord(
   )
 }
 
-// Why: macOS composition rewrites event.key for punctuation, so map event.code to the unmodified char for Esc+ sequences.
-const PUNCTUATION_CODE_MAP: Record<string, string> = {
-  Period: '.',
-  Comma: ',',
-  Slash: '/',
-  Backslash: '\\',
-  Semicolon: ';',
-  Quote: "'",
-  BracketLeft: '[',
-  BracketRight: ']',
-  Minus: '-',
-  Equal: '=',
-  Backquote: '`'
-}
-
 export type TerminalShortcutAction =
   | { type: 'copySelection' }
   | { type: 'selectAll' }
@@ -64,51 +55,8 @@ export type TerminalShortcutAction =
   | { type: 'closeActivePane' }
   | { type: 'splitActivePane'; direction: 'vertical' | 'horizontal' }
   | { type: 'scrollViewport'; position: 'top' | 'bottom' }
-  | { type: 'sendInput'; data: string }
+  | { type: 'sendInput'; data: string; optionKittyRelease?: TerminalOptionKittyRelease }
   | { type: 'switchInputSource' }
-
-/** Kitty keyboard protocol modifier field: 1 + shift(1) + alt(2). */
-function kittyAltModifiers(shiftKey: boolean): number {
-  return shiftKey ? 4 : 3
-}
-
-/**
- * True when the layout composed a printable-ASCII character onto this Option chord
- * (Turkish Option+Q -> '@', German Option+8 -> '{'), rather than leaving a hotkey.
- *
- * Why ASCII: kitty and Ghostty let macOS consume Option for composition by default and send the
- * composed text, so any composed glyph is "typed" there. Orca additionally forwards Option hotkeys
- * to kitty TUIs (#8031), and the composed glyphs that motivated it are all non-ASCII (alt+p -> 'π',
- * alt+b -> '∫'). Printable ASCII is the set a shell or TUI prompt actually needs typed, so it wins;
- * everything else stays a hotkey.
- *
- * Why the base-character compare: a layout that composes nothing reports the unmodified character
- * back in `key`, which must stay a hotkey rather than type itself.
- */
-function isLayoutComposedAsciiCharacter(key: string, baseCharacter: string): boolean {
-  if (key.length !== 1) {
-    return false
-  }
-  const codePoint = key.codePointAt(0) as number
-  if (codePoint <= 0x20 || codePoint > 0x7e) {
-    return false
-  }
-  return key.toLowerCase() !== baseCharacter.toLowerCase()
-}
-
-/** Un-shifted ASCII character for a physical key code (letters, digits, punctuation map), or undefined. */
-function resolveUnshiftedCharacterForCode(code: string | undefined): string | undefined {
-  if (!code) {
-    return undefined
-  }
-  if (code.startsWith('Key') && code.length === 4) {
-    return code.charAt(3).toLowerCase()
-  }
-  if (code.startsWith('Digit') && code.length === 6) {
-    return code.charAt(5)
-  }
-  return PUNCTUATION_CODE_MAP[code]
-}
 
 /**
  * Resolves terminal keyboard events before xterm receives them, centralizing
@@ -118,15 +66,15 @@ export function resolveTerminalShortcutAction(
   event: TerminalShortcutEvent,
   isMac: boolean,
   macOptionAsAlt: MacOptionAsAlt = 'false',
-  optionKeyLocation: number = 0,
+  optionKeyLocations: OptionKeyLocationState = 0,
   isWindows: boolean = false,
   keybindings?: KeybindingOverrides,
   // Why: lazy so local ConPTY lookup runs only for Ctrl+Arrow and Ctrl+Enter.
   isLocalWindowsConptyPane?: () => boolean,
-  // Why: gates Option-as-Alt compensation on the app's own kitty-protocol (CSI > u) opt-in, so shells keep composition.
-  isKittyKeyboardActivePane?: () => boolean,
-  // Why: the physical-code table above is US QWERTY; resolve via Chromium's KeyboardLayoutMap for Dvorak/Colemak/AZERTY layouts.
-  layoutBaseCharacterForCode?: (code: string) => string | undefined,
+  // Why: exact flags distinguish ordinary kitty negotiation from report-all mode.
+  getKittyKeyboardFlagsActivePane?: () => number,
+  // Why: composition is the difference between event.key and the current layout with Option absent.
+  layoutCharacterForCode?: (code: string, shifted: boolean, option?: boolean) => string | undefined,
   // Why: lazy so agent-state lookup for the pane's Windows encoding runs only on Shift+Enter, not every keystroke.
   getWindowsShiftEnterEncoding?: () => WindowsShiftEnterEncoding,
   // Why: keybindings follow the client OS, but byte protocols follow the PTY host — they differ for macOS clients on Windows runtimes.
@@ -217,7 +165,7 @@ export function resolveTerminalShortcutAction(
     const windowsHost = isWindowsTerminalHost()
     const hasTrustedWindowsCsiU = windowsHost && getWindowsShiftEnterEncoding?.() === 'csi-u'
     // Why: CSI-u is application input, not universal; without trusted Windows evidence, require active KKP negotiation.
-    const canSendCsiU = hasTrustedWindowsCsiU || isKittyKeyboardActivePane?.() === true
+    const canSendCsiU = hasTrustedWindowsCsiU || (getKittyKeyboardFlagsActivePane?.() ?? 0) > 0
     return { type: 'sendInput', data: canSendCsiU ? '\x1b[13;2u' : '\x1b\r' }
   }
 
@@ -232,7 +180,7 @@ export function resolveTerminalShortcutAction(
     // Why: preserve query-only TUI chords elsewhere; local ConPTY shells require negotiation or trusted consumer evidence (#12329).
     const canSendCsiU =
       !localWindowsConpty ||
-      isKittyKeyboardActivePane?.() === true ||
+      (getKittyKeyboardFlagsActivePane?.() ?? 0) > 0 ||
       hasCtrlEnterCsiUAuthority?.() === true
     return {
       type: 'sendInput',
@@ -281,7 +229,7 @@ export function resolveTerminalShortcutAction(
     event.key === 'Backspace'
   ) {
     // Why: a kitty-protocol TUI binds the CSI 127;3u xterm emits natively; the legacy \x1b\x7f fallback would bypass it.
-    if (isKittyKeyboardActivePane?.()) {
+    if ((getKittyKeyboardFlagsActivePane?.() ?? 0) > 0) {
       return null
     }
     return { type: 'sendInput', data: '\x1b\x7f' }
@@ -295,7 +243,7 @@ export function resolveTerminalShortcutAction(
     (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
   ) {
     // Why: a kitty-protocol TUI binds alt+arrow via xterm's native CSI 1;3D/C; \eb/\ef would reach it as alt+b/f.
-    if (isKittyKeyboardActivePane?.()) {
+    if ((getKittyKeyboardFlagsActivePane?.() ?? 0) > 0) {
       return null
     }
     // Why: readline doesn't bind xterm's \e[1;3D/C for alt+←/→, so translate to \eb/\ef for word-nav (iTerm2 "Esc+" behavior).
@@ -318,54 +266,15 @@ export function resolveTerminalShortcutAction(
     return { type: 'sendInput', data: event.key === 'ArrowLeft' ? '\x1bb' : '\x1bf' }
   }
 
-  // Why: macOptionIsMeta stays off so non-US layouts can compose @/€; match event.code since composition rewrites event.key.
-  if (isMac && !event.metaKey && !event.ctrlKey && event.altKey && macOptionAsAlt !== 'true') {
-    // Why: event.location reflects the char key, not the held modifier, so the caller supplies Option's tracked keydown location.
-    const isLeftOption = optionKeyLocation === 1
-    const isRightOption = optionKeyLocation === 2
-
-    const shouldActAsMeta =
-      (macOptionAsAlt === 'left' && isLeftOption) || (macOptionAsAlt === 'right' && isRightOption)
-
-    // Why: kitty pane — encode the physical base key as CSI-u; the composed codepoint (alt+π) binds nothing, Dead keys exempt to keep composition.
-    if (event.key !== 'Dead' && isKittyKeyboardActivePane?.()) {
-      const baseCharacter =
-        (event.code ? layoutBaseCharacterForCode?.(event.code) : undefined) ??
-        resolveUnshiftedCharacterForCode(event.code)
-      if (baseCharacter) {
-        // Why: xterm's kitty encoder would report the composed char as a chord (alt+@), so send it as text
-        // like kitty/Ghostty do — unless this Option key is the user's configured Alt side.
-        if (!shouldActAsMeta && isLayoutComposedAsciiCharacter(event.key, baseCharacter)) {
-          return { type: 'sendInput', data: event.key }
-        }
-        return {
-          type: 'sendInput',
-          data: `\x1b[${baseCharacter.codePointAt(0)};${kittyAltModifiers(event.shiftKey)}u`
-        }
-      }
-    }
-
-    if (!event.shiftKey) {
-      if (shouldActAsMeta) {
-        const character = resolveUnshiftedCharacterForCode(event.code)
-        if (character) {
-          return { type: 'sendInput', data: `\x1b${character}` }
-        }
-      }
-
-      // Compose-side Option still needs the critical readline shortcuts (B/F/D) patched.
-      if (!shouldActAsMeta) {
-        if (event.code === 'KeyB') {
-          return { type: 'sendInput', data: '\x1bb' }
-        }
-        if (event.code === 'KeyF') {
-          return { type: 'sendInput', data: '\x1bf' }
-        }
-        if (event.code === 'KeyD') {
-          return { type: 'sendInput', data: '\x1bd' }
-        }
-      }
-    }
+  const optionAction = resolveTerminalOptionShortcutAction(event, {
+    isMac,
+    macOptionAsAlt,
+    optionKeyLocations,
+    getKittyKeyboardFlags: () => getKittyKeyboardFlagsActivePane?.() ?? 0,
+    layoutCharacterForCode
+  })
+  if (optionAction) {
+    return optionAction
   }
 
   return null

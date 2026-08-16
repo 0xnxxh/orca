@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createOptionAsAltProbe } from './option-as-alt-probe'
 import type { LayoutMapLike } from './detect-option-as-alt'
 
@@ -75,6 +75,29 @@ function makeMockWindow(initial: LayoutMapLike | null): MockWindow {
 describe('createOptionAsAltProbe', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses the native snapshot identity before the preference fallback', async () => {
+    const getKeyboardLayoutSnapshot = vi.fn(async () => ({
+      inputSourceId: 'com.apple.keylayout.ABC',
+      keyCharacters: {}
+    }))
+    const getKeyboardInputSourceId = vi.fn(async () => 'com.apple.keylayout.US')
+    vi.stubGlobal('window', {
+      api: { app: { getKeyboardLayoutSnapshot, getKeyboardInputSourceId } }
+    })
+    const probe = createOptionAsAltProbe(makeMockWindow(US_MAP) as unknown as Window)
+
+    await probe.refresh()
+
+    expect(probe.getCurrent()).toBe('non-us')
+    expect(getKeyboardLayoutSnapshot).toHaveBeenCalled()
+    expect(getKeyboardInputSourceId).not.toHaveBeenCalled()
+    probe.dispose()
   })
 
   it('starts as unknown, upgrades after first probe resolves', async () => {

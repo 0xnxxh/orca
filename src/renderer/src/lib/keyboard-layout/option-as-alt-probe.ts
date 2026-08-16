@@ -31,6 +31,7 @@ import {
   type LayoutMapLike
 } from './detect-option-as-alt'
 import { classifyInputSourceId } from './input-source-id'
+import type { KeyboardLayoutSnapshot } from '../../../../shared/keyboard-layout-snapshot'
 
 type NavigatorWithKeyboard = Navigator & {
   keyboard?: {
@@ -65,9 +66,27 @@ function defaultInputSourceIdReader(): InputSourceIdReader {
   return async () => {
     const api = (
       globalThis as {
-        window?: { api?: { app?: { getKeyboardInputSourceId?: () => Promise<string | null> } } }
+        window?: {
+          api?: {
+            app?: {
+              getKeyboardInputSourceId?: () => Promise<string | null>
+              getKeyboardLayoutSnapshot?: () => Promise<KeyboardLayoutSnapshot | null>
+            }
+          }
+        }
       }
     ).window?.api
+    const snapshotReader = api?.app?.getKeyboardLayoutSnapshot
+    if (snapshotReader) {
+      try {
+        const snapshot = await snapshotReader()
+        if (snapshot?.inputSourceId) {
+          return snapshot.inputSourceId
+        }
+      } catch {
+        // Fall through to the preference-backed reader.
+      }
+    }
     const reader = api?.app?.getKeyboardInputSourceId
     if (!reader) {
       return null

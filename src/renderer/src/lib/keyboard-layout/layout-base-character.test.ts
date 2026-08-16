@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   _setLayoutMapForTests,
+  _setLayoutSnapshotForTests,
   getLayoutBaseCharacterForCode,
+  getLayoutCharacterForCode,
   normalizeLayoutBaseCharacter
 } from './layout-base-character'
 
@@ -17,6 +19,7 @@ describe('normalizeLayoutBaseCharacter', () => {
     expect(normalizeLayoutBaseCharacter(undefined)).toBeUndefined()
     expect(normalizeLayoutBaseCharacter('')).toBeUndefined()
     expect(normalizeLayoutBaseCharacter('Dead')).toBeUndefined()
+    expect(normalizeLayoutBaseCharacter('İ')).toBeUndefined()
     expect(normalizeLayoutBaseCharacter('\t')).toBeUndefined()
     expect(normalizeLayoutBaseCharacter(' ')).toBeUndefined()
   })
@@ -25,6 +28,7 @@ describe('normalizeLayoutBaseCharacter', () => {
 describe('getLayoutBaseCharacterForCode', () => {
   afterEach(() => {
     _setLayoutMapForTests(null)
+    _setLayoutSnapshotForTests(null)
   })
 
   it('returns undefined without a cached map, and resolves through one', () => {
@@ -41,5 +45,26 @@ describe('getLayoutBaseCharacterForCode', () => {
     expect(getLayoutBaseCharacterForCode('Semicolon')).toBe('m')
     expect(getLayoutBaseCharacterForCode('KeyE')).toBeUndefined()
     expect(getLayoutBaseCharacterForCode('KeyZ')).toBeUndefined()
+  })
+
+  it('uses the native modifier layer for Shift and falls back safely', () => {
+    _setLayoutMapForTests({ get: (code) => (code === 'Digit2' ? '2' : 'q'), size: 2 })
+    _setLayoutSnapshotForTests({
+      inputSourceId: 'com.apple.keylayout.Latvian',
+      keyCharacters: {
+        Digit2: { unmodified: '2', shifted: '@', optionUnmodified: '„' },
+        KeyQ: { unmodified: 'q', shifted: 'Q', optionUnmodified: '@' }
+      }
+    })
+
+    expect(getLayoutCharacterForCode('Digit2', false)).toBe('2')
+    expect(getLayoutCharacterForCode('Digit2', true)).toBe('@')
+    expect(getLayoutCharacterForCode('KeyQ', true)).toBe('Q')
+    expect(getLayoutCharacterForCode('KeyQ', false, true)).toBe('@')
+
+    _setLayoutSnapshotForTests(null)
+    expect(getLayoutCharacterForCode('Digit2', true)).toBeUndefined()
+    expect(getLayoutCharacterForCode('KeyQ', true)).toBe('Q')
+    expect(getLayoutCharacterForCode('KeyQ', false, true)).toBeUndefined()
   })
 })

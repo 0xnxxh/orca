@@ -3,15 +3,10 @@
 // deep import into a pinned dependency — acceptable here because the version is
 // already pinned by a patch that would fail to apply across a bump.
 import { KittyKeyboard } from '@xterm/xterm/src/common/input/KittyKeyboard'
-
-/**
- * `report_all_keys_as_escape_codes`. Bit 3 is the only flag that changes what a
- * plain printable key should put on the wire; 1/2/4/16 leave it as text.
- */
-const KITTY_REPORT_ALL_KEYS_AS_ESCAPE_CODES = 0b1000
-
-/** `report_event_types`. The only flag that makes a printable press owe a release. */
-const KITTY_REPORT_EVENT_TYPES = 0b0010
+import {
+  KITTY_REPORT_EVENT_TYPES,
+  kittyReportsAllKeysAsEscapeCodes
+} from './terminal-kitty-keyboard-flags'
 
 /**
  * `KittyKeyboardEventType.PRESS` / `.REPEAT` / `.RELEASE`. Inlined because the
@@ -111,20 +106,19 @@ export function encodeImeCommitForKitty(
   if (!press) {
     return { report: null, release: null }
   }
-  const report =
-    (kittyKeyboardFlags & KITTY_REPORT_ALL_KEYS_AS_ESCAPE_CODES) === 0
-      ? null
-      : evaluateKittyReport(
-          press,
-          // Why: the forwarder only claims presses with no control chord, so the
-          // modifier fields are known-false rather than read from a live event.
-          {},
-          kittyKeyboardFlags,
-          // Why: a held key emits repeated keydowns, and the protocol reports those as REPEAT.
-          // Defaulting them all to PRESS would make one held key look like N separate strikes to
-          // an app that counts presses or filters repeats.
-          press.repeat === true ? KITTY_EVENT_TYPE_REPEAT : KITTY_EVENT_TYPE_PRESS
-        )
+  const report = !kittyReportsAllKeysAsEscapeCodes(kittyKeyboardFlags)
+    ? null
+    : evaluateKittyReport(
+        press,
+        // Why: the forwarder only claims presses with no control chord, so the
+        // modifier fields are known-false rather than read from a live event.
+        {},
+        kittyKeyboardFlags,
+        // Why: a held key emits repeated keydowns, and the protocol reports those as REPEAT.
+        // Defaulting them all to PRESS would make one held key look like N separate strikes to
+        // an app that counts presses or filters repeats.
+        press.repeat === true ? KITTY_EVENT_TYPE_REPEAT : KITTY_EVENT_TYPE_PRESS
+      )
   return {
     report,
     release:
