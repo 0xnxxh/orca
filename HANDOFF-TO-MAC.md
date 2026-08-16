@@ -55,8 +55,8 @@ heads from origin** rather than trusting these two rows:
 | Branch | Head | State | Contains |
 |---|---|---|---|
 | `brennanb2025/fix-4449-4491` | `46294c668d` | **PR #14917 OPEN** — verified | STA-4449 + STA-4491. Squashed, clean single commit, all gates green. |
-| `brennanb2025/fix-4471` | `7dd1413a66` | WIP, **stacked on the above** | STA-4471. Lane's own commit on top of `46294c668d`. Not verified by me. |
-| `brennanb2025/fix-4472-4473` | `98ac46d846` | **UNVERIFIED WIP** | STA-4472/4473 backfill scan + discovery extraction. Two teardown snapshots I committed on the lane's behalf mid-edit — **may not compile**. |
+| `brennanb2025/fix-4471` | `7dd1413a66` | **VERIFIED**, stacked on the above | STA-4471 (P0). Proven non-vacuous by mutation — 4 tests RED across runtime/SSH/local create. |
+| `brennanb2025/fix-4472-4473` | `efeec371c8` | Green, not mutation-tested | STA-4472/4473. Head typechecks (exit 0) and its 63 tests pass. Intermediate commits may hold torn writes — do not bisect. |
 | `brennanb2025/fix-glue-cluster` | `c30c9890f2` | Mixed | STA-4477 fix (committed by the lane) + **UNVERIFIED WIP** reland tests I snapshotted at teardown. |
 | `brennanb2025/fix-4451` | `2d2326e07c` | **UNVERIFIED**, rescued WIP | STA-4451. Predecessor's work. I audited it but never ran it. |
 | `brennanb2025/repro-4449-4491` | `e5f7adf8c9` | Reference only | Original repro test + REPRO-FINDINGS.md. Superseded by PR #14917. |
