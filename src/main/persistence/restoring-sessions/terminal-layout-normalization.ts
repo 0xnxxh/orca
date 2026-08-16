@@ -174,8 +174,13 @@ export function normalizeTerminalLayoutSnapshotForPersistence(
   )
   const inputLeafIdsInOrder = collectLayoutLeafIdsInOrder(inputRoot)
   const preferredLeafIdsInOrder = collectLayoutLeafIdsInOrder(preferredLayout?.root)
-  const usePreferredLeafIds = preferredLeafIdsInOrder.length === inputLeafIdsInOrder.length
+  // Why the uniqueness check: a preferred layout that repeats a UUID would hand two input leaves the
+  // same id, collapsing their pty/buffer/scrollback/title records onto one key.
+  const usePreferredLeafIds =
+    preferredLeafIdsInOrder.length === inputLeafIdsInOrder.length &&
+    new Set(preferredLeafIdsInOrder).size === preferredLeafIdsInOrder.length
   const leafIdByInputLeafId = new Map<string, string>()
+  const claimedLeafIds = new Set<string>()
   for (const [index, leafId] of inputLeafIdsInOrder.entries()) {
     const count = counts.get(leafId) ?? 0
     if (count !== 1 || leafIdByInputLeafId.has(leafId)) {
@@ -184,14 +189,17 @@ export function normalizeTerminalLayoutSnapshotForPersistence(
     }
     if (isTerminalLeafId(leafId)) {
       leafIdByInputLeafId.set(leafId, leafId)
+      claimedLeafIds.add(leafId)
       continue
     }
     changed = true
     const preferredLeafId = usePreferredLeafIds ? preferredLeafIdsInOrder[index] : undefined
-    leafIdByInputLeafId.set(
-      leafId,
-      preferredLeafId && isTerminalLeafId(preferredLeafId) ? preferredLeafId : randomUUID()
-    )
+    const nextLeafId =
+      preferredLeafId && isTerminalLeafId(preferredLeafId) && !claimedLeafIds.has(preferredLeafId)
+        ? preferredLeafId
+        : randomUUID()
+    claimedLeafIds.add(nextLeafId)
+    leafIdByInputLeafId.set(leafId, nextLeafId)
   }
   const root = changed
     ? cloneLayoutWithLeafIds(inputRoot, leafIdByInputLeafId, duplicatedInputLeafIds)

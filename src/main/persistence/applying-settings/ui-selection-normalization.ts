@@ -84,12 +84,13 @@ export function normalizeRightSidebarExplorerView(
   view: unknown,
   tab?: unknown
 ): PersistedState['ui']['rightSidebarExplorerView'] {
-  // Why: older builds persisted Search as a standalone activity tab.
-  if (tab === 'search') {
-    return 'search'
-  }
   if (view === 'files' || view === 'search') {
     return view
+  }
+  // Why: older builds persisted Search as a standalone activity tab with no explorer view; 'search'
+  // is still a live tab, so this fallback must not outrank an explicit view.
+  if (tab === 'search') {
+    return 'search'
   }
   return getDefaultUIState().rightSidebarExplorerView
 }

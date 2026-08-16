@@ -23,7 +23,10 @@ export const STALE_DURABLE_WRITE_TEMP_AGE_MS = 24 * 60 * 60 * 1000
 
 export function gcStaleWorktreeMeta(state: StoreOwnedPersistedState): number {
   // Why: a hand-corrupted "worktreeMeta": null overrides the defaults merge; normalize here instead of throwing.
+  // Companion lineage maps get the same guard because the deletes below index them directly.
   state.worktreeMeta ??= {}
+  state.worktreeLineageById ??= {}
+  state.workspaceLineageByChildKey ??= {}
   const repoById = new Map(state.repos.map((repo) => [repo.id, repo]))
   const projectIds = new Set((state.projects ?? []).map((project) => project.id))
   const now = Date.now()
@@ -79,14 +82,24 @@ export function gcStaleWorktreeMeta(state: StoreOwnedPersistedState): number {
 
 export function normalizeWorktreeLinkedItemMetadata(state: StoreOwnedPersistedState): boolean {
   let changed = false
+  // Why: a hand-corrupted null lineage map would throw on the companion deletes below.
+  state.worktreeLineageById ??= {}
+  state.workspaceLineageByChildKey ??= {}
   const rawWorktreeMeta = state.worktreeMeta as unknown
   if (
     typeof rawWorktreeMeta !== 'object' ||
     rawWorktreeMeta === null ||
     Array.isArray(rawWorktreeMeta)
   ) {
+    const hadLineage =
+      Object.keys(state.worktreeLineageById).length > 0 ||
+      Object.keys(state.workspaceLineageByChildKey).length > 0
     state.worktreeMeta = {}
-    changed = rawWorktreeMeta !== undefined
+    // Companions go with the discarded map; a stranded lineage row would otherwise re-attach to a
+    // worktree recreated at the same repoId::path.
+    state.worktreeLineageById = {}
+    state.workspaceLineageByChildKey = {}
+    changed = rawWorktreeMeta !== undefined || hadLineage
   }
   for (const [key, meta] of Object.entries(state.worktreeMeta)) {
     // Why: hand-corrupted non-object entries are a real input class; drop them here because gcStaleWorktreeMeta

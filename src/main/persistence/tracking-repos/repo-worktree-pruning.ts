@@ -30,18 +30,9 @@ export function pruneWorktreeStateForRepo(
     hostMembership.set(key, result)
     return result
   }
-  // Why: session state (legacy blob + per-host partitions) references worktrees
-  // by the same `${repoId}::${path}` owner key; if it is not pruned here, a
-  // deleted project's worktrees stay in lastVisitedAtByWorktreeId /
-  // sleepingAgentSessionsByPaneKey and get re-materialized into worktreeMeta on
-  // the next launch, surfacing as an orphaned "unknown" workspace.
-  // worktreeMeta is host-classified via belongsToHost, but session partitions
-  // are keyed by host directly. A session owner key carries no host, and the
-  // same key can exist in multiple partitions (shared repo id/path across
-  // hosts). So for session cleanup we collect every prefix-matching owner key
-  // regardless of belongsToHost, and let the per-partition host gating below
-  // decide which partition to touch. (belongsToHost still governs
-  // worktreeMeta/lineage deletion. Collect before deleting worktreeMeta.)
+  // Why: leftover session owner keys re-materialize into worktreeMeta next launch as orphaned
+  // "unknown" workspaces. Owner keys carry no host and can repeat across partitions, so collect every
+  // prefix match (before the worktreeMeta deletes below) and let the per-partition gating decide.
   const ownerKeysToPrune = new Set<string>()
   const collectPrefixedKeys = (keys: Iterable<string>): void => {
     for (const key of keys) {
@@ -61,13 +52,9 @@ export function pruneWorktreeStateForRepo(
       delete state.worktreeMeta[key]
     }
   }
-  // Why: owner keys are `${repoId}::${path}` and do not carry a host, so a
-  // host-scoped prune (hostId != null) must only touch that host's session:
-  // the legacy blob is the local host's session, and each
-  // workspaceSessionsByHostId partition is one non-local host. Pruning every
-  // partition here would wipe a surviving host's tabs, sleeping-agent state,
-  // and active-worktree pointer for a shared repo id/path. A full removal
-  // (hostId === null) still clears every host.
+  // Why: a host-scoped prune must touch only that host's session (legacy blob = local, one partition
+  // per remote host); pruning every partition would wipe a surviving host's tabs and sleeping agents
+  // for a shared repo id/path. A full removal (hostId === null) still clears every host.
   const pruneLegacyLocalSession = hostId === null || hostId === LOCAL_EXECUTION_HOST_ID
   const pruneAllHostPartitions = hostId === null
   if (pruneLegacyLocalSession) {
