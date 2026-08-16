@@ -9,8 +9,6 @@ import { isWslUncPath } from '../../shared/wsl-paths'
 import { wslUncDirectoryExists, wslUncDirectoryExistsAsync } from '../wsl'
 
 const pendingWorkingDirectoryValidations = new Map<string, Promise<void>>()
-/** Upper bound on how long one unreachable path may keep poisoning the dedupe map. */
-const WORKING_DIRECTORY_VALIDATION_CACHE_MS = 30_000
 
 /** Thrown when the caller gave up on a probe that is still running. */
 export class WorkingDirectoryValidationAbortedError extends Error {
@@ -86,18 +84,19 @@ export function validateWorkingDirectoryAsync(
   if (!validation) {
     validation = validateWorkingDirectoryUncached(cwd)
     pendingWorkingDirectoryValidations.set(key, validation)
-    const settled = validation
+    const started = validation
+    // Why: dropped only on settle. `fs.stat` is uninterruptible, so retiring a
+    // still-running probe on a timer frees no libuv thread — it only lets the
+    // next caller pin a second one, and a few retries against one dead mount
+    // exhaust the default pool of 4 and stall every other async fs read in the
+    // daemon. Callers escape through `signal` instead, so sharing one hung probe
+    // no longer strands them.
     const forget = (): void => {
-      if (pendingWorkingDirectoryValidations.get(key) === settled) {
+      if (pendingWorkingDirectoryValidations.get(key) === started) {
         pendingWorkingDirectoryValidations.delete(key)
       }
     }
     void validation.then(forget, forget)
-    // Why: a mount that never answers would otherwise pin this entry forever,
-    // so every later create for the same path joins a promise that cannot settle
-    // — turning one dead share into a permanent, cross-session stall.
-    const eviction = setTimeout(forget, WORKING_DIRECTORY_VALIDATION_CACHE_MS)
-    eviction.unref?.()
   }
   const signal = options.signal
   if (!signal) {

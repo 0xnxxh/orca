@@ -107,20 +107,33 @@ describe('validateWorkingDirectoryAsync', () => {
       expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledOnce()
     })
 
-    it('stops a never-settling probe from poisoning the path forever', async () => {
+    it('never pins a second probe on a path whose probe is still hung', async () => {
       vi.useFakeTimers()
       try {
         wslUncDirectoryExistsAsyncMock.mockReturnValue(new Promise<boolean>(() => {}))
+        const hung = deadShare('still-hung')
 
-        const poisoned = deadShare('evicted')
-        void validateWorkingDirectoryAsync(poisoned).catch(() => {})
-        await vi.advanceTimersByTimeAsync(30_000)
-        void validateWorkingDirectoryAsync(poisoned).catch(() => {})
+        // `fs.stat` is uninterruptible, so retiring the entry on a timer would
+        // free no libuv thread — it would only let each retry pin another, and
+        // the default pool of 4 is exhausted after a few rounds.
+        for (let retry = 0; retry < 4; retry += 1) {
+          void validateWorkingDirectoryAsync(hung).catch(() => {})
+          await vi.advanceTimersByTimeAsync(60_000)
+        }
 
-        expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledTimes(2)
+        expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledOnce()
       } finally {
         vi.useRealTimers()
       }
+    })
+
+    it('re-probes once the previous probe settles, so a recovered mount is seen', async () => {
+      wslUncDirectoryExistsAsyncMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      const recovering = deadShare('recovers')
+
+      await expect(validateWorkingDirectoryAsync(recovering)).rejects.toThrow(/does not exist/)
+      await expect(validateWorkingDirectoryAsync(recovering)).resolves.toBeUndefined()
+      expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledTimes(2)
     })
   })
 
