@@ -13,6 +13,8 @@ const {
   handleMock,
   persistAnalysisSnapshotMock,
   readAnalysisSnapshotMock,
+  beginProducerMock,
+  finishProducerMock,
   WorkspaceSpaceScanCancelledErrorMock
 } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>()
@@ -25,6 +27,8 @@ const {
     }),
     persistAnalysisSnapshotMock: vi.fn(),
     readAnalysisSnapshotMock: vi.fn(),
+    beginProducerMock: vi.fn(() => 'producer:1'),
+    finishProducerMock: vi.fn(),
     WorkspaceSpaceScanCancelledErrorMock: class WorkspaceSpaceScanCancelledError extends Error {}
   }
 })
@@ -42,8 +46,8 @@ vi.mock('../workspace-space-analysis', () => ({
 }))
 
 vi.mock('../workspace-space-analysis-snapshot', () => ({
-  beginWorkspaceSpaceAnalysisSnapshotProducer: vi.fn(() => 'producer:1'),
-  finishWorkspaceSpaceAnalysisSnapshotProducer: vi.fn(),
+  beginWorkspaceSpaceAnalysisSnapshotProducer: beginProducerMock,
+  finishWorkspaceSpaceAnalysisSnapshotProducer: finishProducerMock,
   persistWorkspaceSpaceAnalysisSnapshot: persistAnalysisSnapshotMock,
   readWorkspaceSpaceAnalysisSnapshot: readAnalysisSnapshotMock
 }))
@@ -83,6 +87,8 @@ function createStore(): Store {
 describe('registerWorkspaceSpaceHandlers', () => {
   beforeEach(() => {
     analyzeWorkspaceSpaceMock.mockReset()
+    beginProducerMock.mockClear()
+    finishProducerMock.mockClear()
     persistAnalysisSnapshotMock.mockReset().mockResolvedValue(undefined)
     readAnalysisSnapshotMock.mockReset().mockResolvedValue(null)
   })
@@ -123,6 +129,44 @@ describe('registerWorkspaceSpaceHandlers', () => {
 
     await expect(handler!(createEvent())).resolves.toEqual(createAnalyzeResult(2))
     expect(analyzeWorkspaceSpaceMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('fences the snapshot producer across an analysis, settling only after persistence', async () => {
+    const store = createStore()
+    analyzeWorkspaceSpaceMock.mockResolvedValueOnce(createAnalysis(1))
+    let releasePersist = (): void => {}
+    persistAnalysisSnapshotMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        releasePersist = () => resolve()
+      })
+    )
+
+    registerWorkspaceSpaceHandlers(store)
+    await handlers.get('workspaceSpace:analyze')!(createEvent())
+
+    expect(beginProducerMock).toHaveBeenCalledTimes(1)
+    // Still in flight: the analysis can only stop resurrecting rows once its write lands.
+    expect(finishProducerMock).not.toHaveBeenCalled()
+
+    releasePersist()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(finishProducerMock).toHaveBeenCalledWith(expect.any(String), 'producer:1')
+  })
+
+  it('settles the snapshot producer when an analysis fails without persisting', async () => {
+    const store = createStore()
+    analyzeWorkspaceSpaceMock.mockRejectedValueOnce(new Error('analysis exploded'))
+
+    registerWorkspaceSpaceHandlers(store)
+    await expect(handlers.get('workspaceSpace:analyze')!(createEvent())).rejects.toThrow(
+      'analysis exploded'
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(persistAnalysisSnapshotMock).not.toHaveBeenCalled()
+    expect(finishProducerMock).toHaveBeenCalledWith(expect.any(String), 'producer:1')
   })
 
   it('forwards scan progress to the requesting renderer', async () => {

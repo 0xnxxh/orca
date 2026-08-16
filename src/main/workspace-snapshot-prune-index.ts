@@ -52,7 +52,6 @@ export function activeWorkspaceSnapshotPruneKeys(
   return keys
 }
 
-/** A tombstone nobody holds can no longer stop anything, so it is never stored. */
 export function registerWorkspaceSnapshotPrunesForFile(
   tombstones: Map<string, WorkspaceSnapshotPruneTombstone>,
   targets: readonly WorkspaceSnapshotPruneTarget[],
@@ -63,10 +62,6 @@ export function registerWorkspaceSnapshotPrunesForFile(
     const key = workspaceSnapshotPruneKey(worktreeId, executionHostId)
     // Union, never replace: a re-registered target may still be held by an earlier batch.
     const merged = new Set([...(tombstones.get(key)?.holders ?? []), ...holders])
-    if (merged.size === 0) {
-      tombstones.delete(key)
-      continue
-    }
     tombstones.set(key, {
       worktreeId,
       ...(executionHostId ? { executionHostId } : {}),
