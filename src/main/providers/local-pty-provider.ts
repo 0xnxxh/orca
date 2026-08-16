@@ -19,10 +19,8 @@ import { splitWorktreeIdForFilesystem } from '../../shared/worktree/id'
 import { isBracketedPasteSafeShell } from '../../shared/startup-command-submission'
 import {
   injectHistoryEnv,
-  injectWslFishHistoryEnv,
-  updateHistoryEnvForFallback,
-  logHistoryInjection,
-  type HistoryInjectionResult
+  updateHistFileForFallback,
+  logHistoryInjection
 } from '../terminal-history'
 import type { IPtyProvider, PtyProcessInfo, PtySpawnOptions, PtySpawnResult } from './types'
 import {
@@ -874,15 +872,7 @@ export class LocalPtyProvider implements IPtyProvider {
       historyResult = injectHistoryEnv(finalEnv, worktreeId, effectiveShellPath, cwd, {
         wslDistro: launchWslDistro
       })
-      if (isWslTerminal && launchWslDistro) {
-        injectWslFishHistoryEnv(finalEnv, worktreeId, launchWslDistro)
-        addWslEnvKeys(finalEnv, ['HISTFILE', 'fish_history'])
-      }
       logHistoryInjection(worktreeId, historyResult)
-    } else {
-      // Why: injectHistoryEnv is what normally clears it, so when history is off
-      // an inherited ORCA_HISTFILE would still reach the wrapper. Credit: #11146.
-      delete finalEnv.ORCA_HISTFILE
     }
 
     await prepareLocalPtySpawn(id)
@@ -905,9 +895,8 @@ export class LocalPtyProvider implements IPtyProvider {
       ptySpawn: pty.spawn,
       getShellReadyConfig: getFallbackShellReadyConfig,
       // Why: on zsh→bash fallback HISTFILE still points to zsh_history; update before spawn so the child inherits it (design doc §8).
-      onBeforeFallbackSpawn: historyResult?.historyDir
-        ? (env, fallbackShell) =>
-            updateHistoryEnvForFallback(env, fallbackShell, historyResult as HistoryInjectionResult)
+      onBeforeFallbackSpawn: historyResult?.histFile
+        ? (env, fallbackShell) => updateHistFileForFallback(env, fallbackShell)
         : undefined,
       windowsFallbackAttempts
     })

@@ -72,7 +72,7 @@ export function buildAiVaultResumeShellCommand(args: {
     })
   }
 
-  const resumeCommand = `${codexHomeEnvPrefix(codexHome?.trim() || null, platform, shell)}${
+  const resumeCommand = `${codexHomeEnvPrefix(codexHome?.trim() || null, platform)}${
     args.resumeCommand
   }`
   if (platform === 'win32' && shell === 'cmd') {
@@ -89,7 +89,7 @@ export function buildAiVaultResumeShellCommand(args: {
     return `cmd /d /s /c ${quoteWindowsCmdArg(inner)}`
   }
 
-  return `cd ${quoteResumeArg(cwd, platform, shell)} && ${resumeCommand}`
+  return `cd ${quoteShellArg(cwd, platform)} && ${resumeCommand}`
 }
 
 function buildResumeShellCommandForShell(args: {
@@ -184,37 +184,21 @@ function buildAgentResumeInvocation(
   }
 }
 
-function codexHomeEnvPrefix(
-  codexHome: string | null,
-  platform: NodeJS.Platform,
-  shell?: AgentStartupShell
-): string {
+function codexHomeEnvPrefix(codexHome: string | null, platform: NodeJS.Platform): string {
   if (!codexHome) {
     return ''
   }
   if (platform === 'win32') {
     return `set ${quoteWindowsCmdArg(`CODEX_HOME=${codexHome}`)} && `
   }
-  // fish accepts the `NAME=value cmd` prefix (3.1+), but not sh's quoting.
-  return `CODEX_HOME=${quoteResumeArg(codexHome, platform, shell)} `
+  return `CODEX_HOME=${quoteShellArg(codexHome, platform)} `
 }
 
-/** Quotes for the live shell when one is known, else for the platform's default. */
-function quoteResumeArg(
-  value: string,
-  platform: NodeJS.Platform,
-  shell?: AgentStartupShell
-): string {
-  return shell ? quoteStartupArg(value, shell) : quoteShellArg(value, platform)
-}
-
-/** Why not the sh `'\''` idiom here: this is the same resume command the shell
- *  branch above builds, and fish reads that idiom differently — it would halve
- *  backslashes in a path and reject a trailing one. Deferring to
- *  `quoteStartupArg` keeps one spelling regardless of whether a caller happened
- *  to pass a shell. */
 function quoteShellArg(value: string, platform: NodeJS.Platform): string {
-  return platform === 'win32' ? quoteWindowsCmdArg(value) : quoteStartupArg(value, 'posix')
+  if (platform === 'win32') {
+    return quoteWindowsCmdArg(value)
+  }
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function quoteWindowsCmdArg(value: string): string {
