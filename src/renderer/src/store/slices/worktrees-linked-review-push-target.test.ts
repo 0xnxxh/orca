@@ -577,6 +577,70 @@ describe('worktree remote runtime mutations', () => {
     expect(store.getState().worktreesByRepo.repo1[0]?.pushTarget).toBeUndefined()
   })
 
+  it('skips the push-target lookup for a genuinely ambiguous owner instead of throwing past the { ok, error } contract', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo-shared::/same/path'
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'hub-c' } as never,
+      worktreesByRepo: {
+        'repo-shared': [
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo-shared',
+            hostId: 'ssh:ssh-a',
+            runtimeOwnerEnvironmentId: 'hub-a'
+          }),
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo-shared',
+            hostId: 'ssh:ssh-b',
+            runtimeOwnerEnvironmentId: 'hub-b'
+          })
+        ]
+      }
+    } as Partial<AppState>)
+
+    const result = await store.getState().updateWorktreeMeta(worktreeId, { linkedPR: 123 })
+
+    // The ambiguous owner must surface as a graceful { ok: false }, not an uncaught rejection.
+    expect(result.ok).toBe(false)
+    expect(mockApi.worktrees.resolvePrBase).not.toHaveBeenCalled()
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+  })
+
+  it('cleans up the in-flight lookup when restore is skipped for a genuinely ambiguous owner', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo-shared::/same/path'
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'hub-c' } as never,
+      worktreesByRepo: {
+        'repo-shared': [
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo-shared',
+            hostId: 'ssh:ssh-a',
+            runtimeOwnerEnvironmentId: 'hub-a',
+            linkedPR: 123
+          }),
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo-shared',
+            hostId: 'ssh:ssh-b',
+            runtimeOwnerEnvironmentId: 'hub-b',
+            linkedPR: 123
+          })
+        ]
+      }
+    } as Partial<AppState>)
+
+    await expect(store.getState().ensureHostedReviewPushTarget(worktreeId)).resolves.toBeUndefined()
+
+    expect(mockApi.worktrees.resolvePrBase).not.toHaveBeenCalled()
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+    // A second call must not be blocked by a stale in-flight marker from the skipped first call.
+    await expect(store.getState().ensureHostedReviewPushTarget(worktreeId)).resolves.toBeUndefined()
+  })
+
   it('hydrates a missing push target for an existing linked GitLab MR when supported', async () => {
     const store = createTestStore()
     const pushTarget = { remoteName: 'upstream', branchName: 'feature/mr' }
