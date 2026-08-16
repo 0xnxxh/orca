@@ -317,6 +317,7 @@ import {
   type ExpectedTeardownScope
 } from './crash-reporting/process-gone-classification'
 import { recordProcessGoneCrash as recordProcessGoneCrashEvent } from './crash-reporting/process-gone-recorder'
+import { startCrashpadCapture } from './crash-reporting/crashpad-capture'
 import { resolveExpectedTeardownScope } from './crash-reporting/expected-teardown-state'
 import {
   advanceSyntheticTitleSpinnerEntries,
@@ -843,6 +844,9 @@ if (hasSingleInstanceLock) {
   initClaudeUsagePath()
   initCodexUsagePath()
   initOpenCodeUsagePath()
+  // Why: must precede app.whenReady() so Crashpad is installed before the
+  // first renderer spawns; a CHECK before this point is still exit-code-only.
+  startCrashpadCapture()
   crashReports = CrashReportStore.fromUserData()
   recordCrashBreadcrumb('app_started', {
     packaged: app.isPackaged,

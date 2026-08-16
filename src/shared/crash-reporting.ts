@@ -2,6 +2,7 @@ import {
   appendDiagnosticBundleLines,
   type CrashReportDiagnosticBundle
 } from './crash-reporting-diagnostic-bundle'
+import { appendMinidumpSignatureLines } from './crash-report-signature-lines'
 
 export type { CrashReportDiagnosticBundle } from './crash-reporting-diagnostic-bundle'
 
@@ -251,6 +252,7 @@ export function formatCrashReportText(
     `Chrome: ${report.chromeVersion}`
   ]
 
+  appendMinidumpSignatureLines(lines, report.details)
   appendDiagnosticBundleLines(lines, diagnosticBundle, sanitizeCrashReportString)
 
   const details = Object.entries(report.details)
