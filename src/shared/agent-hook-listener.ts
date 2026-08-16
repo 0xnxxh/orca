@@ -2438,7 +2438,7 @@ function isNewTurnEvent(source: AgentHookSource, eventName: unknown): boolean {
       return eventName === 'agent.start'
     case 'opencode':
     case 'mimo-code':
-      return false
+      return eventName === 'SessionStart'
     case 'cursor':
       return eventName === 'beforeSubmitPrompt' || eventName === 'sessionStart'
     case 'pi':
@@ -3773,14 +3773,19 @@ function normalizeOpenCodeFamilyEvent(
   paneKey: string,
   hookPayload: Record<string, unknown>
 ): ParsedAgentStatusPayload | null {
+  const resetsTurn =
+    isNewTurnEvent(source, eventName) ||
+    (eventName === 'MessagePart' && hookPayload.role === 'user')
   const stateName =
     eventName === 'SessionBusy' || eventName === 'MessagePart'
       ? 'working'
       : eventName === 'SessionIdle'
         ? 'done'
-        : eventName === 'PermissionRequest' || eventName === 'AskUserQuestion'
-          ? 'waiting'
-          : null
+        : eventName === 'SessionStart'
+          ? 'done'
+          : eventName === 'PermissionRequest' || eventName === 'AskUserQuestion'
+            ? 'waiting'
+            : null
 
   if (!stateName) {
     return null
@@ -3790,19 +3795,20 @@ function normalizeOpenCodeFamilyEvent(
     state,
     paneKey,
     extractToolFields(source, eventName, hookPayload),
-    { resetOnNewTurn: isNewTurnEvent(source, eventName) }
+    { resetOnNewTurn: resetsTurn }
   )
 
   return normalizeAgentStatusPayload({
     state: stateName,
     prompt: resolvePrompt(state, paneKey, promptText, {
-      resetOnNewTurn: isNewTurnEvent(source, eventName)
+      resetOnNewTurn: resetsTurn
     }),
     agentType: source,
     toolName: snapshot.toolName,
     toolInput: snapshot.toolInput,
     interactivePrompt: snapshot.interactivePrompt,
-    lastAssistantMessage: snapshot.lastAssistantMessage
+    lastAssistantMessage: snapshot.lastAssistantMessage,
+    sessionBoundary: eventName === 'SessionStart' ? true : undefined
   })
 }
 
