@@ -147,6 +147,25 @@ describe('SetProjectLocationDialog', () => {
     expect(screen.queryByTestId('set-project-location-dialog')).toBeNull()
   })
 
+  it('backs out of the host browser on Escape instead of discarding the form', async () => {
+    const onClose = vi.fn()
+    const user = renderDialog({ onClose })
+
+    await user.click(screen.getByRole('button', { name: /Browse folder/ }))
+    await user.click(screen.getByRole('button', { name: 'Browse host filesystem' }))
+    expect(screen.getByTestId('remote-file-browser')).toBeTruthy()
+
+    await user.keyboard('{Escape}')
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('remote-file-browser')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Set location' })).toBeTruthy()
+
+    // A second Escape, now back on the form, dismisses the dialog as usual.
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('notifies the parent when dismissed', async () => {
     const onClose = vi.fn()
     renderDialog({ onClose })

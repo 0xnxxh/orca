@@ -276,6 +276,24 @@ describe('buildProjectHostSetupOptions', () => {
     ])
   })
 
+  // A `repo:<id>` project has no cross-host identity, so linking it on another host
+  // always fails in main — the row keeps its status line instead of a dead button.
+  it('cannot set a location for a host-local project', () => {
+    const options = buildProjectHostSetupOptions({
+      projectId: 'repo:local-repo',
+      eligibleRepos: [repo('local-repo')],
+      hosts: [host('local'), host('ssh:builder', { label: 'Builder' })],
+      projectHostSetups: [setup('local', 'repo:local-repo', 'local', 'local-repo')]
+    })
+
+    expect(options.at(-1)).toMatchObject({
+      kind: 'needs-setup',
+      detail: 'Project location not set',
+      isAvailable: true,
+      canSetLocation: false
+    })
+  })
+
   it.each([
     ['connecting' as const, 'Connecting to host'],
     ['disconnected' as const, 'Connect this host to set up projects'],

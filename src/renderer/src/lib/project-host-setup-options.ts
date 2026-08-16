@@ -6,6 +6,7 @@ import {
   type ExecutionHostId
 } from '../../../shared/execution-host'
 import type { ExecutionHostRegistryEntry } from '../../../shared/execution-host-registry'
+import { isHostLocalProjectId } from '../../../shared/project-host-setup-projection'
 import { isEphemeralVmRuntimeEnvironment } from '../../../shared/runtime-environments'
 import {
   PROJECT_HOST_SETUP_RUNTIME_CAPABILITY,
@@ -190,7 +191,7 @@ function buildNeedsSetupOptions({
           : availability.detail,
         isAvailable: availability.isAvailable,
         attention: host.health === 'error',
-        canSetLocation: canSetProjectLocation(availability.isAvailable, pendingSetup),
+        canSetLocation: canSetProjectLocation(projectId, availability.isAvailable, pendingSetup),
         ...(connectAction ? { connectAction } : {})
       }
     })
@@ -268,10 +269,14 @@ function getHostHealthUnavailableDetail(
 }
 
 function canSetProjectLocation(
+  projectId: string,
   isAvailable: boolean,
   pendingSetup: ProjectHostSetup | undefined
 ): boolean {
-  if (!isAvailable) {
+  // Why: setting up on another host links by project identity, and a host-local
+  // `repo:<id>` project has none to match against — the call always fails, so offer
+  // the plain status line rather than a button that only ever toasts an error.
+  if (!isAvailable || isHostLocalProjectId(projectId)) {
     return false
   }
   if (!pendingSetup) {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Download, FolderOpen } from 'lucide-react'
 import {
   Dialog,
@@ -44,6 +44,10 @@ export function SetProjectLocationDialog({
     setRenderOption(option)
   }
   const activeOption = option ?? renderOption
+  // Why: Radix dismisses on Escape from a document-capture listener, so the host
+  // browser can never intercept it itself. The body parks a back-out here so
+  // Escape steps out of the browser instead of discarding the half-filled form.
+  const exitHostBrowser = useRef<(() => boolean) | null>(null)
 
   return (
     <Dialog
@@ -57,10 +61,12 @@ export function SetProjectLocationDialog({
       <DialogContent
         data-testid="set-project-location-dialog"
         className="sm:max-w-lg"
-        // Why: this dialog is layered over Create worktree — dismissing it must
-        // not also reach the composer underneath and discard the in-progress form.
-        onEscapeKeyDown={(event) => event.stopPropagation()}
-        onInteractOutside={(event) => event.stopPropagation()}
+        onEscapeKeyDown={(event) => {
+          if (exitHostBrowser.current?.()) {
+            // Radix only skips onDismiss when the escape was defaultPrevented.
+            event.preventDefault()
+          }
+        }}
       >
         {activeOption ? (
           <SetProjectLocationDialogBody
@@ -69,6 +75,7 @@ export function SetProjectLocationDialog({
             projectName={projectName}
             projectKind={projectKind}
             defaultCloneUrl={defaultCloneUrl}
+            exitHostBrowser={exitHostBrowser}
             onReady={onReady}
           />
         ) : null}
@@ -82,12 +89,14 @@ function SetProjectLocationDialogBody({
   projectName,
   projectKind,
   defaultCloneUrl,
+  exitHostBrowser,
   onReady
 }: {
   option: NeedsSetupProjectHostOption
   projectName: string
   projectKind: RepoKind
   defaultCloneUrl: string
+  exitHostBrowser: RefObject<(() => boolean) | null>
   onReady: (setupId: string) => void
 }): React.JSX.Element {
   const setupProjectExistingFolder = useAppStore((state) => state.setupProjectExistingFolder)
@@ -109,6 +118,19 @@ function SetProjectLocationDialogBody({
     existing: { value: setupPath, set: setSetupPath },
     clone: { value: cloneDestination, set: setCloneDestination }
   }
+
+  const browsing = view === 'browse' && remoteHost !== null
+  useEffect(() => {
+    exitHostBrowser.current = browsing
+      ? () => {
+          setView(browseField)
+          return true
+        }
+      : null
+    return () => {
+      exitHostBrowser.current = null
+    }
+  }, [browseField, browsing, exitHostBrowser])
 
   const openHostBrowser = (field: BrowseField): void => {
     if (!remoteHost) {
@@ -161,7 +183,7 @@ function SetProjectLocationDialogBody({
     }
   }
 
-  if (view === 'browse' && remoteHost) {
+  if (browsing && remoteHost) {
     return (
       <CreateProjectParentBrowser
         sshTargetId={remoteHost.kind === 'ssh' ? remoteHost.targetId : null}
