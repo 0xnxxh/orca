@@ -115,9 +115,19 @@ export function summarizeTerminalWorktreeParkingPass(args: {
 
 let queuedSummary: TerminalWorktreeParkingPassSummary | null = null
 let flushTimer: ReturnType<typeof setTimeout> | null = null
+let lastEmittedSummaryKey: string | null = null
+
+function parkingPassSummaryKey(summary: TerminalWorktreeParkingPassSummary): string {
+  const stableSummary: Partial<TerminalWorktreeParkingPassSummary> = { ...summary }
+  // Elapsed time alone must not turn an unchanged parking shape into ring churn.
+  delete stableSummary.sampledAtMs
+  delete stableSummary.oldestHiddenAgeMs
+  return JSON.stringify(stableSummary)
+}
 
 export function resetTerminalWorktreeParkingPassTelemetry(): void {
   queuedSummary = null
+  lastEmittedSummaryKey = null
   if (flushTimer !== null) {
     clearTimeout(flushTimer)
     flushTimer = null
@@ -150,9 +160,15 @@ export function queueTerminalWorktreeParkingPass(args: {
     if (!summary) {
       return
     }
-    recordRendererCrashBreadcrumb(TERMINAL_PARKING_PASS_BREADCRUMB, {
+    const sampledSummary = {
       ...summary,
       ...getLivePaneCensus()
-    })
+    }
+    const summaryKey = parkingPassSummaryKey(sampledSummary)
+    if (summaryKey === lastEmittedSummaryKey) {
+      return
+    }
+    lastEmittedSummaryKey = summaryKey
+    recordRendererCrashBreadcrumb(TERMINAL_PARKING_PASS_BREADCRUMB, sampledSummary)
   }, 0)
 }

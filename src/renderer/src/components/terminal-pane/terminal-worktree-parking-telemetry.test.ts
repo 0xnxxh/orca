@@ -131,7 +131,7 @@ describe('worktree parking pass telemetry', () => {
     expect(summary.pastParkDelayPendingSpawnWork).toBe(0)
   })
 
-  it('queues every pass for main-process coalescing', () => {
+  it('queues changed passes for main-process coalescing', () => {
     const base = [verdict({ worktreeId: 'a', hiddenSinceMs: 0 })]
     queueTerminalWorktreeParkingPass({
       verdicts: base,
@@ -156,6 +156,42 @@ describe('worktree parking pass telemetry', () => {
     vi.runOnlyPendingTimers()
     expect(harness.crumbs).toHaveLength(2)
     expect(harness.crumbs[1]?.data?.pastParkDelayPendingSpawnWork).toBe(1)
+  })
+
+  it('suppresses unchanged summaries after the coalescing interval', () => {
+    const base = [verdict({ worktreeId: 'a', hiddenSinceMs: 0 })]
+    queueTerminalWorktreeParkingPass({
+      verdicts: base,
+      ordinaryParkedCount: 0,
+      parkingEnabled: true,
+      retentionBudgetEnabled: true,
+      nowMs: 60_000
+    })
+    vi.runOnlyPendingTimers()
+
+    vi.advanceTimersByTime(31_000)
+    queueTerminalWorktreeParkingPass({
+      verdicts: base,
+      ordinaryParkedCount: 0,
+      parkingEnabled: true,
+      retentionBudgetEnabled: true,
+      nowMs: 91_000
+    })
+    vi.runOnlyPendingTimers()
+    expect(harness.crumbs).toHaveLength(1)
+
+    harness.census = { managers: 7, panes: 9 }
+    queueTerminalWorktreeParkingPass({
+      verdicts: base,
+      ordinaryParkedCount: 0,
+      parkingEnabled: true,
+      retentionBudgetEnabled: true,
+      nowMs: 122_000
+    })
+    vi.runOnlyPendingTimers()
+    expect(harness.crumbs).toHaveLength(2)
+    expect(harness.crumbs[1]?.data?.managers).toBe(7)
+    expect(harness.crumbs[1]?.data?.panes).toBe(9)
   })
 
   it('samples the manager census after the queued pass', () => {
