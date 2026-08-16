@@ -68,6 +68,7 @@ import {
   type StartupCommandDelivery
 } from '../../shared/codex-startup-delivery'
 import { isShellProcess } from '../../shared/shell-process-detection'
+import { TerminalAttachCanceledError } from './daemon-errors'
 import { parsePtySessionId } from './pty-session-id'
 import { getAgentForegroundContextPaths } from '../providers/agent-foreground-context-paths'
 import { assertSafeAgentStartupCwd, resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
@@ -133,6 +134,7 @@ export type PtySubprocessOptions = {
   shellOverride?: string
   terminalWindowsWslDistro?: string | null
   terminalWindowsPowerShellImplementation?: 'auto' | 'powershell.exe' | 'pwsh.exe'
+  isCanceled?: () => boolean
   onMacosTccSpawnStrategy?: (strategy: 'wrapped' | 'direct') => void
 }
 
@@ -860,6 +862,9 @@ export async function createPtySubprocess(opts: PtySubprocessOptions): Promise<S
     validationCwd,
     cwdWasExplicit: opts.cwd !== undefined
   })
+  if (opts.isCanceled?.()) {
+    throw new TerminalAttachCanceledError(opts.sessionId)
+  }
 
   let proc: pty.IPty
   try {

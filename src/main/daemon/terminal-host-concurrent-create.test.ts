@@ -30,10 +30,7 @@ function createOptions(sessionId: string) {
 
 describe('concurrent createOrAttach across the async spawn', () => {
   it('spawns one shell when two callers race the same session id', async () => {
-    // Why: cwd validation is async (STA-4470), so spawnSubprocess now suspends
-    // between the "already exists?" check and the sessions.set that publishes
-    // the session. Without a per-session gate both callers pass the check and
-    // two shells end up hidden behind one id, which strands one of them.
+    // Both callers reach the async spawn before either can publish the session.
     let releaseSpawn: () => void = () => {}
     const spawnGate = new Promise<void>((resolve) => {
       releaseSpawn = resolve
@@ -64,7 +61,7 @@ describe('concurrent createOrAttach across the async spawn', () => {
     const host = new TerminalHost({ spawnSubprocess })
 
     await expect(host.createOrAttach(createOptions('race-2'))).rejects.toThrow('does not exist')
-    // A rejected spawn publishes nothing, so the id must stay claimable.
+    // A failed spawn must leave the id claimable.
     await expect(host.createOrAttach(createOptions('race-2'))).resolves.toMatchObject({
       isNew: true
     })
@@ -91,10 +88,67 @@ describe('concurrent createOrAttach across the async spawn', () => {
       host.createOrAttach(createOptions('solo-b'))
     ])
 
-    // Why: the gate is per session id; serializing unrelated sessions would
-    // rebuild the head-of-line blocking this change exists to remove.
+    // Global serialization would recreate the cross-session stall.
     expect(maxConcurrent).toBe(2)
 
     await host.dispose()
+  })
+
+  it('waits for an in-flight spawn before disposing its session', async () => {
+    let releaseSpawn: () => void = () => {}
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve
+    })
+    const subprocess = mockSubprocess()
+    const host = new TerminalHost({
+      spawnSubprocess: async () => {
+        await spawnGate
+        return subprocess
+      }
+    })
+
+    const creation = host.createOrAttach(createOptions('shutdown-race'))
+    const disposal = host.dispose()
+    let disposed = false
+    void disposal.then(() => {
+      disposed = true
+    })
+
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+
+    releaseSpawn()
+    await creation
+    await disposal
+
+    expect(subprocess.forceKill).toHaveBeenCalledOnce()
+    expect(host.listSessions()).toEqual([])
+  })
+
+  it('fences a queued retry when shutdown overlaps a failed spawn', async () => {
+    let rejectSpawn: () => void = () => {}
+    const spawnGate = new Promise<void>((_resolve, reject) => {
+      rejectSpawn = () => reject(new Error('spawn failed'))
+    })
+    const spawnSubprocess = vi
+      .fn<() => Promise<SubprocessHandle>>()
+      .mockImplementationOnce(async () => {
+        await spawnGate
+        return mockSubprocess()
+      })
+      .mockImplementation(async () => mockSubprocess())
+    const host = new TerminalHost({ spawnSubprocess })
+
+    const first = host.createOrAttach(createOptions('shutdown-retry'))
+    const queued = host.createOrAttach(createOptions('shutdown-retry'))
+    const disposal = host.dispose()
+    rejectSpawn()
+
+    await expect(first).rejects.toThrow('spawn failed')
+    await expect(queued).rejects.toThrow('Terminal host is shutting down')
+    await disposal
+
+    expect(spawnSubprocess).toHaveBeenCalledOnce()
+    expect(host.listSessions()).toEqual([])
   })
 })

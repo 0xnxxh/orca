@@ -10,6 +10,7 @@ import type { TerminalHostOptions } from './terminal-host-options'
 import type { TerminalHostTombstones } from './terminal-host-tombstones'
 import type { TerminalSessionTeardown } from './terminal-session-teardown'
 import { resolveDaemonSessionScrollbackRows } from './daemon-session-scrollback-window'
+import { TerminalAttachCanceledError } from './daemon-errors'
 import { SessionNotFoundError } from './types'
 import { resolveWslSessionContext } from './wsl-session-context'
 
@@ -18,35 +19,15 @@ type TerminalHostSessionCreateDependencies = {
   sessionTeardown: TerminalSessionTeardown
   killedTombstones: TerminalHostTombstones
   spawnSubprocess: TerminalHostOptions['spawnSubprocess']
-  creationFenced: boolean
   onDeadSessionRemoved: (sessionId: string) => void
   onSessionCreated: (sessionId: string, generation: string | undefined, isAlive: boolean) => void
   onSessionExit: (sessionId: string, generation: string | undefined) => void
-  /** In-flight spawns, keyed by session id. Owned by TerminalHost. */
-  pendingCreations: Map<string, Promise<void>>
 }
 
 export async function createOrAttachTerminalSession(
   opts: InternalCreateOrAttachOptions,
   deps: TerminalHostSessionCreateDependencies
 ): Promise<CreateOrAttachResult> {
-  if (deps.creationFenced) {
-    throw new Error('Terminal host is shutting down')
-  }
-  // Why: spawnSubprocess became async so cwd validation cannot block the
-  // daemon's RPC loop (STA-4470). That await sits between the "already exists?"
-  // check below and the sessions.set that publishes the result, so without this
-  // gate two concurrent createOrAttach calls for one session id would both pass
-  // the check and spawn two shells behind a single id.
-  for (
-    let inFlight = deps.pendingCreations.get(opts.sessionId);
-    inFlight !== undefined;
-    inFlight = deps.pendingCreations.get(opts.sessionId)
-  ) {
-    // The loser attaches to whatever the winner published; a failed spawn just
-    // lets this caller try again itself.
-    await inFlight.catch(() => {})
-  }
   opts.onSessionResolved?.(opts.sessionId)
   const existing = deps.sessions.get(opts.sessionId)
 
@@ -91,19 +72,7 @@ export async function createOrAttachTerminalSession(
   deps.killedTombstones.clearForCreate(opts.sessionId)
   const size = normalizePtySize(opts.cols, opts.rows)
   const wslDistro = resolveWslSessionContext(opts)?.distro
-  let settleCreation: () => void = () => {}
-  deps.pendingCreations.set(
-    opts.sessionId,
-    new Promise<void>((resolve) => {
-      settleCreation = resolve
-    })
-  )
-  try {
-    return await spawnAndPublishSession(opts, deps, { size, wslDistro })
-  } finally {
-    deps.pendingCreations.delete(opts.sessionId)
-    settleCreation()
-  }
+  return await spawnAndPublishSession(opts, deps, { size, wslDistro })
 }
 
 async function spawnAndPublishSession(
@@ -124,7 +93,8 @@ async function spawnAndPublishSession(
     ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
     shellOverride: opts.shellOverride,
     terminalWindowsWslDistro: opts.terminalWindowsWslDistro,
-    terminalWindowsPowerShellImplementation: opts.terminalWindowsPowerShellImplementation
+    terminalWindowsPowerShellImplementation: opts.terminalWindowsPowerShellImplementation,
+    isCanceled: opts.isCanceled
   })
 
   // Why: a fallback shell does not emit the preferred shell's ready marker;
@@ -154,6 +124,18 @@ async function spawnAndPublishSession(
       ? { shellReadyTimeoutMs: opts.shellReadyTimeoutMs }
       : {})
   })
+
+  if (opts.isCanceled?.()) {
+    // Retain cleanup ownership if the native child refuses to exit.
+    deps.sessions.set(opts.sessionId, session)
+    await session.forceKillAndDisposeSubprocess()
+    if (deps.sessions.get(opts.sessionId) === session) {
+      session.dispose()
+      deps.sessions.delete(opts.sessionId)
+      deps.onDeadSessionRemoved(opts.sessionId)
+    }
+    throw new TerminalAttachCanceledError(opts.sessionId)
+  }
 
   deps.sessions.set(opts.sessionId, session)
   deps.onSessionCreated(opts.sessionId, opts.agentSessionGeneration, session.isAlive)

@@ -132,6 +132,29 @@ describe('createPtySubprocess', () => {
     expect(onMacosTccSpawnStrategy).toHaveBeenCalledWith('direct')
   })
 
+  it('does not spawn after cancellation wins during async cwd validation', async () => {
+    let releaseValidation: () => void = () => {}
+    const validationGate = new Promise<void>((resolve) => {
+      releaseValidation = resolve
+    })
+    validateWorkingDirectoryMock.mockImplementationOnce(() => validationGate)
+    let canceled = false
+
+    const spawning = createPtySubprocess({
+      sessionId: 'canceled-validation',
+      cols: 80,
+      rows: 24,
+      isCanceled: () => canceled
+    })
+    await vi.waitFor(() => expect(validateWorkingDirectoryMock).toHaveBeenCalled())
+
+    canceled = true
+    releaseValidation()
+
+    await expect(spawning).rejects.toThrow('Attach canceled for session canceled-validation')
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
   it('does not report a spawn strategy when node-pty fails before launch', async () => {
     spawnMock.mockImplementationOnce(() => {
       throw new Error('spawn failed')

@@ -17,8 +17,8 @@ export type TerminalHostOptions = {
     shellOverride?: string
     terminalWindowsWslDistro?: string | null
     terminalWindowsPowerShellImplementation?: 'auto' | 'powershell.exe' | 'pwsh.exe'
-    // Why the union: cwd validation is async so an unreachable share cannot block
-    // the daemon's RPC loop (STA-4470). Sync test stubs still satisfy the await.
+    isCanceled?: () => boolean
+    // Async production spawns and sync test stubs share this boundary.
   }) => SubprocessHandle | Promise<SubprocessHandle>
   // Why: login-session death detection (#7936) needs subprocess exits even when no client is attached.
   onSessionReaped?: (sessionId: string) => void

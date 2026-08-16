@@ -43,9 +43,7 @@ describe('validateWorkingDirectoryAsync', () => {
   })
 
   it('never blocks the event loop while the filesystem answers', async () => {
-    // Why this test exists: the sync twin blocks ~21s on an unreachable UNC
-    // share, which froze the daemon's whole RPC loop (STA-4470). Proving the
-    // loop still turns is the actual regression guard.
+    // A dead UNC share must not freeze unrelated daemon RPCs (STA-4470).
     let ticked = false
     const pending = validateWorkingDirectoryAsync(tempDir)
     setImmediate(() => {
@@ -75,6 +73,35 @@ describe('validateWorkingDirectoryAsync', () => {
       expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledWith(wslPath)
     })
 
+    it('shares one in-flight probe for the same working directory', async () => {
+      let releaseProbe: () => void = () => {}
+      wslUncDirectoryExistsAsyncMock.mockReturnValue(
+        new Promise<boolean>((resolve) => {
+          releaseProbe = () => resolve(true)
+        })
+      )
+
+      const first = validateWorkingDirectoryAsync(wslPath)
+      const second = validateWorkingDirectoryAsync(wslPath)
+      expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledOnce()
+
+      releaseProbe()
+      await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+    })
+
+    it('keeps byte-distinct working directories in separate probes', async () => {
+      wslUncDirectoryExistsAsyncMock.mockResolvedValue(true)
+      const decomposedPath = `${wslPath}-e\u0301`
+      const composedPath = `${wslPath}-\u00e9`
+
+      await Promise.all([
+        validateWorkingDirectoryAsync(decomposedPath),
+        validateWorkingDirectoryAsync(composedPath)
+      ])
+
+      expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledTimes(2)
+    })
+
     it(`rejects on the distro no without falling back to a Win32 stat`, async () => {
       wslUncDirectoryExistsAsyncMock.mockResolvedValue(false)
 
@@ -82,7 +109,7 @@ describe('validateWorkingDirectoryAsync', () => {
     })
 
     it('falls back to the filesystem when the distro probe is inconclusive', async () => {
-      // Win32 stat against the 9P share is unreliable, so null must not be a no.
+      // An inconclusive guest probe is not proof that the directory is missing.
       wslUncDirectoryExistsAsyncMock.mockResolvedValue(null)
 
       await expect(validateWorkingDirectoryAsync(wslPath)).rejects.toThrow(/does not exist/)

@@ -8,6 +8,7 @@ import { wslUncDirectoryExists, wslUncDirectoryExistsAsync } from '../wsl'
 import { wrapShellSpawnForMacosTccAttribution } from './macos-tcc-login-shell'
 
 let didEnsureSpawnHelperExecutable = false
+const pendingWorkingDirectoryValidations = new Map<string, Promise<void>>()
 
 const UNIX_SHELL_FALLBACKS = ['/bin/zsh', '/bin/bash', '/bin/sh'] as const
 
@@ -150,18 +151,25 @@ export function validateWorkingDirectory(cwd: string): void {
   }
 }
 
-/**
- * Async twin of {@link validateWorkingDirectory}, for callers on a shared event
- * loop.
- *
- * Why this exists: the sync version blocks the calling thread for as long as the
- * filesystem takes to answer. Measured on Windows, `existsSync` against an
- * unreachable UNC share blocks ~21s and `wsl.exe` costs ~1.3s on a cold distro.
- * In the terminal daemon that freezes the whole RPC loop, so every other
- * terminal stalls behind one unreachable workspace and clients hit their 30s
- * request ceiling (STA-4470). Off the daemon, the sync version is still fine.
- */
-export async function validateWorkingDirectoryAsync(cwd: string): Promise<void> {
+/** Validate a cwd without blocking the daemon's shared event loop. */
+export function validateWorkingDirectoryAsync(cwd: string): Promise<void> {
+  const key = cwd
+  const pending = pendingWorkingDirectoryValidations.get(key)
+  if (pending) {
+    return pending
+  }
+  const validation = validateWorkingDirectoryUncached(cwd)
+  pendingWorkingDirectoryValidations.set(key, validation)
+  const forget = (): void => {
+    if (pendingWorkingDirectoryValidations.get(key) === validation) {
+      pendingWorkingDirectoryValidations.delete(key)
+    }
+  }
+  void validation.then(forget, forget)
+  return validation
+}
+
+async function validateWorkingDirectoryUncached(cwd: string): Promise<void> {
   if (isWslUncPath(cwd)) {
     const existsInDistro = await wslUncDirectoryExistsAsync(cwd)
     if (existsInDistro === false) {
@@ -176,9 +184,7 @@ export async function validateWorkingDirectoryAsync(cwd: string): Promise<void> 
   try {
     stats = await stat(cwd)
   } catch {
-    // Why one stat, not exists-then-stat: the sync path pays the filesystem
-    // timeout twice against an unreachable share. ENOENT and an unreachable
-    // host are indistinguishable here, which matches the sync behaviour.
+    // One stat avoids paying an unreachable filesystem timeout twice.
     throwMissingWorkingDirectory(cwd)
   }
   if (!stats.isDirectory()) {
