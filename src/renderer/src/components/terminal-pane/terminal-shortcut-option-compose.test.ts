@@ -78,6 +78,20 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     ).toEqual({ type: 'sendInput', data: '\\' })
   })
 
+  it('types a dead-key-layer ASCII character with event reporting balanced', () => {
+    const abc = (code: string, shifted: boolean, option = false): string | undefined =>
+      code === 'Backquote' ? (option ? '`' : shifted ? '~' : '`') : undefined
+    expect(
+      resolveKitty(
+        event({ key: '`', code: 'Backquote', altKey: true, shiftKey: true }),
+        'false',
+        0,
+        abc,
+        2
+      )
+    ).toEqual({ type: 'sendInput', data: '`', optionKittyRelease: { flags: 2 } })
+  })
+
   it('keeps Shift-only ASCII as an Option hotkey', () => {
     const latvian = (code: string, shifted: boolean): string | undefined =>
       code === 'Digit2' ? (shifted ? '@' : '2') : undefined
@@ -89,6 +103,14 @@ describe('Option-composed characters in kitty keyboard panes', () => {
         latvian
       )
     ).toEqual({ type: 'sendInput', data: '\x1b[50;4u' })
+  })
+
+  it('leaves a real dead-key event to the composition path', () => {
+    const abc = (code: string, shifted: boolean, option = false): string | undefined =>
+      code === 'KeyE' ? (option ? '´' : shifted ? 'E' : 'e') : undefined
+    expect(
+      resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }), 'false', 0, abc, 30)
+    ).toBeNull()
   })
 
   it('still reports non-ASCII Option chords as kitty CSI-u hotkeys', () => {
@@ -139,7 +161,13 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     expect(resolveKitty(chord, 'left', 3)).toEqual({ type: 'sendInput', data: '\x1b[113;3u' })
   })
 
-  it.each([8, 9, 10, 15, 24])('preserves report-all kitty flags %i', (flags) => {
+  it.each([
+    [8, '\x1b[113;3u'],
+    [9, '\x1b[113;3u'],
+    [10, '\x1b[113;3u'],
+    [15, '\x1b[113;3u'],
+    [24, '\x1b[113;3;64u']
+  ] as const)('preserves report-all kitty flags %i', (flags, expected) => {
     const action = resolveKitty(
       event({ key: '@', code: 'KeyQ', altKey: true }),
       'false',
@@ -147,10 +175,26 @@ describe('Option-composed characters in kitty keyboard panes', () => {
       undefined,
       flags
     )
-    expect(action).toMatchObject({ type: 'sendInput', data: '\x1b[113;3u' })
+    expect(action).toMatchObject({ type: 'sendInput', data: expected })
     expect(action?.type === 'sendInput' ? action.optionKittyRelease : undefined).toEqual(
-      (flags & 2) === 0 ? undefined : { flags, primaryCodePoint: 113, modifiers: 3 }
+      (flags & 2) === 0 ? undefined : { flags }
     )
+  })
+
+  it('reports repeats and associated text without changing the physical key identity', () => {
+    expect(
+      resolveKitty(
+        event({ key: '@', code: 'KeyQ', altKey: true, repeat: true }),
+        'false',
+        0,
+        undefined,
+        30
+      )
+    ).toEqual({
+      type: 'sendInput',
+      data: '\x1b[113;3:2;64u',
+      optionKittyRelease: { flags: 30 }
+    })
   })
 
   it('pairs raw composed text with a native-Option kitty release', () => {
@@ -159,11 +203,11 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     ).toEqual({
       type: 'sendInput',
       data: '@',
-      optionKittyRelease: { flags: 2, primaryCodePoint: 64, modifiers: 1 }
+      optionKittyRelease: { flags: 2 }
     })
   })
 
-  it('preserves the Option and Shift layout layers in alternate-key releases', () => {
+  it('uses no-Option layout layers for alternate-key reports', () => {
     const german = (code: string, shifted: boolean, option = false): string | undefined =>
       code === 'Digit7' ? (option ? '{' : shifted ? '/' : '7') : undefined
     expect(
@@ -172,22 +216,16 @@ describe('Option-composed characters in kitty keyboard panes', () => {
         'false',
         0,
         german,
-        6
+        30
       )
     ).toEqual({
       type: 'sendInput',
-      data: '\\',
-      optionKittyRelease: {
-        flags: 6,
-        primaryCodePoint: 123,
-        shiftedCodePoint: 92,
-        baseCodePoint: 55,
-        modifiers: 2
-      }
+      data: '\x1b[55:47;4;92u',
+      optionKittyRelease: { flags: 30 }
     })
   })
 
-  it('keeps a shifted chord when event reporting cannot pair the composed release', () => {
+  it('types shifted ASCII when the Option layer is unavailable but keyup can resolve physically', () => {
     const germanWithoutOptionLayer = (
       code: string,
       shifted: boolean,
@@ -204,8 +242,14 @@ describe('Option-composed characters in kitty keyboard panes', () => {
       )
     ).toEqual({
       type: 'sendInput',
-      data: '\x1b[55;4u',
-      optionKittyRelease: { flags: 2, primaryCodePoint: 55, modifiers: 4 }
+      data: '\\',
+      optionKittyRelease: { flags: 2 }
     })
+  })
+
+  it('omits associated text for an Option side configured as Alt', () => {
+    expect(
+      resolveKitty(event({ key: '@', code: 'KeyQ', altKey: true }), 'left', 1, undefined, 24)
+    ).toEqual({ type: 'sendInput', data: '\x1b[113;3u' })
   })
 })

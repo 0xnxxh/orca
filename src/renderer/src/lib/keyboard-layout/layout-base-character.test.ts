@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  _refreshLayoutCharactersForTests,
   _setLayoutMapForTests,
   _setLayoutSnapshotForTests,
   getLayoutBaseCharacterForCode,
@@ -29,6 +30,7 @@ describe('getLayoutBaseCharacterForCode', () => {
   afterEach(() => {
     _setLayoutMapForTests(null)
     _setLayoutSnapshotForTests(null)
+    vi.unstubAllGlobals()
   })
 
   it('returns undefined without a cached map, and resolves through one', () => {
@@ -52,8 +54,13 @@ describe('getLayoutBaseCharacterForCode', () => {
     _setLayoutSnapshotForTests({
       inputSourceId: 'com.apple.keylayout.Latvian',
       keyCharacters: {
-        Digit2: { unmodified: '2', shifted: '@', optionUnmodified: '„' },
-        KeyQ: { unmodified: 'q', shifted: 'Q', optionUnmodified: '@' }
+        Digit2: {
+          unmodified: '2',
+          shifted: '@',
+          optionUnmodified: '„',
+          optionShifted: '“'
+        },
+        KeyQ: { unmodified: 'q', shifted: 'Q', optionUnmodified: '@', optionShifted: 'Ω' }
       }
     })
 
@@ -61,10 +68,72 @@ describe('getLayoutBaseCharacterForCode', () => {
     expect(getLayoutCharacterForCode('Digit2', true)).toBe('@')
     expect(getLayoutCharacterForCode('KeyQ', true)).toBe('Q')
     expect(getLayoutCharacterForCode('KeyQ', false, true)).toBe('@')
+    expect(getLayoutCharacterForCode('KeyQ', true, true)).toBe('Ω')
 
     _setLayoutSnapshotForTests(null)
     expect(getLayoutCharacterForCode('Digit2', true)).toBeUndefined()
     expect(getLayoutCharacterForCode('KeyQ', true)).toBe('Q')
     expect(getLayoutCharacterForCode('KeyQ', false, true)).toBeUndefined()
+  })
+
+  it('keeps the last complete snapshot until an atomic refresh settles', async () => {
+    _setLayoutSnapshotForTests({
+      inputSourceId: 'old',
+      keyCharacters: {
+        Digit7: { unmodified: '7', shifted: '/', optionUnmodified: '{', optionShifted: '\\' }
+      }
+    })
+    let resolveMap!: (map: { get: (code: string) => string | undefined; size: number }) => void
+    let resolveSnapshot!: (snapshot: {
+      inputSourceId: string
+      keyCharacters: Record<
+        string,
+        {
+          unmodified: string
+          shifted: string
+          optionUnmodified: string
+          optionShifted: string
+        }
+      >
+    }) => void
+    const mapPromise = new Promise<{
+      get: (code: string) => string | undefined
+      size: number
+    }>((resolve) => {
+      resolveMap = resolve
+    })
+    const snapshotPromise = new Promise<Parameters<typeof resolveSnapshot>[0]>((resolve) => {
+      resolveSnapshot = resolve
+    })
+    vi.stubGlobal('window', {
+      navigator: { keyboard: { getLayoutMap: () => mapPromise } },
+      api: { app: { getKeyboardLayoutSnapshot: () => snapshotPromise } }
+    })
+
+    const refresh = _refreshLayoutCharactersForTests()
+    expect(getLayoutCharacterForCode('Digit7', true)).toBe('/')
+    resolveMap({ get: () => '&', size: 1 })
+    await Promise.resolve()
+    expect(getLayoutCharacterForCode('Digit7', true)).toBe('/')
+    resolveSnapshot({
+      inputSourceId: 'new',
+      keyCharacters: {
+        Digit7: { unmodified: '7', shifted: '?', optionUnmodified: '[', optionShifted: ']' }
+      }
+    })
+    await refresh
+    expect(getLayoutCharacterForCode('Digit7', true)).toBe('?')
+  })
+
+  it('never combines a native snapshot with a separate layout-map fallback', () => {
+    _setLayoutMapForTests({ get: () => 'q', size: 1 })
+    _setLayoutSnapshotForTests({
+      inputSourceId: 'partial',
+      keyCharacters: {
+        Digit7: { unmodified: '7', shifted: '/', optionUnmodified: '{', optionShifted: '\\' }
+      }
+    })
+
+    expect(getLayoutBaseCharacterForCode('KeyQ')).toBeUndefined()
   })
 })

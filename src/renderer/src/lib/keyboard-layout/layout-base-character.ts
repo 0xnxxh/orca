@@ -19,8 +19,15 @@ type NavigatorWithKeyboard = Navigator & {
   }
 }
 
-let cachedLayoutMap: LayoutMapLike | null = null
-let cachedNativeKeyCharacters: Record<string, KeyboardLayoutKeyCharacters> | null = null
+type LayoutCharacterCache = {
+  layoutMap: LayoutMapLike | null
+  nativeKeyCharacters: Record<string, KeyboardLayoutKeyCharacters> | null
+}
+
+let cachedLayoutCharacters: LayoutCharacterCache = {
+  layoutMap: null,
+  nativeKeyCharacters: null
+}
 let focusListenerAttached = false
 let refreshGeneration = 0
 
@@ -34,7 +41,6 @@ async function refreshLayoutMap(): Promise<void> {
       }
     }
   ).window?.api?.app?.getKeyboardLayoutSnapshot
-  cachedNativeKeyCharacters = null
   const [layoutResult, snapshotResult] = await Promise.allSettled([
     keyboard?.getLayoutMap?.() ?? Promise.resolve(null),
     snapshotReader?.() ?? Promise.resolve(null)
@@ -42,11 +48,12 @@ async function refreshLayoutMap(): Promise<void> {
   if (generation !== refreshGeneration) {
     return
   }
-  if (layoutResult.status === 'fulfilled' && layoutResult.value) {
-    cachedLayoutMap = layoutResult.value
-  }
-  if (snapshotResult.status === 'fulfilled' && snapshotResult.value) {
-    cachedNativeKeyCharacters = snapshotResult.value.keyCharacters
+  const layoutMap = layoutResult.status === 'fulfilled' ? layoutResult.value : null
+  const snapshot = snapshotResult.status === 'fulfilled' ? snapshotResult.value : null
+  const nativeKeyCharacters =
+    snapshot && Object.keys(snapshot.keyCharacters).length > 0 ? snapshot.keyCharacters : null
+  if (layoutMap || nativeKeyCharacters) {
+    cachedLayoutCharacters = { layoutMap, nativeKeyCharacters }
   }
 }
 
@@ -87,8 +94,11 @@ function normalizeLayoutCharacter(value: string | null | undefined): string | un
  *  undefined when the map is unavailable or the key has no single printable
  *  base character (callers fall back to the US table). */
 export function getLayoutBaseCharacterForCode(code: string): string | undefined {
+  const nativeCharacters = cachedLayoutCharacters.nativeKeyCharacters
   return normalizeLayoutBaseCharacter(
-    cachedNativeKeyCharacters?.[code]?.unmodified ?? cachedLayoutMap?.get(code) ?? undefined
+    nativeCharacters
+      ? (nativeCharacters[code]?.unmodified ?? undefined)
+      : (cachedLayoutCharacters.layoutMap?.get(code) ?? undefined)
   )
 }
 
@@ -99,15 +109,17 @@ export function getLayoutCharacterForCode(
   option = false
 ): string | undefined {
   if (option) {
-    if (shifted) {
-      return undefined
-    }
-    return normalizeLayoutCharacter(cachedNativeKeyCharacters?.[code]?.optionUnmodified)
+    const characters = cachedLayoutCharacters.nativeKeyCharacters?.[code]
+    return normalizeLayoutCharacter(
+      shifted ? characters?.optionShifted : characters?.optionUnmodified
+    )
   }
   if (!shifted) {
     return getLayoutBaseCharacterForCode(code)
   }
-  const nativeShifted = normalizeLayoutCharacter(cachedNativeKeyCharacters?.[code]?.shifted)
+  const nativeShifted = normalizeLayoutCharacter(
+    cachedLayoutCharacters.nativeKeyCharacters?.[code]?.shifted
+  )
   if (nativeShifted) {
     return nativeShifted
   }
@@ -120,10 +132,15 @@ export function getLayoutCharacterForCode(
 
 /** Test-only: replace or clear the cached layout map. */
 export function _setLayoutMapForTests(map: LayoutMapLike | null): void {
-  cachedLayoutMap = map
+  cachedLayoutCharacters = { ...cachedLayoutCharacters, layoutMap: map }
 }
 
 /** Test-only: replace or clear the native modifier-layer snapshot. */
 export function _setLayoutSnapshotForTests(snapshot: KeyboardLayoutSnapshot | null): void {
-  cachedNativeKeyCharacters = snapshot?.keyCharacters ?? null
+  cachedLayoutCharacters = {
+    ...cachedLayoutCharacters,
+    nativeKeyCharacters: snapshot?.keyCharacters ?? null
+  }
 }
+
+export const _refreshLayoutCharactersForTests = refreshLayoutMap

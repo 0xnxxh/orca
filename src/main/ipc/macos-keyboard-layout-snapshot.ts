@@ -53,10 +53,15 @@ export function parseKeyboardLayoutSnapshot(stdout: string): KeyboardLayoutSnaps
     keyCharacters[code] = {
       unmodified: optionalString(characters.unmodified),
       shifted: optionalString(characters.shifted),
-      optionUnmodified: optionalString(characters.optionUnmodified)
+      optionUnmodified: optionalString(characters.optionUnmodified),
+      optionShifted: optionalString(characters.optionShifted)
     }
   }
-  return { inputSourceId: optionalString(record.inputSourceId), keyCharacters }
+  return {
+    inputSourceId: optionalString(record.inputSourceId),
+    layoutSourceId: optionalString(record.layoutSourceId),
+    keyCharacters
+  }
 }
 
 export function readMacKeyboardLayoutSnapshot(): Promise<KeyboardLayoutSnapshot | null> {

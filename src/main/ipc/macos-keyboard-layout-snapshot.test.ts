@@ -7,17 +7,34 @@ describe('parseKeyboardLayoutSnapshot', () => {
       parseKeyboardLayoutSnapshot(
         JSON.stringify({
           inputSourceId: 'com.apple.keylayout.Latvian',
+          layoutSourceId: 'com.apple.keylayout.Latvian',
           keyCharacters: {
-            Digit2: { unmodified: '2', shifted: '@', optionUnmodified: '„' },
+            Digit2: {
+              unmodified: '2',
+              shifted: '@',
+              optionUnmodified: '„',
+              optionShifted: '“'
+            },
             KeyE: { unmodified: 'e', shifted: null, optionUnmodified: null }
           }
         })
       )
     ).toEqual({
       inputSourceId: 'com.apple.keylayout.Latvian',
+      layoutSourceId: 'com.apple.keylayout.Latvian',
       keyCharacters: {
-        Digit2: { unmodified: '2', shifted: '@', optionUnmodified: '„' },
-        KeyE: { unmodified: 'e', shifted: null, optionUnmodified: null }
+        Digit2: {
+          unmodified: '2',
+          shifted: '@',
+          optionUnmodified: '„',
+          optionShifted: '“'
+        },
+        KeyE: {
+          unmodified: 'e',
+          shifted: null,
+          optionUnmodified: null,
+          optionShifted: null
+        }
       }
     })
   })
@@ -29,6 +46,6 @@ describe('parseKeyboardLayoutSnapshot', () => {
       parseKeyboardLayoutSnapshot(
         JSON.stringify({ inputSourceId: 42, keyCharacters: { Digit2: 42 } })
       )
-    ).toEqual({ inputSourceId: null, keyCharacters: {} })
+    ).toEqual({ inputSourceId: null, layoutSourceId: null, keyCharacters: {} })
   })
 })

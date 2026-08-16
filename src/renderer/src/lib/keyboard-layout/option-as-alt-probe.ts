@@ -109,6 +109,7 @@ export function createOptionAsAltProbe(
   let current: DetectedLayoutCategory = 'unknown'
   const listeners = new Set<Listener>()
   let disposed = false
+  let probeGeneration = 0
   const readInputSourceId = options.readInputSourceId ?? defaultInputSourceIdReader()
 
   const notify = (next: DetectedLayoutCategory): void => {
@@ -129,6 +130,7 @@ export function createOptionAsAltProbe(
     if (disposed) {
       return
     }
+    const generation = ++probeGeneration
     const nav = win.navigator as NavigatorWithKeyboard
     const keyboard = nav?.keyboard
 
@@ -143,7 +145,7 @@ export function createOptionAsAltProbe(
       inputSourceId = null
     }
 
-    if (disposed) {
+    if (disposed || generation !== probeGeneration) {
       return
     }
 
@@ -173,7 +175,7 @@ export function createOptionAsAltProbe(
     }
     try {
       const map = await keyboard.getLayoutMap()
-      if (disposed) {
+      if (disposed || generation !== probeGeneration) {
         return
       }
       notify(detectOptionAsAltFromLayoutMap(map))

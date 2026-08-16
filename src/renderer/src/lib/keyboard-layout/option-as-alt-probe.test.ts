@@ -277,4 +277,32 @@ describe('createOptionAsAltProbe', () => {
     expect(probe.getCurrent()).toBe('non-us')
     probe.dispose()
   })
+
+  it('does not let an older probe overwrite a newer input source', async () => {
+    let resolveOld!: (value: string | null) => void
+    let resolveNew!: (value: string | null) => void
+    const oldRead = new Promise<string | null>((resolve) => {
+      resolveOld = resolve
+    })
+    const newRead = new Promise<string | null>((resolve) => {
+      resolveNew = resolve
+    })
+    const readInputSourceId = vi
+      .fn<() => Promise<string | null>>()
+      .mockReturnValueOnce(oldRead)
+      .mockReturnValueOnce(newRead)
+    const probe = createOptionAsAltProbe(makeMockWindow(US_MAP) as unknown as Window, {
+      readInputSourceId
+    })
+    const newestProbe = probe.refresh()
+
+    resolveNew('com.apple.keylayout.ABC')
+    await newestProbe
+    expect(probe.getCurrent()).toBe('non-us')
+    resolveOld('com.apple.keylayout.US')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(probe.getCurrent()).toBe('non-us')
+    probe.dispose()
+  })
 })

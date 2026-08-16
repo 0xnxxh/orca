@@ -90,4 +90,15 @@ describe('native preload destructive app actions', () => {
       expect(aborted).toHaveBeenCalledTimes(1)
     })
   }
+
+  it('preserves both macOS keyboard preload adapters', async () => {
+    const api = await loadApi()
+    invoke.mockResolvedValue(undefined)
+
+    await api.app.getMacCapturedDigitRowChords()
+    await api.app.getKeyboardLayoutSnapshot()
+
+    expect(invoke).toHaveBeenCalledWith('app:getMacCapturedDigitRowChords')
+    expect(invoke).toHaveBeenCalledWith('app:getKeyboardLayoutSnapshot')
+  })
 })

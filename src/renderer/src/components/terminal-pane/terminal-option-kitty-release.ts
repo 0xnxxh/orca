@@ -1,60 +1,49 @@
-import { KITTY_REPORT_EVENT_TYPES } from './terminal-kitty-keyboard-flags'
+import { KITTY_REPORT_EVENT_TYPES } from '../../../../shared/terminal-kitty-keyboard-flags'
+import { encodeTerminalOptionKittyEvent } from './terminal-kitty-csi-u-encoding'
 
-export type TerminalOptionKittyRelease = {
-  flags: number
-  primaryCodePoint: number
-  shiftedCodePoint?: number
-  baseCodePoint?: number
-  modifiers: number
-}
+export type TerminalOptionKittyRelease = { flags: number }
 
-type KeyIdentityEvent = {
+type OptionKeyboardEvent = {
   key: string
   code?: string
+  shiftKey: boolean
+  altKey: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+  repeat?: boolean
 }
 
 type PendingRelease = {
-  release: TerminalOptionKittyRelease
   sendInput: (data: string) => void
   getCurrentFlags: () => number
+  layoutCharacterForCode?: (code: string, shifted: boolean) => string | undefined
 }
 
-function keyIdentity(event: KeyIdentityEvent): string {
+function keyIdentity(event: Pick<OptionKeyboardEvent, 'key' | 'code'>): string {
   return event.code || event.key
-}
-
-export function encodeTerminalOptionKittyRelease(
-  release: TerminalOptionKittyRelease,
-  currentFlags: number
-): string | null {
-  if ((currentFlags & KITTY_REPORT_EVENT_TYPES) === 0) {
-    return null
-  }
-  const keyCodes = [
-    String(release.primaryCodePoint),
-    release.shiftedCodePoint === undefined ? '' : String(release.shiftedCodePoint),
-    release.baseCodePoint === undefined ? '' : String(release.baseCodePoint)
-  ]
-  while (keyCodes.at(-1) === '') {
-    keyCodes.pop()
-  }
-  return `\x1b[${keyCodes.join(':')};${release.modifiers}:3u`
 }
 
 export function createTerminalOptionKittyReleaseTracker(): {
   arm: (
-    event: KeyIdentityEvent,
+    event: OptionKeyboardEvent,
     release: TerminalOptionKittyRelease,
     sendInput: (data: string) => void,
-    getCurrentFlags: () => number
+    getCurrentFlags: () => number,
+    layoutCharacterForCode?: (code: string, shifted: boolean) => string | undefined
   ) => void
-  settle: (event: KeyIdentityEvent) => boolean
+  settle: (event: OptionKeyboardEvent) => boolean
   clear: () => void
 } {
   const pending = new Map<string, PendingRelease>()
   return {
-    arm: (event, release, sendInput, getCurrentFlags) => {
-      pending.set(keyIdentity(event), { release, sendInput, getCurrentFlags })
+    arm: (event, release, sendInput, getCurrentFlags, layoutCharacterForCode) => {
+      if ((release.flags & KITTY_REPORT_EVENT_TYPES) === 0) {
+        return
+      }
+      const id = keyIdentity(event)
+      if (event.repeat !== true || !pending.has(id)) {
+        pending.set(id, { sendInput, getCurrentFlags, layoutCharacterForCode })
+      }
     },
     settle: (event) => {
       const id = keyIdentity(event)
@@ -63,9 +52,16 @@ export function createTerminalOptionKittyReleaseTracker(): {
         return false
       }
       pending.delete(id)
-      const data = encodeTerminalOptionKittyRelease(record.release, record.getCurrentFlags())
-      if (data) {
-        record.sendInput(data)
+      const flags = record.getCurrentFlags()
+      if ((flags & KITTY_REPORT_EVENT_TYPES) !== 0) {
+        const data = encodeTerminalOptionKittyEvent(event, {
+          flags,
+          type: 'release',
+          layoutCharacterForCode: record.layoutCharacterForCode
+        })
+        if (data) {
+          record.sendInput(data)
+        }
       }
       return true
     },

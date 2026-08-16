@@ -6,7 +6,7 @@ import { KittyKeyboard } from '@xterm/xterm/src/common/input/KittyKeyboard'
 import {
   KITTY_REPORT_EVENT_TYPES,
   kittyReportsAllKeysAsEscapeCodes
-} from './terminal-kitty-keyboard-flags'
+} from '../../../../shared/terminal-kitty-keyboard-flags'
 
 /**
  * `KittyKeyboardEventType.PRESS` / `.REPEAT` / `.RELEASE`. Inlined because the

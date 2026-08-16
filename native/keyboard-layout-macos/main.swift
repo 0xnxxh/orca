@@ -5,10 +5,12 @@ struct KeyCharacters: Codable {
   let unmodified: String?
   let shifted: String?
   let optionUnmodified: String?
+  let optionShifted: String?
 }
 
 struct KeyboardLayoutSnapshot: Codable {
   let inputSourceId: String?
+  let layoutSourceId: String?
   let keyCharacters: [String: KeyCharacters]
 }
 
@@ -47,7 +49,7 @@ func translatedCharacter(
     UInt16(kUCKeyActionDown),
     modifiers,
     UInt32(LMGetKbdType()),
-    OptionBits(kUCKeyTranslateNoDeadKeysBit),
+    OptionBits(kUCKeyTranslateNoDeadKeysMask),
     &deadKeyState,
     characters.count,
     &length,
@@ -59,39 +61,62 @@ func translatedCharacter(
   return String(utf16CodeUnits: characters, count: length)
 }
 
-let currentInputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
-let currentLayoutSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue()
-var keyCharacters: [String: KeyCharacters] = [:]
+func readStableSnapshot() -> KeyboardLayoutSnapshot? {
+  let currentInputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
+  let currentLayoutSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue()
+  let capturedInputSourceId = inputSourceId(currentInputSource)
+  let capturedLayoutSourceId = inputSourceId(currentLayoutSource)
+  var keyCharacters: [String: KeyCharacters] = [:]
 
-if let currentLayoutSource,
-   let rawData = TISGetInputSourceProperty(
-     currentLayoutSource,
-     kTISPropertyUnicodeKeyLayoutData
-   ) {
-  let data = Unmanaged<CFData>.fromOpaque(rawData).takeUnretainedValue()
-  if let bytes = CFDataGetBytePtr(data) {
-    let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
-    for (code, keyCode) in domKeyCodes {
-      keyCharacters[code] = KeyCharacters(
-        unmodified: translatedCharacter(layout: layout, keyCode: keyCode, modifiers: 0),
-        shifted: translatedCharacter(
-          layout: layout,
-          keyCode: keyCode,
-          modifiers: UInt32(shiftKey >> 8)
-        ),
-        optionUnmodified: translatedCharacter(
-          layout: layout,
-          keyCode: keyCode,
-          modifiers: UInt32(optionKey >> 8)
+  if let currentLayoutSource,
+     let rawData = TISGetInputSourceProperty(
+       currentLayoutSource,
+       kTISPropertyUnicodeKeyLayoutData
+     ) {
+    let data = Unmanaged<CFData>.fromOpaque(rawData).takeUnretainedValue()
+    if let bytes = CFDataGetBytePtr(data) {
+      let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+      for (code, keyCode) in domKeyCodes {
+        keyCharacters[code] = KeyCharacters(
+          unmodified: translatedCharacter(layout: layout, keyCode: keyCode, modifiers: 0),
+          shifted: translatedCharacter(
+            layout: layout,
+            keyCode: keyCode,
+            modifiers: UInt32(shiftKey >> 8)
+          ),
+          optionUnmodified: translatedCharacter(
+            layout: layout,
+            keyCode: keyCode,
+            modifiers: UInt32(optionKey >> 8)
+          ),
+          optionShifted: translatedCharacter(
+            layout: layout,
+            keyCode: keyCode,
+            modifiers: UInt32((optionKey | shiftKey) >> 8)
+          )
         )
-      )
+      }
     }
   }
+
+  let finalInputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
+  let finalLayoutSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue()
+  guard capturedInputSourceId == inputSourceId(finalInputSource),
+        capturedLayoutSourceId == inputSourceId(finalLayoutSource) else {
+    return nil
+  }
+  return KeyboardLayoutSnapshot(
+    inputSourceId: capturedInputSourceId,
+    layoutSourceId: capturedLayoutSourceId,
+    keyCharacters: keyCharacters
+  )
 }
 
-let snapshot = KeyboardLayoutSnapshot(
-  inputSourceId: inputSourceId(currentInputSource),
-  keyCharacters: keyCharacters
-)
-let encoded = try JSONEncoder().encode(snapshot)
-print(String(decoding: encoded, as: UTF8.self))
+for _ in 0..<2 {
+  if let snapshot = readStableSnapshot() {
+    let encoded = try JSONEncoder().encode(snapshot)
+    print(String(decoding: encoded, as: UTF8.self))
+    exit(0)
+  }
+}
+exit(1)

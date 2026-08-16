@@ -8299,19 +8299,20 @@
       "providers": ["local", "daemon", "ssh", "remote-runtime"],
       "coveredPlatforms": ["macos", "linux"],
       "coveredProviders": [],
-      "coverageNotes": "Local macOS and containerized Linux evidence, deterministic renderer-unit coverage for the Linux/Sogou candidate-key policy including the legacy orphaned-keyup fallback, Electron/CDP live-PTY Sogou-style repros, and a macOS renderer/main slice for Preview kitty commits: claimed press/release pairing in both keyup orderings, and snapshot flag provenance where a proven 0, a proven non-zero, and an absent field stay three distinct facts from daemon through the sequenced remote SnapshotStart frame. Real Linux/Sogou OS IME automation, Windows ConPTY post-agent reset, and the CJK/Vietnamese/Arabic matrix remain registered gaps.",
+      "coverageNotes": "Local macOS and containerized Linux evidence, deterministic renderer-unit coverage for the Linux/Sogou candidate-key policy including the legacy orphaned-keyup fallback, Electron/CDP live-PTY Sogou-style repros, and macOS renderer/main slices for Preview kitty commits and layout-native Option input. The Option slice covers complete CSI-u flag fields, repeat/release event types, live keyup modifiers, atomic layout refresh, stable native modifier layers, and both native/web preload fallbacks. Snapshot flag provenance keeps a proven 0, a proven non-zero, and an absent field distinct from daemon through the sequenced remote SnapshotStart frame. Real Linux/Sogou OS IME automation, Windows ConPTY post-agent reset, and the CJK/Vietnamese/Arabic matrix remain registered gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6699",
         "https://github.com/stablyai/orca/pull/6682",
         "https://github.com/stablyai/orca/pull/6513",
         "https://github.com/stablyai/orca/pull/6999"
       ],
-      "invariant": "Composition, native text forwarding, synthetic input, paste, and platform keyboard bypass paths must not send preedit/control bytes before commit and must commit text exactly once to the intended PTY. When the snapshot source proves kitty state, macOS Preview commits must use the application's effective flags after the sequenced snapshot and every proven replay/live transition, and a claimed press delivered under report_event_types must produce exactly one matching release regardless of whether keyup arrives before or after insertText and regardless of xterm's defensive internal reset.",
+      "invariant": "Composition, native text forwarding, synthetic input, paste, and platform keyboard bypass paths must not send preedit/control bytes before commit and must commit text exactly once to the intended PTY. Layout-native Option text must preserve negotiated CSI-u alternate/associated fields, distinguish repeat from press, and resolve releases from the actual keyup modifiers without exposing a partial layout refresh. When the snapshot source proves kitty state, macOS Preview commits must use the application's effective flags after the sequenced snapshot and every proven replay/live transition, and a claimed press delivered under report_event_types must produce exactly one matching release regardless of whether keyup arrives before or after insertText and regardless of xterm's defensive internal reset.",
       "oracle": "Exact outbound bytes from the REAL native-text forwarder behind installPreviewImeBridge after initial snapshot restore, replacement resync, live transitions, and both keydown->insertText->keyup and keydown->keyup->insertText orderings; a wiring-only mock is supporting evidence, not the oracle. The current renderer-unit slice asserts native text commits route to the intended PTY once, composition/preedit bookkeeping does not leak premature text, input-source classification handles synthetic/native paths, paste/runtime forwarding avoids duplicate terminal payloads for covered fixtures, and Linux/Sogou candidate Space/digit selectors do not leak keydown/keypress/keyup while ordinary and long-held letter-to-digit typing remains available. The Electron/CDP live-PTY repro verifies Sogou-style Space and digit selectors submit only the committed Chinese text, while the legacy orphaned-letter-keyup sequence sends no selector byte to the PTY. Real legacy IME commit preservation and the full CJK/Vietnamese/Arabic/JIS-yen matrix run in follow-up platform soak where automation is possible.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-ime-native-text-forwarder.test.ts src/renderer/src/components/terminal-pane/terminal-ime-substituted-text-commit.test.ts src/renderer/src/components/terminal-pane/terminal-ime-macos-keybinding-dict-trace.test.ts src/renderer/src/components/terminal-pane/terminal-paste-runtime.test.ts src/renderer/src/components/terminal-pane/terminal-ime-composition-tracker.test.ts src/renderer/src/components/terminal-pane/terminal-ime-candidate-key-release-guard.test.ts src/renderer/src/components/terminal-pane/xterm-bypass-policy-non-mac.test.ts src/renderer/src/components/terminal-pane/xterm-bypass-policy.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-ime-linux-candidate-state.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx src/shared/terminal-kitty-keyboard-mode-tracker.test.ts src/main/ipc/terminal-preview.test.ts src/main/ipc/terminal-preview-output-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-snapshot-kitty-flags.test.ts src/main/daemon/daemon-pty-adapter.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-kitty-csi-u-encoding.test.ts src/renderer/src/components/terminal-pane/terminal-shortcut-option-compose.test.ts src/renderer/src/components/terminal-pane/terminal-option-kitty-release.test.ts src/renderer/src/lib/keyboard-layout/layout-base-character.test.ts src/renderer/src/lib/keyboard-layout/option-as-alt-probe.test.ts src/main/ipc/macos-keyboard-layout-snapshot.test.ts src/preload/app-restart-checkpoint-routing.test.ts src/renderer/src/web/web-preload-api-ui.test.ts",
         "pnpm run test:e2e -- tests/e2e/chinese-ime-chat-input-repro.spec.ts"
       ],
       "testFiles": [
@@ -8324,6 +8325,14 @@
         "src/renderer/src/components/terminal-pane/terminal-ime-linux-candidate-state.test.ts",
         "src/renderer/src/components/terminal-pane/xterm-bypass-policy-non-mac.test.ts",
         "src/renderer/src/components/terminal-pane/xterm-bypass-policy.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-kitty-csi-u-encoding.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-shortcut-option-compose.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-option-kitty-release.test.ts",
+        "src/renderer/src/lib/keyboard-layout/layout-base-character.test.ts",
+        "src/renderer/src/lib/keyboard-layout/option-as-alt-probe.test.ts",
+        "src/main/ipc/macos-keyboard-layout-snapshot.test.ts",
+        "src/preload/app-restart-checkpoint-routing.test.ts",
+        "src/renderer/src/web/web-preload-api-ui.test.ts",
         "src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts",
         "src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts",
         "src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx",
@@ -8394,6 +8403,58 @@
           "file": "src/renderer/src/components/terminal-pane/xterm-bypass-policy.test.ts",
           "assertions": [
             "macOS standalone Process key behavior and composition-owned key suppression stay intact"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/terminal-kitty-csi-u-encoding.test.ts",
+          "assertions": [
+            "report-all Option events encode exact alternate, repeat, release, and associated-text fields",
+            "release events omit associated text and sparse PC-101 alternates retain their parameter position"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/terminal-shortcut-option-compose.test.ts",
+          "assertions": [
+            "native Option-composed ASCII remains text outside report-all mode while configured-Alt sides remain chords",
+            "dead keys stay with composition and report-all uses layout primary/shifted identities plus committed text"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/terminal-option-kitty-release.test.ts",
+          "assertions": [
+            "owned releases use live Shift and Option state and current alternate-key flags",
+            "event-type pop consumes without bytes and repeat keydowns cannot replace the original release owner"
+          ]
+        },
+        {
+          "file": "src/renderer/src/lib/keyboard-layout/layout-base-character.test.ts",
+          "assertions": [
+            "complete native modifier layers replace atomically while input continues using the prior complete snapshot",
+            "native and browser layout sources from separate transactions are never combined"
+          ]
+        },
+        {
+          "file": "src/renderer/src/lib/keyboard-layout/option-as-alt-probe.test.ts",
+          "assertions": [
+            "a stale asynchronous input-source probe cannot overwrite the newest classification"
+          ]
+        },
+        {
+          "file": "src/main/ipc/macos-keyboard-layout-snapshot.test.ts",
+          "assertions": [
+            "the native snapshot parser preserves input/layout identities and all four modifier layers"
+          ]
+        },
+        {
+          "file": "src/preload/app-restart-checkpoint-routing.test.ts",
+          "assertions": [
+            "both macOS keyboard preload adapters remain wired after main integration"
+          ]
+        },
+        {
+          "file": "src/renderer/src/web/web-preload-api-ui.test.ts",
+          "assertions": [
+            "web fallbacks expose no local captured chords and no native layout snapshot"
           ]
         },
         {

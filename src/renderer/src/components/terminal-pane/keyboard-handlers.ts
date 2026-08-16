@@ -619,7 +619,8 @@ export function useTerminalKeyboardShortcuts({
             e,
             action.optionKittyRelease,
             sendResolvedInput,
-            () => paneKittyKeyboardModesRef?.current.get(pane.id)?.flags ?? 0
+            () => paneKittyKeyboardModesRef?.current.get(pane.id)?.flags ?? 0,
+            getLayoutCharacterForCode
           )
         }
         if ((e.isComposing || hasPendingImeComposition) && (e.key === 'Enter' || imeProcessEnter)) {

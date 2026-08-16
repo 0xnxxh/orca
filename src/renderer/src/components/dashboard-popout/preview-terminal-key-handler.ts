@@ -2,7 +2,10 @@ import type { Terminal } from '@xterm/xterm'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { useAppStore } from '@/store'
-import { prefetchLayoutCharacters } from '@/lib/keyboard-layout/layout-base-character'
+import {
+  getLayoutCharacterForCode,
+  prefetchLayoutCharacters
+} from '@/lib/keyboard-layout/layout-base-character'
 import { createTerminalNativeOnlyShortcutTracker } from '@/components/terminal-pane/terminal-native-only-shortcut'
 import { createOptionKeyLocationTracker } from '@/lib/keyboard-layout/option-key-location-state'
 import { createTerminalOptionKittyReleaseTracker } from '@/components/terminal-pane/terminal-option-kitty-release'
@@ -152,8 +155,12 @@ export function installPreviewTerminalKeyHandler(args: {
     switch (action.type) {
       case 'sendInput':
         if (action.optionKittyRelease) {
-          optionKittyReleases.arm(event, action.optionKittyRelease, args.sendInput, () =>
-            args.getShortcutContext().getKittyKeyboardFlags()
+          optionKittyReleases.arm(
+            event,
+            action.optionKittyRelease,
+            args.sendInput,
+            () => args.getShortcutContext().getKittyKeyboardFlags(),
+            getLayoutCharacterForCode
           )
         }
         args.sendInput(action.data)
