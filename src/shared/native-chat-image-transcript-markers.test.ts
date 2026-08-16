@@ -217,6 +217,48 @@ describe('normalizeImageTranscriptMessages', () => {
     expect(out[2]).toBe(after)
   })
 
+  it('keeps a later literal marker when earlier turns separate it from a real image send', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('s1', '[Image: source: /tmp/a.jpg]'),
+      userText('p1', '[Image #1] what is this?'),
+      userText('u1', 'thanks'),
+      userText('u2', 'in my notes I wrote [Image #2] as plain text')
+    ])
+
+    expect(out.at(-1)?.blocks).toEqual([
+      { type: 'text', text: 'in my notes I wrote [Image #2] as plain text' }
+    ])
+  })
+
+  it('breaks the anchor when a non-image user turn separates the source run from the prompt', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('s1', '[Image: source: /tmp/a.jpg]'),
+      userText('u1', 'here is the picture'),
+      userText('u2', 'please preserve [Image #1] literally')
+    ])
+
+    expect(out.map((message) => message.blocks)).toEqual([
+      [{ type: 'image-ref', path: '/tmp/a.jpg' }],
+      [{ type: 'text', text: 'here is the picture' }],
+      [{ type: 'text', text: 'please preserve [Image #1] literally' }]
+    ])
+  })
+
+  // A marker the user typed must not absorb the image of the send that follows it.
+  it('does not let a literal marker turn claim a later send’s image source', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('u1', 'remember I typed [Image #1] by hand'),
+      userText('s1', '[Image: source: /tmp/a.jpg]'),
+      userText('p1', '[Image #1] what is this?')
+    ])
+
+    expect(out[0]?.blocks).toEqual([{ type: 'text', text: 'remember I typed [Image #1] by hand' }])
+    expect(out.at(-1)?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.jpg' },
+      { type: 'text', text: 'what is this?' }
+    ])
+  })
+
   it('leaves assistant messages untouched', () => {
     const assistant: NativeChatMessage = {
       id: 'a',

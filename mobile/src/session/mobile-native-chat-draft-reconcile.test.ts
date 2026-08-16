@@ -5,6 +5,7 @@ import {
   findLandedImagePreviewEchoes,
   findLandedUnconfirmedSends,
   migrateImagePreviewMessageIds,
+  userTextOccurrenceCounts,
   type PendingImagePreviewEcho,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
@@ -232,5 +233,24 @@ describe('mobile native chat image preview reconciliation', () => {
         prompt
       ])
     ).toEqual({ [sessionKey]: { prompt: ['file:///a.jpg'] } })
+  })
+})
+
+describe('userTextOccurrenceCounts', () => {
+  it('counts a literal marker turn under its verbatim text', () => {
+    expect(userTextOccurrenceCounts([userText('u1', 'keep [Image #1] literal')])).toEqual(
+      new Map([['keep [Image #1] literal', 1]])
+    )
+  })
+
+  // An attached-image turn must not retire a send that carried no images.
+  it('excludes a folded image turn from the literal landed counts', () => {
+    const counts = userTextOccurrenceCounts([
+      userText('s1', '[Image: source: /tmp/a.png]'),
+      userText('p1', '[Image #1] look')
+    ])
+
+    expect(counts.get('look')).toBeUndefined()
+    expect(counts.size).toBe(0)
   })
 })

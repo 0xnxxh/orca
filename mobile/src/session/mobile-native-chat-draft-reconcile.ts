@@ -49,6 +49,24 @@ export function countUserTextOccurrences(
   return count
 }
 
+/** Landed literal-text turns counted under the same key a markerless send uses.
+ *  Image turns are excluded so they cannot retire a send that carried none. */
+export function userTextOccurrenceCounts(
+  messages: readonly NativeChatMessage[]
+): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const message of normalizeImageTranscriptMessages(messages)) {
+    if (message.blocks.some(isImageRefBlock)) {
+      continue
+    }
+    const text = nativeChatUserMessageMatchText(message)
+    if (text) {
+      counts.set(text, (counts.get(text) ?? 0) + 1)
+    }
+  }
+  return counts
+}
+
 /** Number of `[Image: source: …]` echo turns strictly after `tailId` (or the
  *  whole transcript when the tail was paginated out). An image-only send has no
  *  caption to match, so it reconciles by ordinal against this count — counting
