@@ -118,7 +118,7 @@ export class RecoverableRenderErrorBoundary extends React.Component<Props, State
               (staleChunk
                 ? translate(
                     'auto.components.error.boundaries.RecoverableRenderErrorBoundary.staleChunkDescription',
-                    'Orca may have updated in the background. Restart Orca to finish applying the update, or retry this part.'
+                    'Restart Orca to reload the app, or retry loading this part.'
                   )
                 : translate(
                     'auto.components.error.boundaries.RecoverableRenderErrorBoundary.34a189ae0f',

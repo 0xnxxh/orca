@@ -101,7 +101,7 @@ export class RichMarkdownErrorBoundary extends React.Component<Props, State> {
             <div className="max-w-md text-xs opacity-70">
               {translate(
                 'auto.components.error.boundaries.RecoverableRenderErrorBoundary.staleChunkDescription',
-                'Orca may have updated in the background. Restart Orca to finish applying the update, or retry this part.'
+                'Restart Orca to reload the app, or retry loading this part.'
               )}
             </div>
             {/* Catching an error rebuilds this subtree, so the row remounts fresh
