@@ -45,6 +45,8 @@ type RuntimePathFoldMode = 'none' | 'all' | 'wsl-head'
 
 const WSL_UNC_ALIAS = /^\/\/(?:wsl\.localhost|wsl\$)(?=\/|$)/i
 const CANONICAL_WSL_UNC_ALIAS = '//wsl.localhost'
+const FINAL_SIGMA = /\u03c2/g
+const MEDIAL_SIGMA = '\u03c3'
 
 /** Build once per candidate; the fan-out prepares only the short typed prefix. */
 export function prepareRuntimePathPrefixKey(candidatePath: string): RuntimePathPrefixKey {
@@ -116,10 +118,21 @@ function foldForPrefixMatch(canonical: string, fold: RuntimePathFoldMode): strin
     return canonical
   }
   if (fold === 'all') {
-    return canonical.toLowerCase()
+    return foldCase(canonical)
   }
   const headEnd = getWslCaseInsensitiveHeadEnd(canonical)
-  return `${canonical.slice(0, headEnd).toLowerCase()}${canonical.slice(headEnd)}`
+  return `${foldCase(canonical.slice(0, headEnd))}${canonical.slice(headEnd)}`
+}
+
+/**
+ * Why the sigma replacement: `toLowerCase` is context-sensitive. A capital sigma
+ * at the end of a word becomes final sigma, so the typed prefix `C:\ΑΣ` folds to
+ * `c:/ας` while the row `C:\ΑΣΧ` folds to `c:/ασχ` — and a prefix being typed is
+ * always at a word end. Windows uppercases both sigmas to Σ and treats them as
+ * one name, so folding them together matches the filesystem too.
+ */
+function foldCase(value: string): string {
+  return value.toLowerCase().replace(FINAL_SIGMA, MEDIAL_SIGMA)
 }
 
 function getWslCaseInsensitiveHeadEnd(canonical: string): number {

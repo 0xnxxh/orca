@@ -88,6 +88,14 @@ describe('runtime path prefix match', () => {
     expect(matches('/repo/a\u0315\u0300x', '/repo//a\u0316')).toBe(false)
   })
 
+  // Why: a prefix being typed always sits at a word end, where `toLowerCase`
+  // maps a capital sigma to final sigma and breaks the prefix relation.
+  it('folds case without the final-sigma context rule', () => {
+    expect(matches('C:\\\u0391\u03a3\u03a7', 'C:\\\u0391\u03a3')).toBe(true)
+    expect(matches('C:\\\u0391\u03a3\u03a7', 'c:/\u03b1\u03c3')).toBe(true)
+    expect(matches('C:\\\u0391\u03a3\u03a7', 'c:/\u03b1\u03c2')).toBe(true)
+  })
+
   it('refuses a prefix longer than the candidate', () => {
     expect(matches('/repo', '/repo/alpha')).toBe(false)
   })
