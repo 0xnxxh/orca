@@ -133,6 +133,22 @@ describe('buildMobileNativeChatTransientData', () => {
     ])
   })
 
+  it('keeps a marker beyond the folded run’s image count as literal text', () => {
+    const data = build(
+      [
+        user('u1', '[Image: source: /tmp/a.png]'),
+        user('u2', '[Image #1] compare with the [Image #2] I mentioned earlier')
+      ],
+      null,
+      []
+    )
+
+    expect(data[0]?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'text', text: 'compare with the [Image #2] I mentioned earlier' }
+    ])
+  })
+
   it('renders a lone image marker turn (no caption) as an image-ref block', () => {
     const data = build([user('u1', '[Image: source: /tmp/a.png]')], null, [])
     expect(data[0]?.blocks).toEqual([{ type: 'image-ref', path: '/tmp/a.png' }])

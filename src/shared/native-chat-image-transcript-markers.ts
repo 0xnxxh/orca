@@ -27,18 +27,39 @@ export function isImageSourceUserTurn(message: NativeChatMessage): boolean {
   return message.role === 'user' && imageSourcePathFromText(soleText(message) ?? '') !== null
 }
 
-export function stripImagePromptMarker(text: string): string {
-  const stripped = text.replace(IMAGE_PROMPT_MARKERS, '')
+function countMarkers(text: string): number {
+  return text.match(IMAGE_PROMPT_MARKERS)?.length ?? 0
+}
+
+/** Strips the first `limit` markers in document order; the rest are the user's
+ *  own words, so they stay verbatim. */
+function stripImagePromptMarkersUpTo(text: string, limit: number): string {
+  if (limit <= 0) {
+    return text
+  }
+  let used = 0
+  const stripped = text.replace(IMAGE_PROMPT_MARKERS, (match) => {
+    if (used >= limit) {
+      return match
+    }
+    used += 1
+    return ''
+  })
   if (stripped === text) {
     return text
   }
   let result = IMAGE_PROMPT_MARKER_AT_START.test(text)
     ? stripped.replace(HORIZONTAL_WHITESPACE_START, '')
     : stripped
-  if (IMAGE_PROMPT_MARKER_AT_END.test(text)) {
+  // Why: a trailing marker left in place still owns the whitespace before it.
+  if (used === countMarkers(text) && IMAGE_PROMPT_MARKER_AT_END.test(text)) {
     result = result.replace(HORIZONTAL_WHITESPACE_END, '')
   }
   return result
+}
+
+export function stripImagePromptMarker(text: string): string {
+  return stripImagePromptMarkersUpTo(text, Number.POSITIVE_INFINITY)
 }
 
 export function normalizeNativeChatUserText(text: string): string {
@@ -78,10 +99,14 @@ export function nativeChatUserMessageMatchText(message: NativeChatMessage): stri
   return nativeChatUserTextMatchText(joined, message.blocks.some(isImageRefBlock)) || null
 }
 
+/** `limit` is the number of images the run actually carried. Only that many
+ *  markers can be placeholders; the rest are text the user typed. */
 function stripImagePromptMarkersFromTextBlocks(
-  blocks: readonly NativeChatBlock[]
+  blocks: readonly NativeChatBlock[],
+  limit: number
 ): NativeChatBlock[] {
   let sawText = false
+  let remaining = limit
   let next: NativeChatBlock[] | null = null
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index]!
@@ -91,7 +116,8 @@ function stripImagePromptMarkersFromTextBlocks(
     }
     const isFirstText = !sawText
     sawText = true
-    const text = stripImagePromptMarker(block.text)
+    const text = stripImagePromptMarkersUpTo(block.text, remaining)
+    remaining -= Math.min(remaining, countMarkers(block.text))
     if (!text.trim() && (text !== block.text || isFirstText)) {
       next ??= blocks.slice(0, index)
       continue
@@ -173,7 +199,7 @@ export function normalizeImageTranscriptMessages(
           ...prompt,
           blocks: [
             ...imagePaths.map((path) => ({ type: 'image-ref' as const, path })),
-            ...stripImagePromptMarkersFromTextBlocks(prompt.blocks)
+            ...stripImagePromptMarkersFromTextBlocks(prompt.blocks, imagePaths.length)
           ]
         })
         index = nextIndex

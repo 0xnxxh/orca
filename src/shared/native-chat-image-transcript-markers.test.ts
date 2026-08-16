@@ -259,6 +259,79 @@ describe('normalizeImageTranscriptMessages', () => {
     ])
   })
 
+  it('keeps markers beyond the anchored run’s image count as the user’s own words', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('s1', '[Image: source: /tmp/a.png]'),
+      userText('p1', '[Image #1] compare with the [Image #2] I mentioned earlier')
+    ])
+
+    expect(out).toHaveLength(1)
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'text', text: 'compare with the [Image #2] I mentioned earlier' }
+    ])
+  })
+
+  it('strips by document position, not by marker ordinal', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('s1', '[Image: source: /tmp/a.png]'),
+      userText('p1', '[Image #2] came first but [Image #1] came second')
+    ])
+
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'text', text: 'came first but [Image #1] came second' }
+    ])
+  })
+
+  it('strips a marker whose ordinal exceeds the run size when it is within the count', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('s1', '[Image: source: /tmp/a.png]'),
+      userText('p1', '[Image #7] what is this?')
+    ])
+
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'text', text: 'what is this?' }
+    ])
+  })
+
+  it('spends the image budget across text blocks in document order', () => {
+    const prompt: NativeChatMessage = {
+      ...userText('prompt', 'unused'),
+      blocks: [
+        { type: 'text', text: '[Image #1] look at' },
+        { type: 'image-ref', path: '/tmp/existing.png' },
+        { type: 'text', text: 'not [Image #2] though' }
+      ]
+    }
+    const out = normalizeImageTranscriptMessages([
+      userText('s1', '[Image: source: /tmp/a.png]'),
+      prompt
+    ])
+
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'text', text: 'look at' },
+      { type: 'image-ref', path: '/tmp/existing.png' },
+      { type: 'text', text: 'not [Image #2] though' }
+    ])
+  })
+
+  it('keeps the surplus marker on a two-image run that mentions a third', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('s1', '[Image: source: /tmp/a.png]'),
+      userText('s2', '[Image: source: /tmp/b.png]'),
+      userText('p1', '[Image #1] [Image #2] versus the [Image #3] from before')
+    ])
+
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'image-ref', path: '/tmp/b.png' },
+      { type: 'text', text: 'versus the [Image #3] from before' }
+    ])
+  })
+
   it('leaves assistant messages untouched', () => {
     const assistant: NativeChatMessage = {
       id: 'a',
