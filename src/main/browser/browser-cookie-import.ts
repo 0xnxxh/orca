@@ -584,6 +584,10 @@ type CookieImportTarget = {
   openWriteStore: () => CookieImportSessionStore
 }
 
+type CookieImportOptions = {
+  canReportPartitionSkippedCookies?: boolean
+}
+
 function cookieImportTarget(targetPartition: string): CookieImportTarget {
   const targetSession = session.fromPartition(targetPartition)
   return {
@@ -596,7 +600,8 @@ async function importValidatedCookies(
   cookies: ValidatedCookie[],
   totalInput: number,
   target: CookieImportTarget,
-  mode: CookieImportMode
+  mode: CookieImportMode,
+  options: CookieImportOptions = {}
 ): Promise<BrowserCookieImportResult> {
   const targetPartition = target.partition
   const importDomainCache = new Map<string, boolean>()
@@ -623,6 +628,17 @@ async function importValidatedCookies(
   diag(
     `importValidatedCookies: ${cookies.length} validated, ${invalidDomainSkipped} unsafe-domain skipped, ${integritySkipped} source-bound skipped, ${nonTransplantableSkipped} non-transplantable skipped of ${totalInput} total, partition="${targetPartition}"`
   )
+  // Why: an older remote client cannot surface this skip, so fail before opening the target jar.
+  if (
+    options.canReportPartitionSkippedCookies === false &&
+    importableCookies.some((cookie) => cookie.partition.status === 'unreadable')
+  ) {
+    return {
+      ok: false,
+      reason:
+        'This Orca client cannot report cookies skipped for an unreadable site partition. Update Orca on this device and try again.'
+    }
+  }
   let skipped = totalInput - importableCookies.length
   let phase: ImportWritePhase = emptyImportWritePhase()
   // Why (STA-4097/STA-4300): both the rollback and the import writes need CDP identities — only
@@ -1279,7 +1295,8 @@ function readCString(buf: Buffer, offset: number, end: number): string | null {
 
 async function importCookiesFromFirefox(
   browser: DetectedBrowser,
-  targetPartition: string
+  targetPartition: string,
+  options: CookieImportOptions
 ): Promise<BrowserCookieImportResult> {
   diag(`importCookiesFromFirefox: partition="${targetPartition}"`)
 
@@ -1382,7 +1399,8 @@ async function importCookiesFromFirefox(
       validated,
       rows.length,
       cookieImportTarget(targetPartition),
-      'replace-imported-domains'
+      'replace-imported-domains',
+      options
     )
   } catch (err) {
     rmSync(tmpDir, { recursive: true, force: true })
@@ -1456,7 +1474,7 @@ async function importCookiesFromSafari(
 export async function importCookiesFromBrowser(
   browser: DetectedBrowser,
   targetPartition: string,
-  options: { canReportPartitionSkippedCookies?: boolean } = {}
+  options: CookieImportOptions = {}
 ): Promise<BrowserCookieImportResult> {
   diag(`importCookiesFromBrowser: browser=${browser.family} partition="${targetPartition}"`)
   if (!existsSync(browser.cookiesPath)) {
@@ -1465,7 +1483,7 @@ export async function importCookiesFromBrowser(
   }
 
   if (browser.family === 'firefox') {
-    return importCookiesFromFirefox(browser, targetPartition)
+    return importCookiesFromFirefox(browser, targetPartition, options)
   }
   if (browser.family === 'safari') {
     return importCookiesFromSafari(browser, targetPartition)

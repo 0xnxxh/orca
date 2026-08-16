@@ -82,6 +82,16 @@ function chromeBrowser(cookiesPath: string): DetectedBrowser {
   }
 }
 
+function firefoxBrowser(cookiesPath: string): DetectedBrowser {
+  return {
+    family: 'firefox',
+    label: 'Firefox',
+    cookiesPath,
+    profiles: [{ name: 'default-release', directory: 'default-release' }],
+    selectedProfile: 'default-release'
+  }
+}
+
 // Why (STA-4300): cookies.set() silently drops partitionKey, so no user cookie may reach it. Only
 // the __init probe — which writes no user data — is allowed through; anything else is the
 // downgrade returning, and it must fail the test rather than quietly succeed.
@@ -344,5 +354,69 @@ describe('native Chromium import partition fidelity', () => {
     const stagedNames = stagedDb.prepare('SELECT name FROM cookies ORDER BY name').all()
     stagedDb.close()
     expect(stagedNames).toEqual([{ name: 'plain' }])
+  })
+})
+
+describe('Firefox import partition fidelity', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'orca-partition-fidelity-firefox-'))
+    writeCookieIdentityMock.mockReset().mockResolvedValue(undefined)
+    sessionFromPartitionMock.mockReset()
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('leaves the target jar untouched when the client cannot report a partition skip', async () => {
+    const sourceCookiesPath = join(tmpDir, 'cookies.sqlite')
+    const sourceDb = new DatabaseSync(sourceCookiesPath)
+    sourceDb.exec(`
+      CREATE TABLE moz_cookies (
+        name TEXT,
+        value TEXT,
+        host TEXT,
+        path TEXT,
+        expiry INTEGER,
+        isSecure INTEGER,
+        isHttpOnly INTEGER,
+        sameSite INTEGER,
+        originAttributes TEXT
+      );
+      INSERT INTO moz_cookies VALUES
+        ('chips-auth', 'keep-me', '.app.example', '/', 0, 1, 1, 0,
+         '^partitionKey=(https,top.example,f)'),
+        ('plain', 'plain-ok', '.plain.example', '/', 0, 1, 0, 0, '')
+    `)
+    sourceDb.close()
+    const get = vi.fn().mockResolvedValue([
+      {
+        name: 'existing-session',
+        value: 'still-valid',
+        domain: '.app.example',
+        path: '/',
+        secure: true,
+        httpOnly: true,
+        hostOnly: false,
+        session: true,
+        sameSite: 'lax'
+      }
+    ])
+    const remove = vi.fn().mockResolvedValue(undefined)
+    sessionFromPartitionMock.mockReturnValue({ cookies: { get, remove } })
+
+    const result = await importCookiesFromBrowser(
+      firefoxBrowser(sourceCookiesPath),
+      'persist:test',
+      { canReportPartitionSkippedCookies: false }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.ok || result.reason).toContain('cannot report')
+    expect(get).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+    expect(writeCookieIdentityMock).not.toHaveBeenCalled()
   })
 })
