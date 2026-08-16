@@ -588,7 +588,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (opts.signal?.aborted) {
         throw new Error('client_disconnected')
       }
-      return this.client.request<CreateOrAttachResult>('createOrAttach', {
+      const payload = {
         sessionId,
         cols: effectiveCols,
         rows: effectiveRows,
@@ -615,7 +615,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
         ...(!attachOnly && opts.agentSessionEnsure
           ? { agentSessionEnsure: opts.agentSessionEnsure }
           : {})
-      })
+      }
+      return opts.signal
+        ? this.client.request<CreateOrAttachResult>(
+            'createOrAttach',
+            payload,
+            undefined,
+            opts.signal
+          )
+        : this.client.request<CreateOrAttachResult>('createOrAttach', payload)
     }
 
     const createOrAttach = async (
