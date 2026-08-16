@@ -516,3 +516,63 @@ describe('query pipeline', () => {
     expect(counts.safety).toBe(2)
   })
 })
+
+describe('path prefix spelling', () => {
+  function showsPath(candidatePath: string, pathPrefix: string): boolean {
+    return matchesWorkspaceCleanupFilters(
+      makeFacets({
+        candidate: { worktreeId: `repo-1::${candidatePath}`, path: candidatePath },
+        worktree: { id: `repo-1::${candidatePath}` }
+      }),
+      filters((s) => {
+        s.safety.dismissed = 'any'
+        s.location.pathPrefix = pathPrefix
+      }),
+      FACET_NOW
+    )
+  }
+
+  // Why: macOS file pickers hand back NFD for a path Orca stored as NFC, so a
+  // pasted prefix is a different byte string for the same directory.
+  it('matches an NFD-spelled prefix against an NFC-stored path', () => {
+    const nfc = '/repo/café-one'.normalize('NFC')
+    const nfd = '/repo/café-one'.normalize('NFD')
+    expect(nfc).not.toBe(nfd)
+    expect(showsPath(nfc, nfd)).toBe(true)
+    expect(showsPath(nfd, nfc)).toBe(true)
+  })
+
+  // Why interior only: a leading `//` is UNC syntax, not a doubled separator.
+  it('matches a prefix spelled with doubled separators', () => {
+    expect(showsPath('/repo/alpha', '/repo//alpha')).toBe(true)
+    expect(showsPath('/repo//alpha', '/repo/alpha')).toBe(true)
+  })
+
+  // Why: Windows drive/UNC roots fold case and accept either separator, so all
+  // of these spell the one workspace the user sees in Explorer.
+  it('matches Windows drive paths across separator and case spellings', () => {
+    expect(showsPath('C:\\Users\\Alice\\repo', 'C:\\Users\\Alice')).toBe(true)
+    expect(showsPath('C:\\Users\\Alice\\repo', 'c:/users/alice')).toBe(true)
+    expect(showsPath('C:\\Users\\Alice\\repo', 'C:\\USERS\\ALICE\\')).toBe(true)
+  })
+
+  it('matches the pinned directory itself, not only its children', () => {
+    expect(showsPath('/repo/alpha', '/repo/alpha/')).toBe(true)
+    expect(showsPath('/repo/alpha/nested', '/repo/alpha/')).toBe(true)
+  })
+
+  // Why: POSIX paths stay case-sensitive; folding them would merge distinct
+  // directories, which is worse than missing a case-only spelling.
+  it('keeps POSIX prefixes case-sensitive', () => {
+    expect(showsPath('/repo/Alpha', '/repo/alpha')).toBe(false)
+  })
+
+  it('keeps a trailing separator pinned to a whole segment', () => {
+    expect(showsPath('/repository/x', '/repo/')).toBe(false)
+    expect(showsPath('/repository/x', '/repo')).toBe(true)
+  })
+
+  it('still excludes a genuinely different prefix', () => {
+    expect(showsPath('/repo/alpha', '/other')).toBe(false)
+  })
+})

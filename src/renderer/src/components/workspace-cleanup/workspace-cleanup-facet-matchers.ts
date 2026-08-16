@@ -1,3 +1,7 @@
+import {
+  createNormalizedPathInsideOrEqualMatcher,
+  normalizeRuntimePathForComparison
+} from '../../../../shared/cross-platform-path'
 import type { WorkspaceCleanupFacets } from './workspace-cleanup-facets'
 import type {
   WorkspaceCleanupActivityFilter,
@@ -163,7 +167,30 @@ export function matchesWorkspaceCleanupLocation(
     return false
   }
   const prefix = filter.pathPrefix.trim()
-  return prefix.length === 0 || facets.path.startsWith(prefix)
+  return prefix.length === 0 || matchesWorkspaceCleanupPathPrefix(facets.comparisonPath, prefix)
+}
+
+/**
+ * Compares a typed prefix against a candidate's comparison path.
+ *
+ * Why not raw `startsWith`: the same workspace has several valid spellings —
+ * Windows drive/UNC case and backslashes, doubled separators, and the NFD form
+ * macOS file pickers hand back for a path Orca stored as NFC. Any of those would
+ * silently hide rows the user can see on disk.
+ *
+ * `comparisonPath` must already be normalized; `normalizeRuntimePathForComparison`
+ * is not idempotent for WSL UNC paths.
+ */
+export function matchesWorkspaceCleanupPathPrefix(
+  comparisonPath: string,
+  typedPrefix: string
+): boolean {
+  // Why: a trailing separator is how a user pins the prefix to a whole segment,
+  // so `/repo/` must not start matching `/repository`. Without one this stays a
+  // free-text prefix, which is what the "Path starts with" control promises.
+  return /[\\/]$/.test(typedPrefix)
+    ? createNormalizedPathInsideOrEqualMatcher(typedPrefix)(comparisonPath)
+    : comparisonPath.startsWith(normalizeRuntimePathForComparison(typedPrefix))
 }
 
 export function matchesWorkspaceCleanupSafety(
