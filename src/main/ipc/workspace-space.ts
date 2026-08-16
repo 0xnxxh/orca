@@ -11,6 +11,8 @@ import {
   WorkspaceSpaceScanCancelledError
 } from '../workspace-space-analysis'
 import {
+  beginWorkspaceSpaceAnalysisSnapshotProducer,
+  finishWorkspaceSpaceAnalysisSnapshotProducer,
   persistWorkspaceSpaceAnalysisSnapshot,
   readWorkspaceSpaceAnalysisSnapshot
 } from '../workspace-space-analysis-snapshot'
@@ -32,6 +34,8 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
   ipcMain.removeHandler('workspaceSpace:getCachedAnalysis')
   ipcMain.handle('workspaceSpace:analyze', async (event): Promise<WorkspaceSpaceAnalyzeResult> => {
     if (!inFlightScan) {
+      const snapshotProducerId = beginWorkspaceSpaceAnalysisSnapshotProducer(snapshotDirectory)
+      let snapshotPersistenceStarted = false
       const controller = new AbortController()
       const scanId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       let latestProgress: WorkspaceSpaceScanProgress = {
@@ -98,7 +102,10 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
         .then((analysis): WorkspaceSpaceAnalyzeResult => {
           // Fire-and-forget: a ~6-minute cold analysis must survive reload/restart, but
           // persistence must never delay or fail the reply.
-          void persistWorkspaceSpaceAnalysisSnapshot(snapshotDirectory, analysis)
+          snapshotPersistenceStarted = true
+          void persistWorkspaceSpaceAnalysisSnapshot(snapshotDirectory, analysis).finally(() =>
+            finishWorkspaceSpaceAnalysisSnapshotProducer(snapshotDirectory, snapshotProducerId)
+          )
           return { ok: true, analysis }
         })
         .catch((error: unknown): WorkspaceSpaceAnalyzeResult => {
@@ -108,6 +115,9 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
           throw error
         })
         .finally(() => {
+          if (!snapshotPersistenceStarted) {
+            finishWorkspaceSpaceAnalysisSnapshotProducer(snapshotDirectory, snapshotProducerId)
+          }
           inFlightScan = null
         })
     }

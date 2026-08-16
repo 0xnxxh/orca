@@ -18,6 +18,8 @@ import { parseExecutionHostId } from '../../shared/execution-host'
 import { scanWorkspaceCleanup } from './workspace-cleanup-scan'
 import { hasTargetedWorkspaceCleanupScan } from './workspace-cleanup-scan-targets'
 import {
+  beginWorkspaceCleanupScanSnapshotProducer,
+  finishWorkspaceCleanupScanSnapshotProducer,
   persistWorkspaceCleanupScanResult,
   readWorkspaceCleanupScanSnapshot
 } from '../workspace-cleanup-scan-snapshot'
@@ -72,6 +74,10 @@ export function registerWorkspaceCleanupHandlers(
         activeScans.set(scanKey, controller)
       }
       const targeted = hasTargetedWorkspaceCleanupScan(scanArgs)
+      const snapshotProducerId = targeted
+        ? undefined
+        : beginWorkspaceCleanupScanSnapshotProducer(snapshotDirectory)
+      let snapshotPersistenceStarted = false
       const broadScanKey = getBroadScanModeKey(sender.id, scanArgs)
       if (!targeted) {
         // Why: two same-mode broad fleet scans from one renderer can only be a
@@ -99,10 +105,16 @@ export function registerWorkspaceCleanupHandlers(
         // fleet snapshot. worktreeIds: [] is still targeted — persisting its
         // empty result would wipe the fleet cache.
         if (!targeted) {
-          void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result)
+          snapshotPersistenceStarted = true
+          void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result).finally(() =>
+            finishWorkspaceCleanupScanSnapshotProducer(snapshotDirectory, snapshotProducerId!)
+          )
         }
         return result
       } finally {
+        if (snapshotProducerId !== undefined && !snapshotPersistenceStarted) {
+          finishWorkspaceCleanupScanSnapshotProducer(snapshotDirectory, snapshotProducerId)
+        }
         if (!sender.isDestroyed()) {
           sender.removeListener('destroyed', onSenderDestroyed)
         }
