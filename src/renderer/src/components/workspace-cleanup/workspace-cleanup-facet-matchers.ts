@@ -166,10 +166,11 @@ export function matchesWorkspaceCleanupLocation(
   const prefix = filter.pathPrefix.trim()
   return (
     prefix.length === 0 ||
-    // Deliberately redundant: `matchesRuntimePathPrefix` already covers this. It
-    // keeps the cheap exact-typing case allocation-free, and makes "preparation
-    // may only reveal rows, never hide one the raw comparison showed" structural
-    // rather than something every future edit has to re-argue.
+    // Why this branch is required, not just a fast path: NFC is not
+    // prefix-preserving. A prefix that stops right before a combining mark —
+    // `/repo/e` against `/repo/e` + U+0301 + `x` — matches the literal path but
+    // not the composed key. Keeping it also makes "preparation may only reveal
+    // rows, never hide one the raw comparison showed" structural.
     facets.path.startsWith(prefix) ||
     matchesRuntimePathPrefix(facets.pathPrefixKey, prefix)
   )
