@@ -369,16 +369,14 @@ describe('SshPtyProvider', () => {
       })
     })
 
-    it('forwards shell, WSL, and scoped-history options to the relay mux', async () => {
+    it('forwards explicit shellOverride and terminalWindowsWslDistro to the relay mux', async () => {
       mux.request.mockResolvedValue({ id: 'pty-2' })
 
       await provider.spawn({
         cols: 120,
         rows: 40,
         shellOverride: 'powershell.exe',
-        terminalWindowsWslDistro: 'Ubuntu',
-        worktreeId: 'repo-1::/remote/wt',
-        historyIsolationEnabled: true
+        terminalWindowsWslDistro: 'Ubuntu'
       })
 
       expectRequest(mux.request, 'pty.spawn', {
@@ -387,9 +385,7 @@ describe('SshPtyProvider', () => {
         cwd: undefined,
         env: { [POWERLEVEL10K_WIZARD_DISABLE_ENV]: 'true' },
         shellOverride: 'powershell.exe',
-        terminalWindowsWslDistro: 'Ubuntu',
-        worktreeId: 'repo-1::/remote/wt',
-        historyIsolationEnabled: true
+        terminalWindowsWslDistro: 'Ubuntu'
       })
     })
 
