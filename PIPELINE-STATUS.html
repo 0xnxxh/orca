@@ -1,0 +1,305 @@
+<title>Blocker Pipeline Status</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f7f8fa; --border: #e3e6ea; --text: #14171a;
+    --muted: #5c6672; --accent: #2f6feb; --p0: #c0392b; --p1: #b9770e;
+    --p2: #4a7c59; --done: #1e7d4f; --block: #8e44ad; --code: #f0f2f5;
+  }
+  :root:not([data-theme="light"]) { }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --panel: #1b1f26; --border: #2b313a; --text: #e6e9ee;
+      --muted: #99a3b0; --accent: #6ea0ff; --p0: #ff7b6b; --p1: #f0b45e;
+      --p2: #7fd6a2; --done: #5fd39a; --block: #c79cf0; --code: #232830;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --panel: #1b1f26; --border: #2b313a; --text: #e6e9ee;
+    --muted: #99a3b0; --accent: #6ea0ff; --p0: #ff7b6b; --p1: #f0b45e;
+    --p2: #7fd6a2; --done: #5fd39a; --block: #c79cf0; --code: #232830;
+  }
+  body {
+    background: var(--bg); color: var(--text); margin: 0; padding: 2rem 1.25rem 4rem;
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.05rem; margin: 2.2rem 0 .7rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; font-size: .9rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin-bottom: 1.6rem; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: .7rem .85rem; }
+  .tile .n { font-size: 1.5rem; font-weight: 650; letter-spacing: -.02em; }
+  .tile .l { color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; }
+  .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 9px; }
+  table { border-collapse: collapse; width: 100%; font-size: .855rem; }
+  th { background: var(--panel); text-align: left; font-weight: 600; font-size: .73rem;
+       text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+       padding: .6rem .7rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: .62rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82em;
+        background: var(--code); padding: .08em .34em; border-radius: 4px; }
+  .pill { display: inline-block; padding: .1rem .45rem; border-radius: 999px; font-size: .7rem;
+          font-weight: 650; border: 1px solid currentColor; white-space: nowrap; }
+  .P0 { color: var(--p0); } .P1 { color: var(--p1); } .P2 { color: var(--p2); }
+  .st { font-weight: 600; font-size: .8rem; white-space: nowrap; }
+  .s-done { color: var(--done); } .s-prog { color: var(--accent); }
+  .s-block { color: var(--block); } .s-queue { color: var(--muted); }
+  .s-norepro { color: var(--p1); }
+  a { color: var(--accent); }
+  .note { background: var(--panel); border: 1px solid var(--border);
+          border-left: 3px solid var(--accent); border-radius: 7px; padding: .8rem 1rem; margin: .7rem 0; }
+  .note.warn { border-left-color: var(--p1); }
+  .note.stop { border-left-color: var(--p0); }
+  .note h3 { margin: 0 0 .35rem; font-size: .9rem; }
+  .note p { margin: .35rem 0; font-size: .875rem; }
+  ul { margin: .4rem 0; padding-left: 1.15rem; } li { margin: .22rem 0; font-size: .875rem; }
+  .foot { color: var(--muted); font-size: .8rem; margin-top: 2.5rem;
+          border-top: 1px solid var(--border); padding-top: .8rem; }
+</style>
+
+<div class="wrap">
+
+<h1>Release-Blocker Pipeline</h1>
+<p class="sub">Coordinator worktree <code>blocker-pipeline-coordinator</code> on <strong>openclaw</strong> ·
+Run <code>run_42d86ee6a30c</code> · base <code>origin/main @ 93ab6e142</code> ·
+last updated <strong>2026-08-15 17:05 PT</strong></p>
+
+<div class="grid">
+  <div class="tile"><div class="n">12</div><div class="l">Tickets owned</div></div>
+  <div class="tile"><div class="n">2</div><div class="l">Confirmed w/ failing test</div></div>
+  <div class="tile"><div class="n">1</div><div class="l">Does not reproduce</div></div>
+  <div class="tile"><div class="n">2</div><div class="l">Workers active</div></div>
+  <div class="tile"><div class="n">0</div><div class="l">PRs open</div></div>
+</div>
+
+<h2>Ticket status</h2>
+<div class="scroll">
+<table>
+<thead><tr>
+  <th>Ticket</th><th>Pri</th><th>State</th><th>Dispatch / worktree</th><th>Evidence verdict</th><th>PR</th>
+</tr></thead>
+<tbody>
+
+<tr>
+  <td><strong>STA-4449</strong><br><span class="mono">local re-add reissues name</span></td>
+  <td><span class="pill P0">P0</span></td>
+  <td class="st s-prog">FIX IN PROGRESS</td>
+  <td><code>ctx_4d7ae0755825</code><br><span class="mono">fix-4449-4491</span></td>
+  <td><strong>CONFIRMED.</strong> Independent codex repro + coordinator-verified failing test
+      (<code>e5f7adf8c9</code>): 2 failed / 23 passed, <code>names: []</code> vs <code>['nautilus']</code>.
+      Real mechanism is narrower than the brief: local repos <em>do</em> re-seed via the backfill scan, so the
+      hole is the intersection with the deliberate <strong>Codex non-scan</strong> — a name spent only under
+      Codex with its workspace dir gone has no on-disk evidence.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4491</strong><br><span class="mono">SSH target-id rotation</span></td>
+  <td><span class="pill P1">P1</span></td>
+  <td class="st s-prog">FIX IN PROGRESS</td>
+  <td><code>ctx_4d7ae0755825</code><br><span class="mono">fix-4449-4491</span></td>
+  <td><strong>CONFIRMED.</strong> Same verified test run. Namespace key embeds
+      <code>getRepoExecutionHostId</code>; rotation moves <code>ssh:ssh-old</code> →
+      <code>ssh:ssh-new</code> and <code>reassignSshTargetId</code> never migrates
+      <code>retiredWorktreeNamesByNamespace</code>.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4471</strong><br><span class="mono">old clients bypass retirement</span></td>
+  <td><span class="pill P0">P0</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td>Not yet verified. Host must refuse a known-retired path even when the client omits
+      <code>nameWasGenerated</code>. PR #14350 documents this as accepted behaviour, so expect to
+      overturn a deliberate decision, not patch an oversight.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4472</strong><br><span class="mono">WSL distro Claude history</span></td>
+  <td><span class="pill P0">P0</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td>Not yet verified. Backfill scans only the Windows-side <code>~/.claude/projects</code>;
+      distro-local buckets under the UNC root are the durable evidence and are missed.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4473</strong><br><span class="mono">create hangs on backfill</span></td>
+  <td><span class="pill P1">P1</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td>Not yet verified. Cached-forever scan Promise + undeadlined <code>readdir</code>.
+      Pairs with 4472 — both are backfill-scan defects.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4479</strong><br><span class="mono">mobile RPC error clears cache</span></td>
+  <td><span class="pill P2">P2</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td>Not yet verified. Resolved RPC error treated as an empty registry. Host still refuses reuse,
+      so impact is wrong suggestions until refresh.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4480</strong><br><span class="mono">mobile shows proposed name</span></td>
+  <td><span class="pill P2">P2</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td>Not yet verified. Transient wrong title only; live-name hook self-corrects.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4482</strong><br><span class="mono">RELAND #14665</span></td>
+  <td><span class="pill P1">P1</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td><strong>Genuinely outstanding despite Linear reading <code>Done</code>.</strong> Verified: revert
+      <code>b8dc393c18</code> (#14819) merged 23:34 today and <em>no</em> reland commit exists on main;
+      <code>mobile-native-chat-pending-retirement.ts</code> is absent from <code>origin/main</code>.
+      The <code>Done</code> state reflects the revert landing, not the reland.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4477</strong><br><span class="mono">desktop glue retires newer send</span></td>
+  <td><span class="pill P1">P1</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td>Not yet verified. #14663 is <em>not</em> reverted, so unlike 4492 this should still reproduce
+      on main. Do not revert — that re-opens #14262.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4492</strong><br><span class="mono">mobile hydration stays queued</span></td>
+  <td><span class="pill P1">P1</span></td>
+  <td class="st s-norepro">DOES NOT REPRODUCE → folded into 4482</td>
+  <td>—</td>
+  <td><strong>Refuted on origin/main, with cause.</strong> <code>glueBaselineTrusted</code> appears
+      nowhere in <code>mobile/</code>; 2 of its 4 evidence files
+      (<code>mobile-native-chat-pending-retirement.ts</code>,
+      <code>use-mobile-native-chat-drafts-glued-pending.test.ts</code>) were deleted by revert #14819.
+      The ticket's own note — "TARGET <code>d2ffe1f</code> still has #14665; #14819 is not in this span" —
+      confirms it was filed against a pre-revert span. It is <em>not</em> won't-fix: it returns the moment
+      #14665 relands, and STA-4482's reland ask #2 names this exact defect.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4451</strong><br><span class="mono">snapshot tombstones persist</span></td>
+  <td><span class="pill P2">P2</span></td>
+  <td class="st s-queue">QUEUED</td>
+  <td>—</td>
+  <td>Not yet verified. Must answer explicitly whether the retained set is an unbounded <em>leak</em>
+      or merely long-lived <em>latency</em> — that decides the fix shape. Scope fenced away from
+      STA-4448's files.</td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>STA-4363</strong><br><span class="mono">[Image #N] stripped</span></td>
+  <td><span class="pill P2">P2</span></td>
+  <td class="st s-prog">REVIEW IN PROGRESS</td>
+  <td><code>ctx_609b7e4b6d6e</code><br><span class="mono">review-4363</span></td>
+  <td>Reviewing open PR <a href="https://github.com/stablyai/orca/pull/14581">#14581</a>
+      (+2273/−315). Interrogating: is that size earned for a P2 display bug; does anchoring require a
+      <em>contiguous</em> image run; is mobile genuinely fixed; are the assertions non-vacuous under mutation.</td>
+  <td><a href="https://github.com/stablyai/orca/pull/14581">#14581</a> (open, under review)</td>
+</tr>
+
+</tbody>
+</table>
+</div>
+
+<h2>PR shape decision — the #14350 cluster</h2>
+<div class="note">
+<h3>Four PRs on root-cause boundaries, not one and not seven</h3>
+<p>The brief asked whether the five-ticket cluster is one root cause with five faces. Having read all
+seven #14350 tickets together against the code: <strong>it is not.</strong> They split into four
+independent causes, and collapsing them into one PR would couple unrelated risk while a
+five-way split would fragment one genuine shared cause.</p>
+<ul>
+  <li><strong>PR A — 4449 + 4491 (P0):</strong> retirement identity must survive repo re-add. One cause
+      (tombstones keyed to a rotating identity), two host axes. <em>In progress.</em></li>
+  <li><strong>PR B — 4471 (P0):</strong> host-side enforcement independent of client provenance. A
+      wire-compat concern, different fix site (create path), overturns a documented decision.</li>
+  <li><strong>PR C — 4472 + 4473 (P0/P1):</strong> the backfill scan itself — WSL distro coverage plus a
+      deadline, failed-Promise eviction, and routing UNC reads through the bounded WSL gate.</li>
+  <li><strong>PR D — 4479 + 4480 (P2):</strong> two small mobile suggestion-surface defects, both
+      cosmetic, naturally one mobile PR.</li>
+</ul>
+</div>
+
+<div class="note warn">
+<h3>The obvious fix for 4449 is wrong — flagged to the fixer</h3>
+<p>"Key retirement storage by namespace instead of <code>repo.id</code>" is explicitly
+<em>rejected</em> in PR #14350's own body: the namespace derives from <code>workspaceDir</code>,
+<code>nestWorkspaces</code>, <code>worktreeBasePath</code> and <code>repo.path</code>, so keying storage
+on it orphans every retirement the moment a user toggles any one of those — far more common than
+remove/re-add. The fix must <strong>keep <code>repo.id</code> as primary storage and additionally mirror
+into the path-derived namespace</strong> (exactly what the code already does for remote repos, gated off
+for local at the read side, line ~185, and the write side, line ~216). Both axes then hold.</p>
+</div>
+
+<h2>Environment findings that contradict the brief</h2>
+
+<div class="note stop">
+<h3>grok is not usable as the reproduction lane</h3>
+<p>The brief states grok is working on this account. It is not: <code>grok -p</code> returns
+<em>"Not signed in"</em>, no <code>XAI_API_KEY</code> is set, and <code>grok login</code> needs a browser
+or device code — an interactive step that is Brennan's to take. <strong>Substitution:</strong> the
+independence requirement is preserved by using <code>codex</code> as reproducer and
+<code>claude</code> as fixer — different model families, separate contexts, no shared reasoning.
+This worked: the codex reproducer confirmed 4449/4491 with a test I then verified myself.</p>
+</div>
+
+<div class="note">
+<h3>Linear is reachable directly — no agent round-trip needed</h3>
+<p>Plain <code>orca</code> resolves to <code>~/.local/bin/orca</code> (local, unauthenticated →
+<code>linear_not_connected</code>). The authenticated relay is
+<code>/home/brennan/.orca-relay/bin/orca</code>, which works from this session and returns team STA.
+Linear reads and writes are therefore done inline rather than by spawning agents.</p>
+</div>
+
+<div class="note warn">
+<h3>Memory ceiling is below the 4-worker cap</h3>
+<p>openclaw is at ~12.4/15.8 GB used with swap 100% saturated and ~190 MB free. <code>neil</code> holds
+~5.1 GB across live claude sessions and <code>jinjing</code> ~0.5 GB. Running 4 heavy workers risks
+OOM-killing other users' live work, so concurrency is being held at <strong>2</strong> and raised only
+as workers retire. The cap is a ceiling, not a target.</p>
+</div>
+
+<div class="note">
+<h3>Internal skills were not installed in this worktree</h3>
+<p><code>/readiness-checklist</code>, <code>/internal-pr-review</code> and
+<code>/orca-mobile-emulator-qa</code> are not in the Orca bundle; they live in
+<code>~/.orca-internal/eng/skills/</code>. Symlinked into <code>.claude/skills/</code> and
+<code>.agents/skills/</code> (both gitignored) for the coordinator and every child worktree.</p>
+</div>
+
+<h2>Boundaries being respected</h2>
+<ul>
+  <li><strong>STA-4448 is catshark's, untouched.</strong> STA-4451's spec fences it off the sidebar delete
+      path and the cleanup slice, and forbids touching the prune index,
+      <code>WorkspaceSnapshotPruneTarget</code>, or the prune key.</li>
+  <li>PR #14731 merged as <code>5b7f44278a</code> and closed <strong>only</strong> the cleanup-dialog path.
+      PR #14606 is the full ~4000-line fix and is <strong>dirty</strong>. Two-host field validation remains
+      <strong>outstanding</strong> — the UI proof is an injected render and the filesystem evidence comes
+      from the test suite. STA-4343 is not fully fixed.</li>
+  <li>Known main-branch breakage inherited, not caused here: #14738 (<code>393c8764e0</code>) leaves
+      <code>config/scripts/pr-test-loc-summary.test.mjs</code> tripping the type-aware audit under
+      <code>--deny-warnings</code>, and the test-vs-non-test LoC job 404s. STA-4484 is Neil's.</li>
+</ul>
+
+<p class="foot">Maintained by the coordinator agent. Every "CONFIRMED" above means a committed test that
+fails on <code>origin/main</code> and was re-run by the coordinator, not a worker's self-report.</p>
+
+</div>
