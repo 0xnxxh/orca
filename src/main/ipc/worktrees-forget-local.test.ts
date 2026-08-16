@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolve } from 'node:path'
-import { registerWorktreeRootsForRepo, resolveRegisteredWorktreePath } from './filesystem-auth'
+import {
+  registerWorktreeRootsForRepo,
+  resolveRegisteredWorktreePath
+} from './registered-worktree-roots-cache'
 import {
   listWorktreesMock,
   removeWorktreeMock,
