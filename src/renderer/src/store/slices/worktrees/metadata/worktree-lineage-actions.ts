@@ -7,11 +7,7 @@ import {
   refreshWorktreeLineageForSettings,
   setWorktreeLineageForRuntime
 } from './worktree-lineage-refresh'
-import {
-  settingsForWorktreeOwner,
-  trySettingsForWorktreeOwner,
-  warnAmbiguousOwnerOnce
-} from '../listing/worktree-owner-settings'
+import { settingsForWorktreeOwner } from '../listing/worktree-owner-settings'
 
 // Why: this runs inside a catch, so letting the refresh reject would replace the failure it recovers from.
 async function refreshWorktreeLineageBestEffort(
@@ -59,13 +55,9 @@ export function createUpdateWorktreeLineage(
   get: WorktreeSliceGet
 ): WorktreeSlice['updateWorktreeLineage'] {
   return async (worktreeId, args) => {
-    // Why: this action never rejects — the sidebar's remove-parent-link caller awaits it without a catch,
-    // so an ambiguous owner is a skip rather than an unhandled rejection.
-    const ownerSettings = trySettingsForWorktreeOwner(get(), worktreeId)
-    if (!ownerSettings) {
-      warnAmbiguousOwnerOnce(worktreeId, 'worktree lineage update')
-      return
-    }
+    // Why: an unresolvable owner route (ambiguous or missing) rejects rather than skipping — this is a
+    // user-initiated action, and both callers toast the failure. Don't swallow it into a silent no-op.
+    const ownerSettings = settingsForWorktreeOwner(get(), worktreeId)
     try {
       applyWorktreeLineageUpdate(
         set,

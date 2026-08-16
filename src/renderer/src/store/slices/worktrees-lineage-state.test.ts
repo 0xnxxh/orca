@@ -702,9 +702,9 @@ describe('worktree lineage state', () => {
     expect(store.getState().worktreesByRepo.repo1?.[0]).toEqual(updatedChild)
   })
 
-  // The sidebar's remove-parent-link action awaits updateWorktreeLineage without a catch,
-  // so every path out of it must resolve rather than reject.
-  it('skips the lineage update for a genuinely ambiguous owner instead of rejecting', async () => {
+  // An unresolvable owner route must reach the caller so the sidebar can toast it, rather than
+  // becoming a silent no-op. Both callers catch; see WorktreeContextMenu.handleRemoveParentLink.
+  it('rejects the lineage update when the owner route cannot be resolved', async () => {
     const store = createTestStore()
     const worktreeId = 'repo-shared::/same/path'
     store.setState({
@@ -729,7 +729,7 @@ describe('worktree lineage state', () => {
 
     await expect(
       store.getState().updateWorktreeLineage(worktreeId, { noParent: true })
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow()
 
     expect(mockApi.worktrees.updateLineage).not.toHaveBeenCalled()
   })
