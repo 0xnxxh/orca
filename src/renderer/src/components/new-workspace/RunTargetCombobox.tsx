@@ -137,6 +137,19 @@ export default function RunTargetCombobox({
     [connectingHostIds, onConnectHost]
   )
 
+  // Why: reached from the row body, its inline button, and Enter — keep one path
+  // so all three close the picker before handing off to the nested dialog.
+  const setLocation = useCallback(
+    (option: NeedsSetupProjectHostOption): void => {
+      if (!option.canSetLocation || !onSetLocation) {
+        return
+      }
+      close()
+      onSetLocation(option)
+    },
+    [close, onSetLocation]
+  )
+
   /** Commits a row, or opens its submenu when the row is a submenu row. */
   const activate = useCallback(
     (key: string | null): void => {
@@ -149,15 +162,13 @@ export default function RunTargetCombobox({
         return
       }
       if (row.kind === 'needs-setup') {
-        if (row.option.canSetLocation && onSetLocation) {
-          close()
-          onSetLocation(row.option)
-        }
+        // Not ready: setting the location is the only way forward from the row itself.
+        setLocation(row.option)
         return
       }
       setSubmenu(row.kind === 'recipes' ? 'recipes' : 'add-host')
     },
-    [close, onSetLocation, rows, selectHost]
+    [rows, selectHost, setLocation]
   )
 
   const handleKeyDown = useCallback(
@@ -320,12 +331,7 @@ export default function RunTargetCombobox({
                       arm(row.key)
                       setSubmenu(null)
                     }}
-                    onCommit={() => {
-                      if (hasSetLocation) {
-                        close()
-                        onSetLocation?.(row.option)
-                      }
-                    }}
+                    onCommit={() => setLocation(row.option)}
                     trailing={
                       hasConnect ? (
                         <ConnectHostButton
@@ -335,10 +341,7 @@ export default function RunTargetCombobox({
                       ) : hasSetLocation ? (
                         <SetLocationButton
                           hostLabel={row.option.label}
-                          onSetLocation={() => {
-                            close()
-                            onSetLocation?.(row.option)
-                          }}
+                          onSetLocation={() => setLocation(row.option)}
                         />
                       ) : undefined
                     }

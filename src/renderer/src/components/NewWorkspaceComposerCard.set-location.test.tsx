@@ -184,6 +184,8 @@ function renderCard(
         sparsePresets={[]}
         sparseSelectedPresetId={null}
         onSparseSelectPreset={() => {}}
+        branchNameOverride={undefined}
+        onBranchNameOverrideChange={() => {}}
         branchesEnabled={false}
         setupControlsEnabled={false}
         sparseControlsEnabled={false}

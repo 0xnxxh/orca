@@ -2796,26 +2796,21 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const handleProjectHostSetupChange = useCallback(
     (setupId: string): void => {
       const option = projectHostSetupOptions.find((candidate) => candidate.id === setupId)
-      if (option?.kind === 'ready') {
-        // Why: switching run host for the same project must not erase the task/PR source the user is starting from.
-        setSelectedProjectHostSetupOverrideId(option.id)
-        handleRepoChange(option.repoId, {
-          preserveStartFrom: true,
-          forceResetStartFrom: true
-        })
+      const target =
+        option?.kind === 'ready'
+          ? option
+          : // Why: a just-created setup lands in the store before the memoized picker options refresh.
+            useAppStore
+              .getState()
+              .projectHostSetups.find(
+                (candidate) => candidate.id === setupId && candidate.setupState === 'ready'
+              )
+      if (!target) {
         return
       }
-      // Why: a just-created setup is in the store before the memoized picker options refresh.
-      const setup = useAppStore
-        .getState()
-        .projectHostSetups.find(
-          (candidate) => candidate.id === setupId && candidate.setupState === 'ready'
-        )
-      if (!setup) {
-        return
-      }
-      setSelectedProjectHostSetupOverrideId(setup.id)
-      handleRepoChange(setup.repoId, {
+      // Why: switching run host for the same project must not erase the task/PR source the user is starting from.
+      setSelectedProjectHostSetupOverrideId(target.id)
+      handleRepoChange(target.repoId, {
         preserveStartFrom: true,
         forceResetStartFrom: true
       })

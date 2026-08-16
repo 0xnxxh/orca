@@ -163,7 +163,7 @@ type NewWorkspaceComposerCardProps = {
   sparseControlsEnabled?: boolean
   /** When set, "Add project" opens a host-provided flow instead of swapping the store's active modal. */
   onAddProjectOverride?: () => void
-  /** True while a nested dialog (set location) is layered over the composer. */
+  /** Fires as the nested Set-project-location dialog opens and closes, so the host can stand down its Escape/submit handling. */
   onNestedDialogOpenChange?: (open: boolean) => void
 }
 
@@ -512,38 +512,29 @@ export default function NewWorkspaceComposerCard({
     },
     [onNestedDialogOpenChange]
   )
-  const handleSetLocationOpenChange = React.useCallback(
-    (open: boolean): void => {
-      if (open) {
-        return
-      }
-      setSetLocationOption(null)
-      onNestedDialogOpenChange?.(false)
-    },
-    [onNestedDialogOpenChange]
-  )
+  const handleSetLocationClose = React.useCallback((): void => {
+    setSetLocationOption(null)
+    onNestedDialogOpenChange?.(false)
+  }, [onNestedDialogOpenChange])
   const handleSetLocationReady = React.useCallback(
     (setupId: string): void => {
-      setSetLocationOption(null)
-      onNestedDialogOpenChange?.(false)
+      handleSetLocationClose()
       onProjectHostSetupChange?.(setupId)
     },
-    [onNestedDialogOpenChange, onProjectHostSetupChange]
+    [handleSetLocationClose, onProjectHostSetupChange]
   )
-  const defaultCloneUrl = useAppStore((state) => {
-    const project = state.projects?.find((candidate) => candidate.id === selectedProjectId)
-    if (!project) {
-      return ''
-    }
-    for (const sourceRepoId of project.sourceRepoIds) {
-      const remoteUrl = state.repos?.find((repo) => repo.id === sourceRepoId)?.gitRemoteIdentity
-        ?.remoteUrl
-      if (remoteUrl) {
-        return remoteUrl
-      }
-    }
-    return ''
-  })
+  const projects = useAppStore((state) => state.projects)
+  const repos = useAppStore((state) => state.repos)
+  // Prefill "Clone from URL" with the project's own remote so the common case is one click.
+  const defaultCloneUrl = React.useMemo(() => {
+    const sourceRepoIds =
+      projects.find((candidate) => candidate.id === selectedProjectId)?.sourceRepoIds ?? []
+    return (
+      sourceRepoIds
+        .map((sourceId) => repos.find((repo) => repo.id === sourceId)?.gitRemoteIdentity?.remoteUrl)
+        .find((url): url is string => Boolean(url)) ?? ''
+    )
+  }, [projects, repos, selectedProjectId])
   const handleConnectRunTargetHost = React.useCallback(
     async (option: NeedsSetupProjectHostOption): Promise<void> => {
       const action = option.connectAction
@@ -1282,7 +1273,7 @@ export default function NewWorkspaceComposerCard({
         projectName={selectedProjectName}
         projectKind={selectedRepoIsGit ? 'git' : 'folder'}
         defaultCloneUrl={defaultCloneUrl}
-        onOpenChange={handleSetLocationOpenChange}
+        onClose={handleSetLocationClose}
         onReady={handleSetLocationReady}
       />
     </div>

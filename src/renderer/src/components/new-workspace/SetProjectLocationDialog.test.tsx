@@ -60,7 +60,7 @@ function renderDialog(
       projectName="orca"
       projectKind="git"
       defaultCloneUrl="git@github.com:stablyai/orca.git"
-      onOpenChange={vi.fn()}
+      onClose={vi.fn()}
       onReady={vi.fn()}
       {...overrides}
     />
@@ -85,9 +85,9 @@ afterEach(() => {
 
 describe('SetProjectLocationDialog', () => {
   it('keeps the parent caller in charge of close and saves an existing folder', async () => {
-    const onOpenChange = vi.fn()
+    const onClose = vi.fn()
     const onReady = vi.fn()
-    const user = renderDialog({ onOpenChange, onReady })
+    const user = renderDialog({ onClose, onReady })
 
     expect(screen.getByTestId('set-project-location-dialog')).toBeTruthy()
     expect(screen.getByText('Set project location')).toBeTruthy()
@@ -106,7 +106,7 @@ describe('SetProjectLocationDialog', () => {
       displayName: 'orca'
     })
     expect(onReady).toHaveBeenCalledWith('setup-openclaw')
-    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('clones onto the selected host', async () => {
@@ -140,7 +140,7 @@ describe('SetProjectLocationDialog', () => {
         projectName="orca"
         projectKind="git"
         defaultCloneUrl=""
-        onOpenChange={vi.fn()}
+        onClose={vi.fn()}
         onReady={vi.fn()}
       />
     )
@@ -148,11 +148,11 @@ describe('SetProjectLocationDialog', () => {
   })
 
   it('notifies the parent when dismissed', async () => {
-    const onOpenChange = vi.fn()
-    renderDialog({ onOpenChange })
+    const onClose = vi.fn()
+    renderDialog({ onClose })
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')?.click()
     })
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(onClose).toHaveBeenCalled()
   })
 })

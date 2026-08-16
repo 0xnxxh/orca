@@ -9,14 +9,11 @@ import {
 } from '@/components/ui/dialog'
 import { translate } from '@/i18n/i18n'
 import { useAppStore } from '@/store'
-import { RemoteFileBrowser } from '@/components/sidebar/RemoteFileBrowser'
+import { CreateProjectParentBrowser } from '@/components/sidebar/CreateProjectLocationField'
 import type { NeedsSetupProjectHostOption } from '@/lib/project-host-setup-options'
+import { parseExecutionHostId } from '../../../../shared/execution-host'
 import type { RepoKind } from '../../../../shared/repo-types'
-import {
-  getProjectLocationBrowseTarget,
-  pickLocalProjectLocationFolder,
-  type ProjectLocationBrowseTarget
-} from './set-project-location-browse'
+import { pickLocalProjectLocationFolder } from './pick-local-project-folder'
 import { CloneForm, ExistingFolderForm, LocationActionButton } from './SetProjectLocationForms'
 
 type DialogView = 'choose' | 'existing' | 'clone' | 'browse'
@@ -27,7 +24,7 @@ type SetProjectLocationDialogProps = {
   projectName: string
   projectKind: RepoKind
   defaultCloneUrl: string
-  onOpenChange: (open: boolean) => void
+  onClose: () => void
   onReady: (setupId: string) => void
 }
 
@@ -36,10 +33,12 @@ export function SetProjectLocationDialog({
   projectName,
   projectKind,
   defaultCloneUrl,
-  onOpenChange,
+  onClose,
   onReady
 }: SetProjectLocationDialogProps): React.JSX.Element {
   const open = option !== null
+  // Why: keep the last option rendered through the close animation, so the body
+  // doesn't blank out as the dialog slides away.
   const [renderOption, setRenderOption] = useState(option)
   if (option !== null && option !== renderOption) {
     setRenderOption(option)
@@ -47,12 +46,20 @@ export function SetProjectLocationDialog({
   const activeOption = option ?? renderOption
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onOpenChange(false)}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
+          onClose()
+        }
+      }}
+    >
       <DialogContent
         data-testid="set-project-location-dialog"
         className="sm:max-w-lg"
+        // Why: this dialog is layered over Create worktree — dismissing it must
+        // not also reach the composer underneath and discard the in-progress form.
         onEscapeKeyDown={(event) => event.stopPropagation()}
-        onPointerDownOutside={(event) => event.stopPropagation()}
         onInteractOutside={(event) => event.stopPropagation()}
       >
         {activeOption ? (
@@ -92,12 +99,20 @@ function SetProjectLocationDialogBody({
   const [cloneUrl, setCloneUrl] = useState(defaultCloneUrl)
   const [cloneDestination, setCloneDestination] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const browseTarget = getProjectLocationBrowseTarget(option.hostId)
+  const parsedHost = parseExecutionHostId(option.hostId)
+  // Remote hosts browse in-dialog; the local host gets the native folder picker.
+  const remoteHost =
+    parsedHost?.kind === 'ssh' || parsedHost?.kind === 'runtime' ? parsedHost : null
   const canClone = projectKind === 'git'
+  // Both views browse for a path; this is the field each one writes back to.
+  const pathFields: Record<BrowseField, { value: string; set: (path: string) => void }> = {
+    existing: { value: setupPath, set: setSetupPath },
+    clone: { value: cloneDestination, set: setCloneDestination }
+  }
 
   const openHostBrowser = (field: BrowseField): void => {
-    if (browseTarget.kind === 'local') {
-      void pickLocalProjectLocationFolder(field === 'existing' ? setSetupPath : setCloneDestination)
+    if (!remoteHost) {
+      void pickLocalProjectLocationFolder(pathFields[field].set)
       return
     }
     setBrowseField(field)
@@ -146,21 +161,14 @@ function SetProjectLocationDialogBody({
     }
   }
 
-  if (view === 'browse' && browseTarget.kind !== 'local') {
+  if (view === 'browse' && remoteHost) {
     return (
-      <HostFilesystemBrowseView
-        browseTarget={browseTarget}
-        initialPath={browseField === 'existing' ? setupPath : cloneDestination}
-        onSelect={(path) => {
-          if (browseField === 'existing') {
-            setSetupPath(path)
-            setView('existing')
-            return
-          }
-          setCloneDestination(path)
-          setView('clone')
-        }}
-        onCancel={() => setView(browseField)}
+      <CreateProjectParentBrowser
+        sshTargetId={remoteHost.kind === 'ssh' ? remoteHost.targetId : null}
+        runtimeEnvironmentId={remoteHost.kind === 'runtime' ? remoteHost.environmentId : null}
+        createParent={pathFields[browseField].value}
+        onParentChange={pathFields[browseField].set}
+        onClose={() => setView(browseField)}
       />
     )
   }
@@ -196,7 +204,8 @@ function SetProjectLocationDialogBody({
             )}
             onClick={() => {
               setView('existing')
-              if (browseTarget.kind === 'local' && !setupPath) {
+              // Local hosts get the native picker straight away — one click instead of two.
+              if (!remoteHost && !setupPath) {
                 void pickLocalProjectLocationFolder(setSetupPath)
               }
             }}
@@ -242,52 +251,6 @@ function SetProjectLocationDialogBody({
           onSubmit={() => void handleCloneSubmit()}
         />
       ) : null}
-    </>
-  )
-}
-
-function HostFilesystemBrowseView({
-  browseTarget,
-  initialPath,
-  onSelect,
-  onCancel
-}: {
-  browseTarget: Exclude<ProjectLocationBrowseTarget, { kind: 'local' }>
-  initialPath: string
-  onSelect: (path: string) => void
-  onCancel: () => void
-}): React.JSX.Element {
-  return (
-    <>
-      <DialogHeader>
-        <DialogTitle>
-          {translate(
-            'auto.components.sidebar.CreateProjectLocationField.f520f83a97',
-            'Browse host filesystem'
-          )}
-        </DialogTitle>
-        <DialogDescription>
-          {translate(
-            'auto.components.sidebar.CreateProjectLocationField.b589b77997',
-            'Navigate to a directory and click Select to choose it.'
-          )}
-        </DialogDescription>
-      </DialogHeader>
-      {browseTarget.kind === 'ssh' ? (
-        <RemoteFileBrowser
-          targetId={browseTarget.targetId}
-          initialPath={initialPath || '~'}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />
-      ) : (
-        <RemoteFileBrowser
-          runtimeEnvironmentId={browseTarget.environmentId}
-          initialPath={initialPath || '~'}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />
-      )}
     </>
   )
 }
