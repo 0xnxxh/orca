@@ -166,11 +166,11 @@ export function matchesWorkspaceCleanupLocation(
   const prefix = filter.pathPrefix.trim()
   return (
     prefix.length === 0 ||
-    // Why this branch is required, not just a fast path: NFC is not
-    // prefix-preserving. A prefix that stops right before a combining mark —
-    // `/repo/e` against `/repo/e` + U+0301 + `x` — matches the literal path but
-    // not the composed key. Keeping it also makes "preparation may only reveal
-    // rows, never hide one the raw comparison showed" structural.
+    // No test needs this branch — `matchesRuntimePathPrefix` covers every case we
+    // know of. It stays because it is the only *structural* guarantee that this
+    // filter can never hide a row plain `startsWith` showed, so the preparation
+    // pipeline never has to be exhaustively re-proved to stay safe. It also skips
+    // preparation entirely for the common exact-typing case.
     facets.path.startsWith(prefix) ||
     matchesRuntimePathPrefix(facets.pathPrefixKey, prefix)
   )

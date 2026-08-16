@@ -77,6 +77,17 @@ describe('runtime path prefix match', () => {
     expect(matches('/repo/e\u0301x', '/repo/f')).toBe(false)
   })
 
+  // Why: NFD reorders combining marks by canonical class, so a prefix that stops
+  // between two marks loses its boundary in the decomposed spelling. The
+  // order-preserving spelling is what keeps these reachable.
+  it('keeps a prefix that stops between combining marks reachable', () => {
+    expect(matches('/repo/a\u0315\u0300x', '/repo//a\u0315')).toBe(true)
+    expect(matches('/repo/a\u0315\u0300x', '/repo/a\u0315')).toBe(true)
+    expect(matches('C:\\repo\\A\u0315\u0300x', 'c:/repo/a\u0315')).toBe(true)
+    expect(matches('//wsl.localhost/A\u0315\u0300/home', '//wsl$/a\u0315')).toBe(true)
+    expect(matches('/repo/a\u0315\u0300x', '/repo//a\u0316')).toBe(false)
+  })
+
   it('refuses a prefix longer than the candidate', () => {
     expect(matches('/repo', '/repo/alpha')).toBe(false)
   })

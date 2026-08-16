@@ -12,8 +12,18 @@ import { isWindowsAbsolutePathLike } from './cross-platform-path'
  * same way and compared literally.
  */
 export type RuntimePathPrefixKey = {
-  /** Separator- and case-prepared candidate; a comparison key, never a real path. */
-  path: string
+  /**
+   * Two prepared spellings of the candidate; comparison keys, never real paths.
+   *
+   * Why two: no single whole-string normalization is prefix-preserving. NFC
+   * merges `e` + U+0301 into `é` and destroys a boundary that stops at the `e`;
+   * NFD keeps code points separate but canonically reorders combining marks, so
+   * a boundary between two marks moves. `decomposed` buys canonical equivalence
+   * across NFC/NFD spellings, `ordered` keeps the candidate's own mark order, and
+   * a prefix only has to survive one of them.
+   */
+  decomposedPath: string
+  orderedPath: string
   windows: boolean
   fold: RuntimePathFoldMode
 }
@@ -33,18 +43,34 @@ const CANONICAL_WSL_UNC_ALIAS = '//wsl.localhost'
 /** Build once per candidate; the fan-out prepares only the short typed prefix. */
 export function prepareRuntimePathPrefixKey(candidatePath: string): RuntimePathPrefixKey {
   const windows = isWindowsAbsolutePathLike(candidatePath)
-  const canonical = canonicalizeForPrefixMatch(candidatePath, windows)
+  const decomposed = canonicalizeForPrefixMatch(candidatePath, windows, true)
   const fold: RuntimePathFoldMode = !windows
     ? 'none'
-    : WSL_UNC_ALIAS.test(canonical)
+    : WSL_UNC_ALIAS.test(decomposed)
       ? 'wsl-head'
       : 'all'
-  return { path: foldForPrefixMatch(canonical, fold), windows, fold }
+  return {
+    decomposedPath: foldForPrefixMatch(decomposed, fold),
+    orderedPath: foldForPrefixMatch(
+      canonicalizeForPrefixMatch(candidatePath, windows, false),
+      fold
+    ),
+    windows,
+    fold
+  }
 }
 
 export function matchesRuntimePathPrefix(key: RuntimePathPrefixKey, typedPrefix: string): boolean {
-  const prefix = foldForPrefixMatch(canonicalizeForPrefixMatch(typedPrefix, key.windows), key.fold)
-  if (key.path.startsWith(prefix)) {
+  const prepare = (decompose: boolean): string =>
+    foldForPrefixMatch(canonicalizeForPrefixMatch(typedPrefix, key.windows, decompose), key.fold)
+  return (
+    matchesPreparedPath(key.decomposedPath, prepare(true)) ||
+    matchesPreparedPath(key.orderedPath, prepare(false))
+  )
+}
+
+function matchesPreparedPath(path: string, prefix: string): boolean {
+  if (path.startsWith(prefix)) {
     return true
   }
   // Why: a trailing separator pins the prefix to a whole segment, so `/repo/`
@@ -54,16 +80,16 @@ export function matchesRuntimePathPrefix(key: RuntimePathPrefixKey, typedPrefix:
   // Why the guard: a root prefix has no parent segment to pin to. Without it a
   // bare `//` would equal the POSIX root `/`, contradicting the canonicalizer's
   // deliberate treatment of a leading `//` as UNC syntax rather than a separator.
-  return prefix.endsWith('/') && pinned.length > 0 && !pinned.endsWith('/') && key.path === pinned
+  return prefix.endsWith('/') && pinned.length > 0 && !pinned.endsWith('/') && path === pinned
 }
 
-function canonicalizeForPrefixMatch(value: string, windows: boolean): string {
-  // Why NFD and not the NFC the equality helpers use: both give the same
-  // canonical equivalence, but only NFD is prefix-preserving. Composing `e` +
-  // U+0301 into `é` destroys the boundary of a prefix that stops at the `e`, so
-  // an NFC key hides the row for `/repo/e` against `/repo/e` + U+0301 + `x`.
-  // Decomposition never merges code points, so every prefix survives it.
-  const decomposed = value.normalize('NFD')
+function canonicalizeForPrefixMatch(value: string, windows: boolean, decompose: boolean): string {
+  // Why NFD rather than the NFC the equality helpers use: both give the same
+  // canonical equivalence, but composition merges `e` + U+0301 into `é` and so
+  // destroys the boundary of a prefix that stops at the `e`. Decomposition never
+  // merges code points; the caller pairs it with the undecomposed spelling to
+  // cover the marks NFD reorders.
+  const decomposed = decompose ? value.normalize('NFD') : value
   // Why: backslash is a legal POSIX filename character, including on SSH and
   // folder workspaces, so fold it only when the candidate proves Windows syntax.
   const separators = windows ? decomposed.replace(/\\/g, '/') : decomposed
