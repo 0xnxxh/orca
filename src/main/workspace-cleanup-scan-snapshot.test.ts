@@ -414,6 +414,28 @@ describe('workspace cleanup scan snapshot', () => {
     now.mockRestore()
   })
 
+  it('bounds tombstone retention when no later scan can retire it', async () => {
+    const candidate = makeCandidate()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    await pruneWorkspaceCleanupScanSnapshot(
+      userDataDirHolder.dir,
+      candidate.worktreeId,
+      candidate.executionHostId
+    )
+
+    now.mockReturnValue(10 * 60 * 1000 + 101)
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      { ...makeBroadResult([candidate]), scannedAt: 99 }
+    )
+
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
+      candidate
+    ])
+    now.mockRestore()
+  })
+
   it('patches and prunes host-colliding workspace ids independently', async () => {
     const local = makeCandidate()
     const remote = makeCandidate({

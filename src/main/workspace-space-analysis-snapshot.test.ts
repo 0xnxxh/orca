@@ -374,6 +374,27 @@ describe('workspace space analysis snapshot', () => {
     now.mockRestore()
   })
 
+  it('bounds tombstone retention when no later analysis can retire it', async () => {
+    const row = makeWorktreeRow()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    await pruneWorkspaceSpaceAnalysisSnapshot(
+      userDataDirHolder.dir,
+      row.worktreeId,
+      row.executionHostId
+    )
+
+    now.mockReturnValue(10 * 60 * 1000 + 101)
+    await persistWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, {
+      ...makeAnalysis([row]),
+      scannedAt: 99
+    })
+
+    expect((await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir))?.worktrees).toEqual([
+      row
+    ])
+    now.mockRestore()
+  })
+
   it('prunes host-colliding workspace ids without corrupting surviving totals', async () => {
     const local = makeWorktreeRow({ sizeBytes: 1000, reclaimableBytes: 1000 })
     const remote = makeWorktreeRow({
