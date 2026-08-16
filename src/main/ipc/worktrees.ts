@@ -127,7 +127,7 @@ import {
   createLocalWorktree,
   createRemoteWorktree,
   cleanupUnusedWorktreePushTargetRemote,
-  cleanupUnusedWorktreePushTargetRemoteSsh,
+  cleanupUnusedRemoteWorktreePushTarget,
   notifyWorktreesChanged
 } from './worktree-remote'
 import { registerWorktreeChangeInvalidator } from './worktree-change-invalidators'
@@ -2612,7 +2612,7 @@ export function registerWorktreeHandlers(
                 } finally {
                   await removalGate.finish(removalCompleted)
                 }
-                await cleanupUnusedWorktreePushTargetRemoteSsh(
+                await cleanupUnusedRemoteWorktreePushTarget(
                   provider!,
                   repo.path,
                   args.worktreeId,
@@ -2720,7 +2720,7 @@ export function registerWorktreeHandlers(
               }
               // Why: a manually deleted worktree is already gone; persisted metadata proves it was an Orca-known row, so no force is needed.
               if (repo.connectionId) {
-                await cleanupUnusedWorktreePushTargetRemoteSsh(
+                await cleanupUnusedRemoteWorktreePushTarget(
                   provider!,
                   repo.path,
                   args.worktreeId,
@@ -2891,7 +2891,7 @@ export function registerWorktreeHandlers(
               rawRemovalResult,
               registeredWorktree.head
             )
-            await cleanupUnusedWorktreePushTargetRemoteSsh(
+            await cleanupUnusedRemoteWorktreePushTarget(
               provider!,
               repo.path,
               args.worktreeId,
@@ -3266,7 +3266,7 @@ export function registerWorktreeHandlers(
           cleanupTarget.branchName,
           cleanupTarget.head
         )
-        await cleanupUnusedWorktreePushTargetRemoteSsh(
+        await cleanupUnusedRemoteWorktreePushTarget(
           provider,
           repo.path,
           args.worktreeId,
