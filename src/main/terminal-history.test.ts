@@ -346,9 +346,7 @@ describe('terminal-history', () => {
       // Why: an Orca terminal opened from inside another Orca terminal inherits
       // it, and the zsh wrapper would then re-export the PARENT worktree's
       // history path here. Credit: caught by @innocarpe in #11146.
-      const env: Record<string, string> = {
-        ORCA_HISTFILE: ['', 'other', 'wt', 'zsh_history'].join(sep)
-      }
+      const env: Record<string, string> = { ORCA_HISTFILE: ['', 'other', 'wt', 'zsh_history'].join(sep) }
 
       injectHistoryEnv(env, 'repo-1::/path/wt', '/bin/zsh', '/path/wt')
 

@@ -1,6 +1,7 @@
 // Why: local PTYs and the daemon/SSH path must use identical ZDOTDIR discovery;
 // small drift here breaks different terminal transports in different ways.
 
+
 function quotePosixSingle(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }

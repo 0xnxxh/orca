@@ -299,10 +299,7 @@ export function buildShellCommandFromArgv(
  */
 const ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
-export function clearEnvCommand(
-  name: string | readonly string[],
-  shell: AgentStartupShell
-): string {
+export function clearEnvCommand(name: string | readonly string[], shell: AgentStartupShell): string {
   const names = typeof name === 'string' ? [name] : [...name]
   // Why assert rather than escape: these names are interpolated straight into a
   // shell line, so anything but an identifier is both a command injection and —
@@ -311,13 +308,13 @@ export function clearEnvCommand(
   // this cannot fire today; it exists so it stays that way.
   for (const each of names) {
     if (!ENV_VAR_NAME.test(each)) {
-      throw new Error(
-        `clearEnvCommand: ${JSON.stringify(each)} is not an environment variable name`
-      )
+      throw new Error(`clearEnvCommand: ${JSON.stringify(each)} is not an environment variable name`)
     }
   }
   if (shell === 'powershell') {
-    return names.map((each) => `Remove-Item Env:${each} -ErrorAction SilentlyContinue`).join('; ')
+    return names
+      .map((each) => `Remove-Item Env:${each} -ErrorAction SilentlyContinue`)
+      .join('; ')
   }
   if (shell === 'cmd') {
     return names.map((each) => `set "${each}="`).join(' & ')

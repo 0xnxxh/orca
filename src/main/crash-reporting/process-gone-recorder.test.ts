@@ -440,9 +440,7 @@ describe('recordProcessGoneCrash', () => {
   // child persists synchronously on every branch of the crash-reporting stack
   // (the renderer killed path defers behind a sibling-kill settle), so the
   // platform stub is still in force when the gate reads process.platform.
-  const nonRecoverableChildKill = (
-    overrides: Partial<ProcessGoneCrashEvent>
-  ): ProcessGoneCrashEvent =>
+  const nonRecoverableChildKill = (overrides: Partial<ProcessGoneCrashEvent>): ProcessGoneCrashEvent =>
     event({
       source: 'child',
       processType: 'Utility',

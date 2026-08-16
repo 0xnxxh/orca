@@ -28,14 +28,7 @@ type LiveShell = { name: string; path: string }
 /** Every Unix shell on this machine a queued Orca command line could land in. */
 function discoverShells(): LiveShell[] {
   const shells: LiveShell[] = []
-  for (const path of [
-    '/bin/sh',
-    '/bin/bash',
-    '/bin/zsh',
-    '/bin/dash',
-    '/usr/bin/dash',
-    '/bin/ksh'
-  ]) {
+  for (const path of ['/bin/sh', '/bin/bash', '/bin/zsh', '/bin/dash', '/usr/bin/dash', '/bin/ksh']) {
     if (existsSync(path) && !shells.some((shell) => shell.name === basename(path))) {
       shells.push({ name: basename(path), path })
     }
@@ -118,130 +111,130 @@ afterAll(() => {
 describe.skipIf(process.platform === 'win32')(
   'one POSIX startup dialect is correct in every Unix shell',
   () => {
-    // Always runs, so a CI lane cannot report green with the shell cases skipped.
-    it('has the fish this suite needs when CI requires one', () => {
-      expect(fishRequirementViolation(FISH)).toBeNull()
+  // Always runs, so a CI lane cannot report green with the shell cases skipped.
+  it('has the fish this suite needs when CI requires one', () => {
+    expect(fishRequirementViolation(FISH)).toBeNull()
+  })
+
+  it('found shells to test against', () => {
+    expect(SHELLS.map((shell) => shell.name)).toContain('sh')
+  })
+
+  describe.each(SHELLS)('$name', (shell) => {
+    it.each(QUOTING_CASES)('quotes %j so the shell yields it back verbatim', (value) => {
+      expect(runInShell(shell, `printf '%s' ${quoteStartupArg(value, 'posix')}`)).toBe(value)
     })
 
-    it('found shells to test against', () => {
-      expect(SHELLS.map((shell) => shell.name)).toContain('sh')
+    it('quotes a whole argv so every argument survives independently', () => {
+      const argv = QUOTING_CASES.filter((value) => value !== '')
+      const quoted = argv.map((value) => quoteStartupArg(value, 'posix')).join(' ')
+      // Why NUL: it is the one byte no case above can contain, so it cannot be
+      // forged by a value that was mis-split into two arguments.
+      const output = runInShell(shell, `printf '%s\\0' ${quoted}`)
+      expect(output.split('\0').slice(0, -1)).toEqual(argv)
     })
 
-    describe.each(SHELLS)('$name', (shell) => {
-      it.each(QUOTING_CASES)('quotes %j so the shell yields it back verbatim', (value) => {
-        expect(runInShell(shell, `printf '%s' ${quoteStartupArg(value, 'posix')}`)).toBe(value)
-      })
+    it('clears an exported variable with no wrapper installed', () => {
+      const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
+      const probe =
+        shell.name === 'fish'
+          ? `set -gx ORCA_PI_PREFILL draft; ${clear}; set -q ORCA_PI_PREFILL; and echo STILL; or echo CLEARED`
+          : `ORCA_PI_PREFILL=draft; export ORCA_PI_PREFILL; ${clear}; echo "\${ORCA_PI_PREFILL:+STILL}\${ORCA_PI_PREFILL:-CLEARED}"`
+      expect(runInShell(shell, probe).trim()).toBe('CLEARED')
+    })
 
-      it('quotes a whole argv so every argument survives independently', () => {
-        const argv = QUOTING_CASES.filter((value) => value !== '')
-        const quoted = argv.map((value) => quoteStartupArg(value, 'posix')).join(' ')
-        // Why NUL: it is the one byte no case above can contain, so it cannot be
-        // forged by a value that was mis-split into two arguments.
-        const output = runInShell(shell, `printf '%s\\0' ${quoted}`)
-        expect(output.split('\0').slice(0, -1)).toEqual(argv)
-      })
+    it('clears several variables in one statement', () => {
+      const clear = clearEnvCommand(['ORCA_A', 'ORCA_B'], 'posix')
+      const probe =
+        shell.name === 'fish'
+          ? `set -gx ORCA_A 1; set -gx ORCA_B 2; ${clear}; set -q ORCA_A; or set -q ORCA_B; and echo STILL; or echo CLEARED`
+          : `ORCA_A=1 ORCA_B=2; export ORCA_A ORCA_B; ${clear}; echo "\${ORCA_A:+STILL}\${ORCA_B:+STILL}\${ORCA_A:-CLEARED}"`
+      expect(runInShell(shell, probe).trim()).toBe('CLEARED')
+    })
 
-      it('clears an exported variable with no wrapper installed', () => {
+    // Why this case: fish's `set -e` returns non-zero for a variable that is
+    // already unset. An `A && B || C` spelling would fall through to the sh
+    // branch and print `Unknown command: unset` — the exact bug being fixed.
+    it.each([
+      ['already set', true],
+      ['already unset', false]
+    ])('exits 0 and writes nothing to stderr when the variable is %s', (_label, preset) => {
+      const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
+      const setUp = preset
+        ? shell.name === 'fish'
+          ? 'set -gx ORCA_PI_PREFILL draft; '
+          : 'ORCA_PI_PREFILL=draft; export ORCA_PI_PREFILL; '
+        : ''
+      const stderr = execFileSync(shell.path, ['-c', `${setUp}${clear} 2>&1 1>/dev/null`], {
+        encoding: 'utf8',
+        timeout: 20_000,
+        env: sandboxEnv()
+      })
+      expect(stderr).toBe('')
+    })
+
+    // Why INTERACTIVE (-i, script on stdin): aliases are only expanded by an
+    // interactive shell, which is the mode Orca types into — a `-c` run cannot
+    // see this class of bug at all. A user with `alias test=…` would otherwise
+    // silently skip both branches and keep the prefill exported.
+    it.runIf(['bash', 'zsh'].includes(shell.name))(
+      'clears even when `test` is aliased away in an interactive shell',
+      () => {
         const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
-        const probe =
-          shell.name === 'fish'
-            ? `set -gx ORCA_PI_PREFILL draft; ${clear}; set -q ORCA_PI_PREFILL; and echo STILL; or echo CLEARED`
-            : `ORCA_PI_PREFILL=draft; export ORCA_PI_PREFILL; ${clear}; echo "\${ORCA_PI_PREFILL:+STILL}\${ORCA_PI_PREFILL:-CLEARED}"`
-        expect(runInShell(shell, probe).trim()).toBe('CLEARED')
-      })
-
-      it('clears several variables in one statement', () => {
-        const clear = clearEnvCommand(['ORCA_A', 'ORCA_B'], 'posix')
-        const probe =
-          shell.name === 'fish'
-            ? `set -gx ORCA_A 1; set -gx ORCA_B 2; ${clear}; set -q ORCA_A; or set -q ORCA_B; and echo STILL; or echo CLEARED`
-            : `ORCA_A=1 ORCA_B=2; export ORCA_A ORCA_B; ${clear}; echo "\${ORCA_A:+STILL}\${ORCA_B:+STILL}\${ORCA_A:-CLEARED}"`
-        expect(runInShell(shell, probe).trim()).toBe('CLEARED')
-      })
-
-      // Why this case: fish's `set -e` returns non-zero for a variable that is
-      // already unset. An `A && B || C` spelling would fall through to the sh
-      // branch and print `Unknown command: unset` — the exact bug being fixed.
-      it.each([
-        ['already set', true],
-        ['already unset', false]
-      ])('exits 0 and writes nothing to stderr when the variable is %s', (_label, preset) => {
-        const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
-        const setUp = preset
-          ? shell.name === 'fish'
-            ? 'set -gx ORCA_PI_PREFILL draft; '
-            : 'ORCA_PI_PREFILL=draft; export ORCA_PI_PREFILL; '
-          : ''
-        const stderr = execFileSync(shell.path, ['-c', `${setUp}${clear} 2>&1 1>/dev/null`], {
+        const script = [
+          'alias test=false',
+          'ORCA_PI_PREFILL=draft; export ORCA_PI_PREFILL',
+          clear,
+          'echo "RESULT=${ORCA_PI_PREFILL:+STILL}${ORCA_PI_PREFILL:-CLEARED}"'
+        ].join('\n')
+        const out = execFileSync(shell.path, ['-i'], {
+          input: `${script}\n`,
           encoding: 'utf8',
           timeout: 20_000,
-          env: sandboxEnv()
+          env: sandboxEnv(),
+          stdio: ['pipe', 'pipe', 'ignore']
         })
-        expect(stderr).toBe('')
-      })
+        expect(out).toContain('RESULT=CLEARED')
+      }
+    )
 
-      // Why INTERACTIVE (-i, script on stdin): aliases are only expanded by an
-      // interactive shell, which is the mode Orca types into — a `-c` run cannot
-      // see this class of bug at all. A user with `alias test=…` would otherwise
-      // silently skip both branches and keep the prefill exported.
-      it.runIf(['bash', 'zsh'].includes(shell.name))(
-        'clears even when `test` is aliased away in an interactive shell',
-        () => {
-          const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
-          const script = [
-            'alias test=false',
-            'ORCA_PI_PREFILL=draft; export ORCA_PI_PREFILL',
-            clear,
-            'echo "RESULT=${ORCA_PI_PREFILL:+STILL}${ORCA_PI_PREFILL:-CLEARED}"'
-          ].join('\n')
-          const out = execFileSync(shell.path, ['-i'], {
-            input: `${script}\n`,
-            encoding: 'utf8',
-            timeout: 20_000,
-            env: sandboxEnv(),
-            stdio: ['pipe', 'pipe', 'ignore']
-          })
-          expect(out).toContain('RESULT=CLEARED')
-        }
-      )
-
-      // Why: `$fish_pid` is a heuristic — any non-empty value takes the fish
-      // branch. `set -e NAME` there would enable errexit, silently changing the
-      // semantics of every command after it for the rest of the session.
-      // `set --erase` cannot: `--` ends option parsing, so the worst a misfire
-      // costs is a usage message and the positional parameters (which an
-      // interactive shell does not meaningfully use).
-      // Scoped to bash/zsh because `set` is a POSIX special builtin: in sh, dash
-      // and ksh a misfire aborts a NON-interactive shell before anything can be
-      // observed. Interactively — the mode Orca types into — they survive without
-      // errexit too, but that is not scriptable here. bash and zsh report `$-`
-      // either way, and both DID silently enable errexit under the old `set -e`.
-      // Why `-g` is not optional: without it, a name that exists ONLY as a
-      // universal — `set -Ux CODEX_HOME …`, a normal thing for a fish user to
-      // have — is permanently deleted from every future session. Reachable from
-      // the clipboard command, which may run with no injected value at all.
-      it.runIf(shell.name === 'fish')('never deletes a lone universal variable', () => {
-        const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
-        const probe = `set -Ux ORCA_PI_PREFILL persisted; ${clear}; set -q ORCA_PI_PREFILL; and echo "RESULT=$ORCA_PI_PREFILL"; or echo RESULT=DESTROYED; set -Ue ORCA_PI_PREFILL`
-        expect(runInShell(shell, probe)).toContain('RESULT=persisted')
-      })
-
-      // A universal shadowed by the injected global: the global goes, theirs
-      // comes back. That is the wanted outcome, not a missed erase.
-      it.runIf(shell.name === 'fish')('reveals a shadowed universal instead of deleting it', () => {
-        const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
-        const probe = `set -Ux ORCA_PI_PREFILL mine; set -gx ORCA_PI_PREFILL injected; ${clear}; echo "RESULT=$ORCA_PI_PREFILL"; set -Ue ORCA_PI_PREFILL`
-        expect(runInShell(shell, probe)).toContain('RESULT=mine')
-      })
-
-      it.runIf(['bash', 'zsh'].includes(shell.name))(
-        'never enables errexit when $fish_pid misfires',
-        () => {
-          const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
-          const probe = `fish_pid=1; export fish_pid; ${clear} 2>/dev/null; printf '%s' "$-"`
-          expect(runInShell(shell, probe).trim()).not.toContain('e')
-        }
-      )
+    // Why: `$fish_pid` is a heuristic — any non-empty value takes the fish
+    // branch. `set -e NAME` there would enable errexit, silently changing the
+    // semantics of every command after it for the rest of the session.
+    // `set --erase` cannot: `--` ends option parsing, so the worst a misfire
+    // costs is a usage message and the positional parameters (which an
+    // interactive shell does not meaningfully use).
+    // Scoped to bash/zsh because `set` is a POSIX special builtin: in sh, dash
+    // and ksh a misfire aborts a NON-interactive shell before anything can be
+    // observed. Interactively — the mode Orca types into — they survive without
+    // errexit too, but that is not scriptable here. bash and zsh report `$-`
+    // either way, and both DID silently enable errexit under the old `set -e`.
+    // Why `-g` is not optional: without it, a name that exists ONLY as a
+    // universal — `set -Ux CODEX_HOME …`, a normal thing for a fish user to
+    // have — is permanently deleted from every future session. Reachable from
+    // the clipboard command, which may run with no injected value at all.
+    it.runIf(shell.name === 'fish')('never deletes a lone universal variable', () => {
+      const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
+      const probe = `set -Ux ORCA_PI_PREFILL persisted; ${clear}; set -q ORCA_PI_PREFILL; and echo "RESULT=$ORCA_PI_PREFILL"; or echo RESULT=DESTROYED; set -Ue ORCA_PI_PREFILL`
+      expect(runInShell(shell, probe)).toContain('RESULT=persisted')
     })
+
+    // A universal shadowed by the injected global: the global goes, theirs
+    // comes back. That is the wanted outcome, not a missed erase.
+    it.runIf(shell.name === 'fish')('reveals a shadowed universal instead of deleting it', () => {
+      const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
+      const probe = `set -Ux ORCA_PI_PREFILL mine; set -gx ORCA_PI_PREFILL injected; ${clear}; echo "RESULT=$ORCA_PI_PREFILL"; set -Ue ORCA_PI_PREFILL`
+      expect(runInShell(shell, probe)).toContain('RESULT=mine')
+    })
+
+    it.runIf(['bash', 'zsh'].includes(shell.name))(
+      'never enables errexit when $fish_pid misfires',
+      () => {
+        const clear = clearEnvCommand('ORCA_PI_PREFILL', 'posix')
+        const probe = `fish_pid=1; export fish_pid; ${clear} 2>/dev/null; printf '%s' "$-"`
+        expect(runInShell(shell, probe).trim()).not.toContain('e')
+      }
+    )
+  })
   }
 )

@@ -1,8 +1,6 @@
 import { getPosixOmpShellWrapper } from '../pty/omp-shell-wrapper'
 import { getPosixCodexShellLaunchPreflight } from '../pty/codex-shell-launch-preflight'
-import {
-  getZshFinalZdotdirRestoreBlock,
-  getZshStartupFileSourceBlock,
+import { getZshFinalZdotdirRestoreBlock, getZshStartupFileSourceBlock,
   ZSH_HISTFILE_RESTORE_BLOCK
 } from '../shell-templates'
 
