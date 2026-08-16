@@ -25,6 +25,9 @@ const DEFAULT_MAX_TOMBSTONES = 1000
 
 export class TerminalHost {
   private sessions = new Map<string, Session>()
+  // Why: serializes concurrent creates for one session id across the async
+  // spawn (see terminal-host-session-create).
+  private pendingCreations = new Map<string, Promise<void>>()
   private sessionTeardown = new TerminalSessionTeardown(this.sessions)
   private killedTombstones: TerminalHostTombstones
   private spawnSubprocess: TerminalHostOptions['spawnSubprocess']
@@ -59,6 +62,7 @@ export class TerminalHost {
         }
         const result = await createOrAttachTerminalSession(options, {
           sessions: this.sessions,
+          pendingCreations: this.pendingCreations,
           sessionTeardown: this.sessionTeardown,
           killedTombstones: this.killedTombstones,
           spawnSubprocess: this.spawnSubprocess,

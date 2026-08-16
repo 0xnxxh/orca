@@ -86,7 +86,9 @@ export type DaemonServerOptions = {
     env?: Record<string, string>
     command?: string
     shellOverride?: string
-  }) => SubprocessHandle
+    // Why the union: see TerminalHostOptions — cwd validation is async so an
+    // unreachable share cannot block this server's RPC loop (STA-4470).
+  }) => SubprocessHandle | Promise<SubprocessHandle>
 }
 
 type ConnectedClient = {

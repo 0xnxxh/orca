@@ -1,9 +1,10 @@
 import { basename, isAbsolute, join } from 'node:path'
 import { existsSync, accessSync, statSync, chmodSync, constants as fsConstants } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { release } from 'node:os'
 import type * as pty from 'node-pty'
 import { isWslUncPath } from '../../shared/wsl-paths'
-import { wslUncDirectoryExists } from '../wsl'
+import { wslUncDirectoryExists, wslUncDirectoryExistsAsync } from '../wsl'
 import { wrapShellSpawnForMacosTccAttribution } from './macos-tcc-login-shell'
 
 let didEnsureSpawnHelperExecutable = false
@@ -145,6 +146,42 @@ export function validateWorkingDirectory(cwd: string): void {
     throwMissingWorkingDirectory(cwd)
   }
   if (!statSync(cwd).isDirectory()) {
+    throw new Error(`Working directory "${cwd}" is not a directory.`)
+  }
+}
+
+/**
+ * Async twin of {@link validateWorkingDirectory}, for callers on a shared event
+ * loop.
+ *
+ * Why this exists: the sync version blocks the calling thread for as long as the
+ * filesystem takes to answer. Measured on Windows, `existsSync` against an
+ * unreachable UNC share blocks ~21s and `wsl.exe` costs ~1.3s on a cold distro.
+ * In the terminal daemon that freezes the whole RPC loop, so every other
+ * terminal stalls behind one unreachable workspace and clients hit their 30s
+ * request ceiling (STA-4470). Off the daemon, the sync version is still fine.
+ */
+export async function validateWorkingDirectoryAsync(cwd: string): Promise<void> {
+  if (isWslUncPath(cwd)) {
+    const existsInDistro = await wslUncDirectoryExistsAsync(cwd)
+    if (existsInDistro === false) {
+      throwMissingWorkingDirectory(cwd)
+    }
+    if (existsInDistro === true) {
+      return
+    }
+  }
+
+  let stats: Awaited<ReturnType<typeof stat>>
+  try {
+    stats = await stat(cwd)
+  } catch {
+    // Why one stat, not exists-then-stat: the sync path pays the filesystem
+    // timeout twice against an unreachable share. ENOENT and an unreachable
+    // host are indistinguishable here, which matches the sync behaviour.
+    throwMissingWorkingDirectory(cwd)
+  }
+  if (!stats.isDirectory()) {
     throw new Error(`Working directory "${cwd}" is not a directory.`)
   }
 }
