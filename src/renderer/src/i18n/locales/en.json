@@ -334,8 +334,16 @@
           "runtimeScopeForbiddenTitle": "This connection has limited (mobile) access",
           "runtimeScopeForbiddenDescription": "Workspaces are unavailable on a mobile-scope pairing. Reconnect using the browser access link from Settings → Runtime Environments → Share this Orca server.",
           "a17f4d2e93": "Could not update this workspace.",
-          "a1c4f7b2d3": "Update the remote runtime to change this workspace’s linked issue",
-          "b8e2d6014f": "Update the remote runtime to link Linear issues"
+          "metadata": {
+            "worktree": {
+              "meta": {
+                "persist": {
+                  "877e3638d8": "Update the remote runtime to change this workspace’s linked issue",
+                  "4367540861": "Update the remote runtime to link Linear issues"
+                }
+              }
+            }
+          }
         },
         "repos": {
           "2975400634": "Update Orca server to open non-Git folders on this runtime.",

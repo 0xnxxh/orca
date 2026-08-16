@@ -34,7 +34,7 @@ export async function persistWorktreeMeta(
       target.environmentId,
       WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY,
       translate(
-        'auto.store.slices.worktrees.a1c4f7b2d3',
+        'auto.store.slices.worktrees.metadata.worktree.meta.persist.877e3638d8',
         'Update the remote runtime to change this workspace’s linked issue'
       )
     )
@@ -46,7 +46,7 @@ export async function persistWorktreeMeta(
       target.environmentId,
       TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY,
       translate(
-        'auto.store.slices.worktrees.b8e2d6014f',
+        'auto.store.slices.worktrees.metadata.worktree.meta.persist.4367540861',
         'Update the remote runtime to link Linear issues'
       )
     )
