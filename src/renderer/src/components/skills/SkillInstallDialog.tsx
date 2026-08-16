@@ -30,6 +30,8 @@ import {
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 import { useSkillInstallProgress } from './skill-install-progress-state'
 import { translate } from '@/i18n/i18n'
+import { resolveSkillShareForInstall } from './skill-warning-preview-gate'
+import { useSkillInstallRisk } from './use-skill-install-risk'
 
 export function SkillInstallDialog({
   open,
@@ -70,6 +72,7 @@ export function SkillInstallDialog({
     wslDistro: executionTarget?.distro ?? null
   })
   const providers = providerChoice ?? defaultSelectedSkillProviders(detectedAgents)
+  const installRisk = useSkillInstallRisk(preview?.version ?? null)
 
   const workspaceChoices = useMemo(
     () => skillInstallWorkspaceChoices({ environmentId, folderWorkspaces, repos, worktreesByRepo }),
@@ -95,7 +98,7 @@ export function SkillInstallDialog({
     setError(null)
     setResult(null)
     try {
-      const operation = await window.api.skills.resolveShare(shareId)
+      const operation = await resolveSkillShareForInstall(shareId)
       if (operation.status !== 'ok') {
         setError(
           operation.status === 'unconfigured'
@@ -268,8 +271,6 @@ export function SkillInstallDialog({
                   'Install shared skill'
                 )}
           </DialogTitle>
-          {/* Why: the title plus what is on screen already says this; the old
-              line was package-identity jargon a recipient cannot act on. */}
         </DialogHeader>
 
         {resolvingInitialLink ? (
@@ -300,6 +301,7 @@ export function SkillInstallDialog({
             destinationPreview={destinationPreview}
             result={result}
             busy={busy}
+            riskSummary={installRisk!}
             onDiscard={() => void install(true)}
           >
             <SkillInstallTargetFields

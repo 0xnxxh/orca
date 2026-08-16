@@ -5,6 +5,8 @@ import type { SkillCloudVersion } from '../../../../shared/skill-cloud-contract'
 import type { SkillBundleInstallPreview } from '../../../../shared/skill-bundle-install-contract'
 import { SkillPackageChecklist } from './SkillPackageChecklist'
 import { checklistItemsFromVersion } from './skill-package-checklist-items'
+import { SkillInstallRiskNotice } from './SkillInstallRiskNotice'
+import type { SkillInstallRiskSummary } from './skill-package-install-risk'
 import { translate } from '@/i18n/i18n'
 
 type BundleVersion = SkillCloudVersion & {
@@ -40,6 +42,7 @@ export function SkillBundleInstallReview(props: {
   selectedSkillIds: ReadonlySet<string>
   destinationPreview: SkillBundleInstallPreview | null
   replaceSkillIds: ReadonlySet<string>
+  riskSummary: SkillInstallRiskSummary
   busy: boolean
   onToggleSkill(skillId: string, selected: boolean): void
   onToggleAll(selected: boolean): void
@@ -92,13 +95,9 @@ export function SkillBundleInstallReview(props: {
             {props.version.releaseNotes}
           </p>
         ) : null}
-        <p className="text-xs leading-5 text-muted-foreground">
-          {translate(
-            'auto.components.skills.install.trustNote',
-            'Skills are instructions and code from their author. Install what you trust.'
-          )}
-        </p>
       </section>
+
+      <SkillInstallRiskNotice summary={props.riskSummary} />
 
       {props.children}
 

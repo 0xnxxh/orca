@@ -4501,7 +4501,16 @@
           "rowInstalled": "Already installed",
           "rowUpdate": "Update",
           "rowNew": "New",
-          "chooseSkills": "Choose what to install from this link."
+          "chooseSkills": "Choose what to install from this link.",
+          "singleRunnableWarning": "This skill includes scripts or binary files.",
+          "runnableWarning": "{{affectedCount}} of {{selectedCount}} selected skills include scripts or binary files: {{affected}}.",
+          "reviewRunnableFiles": "Includes scripts or binary files",
+          "reviewSupportingFiles": "Includes supporting files",
+          "reviewInstructions": "About this skill",
+          "supportingFileWarning": "The selected skills include {{fileCount}} beyond SKILL.md.",
+          "agentAccessWarning": "Skills contain instructions your agent may follow. Continue only if you trust the source of this share link.",
+          "fileBinary": "binary",
+          "fileRunnable": "runnable"
         },
         "filter": {
           "allAgents": "All agents",

@@ -6,23 +6,30 @@ import { translate } from '@/i18n/i18n'
 import { byteLabel } from './skill-share-preview-summary'
 import {
   checklistItemSummary,
-  isScriptFile,
   type SkillChecklistFile,
   type SkillChecklistItem
 } from './skill-package-checklist-items'
+import { isSkillBinaryFile, isSkillRunnableFile } from './skill-package-install-risk'
 
 function FileRow({ file }: { file: SkillChecklistFile }): React.JSX.Element {
-  const tag = file.executable
-    ? translate('auto.components.skills.share.fileExecutable', 'executable')
-    : isScriptFile(file)
-      ? translate('auto.components.skills.share.fileScript', 'script')
+  const binary = isSkillBinaryFile(file)
+  const runnable = isSkillRunnableFile(file)
+  const tags = [
+    binary ? translate('auto.components.skills.install.fileBinary', 'binary') : null,
+    runnable
+      ? file.executable
+        ? translate('auto.components.skills.share.fileExecutable', 'executable')
+        : translate('auto.components.skills.install.fileRunnable', 'runnable')
       : null
+  ].filter(Boolean)
   return (
     <li className="flex items-baseline gap-2 text-[11px]">
       <span className="min-w-0 flex-1 break-all font-mono" title={file.path}>
         {file.path}
       </span>
-      {tag ? <span className="shrink-0 text-muted-foreground">{tag}</span> : null}
+      {tags.length ? (
+        <span className="shrink-0 text-muted-foreground">{tags.join(' · ')}</span>
+      ) : null}
       <span className="shrink-0 tabular-nums text-muted-foreground">{byteLabel(file.size)}</span>
     </li>
   )

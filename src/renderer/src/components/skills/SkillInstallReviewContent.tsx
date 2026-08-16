@@ -9,6 +9,8 @@ import type {
 } from '../../../../shared/skill-install-contract'
 import { SkillPackageChecklist } from './SkillPackageChecklist'
 import { checklistItemsFromVersion } from './skill-package-checklist-items'
+import { SkillInstallRiskNotice } from './SkillInstallRiskNotice'
+import type { SkillInstallRiskSummary } from './skill-package-install-risk'
 import { skillInstallResultLabel } from './skill-install-result-label'
 import type { ResolvedSkillShare } from './skill-share-version-summary'
 import { translate } from '@/i18n/i18n'
@@ -115,6 +117,7 @@ export function SkillInstallReview({
   destinationPreview,
   result,
   busy,
+  riskSummary,
   onDiscard,
   children
 }: {
@@ -122,6 +125,7 @@ export function SkillInstallReview({
   destinationPreview: SkillInstallPreview | null
   result: SkillInstallResult | null
   busy: boolean
+  riskSummary: SkillInstallRiskSummary
   onDiscard: () => void
   children: ReactNode
 }): React.JSX.Element {
@@ -149,13 +153,9 @@ export function SkillInstallReview({
             {version.releaseNotes}
           </p>
         ) : null}
-        <p className="text-xs leading-5 text-muted-foreground">
-          {translate(
-            'auto.components.skills.install.trustNote',
-            'Skills are instructions and code from their author. Install what you trust.'
-          )}
-        </p>
       </section>
+
+      <SkillInstallRiskNotice summary={riskSummary} />
 
       {children}
 

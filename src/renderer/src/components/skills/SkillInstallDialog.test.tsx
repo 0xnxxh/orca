@@ -293,7 +293,77 @@ describe('SkillInstallDialog', () => {
     expect(screen.queryByText(char.repeat(64))).toBeNull()
     expect(screen.queryByText('Immutable version')).toBeNull()
     expect(screen.queryByText('0 scripts')).toBeNull()
-    expect(screen.getAllByText(/No scripts or executables/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Instructions only/).length).toBeGreaterThan(0)
+  })
+
+  it('warns about supporting files without blocking installation', async () => {
+    const sharedVersion = version()
+    if (!('files' in sharedVersion.manifest)) {
+      throw new Error('expected single skill')
+    }
+    sharedVersion.manifest.files.push({
+      path: 'references/guide.md',
+      size: 12,
+      executable: false,
+      classification: 'text',
+      sha256: DIGEST,
+      identitySha256: DIGEST
+    })
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockResolvedValue({
+      status: 'ok',
+      value: { id: 'share_1', version: sharedVersion }
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+
+    await inspectSkill()
+    expect(screen.getByText('Includes supporting files')).toBeTruthy()
+    expect(screen.getByText(/include 1 file beyond SKILL.md/)).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: /I trust the sender/ })).toBeNull()
+    expect(
+      (screen.getByRole('button', { name: 'Install skill' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+  })
+
+  it('describes selected bundle skills with runnable files without blocking installation', async () => {
+    const sharedVersion = bundleVersion()
+    if (!('skills' in sharedVersion.manifest)) {
+      throw new Error('expected bundle')
+    }
+    sharedVersion.manifest.skills[0].files.push({
+      path: 'release.py',
+      size: 12,
+      executable: false,
+      classification: 'text',
+      sha256: DIGEST,
+      identitySha256: DIGEST
+    })
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockResolvedValue({
+      status: 'ok',
+      value: { id: 'share_1', version: sharedVersion }
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills, preflight: detectionApi(['codex']) }
+    })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+
+    await inspectSkill('alpha description')
+    expect(screen.getByText(/1 of 2 selected skills include scripts or binary files: alpha/))
+    expect(screen.queryByRole('checkbox', { name: /I trust the sender/ })).toBeNull()
+    const installButton = screen.getByRole('button', { name: 'Install 2 skills' })
+    expect((installButton as HTMLButtonElement).disabled).toBe(false)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /alpha/ }))
+    expect(screen.getByText('About this skill')).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: 'Install 1 skill' }) as HTMLButtonElement).disabled
+    ).toBe(false)
   })
 
   it('focuses the link first and programmatically names destination controls', async () => {

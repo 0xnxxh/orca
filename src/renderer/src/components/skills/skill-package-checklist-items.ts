@@ -1,8 +1,17 @@
 import type { SkillCloudVersion } from '../../../../shared/skill-cloud-contract'
 import { fileCountLabel } from './skill-display-labels'
-import { summarizeExecutableContent } from './skill-share-preview-summary'
+import {
+  isSkillBinaryFile,
+  isSkillInstructionFile,
+  isSkillRunnableFile
+} from './skill-package-install-risk'
 
-export type SkillChecklistFile = { path: string; size: number; executable: boolean }
+export type SkillChecklistFile = {
+  path: string
+  size: number
+  executable: boolean
+  classification: 'text' | 'binary'
+}
 
 export type SkillChecklistItem = {
   id: string
@@ -33,18 +42,26 @@ export function checklistItemsFromVersion(version: SkillCloudVersion): SkillChec
   ]
 }
 
-export function isScriptFile(file: SkillChecklistFile): boolean {
-  return file.path.startsWith('scripts/')
-}
-
-/** Row summary: how much is here, and whether any of it can run. */
+/** Row summary: how much is here, and what deserves extra review. */
 export function checklistItemSummary(files: readonly SkillChecklistFile[]): {
   label: string
   risky: boolean
 } {
-  const risk = summarizeExecutableContent(
-    files.filter(isScriptFile).length,
-    files.filter((file) => file.executable).length
-  )
-  return { label: `${fileCountLabel(files.length)} · ${risk.label}`, risky: risk.risky }
+  const additionalCount = files.filter((file) => !isSkillInstructionFile(file)).length
+  const runnableCount = files.filter(isSkillRunnableFile).length
+  const binaryCount = files.filter(isSkillBinaryFile).length
+  const labels: string[] = []
+  if (runnableCount) {
+    labels.push(`${runnableCount} runnable`)
+  }
+  if (binaryCount) {
+    labels.push(`${binaryCount} binary`)
+  }
+  if (!labels.length) {
+    labels.push(additionalCount ? `${additionalCount} supporting` : 'Instructions only')
+  }
+  return {
+    label: `${fileCountLabel(files.length)} · ${labels.join(' · ')}`,
+    risky: additionalCount > 0
+  }
 }

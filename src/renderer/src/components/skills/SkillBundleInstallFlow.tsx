@@ -21,6 +21,8 @@ import type { SkillInstallProviderId } from '../../../../shared/skill-install-pr
 import { skillInstallWorkspaceChoices } from './skill-install-workspace-choices'
 import { useSkillInstallProgress } from './skill-install-progress-state'
 import { translate } from '@/i18n/i18n'
+import { checklistItemsFromVersion } from './skill-package-checklist-items'
+import { summarizeSkillInstallRisk } from './skill-package-install-risk'
 
 type BundleVersion = SkillCloudVersion & {
   manifest: Extract<SkillCloudVersion['manifest'], { skills: unknown }>
@@ -75,6 +77,10 @@ export function SkillBundleInstallFlow(props: {
     wslDistro: executionTarget?.distro ?? null
   })
   const providers = providerChoice ?? defaultSelectedSkillProviders(detectedAgents)
+  const riskSummary = useMemo(
+    () => summarizeSkillInstallRisk(checklistItemsFromVersion(props.version), selectedSkillIds),
+    [props.version, selectedSkillIds]
+  )
 
   const workspaceChoices = useMemo(
     () => skillInstallWorkspaceChoices({ environmentId, folderWorkspaces, repos, worktreesByRepo }),
@@ -234,6 +240,7 @@ export function SkillBundleInstallFlow(props: {
           selectedSkillIds={selectedSkillIds}
           destinationPreview={destinationPreview}
           replaceSkillIds={replaceSkillIds}
+          riskSummary={riskSummary}
           busy={busy}
           onToggleSkill={(id, selected) => {
             setSelectedSkillIds((current) => {

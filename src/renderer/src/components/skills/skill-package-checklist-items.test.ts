@@ -96,16 +96,28 @@ describe('checklistItemsFromVersion', () => {
 describe('checklistItemSummary', () => {
   it('says once when nothing in the skill can run', () => {
     expect(checklistItemSummary([file('SKILL.md')])).toEqual({
-      label: '1 file · No scripts or executables',
+      label: '1 file · Instructions only',
       risky: false
     })
   })
 
-  it('flags the row when a file can run', () => {
+  it('flags supporting and runnable content for review', () => {
+    expect(checklistItemSummary([file('SKILL.md'), file('references/guide.md')])).toEqual({
+      label: '2 files · 1 supporting',
+      risky: true
+    })
     expect(checklistItemSummary([file('SKILL.md'), file('scripts/setup.sh')])).toEqual({
-      label: '2 files · 1 script',
+      label: '2 files · 1 runnable',
       risky: true
     })
     expect(checklistItemSummary([file('bin/tool', true)]).risky).toBe(true)
+  })
+
+  it('preserves binary classification in the row summary', () => {
+    const binary = { ...file('assets/logo.png'), classification: 'binary' as const }
+    expect(checklistItemSummary([file('SKILL.md'), binary])).toEqual({
+      label: '2 files · 1 binary',
+      risky: true
+    })
   })
 })
