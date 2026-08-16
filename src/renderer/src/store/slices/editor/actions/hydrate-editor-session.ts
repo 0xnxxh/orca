@@ -61,6 +61,10 @@ export function createHydrateEditorSession(
               usedOpenFileIds.has(pf.filePath)
                 ? ownedId
                 : pf.filePath
+            // Why: the persisted schema allows repeated (path, worktree, runtime) tuples, and an owned id repeats verbatim — restoring both would put two files under one id.
+            if (usedOpenFileIds.has(id)) {
+              continue
+            }
             usedOpenFileIds.add(id)
             // Why: map from the collision-derived legacy id; keying by filePath would collapse same-path local/runtime tabs onto the last owner to hydrate.
             addEditorFileIdMigration(editorFileIdMigrationsByWorktree, worktreeId, legacyId, id)

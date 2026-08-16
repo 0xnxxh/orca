@@ -44,6 +44,7 @@ export function buildRestoredEditorOwnerTransition(
       movedTabs.map((tab) => [tab.id, migrations.get(tab.id) ?? tab.id])
     )
     const mappedMovedTabIds = movedTabs.map((tab) => tabIdMigration.get(tab.id) ?? tab.id)
+    const mappedMovedTabIdSet = new Set(mappedMovedTabIds)
     const mappedMovedTabBarIds = movedTabs.map(
       (tab) => migrations.get(tab.entityId) ?? tab.entityId
     )
@@ -102,7 +103,10 @@ export function buildRestoredEditorOwnerTransition(
       nextUnifiedTabsByWorktree[sourceWorktreeId] ?? []
     ).filter((tab) => !movedTabIds.has(tab.id))
     nextUnifiedTabsByWorktree[targetWorktreeId] = [
-      ...(nextUnifiedTabsByWorktree[targetWorktreeId] ?? []),
+      // Why: a leftover target tab carrying a migrated id would duplicate the id that destinationOrder keeps only once.
+      ...(nextUnifiedTabsByWorktree[targetWorktreeId] ?? []).filter(
+        (tab) => !mappedMovedTabIdSet.has(tab.id)
+      ),
       ...movedTabs.map((tab) => ({
         ...tab,
         id: tabIdMigration.get(tab.id) ?? tab.id,

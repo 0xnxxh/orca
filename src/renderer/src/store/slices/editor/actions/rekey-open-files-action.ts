@@ -105,9 +105,12 @@ export function createRekeyOpenFilesAction(
         }
 
         const reveal = s.pendingEditorReveal
-        const rekeyForReveal = reveal
-          ? rekeys.find((r) => r.oldFilePath === reveal.filePath)
-          : undefined
+        // Why: two worktrees can rekey the same oldFilePath, so an id-keyed reveal must match its own file, not the first path match.
+        const rekeyForReveal = !reveal
+          ? undefined
+          : reveal.fileId
+            ? rekeyByOldId.get(reveal.fileId)
+            : rekeys.find((r) => r.oldFilePath === reveal.filePath)
 
         return {
           openFiles: nextOpenFiles,
