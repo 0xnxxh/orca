@@ -40,11 +40,8 @@ export class SshPtyProvider implements IPtyProvider {
   private spawnExitRaces = new SshPtySpawnExitRaceTracker()
   private readonly outputState: SshPtyProviderOutputState
 
-  requestHostRpc = (
-    method: string,
-    params: unknown,
-    options?: { signal?: AbortSignal; timeoutMs?: number }
-  ): Promise<unknown> => this.mux.request(method, params as Record<string, unknown>, options)
+  requestHostRpc: NonNullable<IPtyProvider['requestHostRpc']> = (method, params, options) =>
+    this.mux.request(method, params as Record<string, unknown>, options)
 
   constructor(
     connectionId: string,
@@ -310,9 +307,7 @@ export class SshPtyProvider implements IPtyProvider {
     return processes
   }
 
-  hasPty(id: string): boolean {
-    return this.livePtyIds.has(id)
-  }
+  hasPty = (id: string): boolean => this.livePtyIds.has(id)
 
   async getDefaultShell(): Promise<string> {
     const result = await this.mux.request('pty.getDefaultShell')
