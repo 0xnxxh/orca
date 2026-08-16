@@ -158,6 +158,28 @@ describe('agent prompt submission verification', () => {
     expect(retrySubmit).not.toHaveBeenCalled()
   })
 
+  it('reports permission reached after the retry as blocked', async () => {
+    vi.useFakeTimers()
+    let current = activity()
+    const retrySubmit = vi.fn(async () => {
+      current = activity({ lifecycleSequence: 5, status: 'permission' })
+      return 'retried' as const
+    })
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      prompt: 'review this',
+      readActivity: () => current,
+      readTextBeforeCursor: async () => '› review this',
+      retrySubmit
+    })
+    const rejected = expect(verification).rejects.toThrow('agent_prompt_blocked')
+
+    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS + 50)
+
+    await rejected
+    expect(retrySubmit).toHaveBeenCalledOnce()
+  })
+
   it('cancels before retrying', async () => {
     vi.useFakeTimers()
     const controller = new AbortController()

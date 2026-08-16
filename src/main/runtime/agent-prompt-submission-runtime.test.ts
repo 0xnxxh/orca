@@ -3,6 +3,7 @@ import {
   AGENT_PROMPT_BRACKETED_PASTE_END,
   AGENT_PROMPT_SUBMIT_DELAY_MS
 } from '../../shared/agent-prompt-injection'
+import { AGENT_PROMPT_EFFECT_TIMEOUT_MS } from './agent-prompt-submission-verification'
 import { OrcaRuntimeService } from './orca-runtime'
 import { makeStore } from './runtime-rpc-worktree-store-fixtures'
 
@@ -130,6 +131,87 @@ describe('agent prompt submission runtime', () => {
       'agent_prompt_blocked'
     )
     expect(writes).toEqual([])
+  })
+
+  it('prefers a later permission title over an earlier explicit idle status', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    runtime.onPtyData(
+      'pty-prompt',
+      '\x1b]9999;{"state":"done","agentType":"aider"}\x07',
+      Date.now()
+    )
+    runtime.onPtyData('pty-prompt', '\x1b]0;Codex waiting for permission\x07', Date.now())
+
+    await expect(runtime.sendTerminalAgentPrompt(handle, 'review this')).rejects.toThrow(
+      'agent_prompt_blocked'
+    )
+    expect(writes).toEqual([])
+  })
+
+  it('does not retry from a composer snapshot older than observed output', async () => {
+    vi.useFakeTimers()
+    let resolveSnapshot!: (snapshot: {
+      data: string
+      cols: number
+      rows: number
+      seq: number
+      source: 'headless'
+    }) => void
+    let snapshotSequence = 0
+    const runtime = new OrcaRuntimeService(makeStore() as never)
+    const writes: string[] = []
+    const serializeProviderBuffer = vi.fn(
+      () =>
+        new Promise<{
+          data: string
+          cols: number
+          rows: number
+          seq: number
+          source: 'headless'
+        }>((resolve) => {
+          snapshotSequence = runtime.getPtyOutputSequence('pty-prompt')
+          resolveSnapshot = resolve
+        })
+    )
+    runtime.setPtyController({
+      spawn: vi.fn().mockResolvedValue({ id: 'pty-prompt' }),
+      write: (_ptyId, data) => {
+        writes.push(data)
+        if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+          runtime.onPtyData('pty-prompt', '\x1b[2J\x1b[H› review this', Date.now())
+        }
+        return true
+      },
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    const terminal = await runtime.createTerminal(`path:${WORKTREE_PATH}`, {
+      launchAgent: 'aider'
+    })
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-prompt',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const submission = runtime.sendTerminalAgentPrompt(terminal.handle, 'review this')
+
+    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS + 500)
+    await vi.waitFor(() => expect(serializeProviderBuffer).toHaveBeenCalledOnce())
+    runtime.onPtyData('pty-prompt', '\x1b[2J\x1b[Hagent accepted', Date.now())
+    resolveSnapshot({
+      data: '\x1b[2J\x1b[H› review this',
+      cols: 80,
+      rows: 24,
+      seq: snapshotSequence,
+      source: 'headless'
+    })
+    await vi.runAllTimersAsync()
+
+    await expect(submission).resolves.toMatchObject({ accepted: true })
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
   it('blocks a retry when permission appears after the first Enter', async () => {

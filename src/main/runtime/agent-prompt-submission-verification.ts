@@ -72,7 +72,10 @@ export async function verifyAgentPromptSubmission(
     options.readActivity,
     options.signal
   )
-  if (retryEffect === 'working' || retryEffect === 'permission') {
+  if (retryEffect === 'permission') {
+    throw new Error('agent_prompt_blocked')
+  }
+  if (retryEffect === 'working') {
     return { retried: true }
   }
   if (retryEffect === 'none') {

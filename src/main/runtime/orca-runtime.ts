@@ -18620,7 +18620,10 @@ export class OrcaRuntimeService {
         if (current.generation !== baseline.generation) {
           throw new Error('terminal_handle_stale')
         }
-        return visible?.generation === baseline.generation ? visible.textBeforeCursor : null
+        return visible?.generation === baseline.generation &&
+          visible.sequence >= current.outputSequence
+          ? visible.textBeforeCursor
+          : null
       },
       retrySubmit: async (expected) => {
         assertAgentPromptRequestActive(options.signal)
@@ -18679,11 +18682,15 @@ export class OrcaRuntimeService {
     const explicit = this.getFreshExplicitAgentStatusForHandle(handle)?.status
     const ptyStatus = this.ptysById.get(ptyId)?.lastAgentStatus ?? null
     const lifecycle = this.agentPromptLifecycleByPtyId.get(ptyId)
+    const status =
+      lifecycle?.status === 'permission'
+        ? 'permission'
+        : (explicit ?? ptyStatus ?? lifecycle?.status ?? null)
     return {
       generation: this.getPtyLifecycleGeneration(ptyId),
       lifecycleSequence: lifecycle?.sequence ?? 0,
       outputSequence: this.getPtyOutputSequence(ptyId),
-      status: explicit ?? ptyStatus ?? lifecycle?.status ?? null
+      status
     }
   }
 
