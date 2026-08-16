@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AGENT_PROMPT_BRACKETED_PASTE_END } from '../../shared/agent-prompt-injection'
+import {
+  AGENT_PROMPT_BRACKETED_PASTE_END,
+  AGENT_PROMPT_SUBMIT_DELAY_MS
+} from '../../shared/agent-prompt-injection'
 import { OrcaRuntimeService } from './orca-runtime'
 import { makeStore } from './runtime-rpc-worktree-store-fixtures'
 
@@ -116,5 +119,78 @@ describe('agent prompt submission runtime', () => {
 
     await rejected
     expect(writes).not.toContain('\r')
+  })
+
+  it('does not paste into an existing permission prompt', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    runtime.onPtyData('pty-prompt', '\x1b]0;Codex waiting for permission\x07', Date.now())
+
+    await expect(runtime.sendTerminalAgentPrompt(handle, 'review this')).rejects.toThrow(
+      'agent_prompt_blocked'
+    )
+    expect(writes).toEqual([])
+  })
+
+  it('blocks a retry when permission appears after the first Enter', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+        runtime.onPtyData('pty-prompt', '\x1b[2J\x1b[H› review this', Date.now())
+      } else if (data === '\r') {
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex waiting for permission\x07', Date.now())
+      }
+    })
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    const rejected = expect(submission).rejects.toThrow('agent_prompt_blocked')
+
+    await vi.runAllTimersAsync()
+
+    await rejected
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+  })
+
+  it('serializes concurrent prompt submissions to one PTY', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data === '\r') {
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+      }
+    })
+
+    const first = runtime.sendTerminalAgentPrompt(handle, 'first prompt')
+    const second = runtime.sendTerminalAgentPrompt(handle, 'second prompt')
+    await vi.runAllTimersAsync()
+    await Promise.all([first, second])
+
+    const firstPaste = writes.findIndex((data) => data.includes('first prompt'))
+    const firstEnter = writes.indexOf('\r', firstPaste + 1)
+    const secondPaste = writes.findIndex((data) => data.includes('second prompt'))
+    const secondEnter = writes.indexOf('\r', secondPaste + 1)
+    expect(firstPaste).toBeGreaterThanOrEqual(0)
+    expect(firstEnter).toBeGreaterThan(firstPaste)
+    expect(secondPaste).toBeGreaterThan(firstEnter)
+    expect(secondEnter).toBeGreaterThan(secondPaste)
+  })
+
+  it('does not retry after the request is cancelled', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+        runtime.onPtyData('pty-prompt', '\x1b[2J\x1b[H› review this', Date.now())
+      }
+    })
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this', {
+      signal: controller.signal
+    })
+    const rejected = expect(submission).rejects.toThrow('request_aborted')
+
+    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_SUBMIT_DELAY_MS)
+    controller.abort()
+    await vi.runAllTimersAsync()
+
+    await rejected
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 })

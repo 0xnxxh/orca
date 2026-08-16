@@ -16,35 +16,70 @@ type AgentPromptVerificationOptions = {
   readActivity: () => AgentPromptActivity
   readTextBeforeCursor: () => Promise<string | null>
   retrySubmit: (expected: AgentPromptActivity) => Promise<'retried' | 'activity'>
+  signal?: AbortSignal
 }
+
+type AgentPromptEffect = 'working' | 'permission' | 'activity' | 'none'
 
 export async function verifyAgentPromptSubmission(
   options: AgentPromptVerificationOptions
 ): Promise<{ retried: boolean }> {
+  throwIfAgentPromptAborted(options.signal)
+  if (options.baseline.status === 'permission') {
+    throw new Error('agent_prompt_blocked')
+  }
   if (options.baseline.status === 'working') {
     return { retried: false }
   }
-  if (await waitForAgentPromptActivity(options.baseline, options.readActivity)) {
+  const firstEffect = await waitForAgentPromptEffect(
+    options.baseline,
+    options.readActivity,
+    options.signal
+  )
+  if (firstEffect === 'permission') {
+    throw new Error('agent_prompt_blocked')
+  }
+  if (firstEffect === 'working') {
     return { retried: false }
   }
 
   const proofActivity = options.readActivity()
   assertSamePromptGeneration(options.baseline, proofActivity)
+  assertPromptNotBlocked(proofActivity)
   const textBeforeCursor = await options.readTextBeforeCursor()
   const activityAfterProof = options.readActivity()
   assertSamePromptGeneration(options.baseline, activityAfterProof)
+  assertPromptNotBlocked(activityAfterProof)
   if (agentPromptActivityChanged(options.baseline, activityAfterProof)) {
-    return { retried: false }
+    if (activityAfterProof.status === 'working') {
+      return { retried: false }
+    }
+    if (!textBeforeCursorEndsWithPrompt(textBeforeCursor, options.prompt)) {
+      return { retried: false }
+    }
   }
   if (!textBeforeCursorEndsWithPrompt(textBeforeCursor, options.prompt)) {
     throw new Error('agent_prompt_stalled')
   }
 
+  throwIfAgentPromptAborted(options.signal)
   const retry = await options.retrySubmit(activityAfterProof)
   if (retry === 'activity') {
     return { retried: false }
   }
-  if (!(await waitForAgentPromptActivity(activityAfterProof, options.readActivity))) {
+  const retryEffect = await waitForAgentPromptEffect(
+    activityAfterProof,
+    options.readActivity,
+    options.signal
+  )
+  if (retryEffect === 'working' || retryEffect === 'permission') {
+    return { retried: true }
+  }
+  if (retryEffect === 'none') {
+    throw new Error('agent_prompt_stalled')
+  }
+  const retryTextBeforeCursor = await options.readTextBeforeCursor()
+  if (textBeforeCursorEndsWithPrompt(retryTextBeforeCursor, options.prompt)) {
     throw new Error('agent_prompt_stalled')
   }
   return { retried: true }
@@ -56,7 +91,8 @@ export function agentPromptActivityChanged(
 ): boolean {
   return (
     current.lifecycleSequence !== baseline.lifecycleSequence ||
-    current.outputSequence !== baseline.outputSequence
+    current.outputSequence !== baseline.outputSequence ||
+    current.status !== baseline.status
   )
 }
 
@@ -67,26 +103,41 @@ export function textBeforeCursorEndsWithPrompt(
   if (!textBeforeCursor) {
     return false
   }
-  const expected = normalizeTerminalComposerText(sanitizeAgentPromptText(prompt))
-  return expected.length > 0 && normalizeTerminalComposerText(textBeforeCursor).endsWith(expected)
+  const expected = sanitizeAgentPromptText(prompt)
+  return expected.length > 0 && textBeforeCursor.endsWith(expected)
 }
 
-async function waitForAgentPromptActivity(
+async function waitForAgentPromptEffect(
   baseline: AgentPromptActivity,
-  readActivity: () => AgentPromptActivity
-): Promise<boolean> {
+  readActivity: () => AgentPromptActivity,
+  signal?: AbortSignal
+): Promise<AgentPromptEffect> {
   const deadline = Date.now() + AGENT_PROMPT_EFFECT_TIMEOUT_MS
+  let activityObserved = false
   while (Date.now() < deadline) {
+    throwIfAgentPromptAborted(signal)
     const current = readActivity()
     assertSamePromptGeneration(baseline, current)
-    if (agentPromptActivityChanged(baseline, current)) {
-      return true
+    if (current.status === 'permission') {
+      return 'permission'
     }
-    await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_EFFECT_POLL_MS))
+    if (current.status === 'working') {
+      return 'working'
+    }
+    if (agentPromptActivityChanged(baseline, current)) {
+      activityObserved = true
+    }
+    await waitForAgentPromptPoll(signal)
   }
   const current = readActivity()
   assertSamePromptGeneration(baseline, current)
-  return agentPromptActivityChanged(baseline, current)
+  if (current.status === 'permission') {
+    return 'permission'
+  }
+  if (current.status === 'working') {
+    return 'working'
+  }
+  return activityObserved || agentPromptActivityChanged(baseline, current) ? 'activity' : 'none'
 }
 
 function assertSamePromptGeneration(
@@ -98,6 +149,35 @@ function assertSamePromptGeneration(
   }
 }
 
-function normalizeTerminalComposerText(text: string): string {
-  return text.replace(/\s+/gu, ' ').trim()
+function assertPromptNotBlocked(activity: AgentPromptActivity): void {
+  if (activity.status === 'permission') {
+    throw new Error('agent_prompt_blocked')
+  }
+}
+
+function throwIfAgentPromptAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error('request_aborted')
+  }
+}
+
+async function waitForAgentPromptPoll(signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_EFFECT_POLL_MS))
+    return
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(new Error('request_aborted'))
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, AGENT_PROMPT_EFFECT_POLL_MS)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+    }
+  })
 }

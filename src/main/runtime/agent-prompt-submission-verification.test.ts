@@ -42,7 +42,7 @@ describe('agent prompt submission verification', () => {
     vi.useFakeTimers()
     let current = activity()
     const retrySubmit = vi.fn(async () => {
-      current = activity({ outputSequence: 21 })
+      current = activity({ lifecycleSequence: 5, outputSequence: 21, status: 'working' })
       return 'retried' as const
     })
     const verification = verifyAgentPromptSubmission({
@@ -78,6 +78,25 @@ describe('agent prompt submission verification', () => {
     expect(retrySubmit).not.toHaveBeenCalled()
   })
 
+  it('fails closed when only a large prompt suffix is visible', async () => {
+    vi.useFakeTimers()
+    const current = activity()
+    const retrySubmit = vi.fn()
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      prompt: `${'hidden '.repeat(200)}visible tail`,
+      readActivity: () => current,
+      readTextBeforeCursor: async () => 'visible tail',
+      retrySubmit
+    })
+    const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
+
+    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
+
+    await rejected
+    expect(retrySubmit).not.toHaveBeenCalled()
+  })
+
   it('fails after one ineffective retry', async () => {
     vi.useFakeTimers()
     const current = activity()
@@ -95,6 +114,68 @@ describe('agent prompt submission verification', () => {
 
     await rejected
     expect(retrySubmit).toHaveBeenCalledOnce()
+  })
+
+  it('retries after redraw-only output leaves the exact prompt at the cursor', async () => {
+    vi.useFakeTimers()
+    let current = activity()
+    const retrySubmit = vi.fn(async () => {
+      current = activity({ lifecycleSequence: 5, status: 'working' })
+      return 'retried' as const
+    })
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      prompt: 'review this',
+      readActivity: () => current,
+      readTextBeforeCursor: async () => '› review this',
+      retrySubmit
+    })
+
+    current = activity({ outputSequence: 21 })
+    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS + 50)
+
+    await expect(verification).resolves.toEqual({ retried: true })
+    expect(retrySubmit).toHaveBeenCalledOnce()
+  })
+
+  it('blocks a retry when permission appears after the first submit', async () => {
+    vi.useFakeTimers()
+    let current = activity()
+    const retrySubmit = vi.fn()
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      prompt: 'review this',
+      readActivity: () => current,
+      readTextBeforeCursor: async () => '› review this',
+      retrySubmit
+    })
+    const rejected = expect(verification).rejects.toThrow('agent_prompt_blocked')
+
+    current = activity({ status: 'permission' })
+    await vi.advanceTimersByTimeAsync(50)
+
+    await rejected
+    expect(retrySubmit).not.toHaveBeenCalled()
+  })
+
+  it('cancels before retrying', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const current = activity()
+    const retrySubmit = vi.fn()
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      prompt: 'review this',
+      readActivity: () => current,
+      readTextBeforeCursor: async () => '› review this',
+      retrySubmit,
+      signal: controller.signal
+    })
+
+    controller.abort()
+
+    await expect(verification).rejects.toThrow('request_aborted')
+    expect(retrySubmit).not.toHaveBeenCalled()
   })
 
   it('does not retry prompts sent while an agent is already working', async () => {
@@ -137,5 +218,11 @@ describe('agent prompt submission verification', () => {
     expect(textBeforeCursorEndsWithPrompt('line one\nline two\n›', 'line one\nline two')).toBe(
       false
     )
+  })
+
+  it('preserves meaningful whitespace and hard cursor boundaries', () => {
+    expect(textBeforeCursorEndsWithPrompt('› review this', 'review  this')).toBe(false)
+    expect(textBeforeCursorEndsWithPrompt('› review this', 'review\tthis')).toBe(false)
+    expect(textBeforeCursorEndsWithPrompt('› review this\n', 'review this')).toBe(false)
   })
 })

@@ -1961,6 +1961,67 @@ const AGENT_PROMPT_RENDER_TIMEOUT_MS = 8000
 const AGENT_PROMPT_RENDER_QUIET_MS = 1500
 // Why: Claude and Codex emit show-cursor after accepting bracketed paste.
 const AGENT_PROMPT_RENDER_MARKER = '\x1b[?25h'
+
+function assertAgentPromptRequestActive(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error('request_aborted')
+  }
+}
+
+async function waitForAgentPromptPromise<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    return await promise
+  }
+  assertAgentPromptRequestActive(signal)
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false
+    const finish = (result: { value: T } | { error: unknown }): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      if ('error' in result) {
+        reject(result.error)
+      } else {
+        resolve(result.value)
+      }
+    }
+    const onAbort = (): void => finish({ error: new Error('request_aborted') })
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    promise.then(
+      (value) => finish({ value }),
+      (error: unknown) => finish({ error })
+    )
+  })
+}
+
+async function waitForAgentPromptDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    return
+  }
+  assertAgentPromptRequestActive(signal)
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(new Error('request_aborted'))
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, delayMs)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+    }
+  })
+}
+
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
 // Why: the split already failed; the caller waits on this teardown only to learn whether the
 // fallback kill is needed, so keep it short — an unreachable host must not stall the rejection.
@@ -3139,6 +3200,7 @@ export class OrcaRuntimeService {
     string,
     { status: AgentStatus | null; sequence: number }
   >()
+  private agentPromptSubmissionTailByPtyId = new Map<string, Promise<void>>()
   private providerSequenceInitializedPtys = new Set<string>()
   private providerSequenceOffsetByPtyId = new Map<string, number>()
   private providerSnapshotPreferredPtys = new Set<string>()
@@ -17886,6 +17948,7 @@ export class OrcaRuntimeService {
     options: {
       beforeWrite?: (ptyId: string) => void | Promise<void>
       suffixFailureError?: string
+      signal?: AbortSignal
     } = {}
   ): Promise<RuntimeTerminalSend> {
     const payload = buildAgentPromptPasteBytes(prompt)
@@ -17895,13 +17958,10 @@ export class OrcaRuntimeService {
         throw new Error('terminal_not_writable')
       }
       await assertTerminalInputWithinLimitWithYield(payload)
-      const submits = await this.writeTerminalAgentPrompt(
-        handle,
-        pty.pty.ptyId,
-        prompt,
-        payload,
-        options
-      )
+      const submits = await this.serializeAgentPromptSubmission(pty.pty.ptyId, async () => {
+        this.assertLiveTerminalHandleTargetsPty(handle, pty.pty.ptyId)
+        return await this.writeTerminalAgentPrompt(handle, pty.pty.ptyId, prompt, payload, options)
+      })
       const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
       return { handle, accepted: true, bytesWritten }
     }
@@ -17916,13 +17976,10 @@ export class OrcaRuntimeService {
     if (await this.isLeafPtyProvenAbsent(leaf.ptyId)) {
       throw new Error('terminal_not_writable')
     }
-    const submits = await this.writeTerminalAgentPrompt(
-      handle,
-      leaf.ptyId,
-      prompt,
-      payload,
-      options
-    )
+    const submits = await this.serializeAgentPromptSubmission(leaf.ptyId, async () => {
+      this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId!)
+      return await this.writeTerminalAgentPrompt(handle, leaf.ptyId!, prompt, payload, options)
+    })
     const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
     return { handle, accepted: true, bytesWritten }
   }
@@ -18486,8 +18543,13 @@ export class OrcaRuntimeService {
     options: {
       beforeWrite?: (ptyId: string) => void | Promise<void>
       suffixFailureError?: string
+      signal?: AbortSignal
     } = {}
   ): Promise<number> {
+    assertAgentPromptRequestActive(options.signal)
+    if (this.getAgentPromptActivity(handle, ptyId).status === 'permission') {
+      throw new Error('agent_prompt_blocked')
+    }
     const renderGate = this.createAgentPromptRenderGate(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false
@@ -18496,7 +18558,9 @@ export class OrcaRuntimeService {
       let chunk = chunks.next()
       while (!chunk.done) {
         const nextChunk = chunks.next()
+        assertAgentPromptRequestActive(options.signal)
         await options.beforeWrite?.(ptyId)
+        assertAgentPromptRequestActive(options.signal)
         if (nextChunk.done) {
           renderGate?.arm()
         }
@@ -18520,11 +18584,15 @@ export class OrcaRuntimeService {
     }
 
     if (renderGate) {
-      await renderGate.wait()
-      renderGate.dispose()
+      try {
+        await waitForAgentPromptPromise(renderGate.wait(), options.signal)
+      } finally {
+        renderGate.dispose()
+      }
     } else {
-      await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_SUBMIT_DELAY_MS))
+      await waitForAgentPromptDelay(AGENT_PROMPT_SUBMIT_DELAY_MS, options.signal)
     }
+    assertAgentPromptRequestActive(options.signal)
     try {
       await options.beforeWrite?.(ptyId)
     } catch (error) {
@@ -18533,6 +18601,7 @@ export class OrcaRuntimeService {
       }
       throw error
     }
+    assertAgentPromptRequestActive(options.signal)
     const baseline = this.getAgentPromptActivity(handle, ptyId)
     if (baseline.status === 'permission') {
       throw new Error('agent_prompt_blocked')
@@ -18554,6 +18623,7 @@ export class OrcaRuntimeService {
         return visible?.generation === baseline.generation ? visible.textBeforeCursor : null
       },
       retrySubmit: async (expected) => {
+        assertAgentPromptRequestActive(options.signal)
         try {
           await options.beforeWrite?.(ptyId)
         } catch (error) {
@@ -18562,9 +18632,13 @@ export class OrcaRuntimeService {
           }
           throw error
         }
+        assertAgentPromptRequestActive(options.signal)
         const current = this.getAgentPromptActivity(handle, ptyId)
         if (current.generation !== expected.generation) {
           throw new Error('terminal_handle_stale')
+        }
+        if (current.status === 'permission') {
+          throw new Error('agent_prompt_blocked')
         }
         if (agentPromptActivityChanged(expected, current)) {
           return 'activity'
@@ -18574,9 +18648,30 @@ export class OrcaRuntimeService {
           throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
         }
         return 'retried'
-      }
+      },
+      signal: options.signal
     })
     return verification.retried ? 2 : 1
+  }
+
+  private async serializeAgentPromptSubmission<T>(
+    ptyId: string,
+    submit: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.agentPromptSubmissionTailByPtyId.get(ptyId) ?? Promise.resolve()
+    const submission = previous.catch(() => undefined).then(submit)
+    const tail = submission.then(
+      () => undefined,
+      () => undefined
+    )
+    this.agentPromptSubmissionTailByPtyId.set(ptyId, tail)
+    try {
+      return await submission
+    } finally {
+      if (this.agentPromptSubmissionTailByPtyId.get(ptyId) === tail) {
+        this.agentPromptSubmissionTailByPtyId.delete(ptyId)
+      }
+    }
   }
 
   private getAgentPromptActivity(handle: string, ptyId: string): AgentPromptActivity {
