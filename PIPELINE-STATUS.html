@@ -63,14 +63,48 @@
 <h1>Release-Blocker Pipeline</h1>
 <p class="sub">Coordinator worktree <code>blocker-pipeline-coordinator</code> on <strong>openclaw</strong> ·
 Run <code>run_42d86ee6a30c</code> · base <code>origin/main @ 93ab6e142</code> ·
-last updated <strong>2026-08-15 17:05 PT</strong></p>
+last updated <strong>2026-08-16 11:15 PT — PIPELINE MOVED TO MAC</strong></p>
 
 <div class="grid">
   <div class="tile"><div class="n">12</div><div class="l">Tickets owned</div></div>
-  <div class="tile"><div class="n">2</div><div class="l">Confirmed w/ failing test</div></div>
+  <div class="tile"><div class="n">3</div><div class="l">Confirmed w/ failing test</div></div>
+  <div class="tile"><div class="n">2</div><div class="l">Confirmed by code read</div></div>
   <div class="tile"><div class="n">1</div><div class="l">Does not reproduce</div></div>
-  <div class="tile"><div class="n">2</div><div class="l">Workers active</div></div>
-  <div class="tile"><div class="n">0</div><div class="l">PRs open</div></div>
+  <div class="tile"><div class="n">8</div><div class="l">Branches pushed</div></div>
+  <div class="tile"><div class="n">1</div><div class="l">PRs open</div></div>
+</div>
+
+<div class="note stop">
+<h3>2026-08-16 — pipeline moved off openclaw to Brennan's Mac</h3>
+<p>All work is <strong>committed and pushed</strong>. The authoritative handoff is
+<code>HANDOFF-TO-MAC.md</code> on this branch — read it, not this board, for detail.
+Nothing was lost; 8 branches are on origin.</p>
+<p><strong>Shipped:</strong> <a href="https://github.com/stablyai/orca/pull/14917">PR #14917</a>
+(STA-4449 P0 + STA-4491 P1), verified with a production-only revert (5 tests RED) <em>and</em> a
+7-mutation battery, squashed to one clean commit, all gates green. Both tickets moved to
+<strong>In Review</strong> in Linear with the PR attached.</p>
+<p><strong>Two vacuous tests were caught and fixed</strong> — the predecessor's STA-4491 test passed
+via the <code>ssh:?</code> unknown-identity fallback rather than the real mechanism, and my own first
+replacement passed via a surviving <code>repo.id</code> row. The revert proof missed both; only the
+mutation battery caught them.</p>
+<p><strong>A live sabotage mutation</strong> (M14) was still applied to a product file in
+<code>review-4363</code>. Reverted and verified byte-identical against PR #14581's head.</p>
+</div>
+
+<div class="note stop">
+<h3>Incident 17:08 PT (previous session) — headless runtime died, all 4 workers lost, work recovered</h3>
+<p>The <code>orca serve</code> runtime on port 16770 and its Xvfb <code>:95</code> both died about 20 minutes in
+(memory used fell 12.6 → 9.3 GB; no OOM record in the readable logs). All four in-flight workers were killed.
+Neil's <code>:78</code>/<code>:79</code> displays were untouched.</p>
+<p><strong>Recovered:</strong> cleared the stale brennan-owned <code>:95</code> lock, restarted Xvfb with
+<code>-extension GLX</code> and <code>orca serve</code> on 16770 (up in 5 s). Three worktrees held
+<strong>uncommitted</strong> work — it is now committed as <code>[rescued from runtime crash]</code>. The reviewer
+had died with a deliberate mutation still applied to
+<code>mobile-native-chat-pending-retirement.ts</code>; that was reverted so the tree is not left sabotaged.
+<strong>Lost:</strong> the readiness baseline (nothing committed) — being re-run.</p>
+<p><strong>Hardening:</strong> <code>scripts/runtime-watchdog.sh</code> now polls every 30 s and restarts the
+runtime (and Xvfb <code>:95</code> only) after two consecutive misses. Every resumed worker is instructed to
+commit every ~10 minutes. Concurrency lowered from 4 to <strong>3</strong>, since the crash happened at 4.</p>
 </div>
 
 <h2>Ticket status</h2>
@@ -109,11 +143,18 @@ last updated <strong>2026-08-15 17:05 PT</strong></p>
 <tr>
   <td><strong>STA-4471</strong><br><span class="mono">old clients bypass retirement</span></td>
   <td><span class="pill P0">P0</span></td>
-  <td class="st s-queue">QUEUED</td>
+  <td class="st s-prog">CONFIRMED — queued for fix</td>
   <td>—</td>
-  <td>Not yet verified. Host must refuse a known-retired path even when the client omits
-      <code>nameWasGenerated</code>. PR #14350 documents this as accepted behaviour, so expect to
-      overturn a deliberate decision, not patch an oversight.</td>
+  <td><strong>CONFIRMED by coordinator code read</strong> (test still owed).
+      <code>orca-runtime.ts:22645</code>: <code>shouldRetireGeneratedName = args.nameWasGenerated === true
+      &amp;&amp; isGeneratedWorktreeCreateName(...)</code>. With the flag absent this is false, so
+      <code>retiredNameRegistry</code> is <code>null</code>, <code>isRetiredName</code> is <code>null</code>, and the
+      <code>if (isRetiredName?.(...)) continue</code> skip never fires — the host creates straight onto a cwd it
+      knows is retired. Same gate at <code>worktree-remote.ts:1566</code> and <code>:2142</code>; all three need it.
+      <em>The fix has a real tension:</em> #14350 gated on the explicit flag because the pool holds ordinary words
+      (<code>orca</code>, <code>runner</code>, <code>sole</code>, <code>emperor</code>) people type on purpose. The
+      resolution is to consult only the <strong>retired set</strong> (names actually spent), not the whole pool — if
+      the typed name really is retired, that cwd holds another workspace's history and redirecting is correct.</td>
   <td>—</td>
 </tr>
 
@@ -253,7 +294,7 @@ for local at the read side, line ~185, and the write side, line ~216). Both axes
 
 <div class="note stop">
 <h3>grok is not usable as the reproduction lane</h3>
-<p>The brief states grok is working on this account. It is not: <code>grok -p</code> returns
+<p><strong>Re-confirmed 2026-08-16</strong> after being told twice that grok works: it does not. <code>grok -p</code> returns
 <em>"Not signed in"</em>, no <code>XAI_API_KEY</code> is set, and <code>grok login</code> needs a browser
 or device code — an interactive step that is Brennan's to take. <strong>Substitution:</strong> the
 independence requirement is preserved by using <code>codex</code> as reproducer and
@@ -294,9 +335,12 @@ as workers retire. The cap is a ceiling, not a target.</p>
       PR #14606 is the full ~4000-line fix and is <strong>dirty</strong>. Two-host field validation remains
       <strong>outstanding</strong> — the UI proof is an injected render and the filesystem evidence comes
       from the test suite. STA-4343 is not fully fixed.</li>
-  <li>Known main-branch breakage inherited, not caused here: #14738 (<code>393c8764e0</code>) leaves
-      <code>config/scripts/pr-test-loc-summary.test.mjs</code> tripping the type-aware audit under
-      <code>--deny-warnings</code>, and the test-vs-non-test LoC job 404s. STA-4484 is Neil's.</li>
+  <li><strong>CORRECTED 2026-08-16:</strong> the #14738 type-aware audit breakage is
+      <strong>already fixed on main</strong> by <code>931cb037c5</code> (#14755), an ancestor of
+      <code>93ab6e142e</code>. Verified two independent ways. A branch failing
+      <code>audit:code-quality:type-aware</code> is failing on its own changes — do not excuse it as
+      inherited. Only the LoC-job 404 half remains open (Neil / STA-4484), and it merely posts a PR
+      comment.</li>
 </ul>
 
 <p class="foot">Maintained by the coordinator agent. Every "CONFIRMED" above means a committed test that
