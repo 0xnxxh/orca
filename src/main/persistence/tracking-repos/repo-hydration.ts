@@ -9,6 +9,10 @@ import {
   sanitizeRepoProjectHostSetupMethod,
   sanitizeRepoUpstream
 } from './repo-sanitization'
+import {
+  normalizeCustomWorktreeVisibilitySources,
+  normalizeWorktreeVisibilitySourcePreferences
+} from '../../../shared/worktree/visibility-sources'
 
 export function hydrateRepo(repo: Repo, gitUsernameCache: ReadonlyMap<string, string>): Repo {
   const {
@@ -18,6 +22,8 @@ export function hydrateRepo(repo: Repo, gitUsernameCache: ReadonlyMap<string, st
     sourceControlAi: rawSourceControlAi,
     projectHostSetupMethod: rawProjectHostSetupMethod,
     forkSyncMode: rawForkSyncMode,
+    customWorktreeVisibilitySources: rawCustomWorktreeVisibilitySources,
+    worktreeVisibilitySourcePreferences: rawWorktreeVisibilitySourcePreferences,
     ...repoWithoutIcon
   } = repo
   const repoIcon = sanitizeRepoIcon(rawRepoIcon)
@@ -26,6 +32,12 @@ export function hydrateRepo(repo: Repo, gitUsernameCache: ReadonlyMap<string, st
   const sourceControlAi = normalizeRepoSourceControlAiOverrides(rawSourceControlAi)
   const projectHostSetupMethod = sanitizeRepoProjectHostSetupMethod(rawProjectHostSetupMethod)
   const forkSyncMode = sanitizeForkSyncMode(rawForkSyncMode)
+  const customWorktreeVisibilitySources = normalizeCustomWorktreeVisibilitySources(
+    rawCustomWorktreeVisibilitySources
+  )
+  const worktreeVisibilitySourcePreferences = normalizeWorktreeVisibilitySourcePreferences(
+    rawWorktreeVisibilitySourcePreferences
+  )
   // Why: never spawn git/gh username resolution in hydration — a stuck probe froze Windows startup for minutes (issue #7225); read only cache/persisted value.
   const gitUsername = isFolderRepo(repo)
     ? ''
@@ -39,6 +51,10 @@ export function hydrateRepo(repo: Repo, gitUsernameCache: ReadonlyMap<string, st
     ...(sourceControlAi !== undefined ? { sourceControlAi } : {}),
     ...(projectHostSetupMethod !== undefined ? { projectHostSetupMethod } : {}),
     ...(forkSyncMode !== undefined ? { forkSyncMode } : {}),
+    ...(customWorktreeVisibilitySources !== undefined ? { customWorktreeVisibilitySources } : {}),
+    ...(worktreeVisibilitySourcePreferences !== undefined
+      ? { worktreeVisibilitySourcePreferences }
+      : {}),
     kind: isFolderRepo(repo) ? 'folder' : 'git',
     gitUsername,
     hookSettings: {
