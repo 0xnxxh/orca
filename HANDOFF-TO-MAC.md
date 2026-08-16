@@ -248,8 +248,24 @@ instinct, since that flag is precisely what STA-4492 says becomes a permanent gl
   the moment #14665 relands. **Therefore STA-4492 must be fixed as part of the reland, with a
   regression test** — STA-4482's reland ask #2 names this exact defect.
 - STA-4482 reads **`Done`** in Linear. That reflects the *revert* landing, not a reland. It is
-  genuinely outstanding. I verified no reland commit exists on main and
-  `mobile/src/session/mobile-native-chat-pending-retirement.ts` is absent from `origin/main`.
+  genuinely outstanding.
+
+  **Do not test this with `git merge-base --is-ancestor`.** `68ca17e46c` (#14665) *is* an
+  ancestor of `origin/main` — the commit is in history — but `b8dc393c18` reverted its effect
+  and is also on main. Ancestry answers "was it ever committed", not "is it live". The
+  definitive check is the file:
+
+  ```
+  $ git cat-file -e origin/main:mobile/src/session/mobile-native-chat-pending-retirement.ts
+  → ABSENT
+  ```
+
+  I verified all four of these: desktop half `aaa877d2a2` (#14663) is on main and **not**
+  reverted; mobile half `68ca17e46c` (#14665) is in history but its file is gone; the revert
+  `b8dc393c18` is on main. So **main currently ships the desktop half of a paired fix with the
+  mobile half backed out** — desktop and mobile disagree about glued pending bubbles until the
+  reland lands. Check the reland for parity against `aaa877d2a2` rather than treating it as
+  mobile-only.
 - The readiness lane found a **desktop/mobile asymmetry currently shipping on main**: #14665
   was the mobile half of #14262 and is reverted, while the desktop half `aaa877d2a2` (#14663)
   is not. Check the reland for parity against `aaa877d2a2` rather than treating it as
@@ -388,6 +404,11 @@ missing file; not locally reproducible, still Neil's / STA-4484, and non-blockin
 - **No root-unit-test baseline exists.** The readiness lane's root suite ran ~25 min and was
   terminated incomplete; vitest buffers its summary, so it produced *no* signal. Do not read
   it as passing. Run it sharded (`--shard=N/16`, matching CI) on the Mac.
+- **No E2E baseline either**, and no packaging, and no Node 24 half of the test matrix (this
+  box is Node 26 only). If a pipeline PR touches startup, session restore, or terminal
+  behaviour, run a golden E2E subset before landing —
+  `pnpm run test:e2e:workspace-session-golden`. It was skipped here only for memory, not
+  because it is unavailable.
 - A stray local tag `repro-4449-4491-failing-test` sorts ahead of the real release tags in this
   shared repo. Harmless, but anything resolving "latest tag" will pick it up.
 - `scripts/runtime-watchdog.sh` (pid 16693 here) is **pipeline infrastructure, not product
