@@ -6,6 +6,7 @@ import { sanitizeRecentTabIds } from '../../tab-group-state'
 import {
   nextActiveIdAfterRemoval,
   removeEmptyEditorGroups,
+  removeTabIdsFromGroup,
   rekeyFileIdRecord
 } from '../file-ids/open-file-path-rekey'
 import type {
@@ -94,9 +95,17 @@ export function buildRestoredEditorOwnerTransition(
         destinationOrder
       )
     }
+    // Why: the migrated ids land in targetGroup only, so any sibling group holding the same id is left dangling.
     const nextTargetGroups = targetGroups.some((group) => group.id === targetGroupId)
-      ? targetGroups.map((group) => (group.id === targetGroupId ? updatedTargetGroup : group))
-      : [...targetGroups, updatedTargetGroup]
+      ? targetGroups.map((group) =>
+          group.id === targetGroupId
+            ? updatedTargetGroup
+            : removeTabIdsFromGroup(group, mappedMovedTabIdSet)
+        )
+      : [
+          ...targetGroups.map((group) => removeTabIdsFromGroup(group, mappedMovedTabIdSet)),
+          updatedTargetGroup
+        ]
 
     const nextUnifiedTabsByWorktree = { ...s.unifiedTabsByWorktree }
     nextUnifiedTabsByWorktree[sourceWorktreeId] = (

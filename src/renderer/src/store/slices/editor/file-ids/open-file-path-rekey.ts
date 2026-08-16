@@ -1,6 +1,7 @@
 import type { AppState } from '../../../types'
 import type { TabGroup } from '../../../../../../shared/tab-types'
 import { pruneTabGroupLayoutForGroups } from '../../tabs-hydration'
+import { sanitizeRecentTabIds } from '../../tab-group-state'
 
 export function rekeyFileIdRecord<T>(
   record: Record<string, T>,
@@ -27,6 +28,29 @@ export function nextActiveIdAfterRemoval(
 ): string | null {
   const recent = (recentIds ?? []).toReversed().find((id) => !removedIds.has(id))
   return recent ?? ids.find((id) => !removedIds.has(id)) ?? null
+}
+
+/** Strip `removedIds` from a group's order, MRU stack and active id; returns the
+ * same object when the group never referenced them. */
+export function removeTabIdsFromGroup(group: TabGroup, removedIds: ReadonlySet<string>): TabGroup {
+  const recentTabIds = group.recentTabIds ?? []
+  const references =
+    group.tabOrder.some((id) => removedIds.has(id)) ||
+    recentTabIds.some((id) => removedIds.has(id)) ||
+    (group.activeTabId !== null && removedIds.has(group.activeTabId))
+  if (!references) {
+    return group
+  }
+  const tabOrder = group.tabOrder.filter((id) => !removedIds.has(id))
+  return {
+    ...group,
+    activeTabId:
+      group.activeTabId !== null && removedIds.has(group.activeTabId)
+        ? nextActiveIdAfterRemoval(group.tabOrder, recentTabIds, removedIds)
+        : group.activeTabId,
+    tabOrder,
+    recentTabIds: sanitizeRecentTabIds(recentTabIds, tabOrder)
+  }
 }
 
 export function removeEmptyEditorGroups(

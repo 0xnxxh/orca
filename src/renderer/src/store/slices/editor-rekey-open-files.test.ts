@@ -290,10 +290,14 @@ describe('rekeyOpenFilesForPathChange', () => {
       pendingEditorReveal: { fileId: otherWorktreeId, filePath: '/repo/a.md', line: 40 }
     } as never)
 
-    useAppStore.getState().rekeyOpenFilesForPathChange({
+    const result = useAppStore.getState().rekeyOpenFilesForPathChange({
       rekeys: [rekeyFor(rekeyedId, '/repo/sub/a.md', 'sub/a.md')]
     })
 
+    expect(result).toEqual({ ok: true })
+    expect(
+      useAppStore.getState().openFiles.find((file) => file.id === '/repo/sub/a.md')
+    ).toMatchObject({ filePath: '/repo/sub/a.md' })
     const reveal = useAppStore.getState().pendingEditorReveal!
     expect(reveal.fileId).toBe(otherWorktreeId)
     expect(reveal.filePath).toBe('/repo/a.md')
