@@ -72,10 +72,12 @@ vi.mock('./pty', () => ({
 
 // Why: snapshot persistence does real file I/O; covered in workspace-cleanup-snapshot-ipc.test.ts.
 vi.mock('../workspace-cleanup-scan-snapshot', () => ({
-  beginWorkspaceCleanupScanSnapshotProducer: vi.fn(() => 'producer:1'),
-  finishWorkspaceCleanupScanSnapshotProducer: vi.fn(),
   persistWorkspaceCleanupScanResult: vi.fn(async () => undefined),
-  readWorkspaceCleanupScanSnapshot: vi.fn(async () => null)
+  readWorkspaceCleanupScanSnapshot: vi.fn(async () => null),
+  withWorkspaceCleanupScanSnapshotProducer: vi.fn(
+    async (_directory: string, produce: (producer: unknown) => Promise<unknown>) =>
+      produce({ seq: 1, beginWrite: () => () => {} })
+  )
 }))
 
 import { scanWorkspaceCleanup } from './workspace-cleanup'

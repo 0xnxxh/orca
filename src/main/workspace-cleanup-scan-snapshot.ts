@@ -17,7 +17,10 @@ import {
   workspaceSnapshotPruneTargetKeys,
   type WorkspaceSnapshotPruneTarget
 } from './workspace-snapshot-prune-index'
-import { createWorkspaceSnapshotPruneTombstoneRegistry } from './workspace-snapshot-prune-tombstone-holders'
+import {
+  createWorkspaceSnapshotPruneTombstoneRegistry,
+  type WorkspaceSnapshotPruneProducerToken
+} from './workspace-snapshot-prune-tombstone-holders'
 
 const SNAPSHOT_FILE_NAME = 'orca-workspace-cleanup-scan.json'
 const SNAPSHOT_VERSION = 2
@@ -28,9 +31,8 @@ const tombstoneRegistry = createWorkspaceSnapshotPruneTombstoneRegistry((directo
   sidecarSnapshotFile(directory, SNAPSHOT_FILE_NAME)
 )
 
-/** Bracket every scan that may persist to this sidecar so its tombstones retire when it settles. */
-export const beginWorkspaceCleanupScanSnapshotProducer = tombstoneRegistry.beginProducer
-export const finishWorkspaceCleanupScanSnapshotProducer = tombstoneRegistry.finishProducer
+/** Run every scan that may persist to this sidecar inside the fence — the only source of a token. */
+export const withWorkspaceCleanupScanSnapshotProducer = tombstoneRegistry.withProducer
 
 /** Retention probe: STA-4451 is about how many tombstones survive, not just which rows they hide. */
 export const workspaceCleanupScanSnapshotTombstoneCountForTests = (
@@ -156,11 +158,12 @@ export function registerWorkspaceCleanupScanSnapshotPruneTombstones(
 
 function excludeRowsPrunedDuringScan(
   file: string,
-  result: WorkspaceCleanupScanResult
+  result: WorkspaceCleanupScanResult,
+  producerSeq: number
 ): WorkspaceCleanupScanResult {
   const prunedKeys = activeWorkspaceSnapshotPruneKeys(
     tombstoneRegistry.tombstones(file),
-    result.scannedAt
+    producerSeq
   )
   if (prunedKeys.size === 0) {
     return result
@@ -171,36 +174,6 @@ function excludeRowsPrunedDuringScan(
       !prunedKeys.has(workspaceSnapshotPruneKey(candidate.worktreeId))
   )
   return candidates.length === result.candidates.length ? result : { ...result, candidates }
-}
-
-function clearSupersededPrunes(
-  file: string,
-  result: WorkspaceCleanupScanResult,
-  broad: boolean
-): void {
-  const pruned = tombstoneRegistry.tombstones(file)
-  if (!pruned) {
-    return
-  }
-  const candidateKeys = broad
-    ? undefined
-    : new Set(
-        result.candidates.flatMap((candidate) => [
-          workspaceSnapshotPruneKey(candidate.worktreeId, candidate.executionHostId),
-          workspaceSnapshotPruneKey(candidate.worktreeId)
-        ])
-      )
-  for (const [key, entry] of pruned) {
-    // A held tombstone outranks supersession: the holder is exactly the writer that could still
-    // resurrect the row with a result older than this one.
-    if (
-      entry.holders.size === 0 &&
-      entry.prunedAt < result.scannedAt &&
-      (broad || candidateKeys?.has(key))
-    ) {
-      pruned.delete(key)
-    }
-  }
 }
 
 /**
@@ -215,12 +188,19 @@ const lastPersistedScannedAtByFile = new Map<string, number>()
 export async function persistWorkspaceCleanupScanResult(
   snapshotDirectory: string,
   args: WorkspaceCleanupScanArgs,
-  result: WorkspaceCleanupScanResult
+  result: WorkspaceCleanupScanResult,
+  producer: WorkspaceSnapshotPruneProducerToken
 ): Promise<void> {
   const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
+  const endWrite = producer.beginWrite(file)
+  if (!endWrite) {
+    // The producer was bounded out, so its tombstones have already retired. Writing now is exactly
+    // the resurrection they existed to prevent — drop this result instead.
+    return
+  }
   try {
     await withSidecarSnapshotQueue(file, async () => {
-      const filteredResult = excludeRowsPrunedDuringScan(file, result)
+      const filteredResult = excludeRowsPrunedDuringScan(file, result, producer.seq)
       // worktreeIds (even empty) is a targeted scan; persisting it as broad
       // would replace the fleet snapshot with a subset.
       const broad =
@@ -237,7 +217,6 @@ export async function persistWorkspaceCleanupScanResult(
         }
         await writeSnapshot(file, filteredResult)
         lastPersistedScannedAtByFile.set(file, filteredResult.scannedAt)
-        clearSupersededPrunes(file, result, true)
         return
       }
       if (filteredResult.candidates.length === 0) {
@@ -249,10 +228,11 @@ export async function persistWorkspaceCleanupScanResult(
         return
       }
       await writeSnapshot(file, patchCandidates(existing, filteredResult.candidates))
-      clearSupersededPrunes(file, result, false)
     })
   } catch (error) {
     console.warn('[workspace-cleanup] failed to persist scan snapshot:', error)
+  } finally {
+    endWrite()
   }
 }
 

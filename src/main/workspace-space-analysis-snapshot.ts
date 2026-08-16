@@ -15,7 +15,10 @@ import {
   workspaceSnapshotPruneTargetKeys,
   type WorkspaceSnapshotPruneTarget
 } from './workspace-snapshot-prune-index'
-import { createWorkspaceSnapshotPruneTombstoneRegistry } from './workspace-snapshot-prune-tombstone-holders'
+import {
+  createWorkspaceSnapshotPruneTombstoneRegistry,
+  type WorkspaceSnapshotPruneProducerToken
+} from './workspace-snapshot-prune-tombstone-holders'
 import { withoutWorktreeRows } from './workspace-space-analysis-row-pruning'
 
 const SNAPSHOT_FILE_NAME = 'orca-workspace-space-analysis.json'
@@ -27,9 +30,8 @@ const tombstoneRegistry = createWorkspaceSnapshotPruneTombstoneRegistry((directo
   sidecarSnapshotFile(directory, SNAPSHOT_FILE_NAME)
 )
 
-/** Bracket every analysis that may persist to this sidecar so its tombstones retire when it settles. */
-export const beginWorkspaceSpaceAnalysisSnapshotProducer = tombstoneRegistry.beginProducer
-export const finishWorkspaceSpaceAnalysisSnapshotProducer = tombstoneRegistry.finishProducer
+/** Run every analysis that may persist to this sidecar inside the fence — the only source of a token. */
+export const withWorkspaceSpaceAnalysisSnapshotProducer = tombstoneRegistry.withProducer
 
 /** Retention probe: STA-4451 is about how many tombstones survive, not just which rows they hide. */
 export const workspaceSpaceAnalysisSnapshotTombstoneCountForTests = (
@@ -119,16 +121,27 @@ async function writeSnapshot(file: string, analysis: WorkspaceSpaceAnalysis): Pr
 /** Persist a completed analysis. Never throws — the snapshot is a refetchable cache. */
 export async function persistWorkspaceSpaceAnalysisSnapshot(
   snapshotDirectory: string,
-  analysis: WorkspaceSpaceAnalysis
+  analysis: WorkspaceSpaceAnalysis,
+  producer: WorkspaceSnapshotPruneProducerToken
 ): Promise<void> {
   const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
+  const endWrite = producer.beginWrite(file)
+  if (!endWrite) {
+    // The producer was bounded out, so its tombstones have already retired. Writing now is exactly
+    // the resurrection they existed to prevent — drop this result instead.
+    return
+  }
   try {
     await withSidecarSnapshotQueue(file, async () => {
-      await writeSnapshot(file, stripTopLevelItems(excludeRowsPrunedDuringScan(file, analysis)))
-      clearSupersededPrunes(file, analysis)
+      await writeSnapshot(
+        file,
+        stripTopLevelItems(excludeRowsPrunedDuringScan(file, analysis, producer.seq))
+      )
     })
   } catch (error) {
     console.warn('[workspace-space] failed to persist analysis snapshot:', error)
+  } finally {
+    endWrite()
   }
 }
 
@@ -151,11 +164,12 @@ export function registerWorkspaceSpaceAnalysisSnapshotPruneTombstones(
 
 function excludeRowsPrunedDuringScan(
   file: string,
-  analysis: WorkspaceSpaceAnalysis
+  analysis: WorkspaceSpaceAnalysis,
+  producerSeq: number
 ): WorkspaceSpaceAnalysis {
   const prunedKeys = activeWorkspaceSnapshotPruneKeys(
     tombstoneRegistry.tombstones(file),
-    analysis.scannedAt
+    producerSeq
   )
   return withoutWorktreeRows(
     analysis,
@@ -163,20 +177,6 @@ function excludeRowsPrunedDuringScan(
       prunedKeys.has(workspaceSnapshotPruneKey(row.worktreeId, row.executionHostId)) ||
       prunedKeys.has(workspaceSnapshotPruneKey(row.worktreeId))
   )
-}
-
-function clearSupersededPrunes(file: string, analysis: WorkspaceSpaceAnalysis): void {
-  const pruned = tombstoneRegistry.tombstones(file)
-  if (!pruned) {
-    return
-  }
-  for (const [key, entry] of pruned) {
-    // A held tombstone outranks supersession: the holder is exactly the writer that could still
-    // resurrect the row with a result older than this one.
-    if (entry.holders.size === 0 && entry.prunedAt < analysis.scannedAt) {
-      pruned.delete(key)
-    }
-  }
 }
 
 async function pruneWorkspaceSpaceAnalysisSnapshotsWithRegisteredTombstones(

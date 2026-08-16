@@ -13,13 +13,18 @@ const {
   handleMock,
   persistAnalysisSnapshotMock,
   readAnalysisSnapshotMock,
-  beginProducerMock,
-  finishProducerMock,
+  withProducerMock,
+  producerToken,
+  fenceLog,
   WorkspaceSpaceScanCancelledErrorMock
 } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>()
+  const fenceLog: string[] = []
+  const producerToken = { seq: 7, beginWrite: vi.fn(() => vi.fn()) }
   return {
     handlers,
+    fenceLog,
+    producerToken,
     analyzeWorkspaceSpaceMock: vi.fn(),
     removeHandlerMock: vi.fn(),
     handleMock: vi.fn((channel: string, handler: (...args: unknown[]) => Promise<unknown>) => {
@@ -27,8 +32,16 @@ const {
     }),
     persistAnalysisSnapshotMock: vi.fn(),
     readAnalysisSnapshotMock: vi.fn(),
-    beginProducerMock: vi.fn(() => 'producer:1'),
-    finishProducerMock: vi.fn(),
+    withProducerMock: vi.fn(
+      async (_directory: string, produce: (producer: unknown) => Promise<unknown>) => {
+        fenceLog.push('open')
+        try {
+          return await produce(producerToken)
+        } finally {
+          fenceLog.push('close')
+        }
+      }
+    ),
     WorkspaceSpaceScanCancelledErrorMock: class WorkspaceSpaceScanCancelledError extends Error {}
   }
 })
@@ -46,10 +59,9 @@ vi.mock('../workspace-space-analysis', () => ({
 }))
 
 vi.mock('../workspace-space-analysis-snapshot', () => ({
-  beginWorkspaceSpaceAnalysisSnapshotProducer: beginProducerMock,
-  finishWorkspaceSpaceAnalysisSnapshotProducer: finishProducerMock,
   persistWorkspaceSpaceAnalysisSnapshot: persistAnalysisSnapshotMock,
-  readWorkspaceSpaceAnalysisSnapshot: readAnalysisSnapshotMock
+  readWorkspaceSpaceAnalysisSnapshot: readAnalysisSnapshotMock,
+  withWorkspaceSpaceAnalysisSnapshotProducer: withProducerMock
 }))
 
 import { registerWorkspaceSpaceHandlers } from './workspace-space'
@@ -87,9 +99,11 @@ function createStore(): Store {
 describe('registerWorkspaceSpaceHandlers', () => {
   beforeEach(() => {
     analyzeWorkspaceSpaceMock.mockReset()
-    beginProducerMock.mockClear()
-    finishProducerMock.mockClear()
-    persistAnalysisSnapshotMock.mockReset().mockResolvedValue(undefined)
+    withProducerMock.mockClear()
+    fenceLog.length = 0
+    persistAnalysisSnapshotMock.mockReset().mockImplementation(async () => {
+      fenceLog.push('persist')
+    })
     readAnalysisSnapshotMock.mockReset().mockResolvedValue(null)
   })
 
@@ -131,30 +145,21 @@ describe('registerWorkspaceSpaceHandlers', () => {
     expect(analyzeWorkspaceSpaceMock).toHaveBeenCalledTimes(2)
   })
 
-  it('fences the snapshot producer across an analysis, settling only after persistence', async () => {
+  it('runs an analysis and its persist inside one snapshot producer bracket', async () => {
     const store = createStore()
-    analyzeWorkspaceSpaceMock.mockResolvedValueOnce(createAnalysis(1))
-    let releasePersist = (): void => {}
-    persistAnalysisSnapshotMock.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        releasePersist = () => resolve()
-      })
-    )
+    const analysis = createAnalysis(1)
+    analyzeWorkspaceSpaceMock.mockResolvedValueOnce(analysis)
 
     registerWorkspaceSpaceHandlers(store)
     await handlers.get('workspaceSpace:analyze')!(createEvent())
 
-    expect(beginProducerMock).toHaveBeenCalledTimes(1)
-    // Still in flight: the analysis can only stop resurrecting rows once its write lands.
-    expect(finishProducerMock).not.toHaveBeenCalled()
-
-    releasePersist()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(finishProducerMock).toHaveBeenCalledWith(expect.any(String), 'producer:1')
+    expect(withProducerMock).toHaveBeenCalledWith('/profile-a', expect.any(Function))
+    expect(fenceLog).toEqual(['open', 'persist', 'close'])
+    // The token is the write capability; persisting with anything else would escape the fence.
+    expect(persistAnalysisSnapshotMock).toHaveBeenCalledWith('/profile-a', analysis, producerToken)
   })
 
-  it('settles the snapshot producer when an analysis fails without persisting', async () => {
+  it('closes the snapshot producer bracket when an analysis fails without persisting', async () => {
     const store = createStore()
     analyzeWorkspaceSpaceMock.mockRejectedValueOnce(new Error('analysis exploded'))
 
@@ -162,11 +167,9 @@ describe('registerWorkspaceSpaceHandlers', () => {
     await expect(handlers.get('workspaceSpace:analyze')!(createEvent())).rejects.toThrow(
       'analysis exploded'
     )
-    await Promise.resolve()
-    await Promise.resolve()
 
     expect(persistAnalysisSnapshotMock).not.toHaveBeenCalled()
-    expect(finishProducerMock).toHaveBeenCalledWith(expect.any(String), 'producer:1')
+    expect(fenceLog).toEqual(['open', 'close'])
   })
 
   it('forwards scan progress to the requesting renderer', async () => {
@@ -293,7 +296,7 @@ describe('registerWorkspaceSpaceHandlers', () => {
     const analyzeHandler = handlers.get('workspaceSpace:analyze')
 
     await expect(analyzeHandler!(createEvent())).resolves.toEqual({ ok: true, analysis })
-    expect(persistAnalysisSnapshotMock).toHaveBeenCalledWith('/profile-a', analysis)
+    expect(persistAnalysisSnapshotMock).toHaveBeenCalledWith('/profile-a', analysis, producerToken)
   })
 
   it('serves the cached analysis through getCachedAnalysis', async () => {

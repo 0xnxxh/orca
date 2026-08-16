@@ -18,11 +18,11 @@ import { parseExecutionHostId } from '../../shared/execution-host'
 import { scanWorkspaceCleanup } from './workspace-cleanup-scan'
 import { hasTargetedWorkspaceCleanupScan } from './workspace-cleanup-scan-targets'
 import {
-  beginWorkspaceCleanupScanSnapshotProducer,
-  finishWorkspaceCleanupScanSnapshotProducer,
   persistWorkspaceCleanupScanResult,
-  readWorkspaceCleanupScanSnapshot
+  readWorkspaceCleanupScanSnapshot,
+  withWorkspaceCleanupScanSnapshotProducer
 } from '../workspace-cleanup-scan-snapshot'
+import type { WorkspaceSnapshotPruneProducerToken } from '../workspace-snapshot-prune-tombstone-holders'
 import {
   beginWorkspaceCleanupRemovalSnapshotPruneBatch,
   finishWorkspaceCleanupRemovalSnapshotPruneBatch,
@@ -74,11 +74,6 @@ export function registerWorkspaceCleanupHandlers(
         activeScans.set(scanKey, controller)
       }
       const targeted = hasTargetedWorkspaceCleanupScan(scanArgs)
-      // Only a broad scan persists, so only a broad scan can resurrect a row pruned while it ran.
-      const snapshotProducer = targeted
-        ? undefined
-        : beginWorkspaceCleanupScanSnapshotProducer(snapshotDirectory)
-      let snapshotPersistence: Promise<void> | undefined
       const broadScanKey = getBroadScanModeKey(sender.id, scanArgs)
       if (!targeted) {
         // Why: two same-mode broad fleet scans from one renderer can only be a
@@ -91,7 +86,9 @@ export function registerWorkspaceCleanupHandlers(
       // work, not merely mute its progress events.
       const onSenderDestroyed = (): void => controller.abort()
       sender.once('destroyed', onSenderDestroyed)
-      try {
+      const runScan = async (
+        producer?: WorkspaceSnapshotPruneProducerToken
+      ): Promise<WorkspaceCleanupScanResult> => {
         const result = await scanWorkspaceCleanup(store, scanArgs, {
           signal: controller.signal,
           onProgress: scanArgs.scanId
@@ -102,26 +99,21 @@ export function registerWorkspaceCleanupHandlers(
               }
             : undefined
         })
-        // Focused scans are live-only; persisting each rewrites and fsyncs the
-        // fleet snapshot. worktreeIds: [] is still targeted — persisting its
-        // empty result would wipe the fleet cache.
-        if (!targeted) {
-          snapshotPersistence = persistWorkspaceCleanupScanResult(
-            snapshotDirectory,
-            scanArgs,
-            result
-          )
-          void snapshotPersistence
+        // Fire-and-forget: the fence stays open until the write settles, but the reply must not
+        // wait on it.
+        if (producer) {
+          void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result, producer)
         }
         return result
+      }
+      try {
+        // Focused scans are live-only, so they never take the fence: persisting each would rewrite
+        // and fsync the fleet snapshot. worktreeIds: [] is still targeted — persisting its empty
+        // result would wipe the fleet cache.
+        return targeted
+          ? await runScan()
+          : await withWorkspaceCleanupScanSnapshotProducer(snapshotDirectory, runScan)
       } finally {
-        // Settle the fence only once this scan can no longer write: after its persist resolves, or
-        // immediately when it ended (cancelled, aborted, threw) without starting one.
-        if (snapshotProducer !== undefined) {
-          void Promise.allSettled([snapshotPersistence]).then(() =>
-            finishWorkspaceCleanupScanSnapshotProducer(snapshotDirectory, snapshotProducer)
-          )
-        }
         if (!sender.isDestroyed()) {
           sender.removeListener('destroyed', onSenderDestroyed)
         }
