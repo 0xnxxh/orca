@@ -106,6 +106,35 @@ const RUN_PANE_KEY_MATCH_SUFFIX_SQL =
 const DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL =
   "substr(assignee_pane_key, instr(assignee_pane_key, ':') + 1)"
 const REMOTE_ATTACHMENT_PANE_KEY_MATCH_SUFFIX_SQL = "substr(pane_key, instr(pane_key, ':') + 1)"
+export const DISPATCH_CONTEXT_CLAIM_SQL = `INSERT INTO dispatch_contexts (
+  id, run_id, task_id, contract_version, launch_token_hash,
+  assignee_handle, assignee_pane_key, process_incarnation,
+  status, failure_count, dispatched_at
+)
+SELECT ?, run_id, id, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now')
+FROM tasks
+WHERE id = ? AND status = 'ready'
+  AND NOT EXISTS (
+    SELECT 1 FROM dispatch_contexts active
+    WHERE active.assignee_handle = ?
+      AND active.status IN ('pending', 'dispatched')
+  )
+  AND (
+    ? IS NULL OR NOT EXISTS (
+      SELECT 1 FROM dispatch_contexts active
+      WHERE active.assignee_pane_key = ?
+        AND active.status IN ('pending', 'dispatched')
+    )
+  )
+  AND (
+    ? IS NULL OR NOT EXISTS (
+      SELECT 1 FROM dispatch_contexts active
+      WHERE active.assignee_pane_key IS NOT NULL
+        AND active.status IN ('pending', 'dispatched')
+        AND instr(active.assignee_pane_key, ':') > 1
+        AND ${DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL} = ?
+    )
+  )`
 
 function paneKeyMatchSuffix(paneKey: string): string {
   const colon = paneKey.indexOf(':')
@@ -7234,40 +7263,7 @@ export class OrchestrationDb {
     this.db.exec('SAVEPOINT create_dispatch_context')
     try {
       const inserted = this.db
-        .prepare(
-          `INSERT INTO dispatch_contexts (
-             id, run_id, task_id, contract_version, launch_token_hash,
-             assignee_handle, assignee_pane_key, process_incarnation,
-             status, failure_count, dispatched_at
-           )
-           SELECT ?, run_id, id, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now')
-           FROM tasks
-           WHERE id = ? AND status = 'ready'
-             AND NOT EXISTS (
-               SELECT 1 FROM dispatch_contexts active
-               WHERE active.assignee_handle = ?
-                 AND active.status IN ('pending', 'dispatched')
-             )
-             AND (
-               ? IS NULL OR NOT EXISTS (
-                 SELECT 1 FROM dispatch_contexts active
-                 WHERE active.assignee_pane_key = ?
-                   AND active.status IN ('pending', 'dispatched')
-               )
-             )
-             AND (
-               ? IS NULL OR NOT EXISTS (
-                 SELECT 1 FROM dispatch_contexts active
-                 WHERE active.assignee_pane_key IS NOT NULL
-                   AND active.status IN ('pending', 'dispatched')
-                   AND instr(active.assignee_pane_key, ':') > 1
-                   AND substr(
-                     active.assignee_pane_key,
-                     instr(active.assignee_pane_key, ':') + 1
-                   ) = ?
-               )
-             )`
-        )
+        .prepare(DISPATCH_CONTEXT_CLAIM_SQL)
         .run(
           id,
           CURRENT_CONTRACT_VERSION,

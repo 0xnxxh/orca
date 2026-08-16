@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type Database from '../../sqlite/sync-database'
-import { OrchestrationDb } from './db'
+import { DISPATCH_CONTEXT_CLAIM_SQL, OrchestrationDb } from './db'
 
 const CREATOR_PANE = 'tab-creator:11111111-1111-4111-8111-111111111111'
 const CREATOR_PROCESS = 'pty-creator:incarnation-a'
@@ -53,35 +53,20 @@ describe('creator authority lookup performance', () => {
   it('uses active-assignee indexes for Dispatch occupancy claims', () => {
     db = new OrchestrationDb(':memory:')
     const plan = sqliteFor(db)
-      .prepare(
-        `EXPLAIN QUERY PLAN
-         SELECT 1 FROM tasks
-         WHERE id = ? AND status = 'ready'
-           AND NOT EXISTS (
-             SELECT 1 FROM dispatch_contexts active
-             WHERE active.assignee_handle = ?
-               AND active.status IN ('pending', 'dispatched')
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM dispatch_contexts active
-             WHERE active.assignee_pane_key = ?
-               AND active.status IN ('pending', 'dispatched')
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM dispatch_contexts active
-             WHERE active.assignee_pane_key IS NOT NULL
-               AND active.status IN ('pending', 'dispatched')
-               AND instr(active.assignee_pane_key, ':') > 1
-               AND substr(
-                 active.assignee_pane_key,
-                 instr(active.assignee_pane_key, ':') + 1
-               ) = ?
-           )`
-      )
+      .prepare(`EXPLAIN QUERY PLAN ${DISPATCH_CONTEXT_CLAIM_SQL}`)
       .all(
+        'ctx_claimant',
+        1,
+        null,
+        'term_worker',
+        'tab_worker:33333333-3333-4333-8333-333333333333',
+        'worker:1',
+        0,
         'task_claimant',
         'term_worker',
         'tab_worker:33333333-3333-4333-8333-333333333333',
+        'tab_worker:33333333-3333-4333-8333-333333333333',
+        '33333333-3333-4333-8333-333333333333',
         '33333333-3333-4333-8333-333333333333'
       ) as { detail: string }[]
     const details = plan.map((row) => row.detail).join(' | ')
