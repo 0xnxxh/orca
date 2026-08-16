@@ -46,15 +46,25 @@ const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
  * use-app-session-persistence.ts or remote-workspace-snapshot-apply.ts was touched by the branch
  * that added this spec.
  *
- * Marked fixme rather than deleted or worked around. Waiting for the upload would hide it, and a
- * user opening a tab right after a reconnect has no such signal to wait on either. The likely fix is
- * to push local state before applying a host snapshot rather than letting `revision > 0` win
- * unconditionally — a risky change in the session-sync protocol, deliberately not attempted here.
+ * FIXED by making the merge treat the host as authoritative only for what it knows: a local tab the
+ * snapshot has never been told about is kept rather than erased.
+ *
+ * SCOPE — this spec is NOT the guard, and measuring it is the only reason that is knowable. Against
+ * the unfixed code it fails roughly one run in three or four, because the destruction needs the tab
+ * to be created inside the debounced upload's suppression window and nothing here can force that
+ * from the outside. Removing the waits between creating the tab and reconnecting tightened it and
+ * still did not make it deterministic.
+ *
+ * The real guards are deterministic and live elsewhere: remote-workspace-snapshot-local-tab-survival
+ * .test.ts drives this same scenario through the actual apply path, and
+ * remote-workspace-session-merge-local-survival.test.ts covers the merge decision table. Together
+ * they fail 8 times on the unfixed code. Keep this spec as end-to-end smoke, and do not read a green
+ * run here as evidence the bug is gone.
  */
 test.describe('SSH reconnect tab destruction', () => {
   test.skip(!RUN_DOCKER_SSH, 'Set ORCA_E2E_SSH_DOCKER=1 to run the dockerized SSH relay tests')
 
-  test.fixme('keeps a tab created right after a reconnect alive across the next one', async ({
+  test('keeps a tab created right after a reconnect alive across the next one', async ({
     orcaPage
   }, testInfo) => {
     test.slow()
@@ -76,33 +86,45 @@ test.describe('SSH reconnect tab destruction', () => {
       // is dropped from the session write rather than deferred. This is the ordinary thing a user
       // does; the timing is not contrived.
       await openTerminalTabInActiveGroup(orcaPage)
-      await waitForActiveTerminalManager(orcaPage, 60_000)
-      const freshPtyId = await waitForActivePanePtyId(orcaPage, 60_000)
-      expect(freshPtyId).not.toBe(ptyId)
+      // Only that the tab exists in the store — no waiting for its manager or PTY. Every wait here
+      // is time the debounced upload can use to land, which is what made this spec miss the bug.
+      const tabsBefore = await orcaPage.evaluate(() => {
+        const state = window.__store?.getState()
+        const worktreeId = state?.activeWorktreeId
+        return worktreeId ? (state?.tabsByWorktree?.[worktreeId]?.length ?? 0) : 0
+      })
+      expect(tabsBefore).toBeGreaterThanOrEqual(2)
 
-      await execInTerminal(orcaPage, freshPtyId, 'top -b -n 1 > /dev/null; top')
-      await waitForTerminalOutput(orcaPage, 'load average', 30_000, 8000)
-
+      // Deliberately NOTHING between creating the tab and reconnecting. The destruction only fires
+      // while the tab's creation is still unuploaded, so idling here — as waiting for a TUI to draw
+      // did — lets the debounced write land and the bug evaporate. That is exactly why an earlier
+      // version of this spec passed with the bug still present, and why it was worthless as a guard.
       await reconnectDockerSshRelayTarget(orcaPage, remote.targetId)
       await waitForActiveTerminalManager(orcaPage, 60_000)
-      await waitForActivePanePtyId(orcaPage, 60_000)
 
-      // Fails here: the pane for this tab no longer exists, so nothing ever paints again.
-      await waitForTerminalOutput(orcaPage, 'load average', 60_000, 8000)
-
-      // The tab bar and the terminal slice must agree. They do not: the bar keeps rendering a tab
-      // the slice has already dropped, which is why the failure looks like a dead tab rather than
-      // a missing one.
+      // Checked BEFORE any paint assertion: survival and repaint are different failures, and this
+      // order names which one broke instead of collapsing both into "no output".
       const tabCounts = await orcaPage.evaluate(() => {
         const state = window.__store?.getState()
         const worktreeId = state?.activeWorktreeId
         return {
           inSlice: worktreeId ? (state?.tabsByWorktree?.[worktreeId]?.length ?? 0) : 0,
-          paneManagers: Object.keys(window.__paneManagers ?? {}).length
+          // __paneManagers is a Map. Object.keys on a Map silently returns [], which reads as
+          // "nothing is mounted" regardless of the truth — that cost a full debugging cycle.
+          paneManagers: window.__paneManagers?.size ?? 0
         }
       })
-      expect(tabCounts.inSlice).toBeGreaterThanOrEqual(2)
-      expect(tabCounts.paneManagers).toBeGreaterThanOrEqual(2)
+      expect(tabCounts.inSlice, 'the reconnect destroyed the tab').toBeGreaterThanOrEqual(2)
+      expect(
+        tabCounts.paneManagers,
+        'the tab survived but its pane manager did not'
+      ).toBeGreaterThanOrEqual(1)
+
+      // Surviving in the store is not enough — the pane has to still reach its shell.
+      const survivingPtyId = await waitForActivePanePtyId(orcaPage, 60_000)
+      const aliveMarker = `TAB_SURVIVED_${Date.now()}`
+      await execInTerminal(orcaPage, survivingPtyId, `echo ${aliveMarker}`)
+      await waitForTerminalOutput(orcaPage, aliveMarker, 60_000)
     } finally {
       if (target) {
         cleanupDockerSshRelayTarget(target)

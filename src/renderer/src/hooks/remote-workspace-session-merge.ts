@@ -28,10 +28,31 @@ export function mergeDirectSshRemoteWorkspaceSession(
       .map((tab) => [tab.id, tab])
   )
   const locallyPreservedTabIds = new Set<string>()
+  const localTabsFor = (worktreeId: string): TerminalTab[] =>
+    liveTabsByWorktree[worktreeId] ?? current.tabsByWorktree[worktreeId] ?? []
+  // Why the union and not just the remote keys: a host snapshot that has never been told about this
+  // worktree carries no entry for it at all, and iterating only its keys would drop every local tab
+  // through the omit below.
+  const mergedWorktreeIds = new Set([
+    ...Object.keys(remote.tabsByWorktree),
+    ...[...replaceWorktreeIds].filter((worktreeId) => localTabsFor(worktreeId).length > 0)
+  ])
+  const remoteKnownTabIds = new Set(
+    Object.values(remote.tabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.id))
+  )
+  // Why sessions and not just tab ids: the host can carry the same agent session under a NEW tab id,
+  // and keeping the local tab as well would put one launched agent on the screen twice. The session
+  // id is the identity that survives a tab-id change, so a session the host already lists means the
+  // local tab is a stale alias rather than something the host has never seen.
+  const remoteKnownSessionIds = new Set(
+    Object.entries(remote.remoteSessionIdsByTabId ?? {})
+      .filter(([tabId]) => remoteKnownTabIds.has(tabId))
+      .map(([, sessionId]) => sessionId)
+  )
   const tabsByWorktree = Object.fromEntries(
-    Object.entries(remote.tabsByWorktree).map(([worktreeId, tabs]) => [
-      worktreeId,
-      tabs.map((tab) => {
+    [...mergedWorktreeIds].map((worktreeId) => {
+      const remoteTabs = remote.tabsByWorktree[worktreeId] ?? []
+      const reconciled = remoteTabs.map((tab) => {
         const local = currentTabsById.get(tab.id)
         if (
           !local ||
@@ -44,7 +65,30 @@ export function mergeDirectSshRemoteWorkspaceSession(
         locallyPreservedTabIds.add(tab.id)
         return preserveNewerLocalTerminalFields(tab, local)
       })
-    ])
+      if (!replaceWorktreeIds.has(worktreeId)) {
+        return [worktreeId, reconciled]
+      }
+      // Why: the host is authoritative for what it knows, not for what it has never been told. A tab
+      // created locally whose upload was still pending is absent from the snapshot for the same
+      // reason it is new — deleting it here loses a live pane and the process running in it. Closing
+      // a tab removes it from local state too, so a genuinely closed tab is not in this list.
+      // Why the id is checked against EVERY worktree and not just this one: the same tab id can be
+      // owned by two worktrees while a rename settles, and re-adding it here would keep recreating
+      // the duplicate the repair pass is trying to converge. A host that knows the id anywhere has
+      // been told about the tab, so it is not host-unknown.
+      const hostUnknown = localTabsFor(worktreeId).filter((tab) => {
+        if (remoteKnownTabIds.has(tab.id)) {
+          return false
+        }
+        const localSessionId = current.remoteSessionIdsByTabId?.[tab.id]
+        return localSessionId == null || !remoteKnownSessionIds.has(localSessionId)
+      })
+      for (const tab of hostUnknown) {
+        // Keeps the tab's layout and remote session id from being swept with the replaced ids below.
+        locallyPreservedTabIds.add(tab.id)
+      }
+      return [worktreeId, [...reconciled, ...hostUnknown]]
+    })
   )
   const remoteTabIds = new Set(
     Object.values(tabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.id))
@@ -73,15 +117,35 @@ export function mergeDirectSshRemoteWorkspaceSession(
   }
   const activeOutsideTarget =
     current.activeWorktreeId != null && !replaceWorktreeIds.has(current.activeWorktreeId)
+  // Why this is narrow: a null from the host is not always missing information. A null activeTabId
+  // is a deliberate deselect that arms the duplicate-tab repair, so it is honoured verbatim below.
+  // A null activeWorktreeId is different — it is what a snapshot carries when the host never named
+  // the workspace or its path did not resolve to a local id, and taking that literally drops the
+  // user onto the home screen while their terminals keep running. So it is only overridden when the
+  // workspace they are standing in demonstrably still exists in the merged result.
+  const localActiveWorkspaceSurvives =
+    current.activeWorktreeId != null &&
+    replaceWorktreeIds.has(current.activeWorktreeId) &&
+    (tabsByWorktree[current.activeWorktreeId]?.length ?? 0) > 0
+  const preservedActiveWorktreeId = localActiveWorkspaceSurvives ? current.activeWorktreeId : null
+  const activeWorktreeId = activeOutsideTarget
+    ? current.activeWorktreeId
+    : (remote.activeWorktreeId ?? preservedActiveWorktreeId)
   return {
     ...current,
-    activeRepoId: activeOutsideTarget ? current.activeRepoId : remote.activeRepoId,
-    activeWorktreeId: activeOutsideTarget ? current.activeWorktreeId : remote.activeWorktreeId,
+    activeRepoId: activeOutsideTarget
+      ? current.activeRepoId
+      : remote.activeWorktreeId
+        ? remote.activeRepoId
+        : (remote.activeRepoId ?? (preservedActiveWorktreeId ? current.activeRepoId : null)),
+    activeWorktreeId,
     activeWorkspaceKey: activeOutsideTarget
       ? current.activeWorkspaceKey
       : remote.activeWorktreeId
         ? worktreeWorkspaceKey(remote.activeWorktreeId)
-        : null,
+        : activeWorktreeId
+          ? worktreeWorkspaceKey(activeWorktreeId)
+          : null,
     activeTabId: activeOutsideTarget ? current.activeTabId : remote.activeTabId,
     tabsByWorktree: {
       ...omitTargetWorktrees(current.tabsByWorktree),
@@ -93,7 +157,15 @@ export function mergeDirectSshRemoteWorkspaceSession(
       ...(remote.activeWorktreeIdsOnShutdown ?? [])
     ],
     activeTabIdByWorktree: {
+      // Why the local entry survives: same rule one level down. A host that names no active tab for
+      // the target reopens the workspace on whatever sorts first, which is not where the user was.
       ...omitTargetWorktrees(current.activeTabIdByWorktree),
+      ...Object.fromEntries(
+        [...replaceWorktreeIds].flatMap((worktreeId) => {
+          const localActiveTabId = current.activeTabIdByWorktree?.[worktreeId]
+          return localActiveTabId == null ? [] : [[worktreeId, localActiveTabId] as const]
+        })
+      ),
       ...remote.activeTabIdByWorktree
     },
     remoteSessionIdsByTabId: {
