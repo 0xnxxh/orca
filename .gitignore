@@ -103,6 +103,7 @@ docs/**
 !docs/reference/relay-grace-time-reconfiguration.md
 !docs/reference/remote-wire-compatibility.md
 !docs/reference/renderer-agent-status-performance.md
+!docs/reference/ssh-execution-boundary.md
 !docs/reference/windows-setup-shell.md
 !docs/reference/worktree-scan-fingerprint.md
 
