@@ -44,7 +44,7 @@ describe('macOS keyboard layout change notifications', () => {
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
   })
 
-  it('waits for the old native read, broadcasts to live windows, and unsubscribes on quit', async () => {
+  it('invalidates immediately, refreshes after the old read, and unsubscribes on quit', async () => {
     let notificationCallback: (() => void) | undefined
     let finishRead!: () => void
     waitForSnapshotIdle.mockReturnValue(
@@ -81,11 +81,17 @@ describe('macOS keyboard layout change notifications', () => {
     )
 
     notificationCallback?.()
-    expect(send).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledExactlyOnceWith(KEYBOARD_LAYOUT_CHANGED_CHANNEL, {
+      phase: 'invalidated',
+      generation: 1
+    })
     finishRead()
     await Promise.resolve()
     await Promise.resolve()
-    expect(send).toHaveBeenCalledExactlyOnceWith(KEYBOARD_LAYOUT_CHANGED_CHANNEL)
+    expect(send).toHaveBeenNthCalledWith(2, KEYBOARD_LAYOUT_CHANGED_CHANNEL, {
+      phase: 'refresh',
+      generation: 1
+    })
 
     const quitListener = appOnce.mock.calls.find(([event]) => event === 'will-quit')?.[1] as
       | (() => void)
@@ -96,6 +102,8 @@ describe('macOS keyboard layout change notifications', () => {
     expect(() => quitListener?.()).not.toThrow()
     expect(unsubscribeNotification).toHaveBeenCalledExactlyOnceWith(41)
     expect(appRemoveListener).toHaveBeenCalledWith('will-quit', quitListener)
+    notificationCallback?.()
+    expect(send).toHaveBeenCalledTimes(2)
   })
 
   it('does not install a native subscription off macOS', () => {
@@ -105,5 +113,40 @@ describe('macOS keyboard layout change notifications', () => {
 
     expect(subscribeNotification).not.toHaveBeenCalled()
     expect(appOnce).not.toHaveBeenCalled()
+  })
+
+  it('coalesces rapid changes before the prior native read settles', async () => {
+    let notificationCallback: (() => void) | undefined
+    let finishRead!: () => void
+    waitForSnapshotIdle.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishRead = resolve
+      })
+    )
+    subscribeNotification.mockImplementation((_name: string, callback: () => void) => {
+      notificationCallback = callback
+      return 42
+    })
+    const send = vi.fn()
+    getAllWindows.mockReturnValue([
+      { isDestroyed: () => false, webContents: { isDestroyed: () => false, send } }
+    ])
+
+    registerMacKeyboardLayoutChangeNotifications()
+    notificationCallback?.()
+    notificationCallback?.()
+    expect(send.mock.calls).toEqual([
+      [KEYBOARD_LAYOUT_CHANGED_CHANNEL, { phase: 'invalidated', generation: 1 }],
+      [KEYBOARD_LAYOUT_CHANGED_CHANNEL, { phase: 'invalidated', generation: 2 }]
+    ])
+
+    finishRead()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(send).toHaveBeenLastCalledWith(KEYBOARD_LAYOUT_CHANGED_CHANNEL, {
+      phase: 'refresh',
+      generation: 2
+    })
+    expect(send).toHaveBeenCalledTimes(3)
   })
 })

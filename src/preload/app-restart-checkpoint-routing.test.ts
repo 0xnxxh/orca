@@ -102,13 +102,14 @@ describe('native preload destructive app actions', () => {
     const unsubscribe = api.app.onKeyboardLayoutChanged(onKeyboardLayoutChanged)
     const listener = on.mock.calls.find(
       ([channel]) => channel === KEYBOARD_LAYOUT_CHANGED_CHANNEL
-    )?.[1] as (() => void) | undefined
-    listener?.()
+    )?.[1] as ((event: unknown, payload: unknown) => void) | undefined
+    const payload = { phase: 'invalidated', generation: 1 }
+    listener?.({}, payload)
     unsubscribe()
 
     expect(invoke).toHaveBeenCalledWith('app:getMacCapturedDigitRowChords')
     expect(invoke).toHaveBeenCalledWith('app:getKeyboardLayoutSnapshot')
-    expect(onKeyboardLayoutChanged).toHaveBeenCalledOnce()
+    expect(onKeyboardLayoutChanged).toHaveBeenCalledExactlyOnceWith(payload)
     expect(removeListener).toHaveBeenCalledWith(KEYBOARD_LAYOUT_CHANGED_CHANNEL, listener)
   })
 })

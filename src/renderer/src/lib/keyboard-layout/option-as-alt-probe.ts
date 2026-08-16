@@ -22,6 +22,7 @@ import {
 } from './detect-option-as-alt'
 import { classifyInputSourceId } from './input-source-id'
 import type { KeyboardLayoutSnapshot } from '../../../../shared/keyboard-layout-snapshot'
+import type { KeyboardLayoutChangeEvent } from '../../../../shared/keyboard-layout-events'
 
 type NavigatorWithKeyboard = Navigator & {
   keyboard?: {
@@ -32,7 +33,9 @@ type NavigatorWithKeyboard = Navigator & {
 type Listener = (category: DetectedLayoutCategory) => void
 
 type InputSourceIdReader = () => Promise<string | null>
-type KeyboardLayoutChangeSubscriber = (callback: () => void) => () => void
+type KeyboardLayoutChangeSubscriber = (
+  callback: (event?: KeyboardLayoutChangeEvent) => void
+) => () => void
 
 export type OptionAsAltProbe = {
   /** Current detected category. Starts `'unknown'` until the first probe
@@ -113,6 +116,8 @@ export function createOptionAsAltProbe(
   const listeners = new Set<Listener>()
   let disposed = false
   let probeGeneration = 0
+  let layoutChangeGeneration = 0
+  let layoutRefreshBlocked = false
   const readInputSourceId = options.readInputSourceId ?? defaultInputSourceIdReader()
   const subscribeKeyboardLayoutChanged =
     options.subscribeKeyboardLayoutChanged ?? defaultKeyboardLayoutChangeSubscriber()
@@ -132,7 +137,7 @@ export function createOptionAsAltProbe(
   }
 
   const probe = async (): Promise<void> => {
-    if (disposed) {
+    if (disposed || layoutRefreshBlocked) {
       return
     }
     const generation = ++probeGeneration
@@ -195,8 +200,21 @@ export function createOptionAsAltProbe(
     void probe()
   }
 
-  const onKeyboardLayoutChanged = (): void => {
+  const onKeyboardLayoutChanged = (event?: KeyboardLayoutChangeEvent): void => {
+    if (event && event.generation < layoutChangeGeneration) {
+      return
+    }
     notify('unknown')
+    if (event?.phase === 'invalidated') {
+      layoutChangeGeneration = event.generation
+      layoutRefreshBlocked = true
+      ++probeGeneration
+      return
+    }
+    if (event) {
+      layoutChangeGeneration = event.generation
+    }
+    layoutRefreshBlocked = false
     void probe()
   }
 

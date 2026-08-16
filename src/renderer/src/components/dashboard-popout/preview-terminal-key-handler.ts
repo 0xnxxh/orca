@@ -154,7 +154,9 @@ export function installPreviewTerminalKeyHandler(args: {
     }
     switch (action.type) {
       case 'sendInput':
-        if (action.optionKittyRelease) {
+        if (action.consumeOptionKeyUp) {
+          optionKittyReleases.armNativeDeadKey(event)
+        } else if (action.optionKittyRelease) {
           optionKittyReleases.arm(
             event,
             action.optionKittyRelease,
@@ -165,6 +167,9 @@ export function installPreviewTerminalKeyHandler(args: {
         }
         args.sendInput(action.data)
         return consumeEvent(event)
+      case 'trackNativeOptionDeadKey':
+        optionKittyReleases.armNativeDeadKey(event)
+        return true
       case 'scrollViewport':
         if (action.position === 'top') {
           terminal.scrollToTop()

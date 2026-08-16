@@ -56,6 +56,32 @@ const PC_101_PUNCTUATION_BY_CODE: Readonly<Record<string, string>> = {
   Space: ' '
 }
 
+const KITTY_NUMPAD_CODE_POINT_BY_SUFFIX: Readonly<Record<string, number>> = {
+  Decimal: 57409,
+  Divide: 57410,
+  Multiply: 57411,
+  Subtract: 57412,
+  Add: 57413,
+  Enter: 57414,
+  Equal: 57415,
+  Separator: 57416
+}
+
+const KITTY_NUMPAD_CODE_POINT_BY_KEY: Readonly<Record<string, number>> = {
+  ArrowLeft: 57417,
+  ArrowRight: 57418,
+  ArrowUp: 57419,
+  ArrowDown: 57420,
+  PageUp: 57421,
+  PageDown: 57422,
+  Home: 57423,
+  End: 57424,
+  Insert: 57425,
+  Delete: 57426,
+  Begin: 57427,
+  Clear: 57427
+}
+
 export function pc101CharacterForCode(code: string | undefined): string | undefined {
   if (!code) {
     return undefined
@@ -69,8 +95,70 @@ export function pc101CharacterForCode(code: string | undefined): string | undefi
   return PC_101_PUNCTUATION_BY_CODE[code]
 }
 
+export function optionKittyPrimaryCharacterFallback(
+  event: Pick<TerminalOptionKeyboardEvent, 'key' | 'code'>
+): string | undefined {
+  return pc101CharacterForCode(event.code) === undefined ? event.key : undefined
+}
+
+export function kittyFunctionalNumpadCodePointForEvent(
+  event: Pick<TerminalOptionKeyboardEvent, 'key' | 'code'>
+): number | undefined {
+  if (!event.code?.startsWith('Numpad')) {
+    return undefined
+  }
+  const navigationCodePoint = KITTY_NUMPAD_CODE_POINT_BY_KEY[event.key]
+  if (navigationCodePoint !== undefined) {
+    return navigationCodePoint
+  }
+  const suffix = event.code.slice('Numpad'.length)
+  if (suffix.length === 1 && suffix >= '0' && suffix <= '9') {
+    return 57399 + Number(suffix)
+  }
+  return KITTY_NUMPAD_CODE_POINT_BY_SUFFIX[suffix]
+}
+
+function nativePrimaryCharacterFallback(
+  event: Pick<TerminalOptionKeyboardEvent, 'shiftKey'>,
+  capsLock: boolean,
+  fallback: string | undefined
+): string | undefined {
+  if (!fallback) {
+    return fallback
+  }
+  const lowercase = fallback.toLowerCase()
+  const uppercase = fallback.toUpperCase()
+  if ((event.shiftKey || capsLock) && lowercase !== uppercase) {
+    return [...lowercase].length === 1 ? lowercase : undefined
+  }
+  return event.shiftKey ? undefined : fallback
+}
+
 function singleCodePoint(value: string | undefined): number | undefined {
   return value && [...value].length === 1 ? value.codePointAt(0) : undefined
+}
+
+export function resolveTerminalKittyPrimaryCodePoint(
+  event: TerminalOptionKeyboardEvent,
+  context: {
+    layoutCharacterForCode?: LayoutCharacterResolver
+    primaryCharacterFallback?: string
+  }
+): number | undefined {
+  const capsLock = event.capsLock ?? event.getModifierState?.('CapsLock') === true
+  const numpadCodePoint = kittyFunctionalNumpadCodePointForEvent(event)
+  const pc101Character = pc101CharacterForCode(event.code)
+  const nativeFallback = nativePrimaryCharacterFallback(
+    event,
+    capsLock,
+    context.primaryCharacterFallback
+  )
+  const primaryCharacter =
+    (event.code ? context.layoutCharacterForCode?.(event.code, false) : undefined) ??
+    nativeFallback ??
+    pc101Character ??
+    context.primaryCharacterFallback
+  return numpadCodePoint ?? singleCodePoint(primaryCharacter)
 }
 
 function encodeModifiers(event: TerminalKittyCsiUEvent): number {
@@ -156,17 +244,21 @@ export function encodeTerminalOptionKittyEvent(
     type: TerminalKittyCsiUEventType
     layoutCharacterForCode?: LayoutCharacterResolver
     associatedText?: string
+    primaryCharacterFallback?: string
+    primaryCodePoint?: number
   }
 ): string | null {
+  const capsLock = event.capsLock ?? event.getModifierState?.('CapsLock') === true
+  const numLock = event.numLock ?? event.getModifierState?.('NumLock') === true
+  const numpadCodePoint = kittyFunctionalNumpadCodePointForEvent(event)
   const pc101Character = pc101CharacterForCode(event.code)
-  const primaryCharacter =
-    (event.code ? context.layoutCharacterForCode?.(event.code, false) : undefined) ?? pc101Character
-  const primaryCodePoint = singleCodePoint(primaryCharacter)
+  const primaryCodePoint =
+    context.primaryCodePoint ?? resolveTerminalKittyPrimaryCodePoint(event, context)
   if (primaryCodePoint === undefined) {
     return null
   }
   const shiftedCharacter =
-    event.shiftKey && event.code
+    numpadCodePoint === undefined && event.shiftKey && event.code
       ? (context.layoutCharacterForCode?.(event.code, true) ??
         (!event.altKey ? event.key : undefined))
       : undefined
@@ -175,13 +267,13 @@ export function encodeTerminalOptionKittyEvent(
     type: context.type,
     primaryCodePoint,
     shiftedCodePoint: singleCodePoint(shiftedCharacter),
-    baseCodePoint: singleCodePoint(pc101Character),
+    baseCodePoint: numpadCodePoint === undefined ? singleCodePoint(pc101Character) : undefined,
     shiftKey: event.shiftKey,
     altKey: event.altKey,
     ctrlKey: event.ctrlKey,
     metaKey: event.metaKey,
-    capsLock: event.capsLock ?? event.getModifierState?.('CapsLock') === true,
-    numLock: event.numLock ?? event.getModifierState?.('NumLock') === true,
-    associatedText: context.associatedText
+    capsLock,
+    numLock,
+    associatedText: numpadCodePoint === undefined ? context.associatedText : undefined
   })
 }

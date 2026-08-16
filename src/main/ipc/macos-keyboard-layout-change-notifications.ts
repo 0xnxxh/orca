@@ -1,5 +1,8 @@
 import { app, BrowserWindow, systemPreferences } from 'electron'
-import { KEYBOARD_LAYOUT_CHANGED_CHANNEL } from '../../shared/keyboard-layout-events'
+import {
+  KEYBOARD_LAYOUT_CHANGED_CHANNEL,
+  type KeyboardLayoutChangeEvent
+} from '../../shared/keyboard-layout-events'
 import { waitForMacKeyboardLayoutSnapshotIdle } from './macos-keyboard-layout-snapshot'
 
 const INPUT_SOURCE_CHANGED_NOTIFICATION =
@@ -12,26 +15,36 @@ export function registerMacKeyboardLayoutChangeNotifications(): () => void {
 
   let disposed = false
   let subscriptionId: number
-  const broadcastAfterCurrentRead = async (): Promise<void> => {
-    await waitForMacKeyboardLayoutSnapshotIdle()
-    if (disposed) {
-      return
-    }
+  let generation = 0
+  const broadcast = (event: KeyboardLayoutChangeEvent): void => {
     for (const window of BrowserWindow.getAllWindows()) {
       try {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-          window.webContents.send(KEYBOARD_LAYOUT_CHANGED_CHANNEL)
+          window.webContents.send(KEYBOARD_LAYOUT_CHANGED_CHANNEL, event)
         }
       } catch {
         // The window can close between the liveness check and send.
       }
     }
   }
+  const refreshAfterCurrentRead = async (nextGeneration: number): Promise<void> => {
+    await waitForMacKeyboardLayoutSnapshotIdle()
+    if (!disposed && nextGeneration === generation) {
+      broadcast({ phase: 'refresh', generation: nextGeneration })
+    }
+  }
 
   try {
     subscriptionId = systemPreferences.subscribeNotification(
       INPUT_SOURCE_CHANGED_NOTIFICATION,
-      () => void broadcastAfterCurrentRead()
+      () => {
+        if (disposed) {
+          return
+        }
+        const nextGeneration = ++generation
+        broadcast({ phase: 'invalidated', generation: nextGeneration })
+        void refreshAfterCurrentRead(nextGeneration)
+      }
     )
   } catch {
     return () => undefined

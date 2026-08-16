@@ -1,8 +1,13 @@
 import {
+  KITTY_DISAMBIGUATE_ESCAPE_CODES,
   KITTY_REPORT_EVENT_TYPES,
   kittyReportsAllKeysAsEscapeCodes
 } from '../../../../shared/terminal-kitty-keyboard-flags'
-import { encodeTerminalOptionKittyEvent } from './terminal-kitty-csi-u-encoding'
+import {
+  encodeTerminalOptionKittyEvent,
+  kittyFunctionalNumpadCodePointForEvent,
+  resolveTerminalKittyPrimaryCodePoint
+} from './terminal-kitty-csi-u-encoding'
 
 /** The physical keydown that produced a commit, captured before the input event. */
 export type ImeCommitKeyPress = {
@@ -39,7 +44,10 @@ export type ImeReleaseKeyEvent = {
  * the flags read at commit time. Only `encodeImeReleaseForKitty` interprets it:
  * the forwarder must never re-test event-type bits or rebuild CSI-u itself.
  */
-export type ImeCommitReleaseObligation = { readonly flags: number }
+export type ImeCommitReleaseObligation = {
+  readonly flags: number
+  readonly primaryCodePoint: number
+}
 
 export type ImeCommitKittyEncoding = {
   /** CSI-u press/repeat report, or null when the commit goes out as raw text. */
@@ -53,11 +61,9 @@ export type ImeCommitKittyEncoding = {
  * so writing IME-committed text raw hands it the legacy byte stream it declined.
  * Re-encode the press that produced the commit instead.
  *
- * The gate is bit 3 ALONE for the press. "Kitty is active" and `flags !== 0` are
- * both wrong: a pane negotiating only disambiguation or event types still
- * expects printable keys as text, and encoding there would drop every
- * substituted character. Bit 1 (`report_event_types`) is independent — it makes
- * even a raw-text commit owe exactly one release report.
+ * Standard text keys require bit 3. Functional numpad keys also use CSI-u under
+ * disambiguation/event reporting; other printable commits remain raw text.
+ * Bit 1 (`report_event_types`) independently makes a raw-text commit owe one release.
  *
  * The physical key remains the report identity; bit 4 carries the committed
  * text independently, including multi-codepoint commits.
@@ -73,26 +79,36 @@ export function encodeImeCommitForKitty(
   if (!press) {
     return { report: null, release: null }
   }
-  const report = !kittyReportsAllKeysAsEscapeCodes(kittyKeyboardFlags)
-    ? null
-    : encodeTerminalOptionKittyEvent(
-        {
-          ...press,
-          altKey: false,
-          ctrlKey: false,
-          metaKey: false
-        },
-        {
+  const keyboardEvent = {
+    ...press,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false
+  }
+  const primaryCodePoint = resolveTerminalKittyPrimaryCodePoint(keyboardEvent, {
+    layoutCharacterForCode: context.layoutCharacterForCode,
+    primaryCharacterFallback: press.key
+  })
+  const reportsNumpadPress =
+    kittyFunctionalNumpadCodePointForEvent(press) !== undefined &&
+    (kittyKeyboardFlags & (KITTY_DISAMBIGUATE_ESCAPE_CODES | KITTY_REPORT_EVENT_TYPES)) !== 0
+  const report =
+    !kittyReportsAllKeysAsEscapeCodes(kittyKeyboardFlags) && !reportsNumpadPress
+      ? null
+      : encodeTerminalOptionKittyEvent(keyboardEvent, {
           flags: kittyKeyboardFlags,
           type: press.repeat === true ? 'repeat' : 'press',
           layoutCharacterForCode: context.layoutCharacterForCode,
-          associatedText: context.committedText
-        }
-      )
+          associatedText: context.committedText,
+          primaryCharacterFallback: press.key,
+          primaryCodePoint
+        })
   return {
     report,
     release:
-      (kittyKeyboardFlags & KITTY_REPORT_EVENT_TYPES) === 0 ? null : { flags: kittyKeyboardFlags }
+      (kittyKeyboardFlags & KITTY_REPORT_EVENT_TYPES) === 0 || primaryCodePoint === undefined
+        ? null
+        : { flags: kittyKeyboardFlags, primaryCodePoint }
   }
 }
 
@@ -139,7 +155,9 @@ export function encodeImeReleaseForKitty(
     {
       flags: obligation.flags,
       type: 'release',
-      layoutCharacterForCode: context.layoutCharacterForCode
+      layoutCharacterForCode: context.layoutCharacterForCode,
+      primaryCharacterFallback: releaseKey.key,
+      primaryCodePoint: obligation.primaryCodePoint
     }
   )
 }

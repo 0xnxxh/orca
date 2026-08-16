@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createOptionAsAltProbe } from './option-as-alt-probe'
 import type { LayoutMapLike } from './detect-option-as-alt'
+import type { KeyboardLayoutChangeEvent } from '../../../../shared/keyboard-layout-events'
 
 const US_MAP: LayoutMapLike = {
   size: 9,
@@ -180,6 +181,66 @@ describe('createOptionAsAltProbe', () => {
 
     probe.dispose()
     expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('fences an in-flight probe until the matching refresh phase', async () => {
+    let notifyLayoutChanged: ((event: KeyboardLayoutChangeEvent) => void) | undefined
+    let finishOldRead!: (inputSourceId: string) => void
+    const oldRead = new Promise<string>((resolve) => {
+      finishOldRead = resolve
+    })
+    const readInputSourceId = vi
+      .fn<() => Promise<string>>()
+      .mockReturnValueOnce(oldRead)
+      .mockResolvedValue('com.apple.keylayout.ABC')
+    const probe = createOptionAsAltProbe(makeMockWindow(US_MAP) as unknown as Window, {
+      readInputSourceId,
+      subscribeKeyboardLayoutChanged: (callback) => {
+        notifyLayoutChanged = callback
+        return vi.fn()
+      }
+    })
+
+    notifyLayoutChanged?.({ phase: 'invalidated', generation: 1 })
+    finishOldRead('com.apple.keylayout.US')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(probe.getCurrent()).toBe('unknown')
+
+    notifyLayoutChanged?.({ phase: 'refresh', generation: 1 })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(probe.getCurrent()).toBe('non-us')
+    probe.dispose()
+  })
+
+  it('blocks focus and manual probes until the matching refresh phase', async () => {
+    let notifyLayoutChanged: ((event: KeyboardLayoutChangeEvent) => void) | undefined
+    const readInputSourceId = vi.fn(async () => 'com.apple.keylayout.US')
+    const win = makeMockWindow(US_MAP)
+    const probe = createOptionAsAltProbe(win as unknown as Window, {
+      readInputSourceId,
+      subscribeKeyboardLayoutChanged: (callback) => {
+        notifyLayoutChanged = callback
+        return vi.fn()
+      }
+    })
+    await probe.refresh()
+    const readsBeforeInvalidation = readInputSourceId.mock.calls.length
+
+    notifyLayoutChanged?.({ phase: 'invalidated', generation: 1 })
+    win.fireFocus()
+    await probe.refresh()
+
+    expect(probe.getCurrent()).toBe('unknown')
+    expect(readInputSourceId).toHaveBeenCalledTimes(readsBeforeInvalidation)
+
+    notifyLayoutChanged?.({ phase: 'refresh', generation: 1 })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(probe.getCurrent()).toBe('us')
+    expect(readInputSourceId).toHaveBeenCalledTimes(readsBeforeInvalidation + 1)
+    probe.dispose()
   })
 
   it('stays unknown if navigator.keyboard is unavailable', async () => {

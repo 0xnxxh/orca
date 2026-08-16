@@ -84,6 +84,15 @@ describe('resolvePreviewShortcutAction', () => {
     ).toEqual({ type: 'sendInput', data: '\x1b[113;3u' })
   })
 
+  it('tracks native Option dead keys without consuming their keydown', () => {
+    expect(
+      resolvePreviewShortcutAction(
+        keydown({ key: 'Dead', code: 'KeyE', altKey: true }),
+        contextFor({ getKittyKeyboardFlags: () => 2 })
+      )
+    ).toEqual({ type: 'trackNativeOptionDeadKey' })
+  })
+
   it('withholds the Ctrl+arrow translation on a local ConPTY pty, where PSReadLine binds it', () => {
     const conpty = contextFor({
       clientPlatform: 'win32',

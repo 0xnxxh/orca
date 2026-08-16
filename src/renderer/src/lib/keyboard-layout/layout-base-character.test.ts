@@ -10,6 +10,7 @@ import {
   prefetchLayoutCharacters
 } from './layout-base-character'
 import type { KeyboardLayoutSnapshot } from '../../../../shared/keyboard-layout-snapshot'
+import type { KeyboardLayoutChangeEvent } from '../../../../shared/keyboard-layout-events'
 
 describe('normalizeLayoutBaseCharacter', () => {
   it('accepts a single printable codepoint, lowercased', () => {
@@ -148,7 +149,8 @@ describe('getLayoutBaseCharacterForCode', () => {
         KeyQ: { unmodified: 'q', shifted: 'Q', optionUnmodified: null }
       }
     })
-    let notifyLayoutChanged: (() => void) | undefined
+    let notifyLayoutChanged: ((event: KeyboardLayoutChangeEvent) => void) | undefined
+    let focusListener: (() => void) | undefined
     let resolveOldSnapshot!: (snapshot: KeyboardLayoutSnapshot) => void
     let resolveNewSnapshot!: (snapshot: KeyboardLayoutSnapshot) => void
     const oldSnapshot = new Promise<KeyboardLayoutSnapshot>((resolve) => {
@@ -166,19 +168,26 @@ describe('getLayoutBaseCharacterForCode', () => {
       api: {
         app: {
           getKeyboardLayoutSnapshot,
-          onKeyboardLayoutChanged: (callback: () => void) => {
+          onKeyboardLayoutChanged: (callback: (event: KeyboardLayoutChangeEvent) => void) => {
             notifyLayoutChanged = callback
             return vi.fn()
           }
         }
       },
-      addEventListener: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: () => void) => {
+        if (type === 'focus') {
+          focusListener = listener
+        }
+      }),
       removeEventListener: vi.fn()
     })
 
     prefetchLayoutCharacters()
-    notifyLayoutChanged?.()
+    notifyLayoutChanged?.({ phase: 'invalidated', generation: 1 })
     expect(getLayoutBaseCharacterForCode('KeyQ')).toBeUndefined()
+    focusListener?.()
+    await _refreshLayoutCharactersForTests()
+    expect(getKeyboardLayoutSnapshot).toHaveBeenCalledOnce()
 
     resolveOldSnapshot({
       inputSourceId: 'stale',
@@ -189,6 +198,8 @@ describe('getLayoutBaseCharacterForCode', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(getLayoutBaseCharacterForCode('KeyQ')).toBeUndefined()
+
+    notifyLayoutChanged?.({ phase: 'refresh', generation: 1 })
 
     resolveNewSnapshot({
       inputSourceId: 'new',

@@ -607,6 +607,11 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
+      if (action.type === 'trackNativeOptionDeadKey') {
+        optionKittyReleases.armNativeDeadKey(e)
+        return
+      }
+
       if (action.type === 'sendInput') {
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -615,7 +620,9 @@ export function useTerminalKeyboardShortcuts({
           return
         }
         const sendResolvedInput = createCapturedInputSender(pane, action.data)
-        if (action.optionKittyRelease) {
+        if (action.consumeOptionKeyUp) {
+          optionKittyReleases.armNativeDeadKey(e)
+        } else if (action.optionKittyRelease) {
           optionKittyReleases.arm(
             e,
             action.optionKittyRelease,

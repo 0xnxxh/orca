@@ -12,6 +12,7 @@ import type {
   KeyboardLayoutKeyCharacters,
   KeyboardLayoutSnapshot
 } from '../../../../shared/keyboard-layout-snapshot'
+import type { KeyboardLayoutChangeEvent } from '../../../../shared/keyboard-layout-events'
 
 type NavigatorWithKeyboard = Navigator & {
   keyboard?: {
@@ -32,10 +33,12 @@ let focusListenerAttached = false
 let attachedWindow: Window | null = null
 let unsubscribeLayoutChange: (() => void) | null = null
 let refreshGeneration = 0
+let layoutChangeGeneration = 0
+let layoutRefreshBlocked = false
 
 type KeyboardLayoutAppApi = {
   getKeyboardLayoutSnapshot?: () => Promise<KeyboardLayoutSnapshot | null>
-  onKeyboardLayoutChanged?: (callback: () => void) => () => void
+  onKeyboardLayoutChanged?: (callback: (event: KeyboardLayoutChangeEvent) => void) => () => void
 }
 
 function getKeyboardLayoutAppApi(): KeyboardLayoutAppApi | undefined {
@@ -47,6 +50,9 @@ function getKeyboardLayoutAppApi(): KeyboardLayoutAppApi | undefined {
 }
 
 async function refreshLayoutMap(): Promise<void> {
+  if (layoutRefreshBlocked) {
+    return
+  }
   const generation = ++refreshGeneration
   const keyboard = (window.navigator as NavigatorWithKeyboard).keyboard
   const snapshotReader = getKeyboardLayoutAppApi()?.getKeyboardLayoutSnapshot
@@ -66,10 +72,21 @@ async function refreshLayoutMap(): Promise<void> {
   }
 }
 
-function refreshAfterKeyboardLayoutChange(): void {
+function refreshAfterKeyboardLayoutChange(event: KeyboardLayoutChangeEvent): void {
+  if (event.generation < layoutChangeGeneration) {
+    return
+  }
+  layoutChangeGeneration = event.generation
+  if (event.phase === 'invalidated') {
+    layoutRefreshBlocked = true
+    cachedLayoutCharacters = { layoutMap: null, nativeKeyCharacters: null }
+  } else {
+    layoutRefreshBlocked = false
+  }
   ++refreshGeneration
-  cachedLayoutCharacters = { layoutMap: null, nativeKeyCharacters: null }
-  void refreshLayoutMap()
+  if (event.phase === 'refresh') {
+    void refreshLayoutMap()
+  }
 }
 
 /** Idempotent. Kicks off the initial fetch and keeps the cache fresh across
@@ -171,5 +188,7 @@ export function _resetLayoutCharacterListenersForTests(): void {
   attachedWindow = null
   unsubscribeLayoutChange = null
   focusListenerAttached = false
+  layoutChangeGeneration = 0
+  layoutRefreshBlocked = false
   ++refreshGeneration
 }

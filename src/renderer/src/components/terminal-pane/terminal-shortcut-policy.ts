@@ -58,7 +58,13 @@ export type TerminalShortcutAction =
   | { type: 'closeActivePane' }
   | { type: 'splitActivePane'; direction: 'vertical' | 'horizontal' }
   | { type: 'scrollViewport'; position: 'top' | 'bottom' }
-  | { type: 'sendInput'; data: string; optionKittyRelease?: TerminalOptionKittyRelease }
+  | {
+      type: 'sendInput'
+      data: string
+      optionKittyRelease?: TerminalOptionKittyRelease
+      consumeOptionKeyUp?: boolean
+    }
+  | { type: 'trackNativeOptionDeadKey' }
   | { type: 'switchInputSource' }
 
 /**
@@ -243,6 +249,7 @@ export function resolveTerminalShortcutAction(
     !event.ctrlKey &&
     event.altKey &&
     !event.shiftKey &&
+    event.code?.startsWith('Numpad') !== true &&
     (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
   ) {
     // Why: a kitty-protocol TUI binds alt+arrow via xterm's native CSI 1;3D/C; \eb/\ef would reach it as alt+b/f.

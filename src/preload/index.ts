@@ -229,7 +229,10 @@ import type {
   PreloadApi
 } from './api-types'
 import type { AgentKind, LaunchSource, RequestKind } from '../shared/telemetry-events'
-import { KEYBOARD_LAYOUT_CHANGED_CHANNEL } from '../shared/keyboard-layout-events'
+import {
+  KEYBOARD_LAYOUT_CHANGED_CHANNEL,
+  type KeyboardLayoutChangeEvent
+} from '../shared/keyboard-layout-events'
 import { createBrowserFindSubscriptions } from './browser-find-subscriptions'
 import { createUsageProviderApi } from './usage-provider-api'
 import type { AppStarSource } from '../shared/gh-star-source'
@@ -541,8 +544,13 @@ const api = {
     getMacCapturedDigitRowChords: (): Promise<MacCapturedDigitRowChord[]> =>
       ipcRenderer.invoke('app:getMacCapturedDigitRowChords'),
     getKeyboardLayoutSnapshot: () => ipcRenderer.invoke('app:getKeyboardLayoutSnapshot'),
-    onKeyboardLayoutChanged: (callback: () => void): (() => void) => {
-      const listener = (): void => callback()
+    onKeyboardLayoutChanged: (
+      callback: (event: KeyboardLayoutChangeEvent) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        event: KeyboardLayoutChangeEvent
+      ): void => callback(event)
       ipcRenderer.on(KEYBOARD_LAYOUT_CHANGED_CHANNEL, listener)
       return () => ipcRenderer.removeListener(KEYBOARD_LAYOUT_CHANGED_CHANNEL, listener)
     },

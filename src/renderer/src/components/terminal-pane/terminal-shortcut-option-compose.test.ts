@@ -105,11 +105,27 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     ).toEqual({ type: 'sendInput', data: '\x1b[50;4u' })
   })
 
-  it('leaves a real dead-key event to the composition path', () => {
+  it('tracks a compose-side dead key while preserving its native keydown', () => {
     const abc = (code: string, shifted: boolean, option = false): string | undefined =>
       code === 'KeyE' ? (option ? '´' : shifted ? 'E' : 'e') : undefined
     expect(
       resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }), 'false', 0, abc, 30)
+    ).toEqual({ type: 'trackNativeOptionDeadKey' })
+    expect(
+      resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }), 'left', 2, abc, 2)
+    ).toEqual({ type: 'trackNativeOptionDeadKey' })
+    expect(
+      resolveKitty(
+        event({ key: 'Dead', code: 'KeyE', altKey: true, shiftKey: true }),
+        'left',
+        1,
+        abc,
+        30
+      )
+    ).toEqual({ type: 'trackNativeOptionDeadKey' })
+    // Global Option-as-Alt stays with the terminal engine, which may send the press.
+    expect(
+      resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }), 'true', 0, abc, 30)
     ).toBeNull()
   })
 
@@ -168,6 +184,9 @@ describe('Option-composed characters in kitty keyboard panes', () => {
       type: 'sendInput',
       data: '\x1be'
     })
+    expect(
+      resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }), 'left', 1, undefined, 2)
+    ).toEqual({ type: 'sendInput', data: '\x1be', consumeOptionKeyUp: true })
   })
 
   it('keeps global Option-as-Alt in the centralized encoder without associated text', () => {
@@ -293,6 +312,28 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     })
   })
 
+  it('preserves functional numpad identity under modified-key reporting', () => {
+    expect(
+      resolveKitty(event({ key: '1', code: 'Numpad1', altKey: true }), 'false', 0, undefined, 2)
+    ).toEqual({
+      type: 'sendInput',
+      data: '\x1b[57400;3u',
+      optionKittyRelease: { flags: 2 }
+    })
+  })
+
+  it.each([
+    ['ArrowLeft', 'Numpad4', 57417],
+    ['Delete', 'NumpadDecimal', 57426],
+    ['Clear', 'Numpad5', 57427]
+  ])('preserves NumLock-off %s keypad identity', (key, code, codePoint) => {
+    expect(resolveKitty(event({ key, code, altKey: true }), 'false', 0, undefined, 2)).toEqual({
+      type: 'sendInput',
+      data: `\x1b[${codePoint};3u`,
+      optionKittyRelease: { flags: 2 }
+    })
+  })
+
   it('includes CapsLock in Option protocol modifiers', () => {
     expect(
       resolveKitty(
@@ -330,6 +371,32 @@ describe('Option-composed characters in kitty keyboard panes', () => {
       data: '\\',
       optionKittyRelease: { flags: 2 }
     })
+  })
+
+  it('prefers composed text while the shifted layout snapshot is pending', () => {
+    expect(
+      resolveKitty(
+        event({ key: '\\', code: 'Digit7', altKey: true, shiftKey: true }),
+        'false',
+        0,
+        undefined,
+        2
+      )
+    ).toEqual({
+      type: 'sendInput',
+      data: '\\',
+      optionKittyRelease: { flags: 2 }
+    })
+
+    expect(
+      resolveKitty(
+        event({ key: '\\', code: 'Digit7', altKey: true, shiftKey: true }),
+        'left',
+        1,
+        undefined,
+        2
+      )
+    ).toEqual({ type: 'sendInput', data: '\x1b[55;4u', optionKittyRelease: { flags: 2 } })
   })
 
   it('omits associated text for an Option side configured as Alt', () => {

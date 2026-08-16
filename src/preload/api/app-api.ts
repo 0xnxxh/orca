@@ -11,6 +11,7 @@ import type { PersistedUIState } from '../../shared/persisted-ui-state-types'
 import type { FloatingTerminalCwdRequest } from '../../shared/ui-chrome-types'
 import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
 import type { KeyboardLayoutSnapshot } from '../../shared/keyboard-layout-snapshot'
+import type { KeyboardLayoutChangeEvent } from '../../shared/keyboard-layout-events'
 
 export type AppApi = {
   /** Returns the app identity currently exposed to native chrome and the titlebar. */
@@ -50,7 +51,7 @@ export type AppApi = {
   /** Active macOS layout characters without Option, or null off macOS or when the native probe fails. */
   getKeyboardLayoutSnapshot: () => Promise<KeyboardLayoutSnapshot | null>
   /** Subscribes to active macOS input-source changes. No-op in the browser fallback. */
-  onKeyboardLayoutChanged: (callback: () => void) => () => void
+  onKeyboardLayoutChanged: (callback: (event: KeyboardLayoutChangeEvent) => void) => () => void
   /** Updates the macOS Dock unread badge. No-op on Windows/Linux. */
   setUnreadDockBadgeCount: (count: number) => Promise<void>
   /** Resolves the launch directory for global Floating Terminal tabs. */
