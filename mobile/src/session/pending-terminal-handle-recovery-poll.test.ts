@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, Suspense } from 'react'
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
@@ -11,6 +11,11 @@ type TestResult = {
   type?: 'snapshot' | 'updated'
   snapshotVersion: number
   tabs: string[]
+}
+
+type HarnessProps = {
+  onParked?: (key: string | null) => void
+  suspend?: Promise<never>
 }
 
 const lifecycle = vi.hoisted(() => ({
@@ -79,7 +84,7 @@ function makeHarness() {
     effectiveTabs: value.tabs
   })
 
-  function Harness(): null {
+  function Harness({ onParked = onPendingTerminalRecoveryParked, suspend }: HarnessProps): null {
     actions = useMobileSessionTabsReconciliation<TestResult, string>({
       client,
       connState,
@@ -90,8 +95,11 @@ function makeHarness() {
       hasRecoveryNeed,
       pendingTerminalRecoveryContextKey: contextKey,
       getPendingTerminalRecoveryContextKey,
-      onPendingTerminalRecoveryParked
+      onPendingTerminalRecoveryParked: onParked
     })
+    if (suspend) {
+      throw suspend
+    }
     return null
   }
 
@@ -243,6 +251,65 @@ describe('bounded pending-handle reconciliation cadence', () => {
     expect(harness.parkedContexts.at(-1)).toBe('terminal-a')
     await advance(2000)
     expect(harness.requestTimes).toHaveLength(PENDING_TERMINAL_HANDLE_RECOVERY_ATTEMPTS)
+  })
+
+  it('does not publish a parked callback from a suspended render', async () => {
+    const harness = makeHarness()
+    const committedCallback = vi.fn()
+    const suspendedCallback = vi.fn()
+    const neverCommits = new Promise<never>(() => {})
+    await act(async () => {
+      renderer = create(
+        createElement(
+          Suspense,
+          { fallback: null },
+          createElement(harness.Harness, { onParked: committedCallback })
+        )
+      )
+      await flush()
+    })
+    const committedActions = harness.actions()
+    committedCallback.mockClear()
+
+    await act(async () => {
+      renderer?.update(
+        createElement(
+          Suspense,
+          { fallback: null },
+          createElement(harness.Harness, {
+            onParked: suspendedCallback,
+            suspend: neverCommits
+          })
+        )
+      )
+      await flush()
+    })
+    await act(async () => {
+      await committedActions?.retryPendingTerminalRecovery()
+    })
+
+    expect(committedCallback).toHaveBeenCalledWith(null)
+    expect(suspendedCallback).not.toHaveBeenCalled()
+  })
+
+  it('publishes the committed parked callback before a same-commit context reset', async () => {
+    const harness = makeHarness()
+    const previousCallback = vi.fn()
+    const committedCallback = vi.fn()
+    await act(async () => {
+      renderer = create(createElement(harness.Harness, { onParked: previousCallback }))
+      await flush()
+    })
+    previousCallback.mockClear()
+
+    harness.setContextKey('terminal-b')
+    await act(async () => {
+      renderer?.update(createElement(harness.Harness, { onParked: committedCallback }))
+      await flush()
+    })
+
+    expect(committedCallback).toHaveBeenCalledWith(null)
+    expect(previousCallback).not.toHaveBeenCalled()
   })
 
   it('keeps other recovery sources live while the pending-terminal budget is parked', async () => {

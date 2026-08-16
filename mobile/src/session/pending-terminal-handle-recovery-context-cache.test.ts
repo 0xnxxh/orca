@@ -32,10 +32,14 @@ describe('PendingTerminalHandleRecoveryContextCache', () => {
     const first = terminalTab('terminal-a', null)
     const parentChanged = { ...first, parentTabId: 'other-parent' }
     const leafChanged = { ...first, leafId: 'other-leaf' }
+    const collisionLeft = { ...first, parentTabId: 'ab', leafId: 'c' }
+    const collisionRight = { ...first, parentTabId: 'a', leafId: 'bc' }
     const firstKey = cache.read([first], first.id)
 
     expect(cache.read([parentChanged], parentChanged.id)).not.toBe(firstKey)
     expect(cache.read([leafChanged], leafChanged.id)).not.toBe(firstKey)
+    const collisionLeftKey = cache.read([collisionLeft], collisionLeft.id)
+    expect(cache.read([collisionRight], collisionRight.id)).not.toBe(collisionLeftKey)
   })
 
   it('does not rescan an unchanged context on the polling hot path', () => {
