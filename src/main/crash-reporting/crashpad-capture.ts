@@ -7,7 +7,7 @@
 // a CHECK failure becomes nameable without shipping raw memory anywhere.
 
 import type { Dirent } from 'node:fs'
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { readdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { app, crashReporter } from 'electron'
 import {
@@ -24,6 +24,10 @@ const DUMP_POLL_INTERVAL_MS = 250
 const DUMP_RECENCY_WINDOW_MS = 30_000
 // Renderer dumps run ~1-15 MiB; well past that means we mis-picked a file.
 const MAX_DUMP_BYTES = 64 * 1024 * 1024
+// Match Crashpad's default budget, but enforce it after crashes instead of
+// waiting for its first 10-minute and later daily pruning passes.
+const MAX_STORED_DUMP_BYTES = 128 * 1024 * 1024
+const DUMP_PRUNE_DELAY_MS = 2_000
 
 type DumpCandidate = {
   readonly filePath: string
@@ -38,6 +42,7 @@ let captureStarted = false
 let captureStartedAtMs: number | null = null
 const claimedDumpPaths = new Map<string, number>()
 const reservedDumpPaths = new Set<string>()
+let dumpPruneTimer: NodeJS.Timeout | null = null
 
 export type CrashpadCaptureOptions = {
   /** Overrides Electron's default so tests need no real Crashpad handler. */
@@ -93,6 +98,10 @@ export function _setCrashpadCaptureStateForTest(
   captureStartedAtMs = state?.started ? (state.startedAtMs ?? Number.NEGATIVE_INFINITY) : null
   claimedDumpPaths.clear()
   reservedDumpPaths.clear()
+  if (dumpPruneTimer) {
+    clearTimeout(dumpPruneTimer)
+    dumpPruneTimer = null
+  }
 }
 
 async function collectDumpCandidates(directory: string): Promise<DumpCandidate[]> {
@@ -120,6 +129,52 @@ async function collectDumpCandidates(directory: string): Promise<DumpCandidate[]
     }
   }
   return candidates
+}
+
+async function pruneCrashpadDumps(maxBytes = MAX_STORED_DUMP_BYTES): Promise<void> {
+  const directory = crashpadDumpDirectory
+  if (!directory) {
+    return
+  }
+  const candidates = (await collectDumpCandidates(directory)).sort(
+    (left, right) => right.mtimeMs - left.mtimeMs
+  )
+  let retainedBytes = 0
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index]
+    const mustKeep = index === 0 || reservedDumpPaths.has(candidate.filePath)
+    if (mustKeep || retainedBytes + candidate.size <= maxBytes) {
+      retainedBytes += candidate.size
+      continue
+    }
+    try {
+      await rm(candidate.filePath, { force: true })
+    } catch {
+      // Crashpad can still be promoting a dump; its own later pass will retry.
+    }
+  }
+}
+
+/** Coalesces crash-burst pruning; there is no timer or directory scan while idle. */
+export function scheduleCrashpadDumpPrune(): void {
+  if (!crashpadDumpDirectory || dumpPruneTimer) {
+    return
+  }
+  dumpPruneTimer = setTimeout(() => {
+    void pruneCrashpadDumps()
+      .catch((error) => {
+        console.error('[crash-reporting] Crashpad dump pruning failed:', error)
+      })
+      .finally(() => {
+        dumpPruneTimer = null
+      })
+  }, DUMP_PRUNE_DELAY_MS)
+  dumpPruneTimer.unref()
+}
+
+/** Test seam for byte-budget behavior without a real Crashpad database. */
+export async function _pruneCrashpadDumpsForTest(maxBytes: number): Promise<void> {
+  await pruneCrashpadDumps(maxBytes)
 }
 
 type DumpPollingOptions = {

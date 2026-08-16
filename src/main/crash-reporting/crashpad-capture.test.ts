@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +14,7 @@ vi.mock('./minidump-crash-signature', () => ({
 }))
 
 import {
+  _pruneCrashpadDumpsForTest,
   _setCrashpadCaptureStateForTest,
   captureMinidumpSignature,
   waitForCrashMinidump
@@ -247,5 +248,20 @@ describe('captureMinidumpSignature', () => {
     })
 
     expect(captured).toBeNull()
+  })
+})
+
+describe('Crashpad dump pruning', () => {
+  it('keeps the newest dumps within the byte budget', async () => {
+    await writeDump(path.join('reports', 'old.dmp'), CRASHED_AT, Buffer.alloc(8))
+    await writeDump(path.join('reports', 'middle.dmp'), CRASHED_AT + 100, Buffer.alloc(8))
+    await writeDump(path.join('reports', 'new.dmp'), CRASHED_AT + 200, Buffer.alloc(8))
+
+    await _pruneCrashpadDumpsForTest(16)
+
+    expect((await readdir(path.join(dumpDir, 'reports'))).sort()).toEqual([
+      'middle.dmp',
+      'new.dmp'
+    ])
   })
 })

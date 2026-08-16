@@ -27,7 +27,11 @@ import {
   type ProcessGoneDedupe
 } from './process-gone-dedupe'
 import { getMainProcessLifecycleIdentity } from './main-process-lifecycle-identity'
-import { captureMinidumpSignature, type CapturedMinidump } from './crashpad-capture'
+import {
+  captureMinidumpSignature,
+  scheduleCrashpadDumpPrune,
+  type CapturedMinidump
+} from './crashpad-capture'
 import { minidumpSignatureDetails } from './minidump-crash-signature'
 import { flushActiveSink, startSpan } from '../observability/tracer'
 
@@ -147,6 +151,9 @@ export function recordProcessGoneCrash(
   if (!isCrashReportReason(event.reason)) {
     return
   }
+  // Crashpad captures suppressed service crashes too; keep a crash loop from
+  // filling the disk even when no user-facing report is created.
+  scheduleCrashpadDumpPrune()
   if (
     !shouldRecordProcessGoneCrash({
       source: event.source,

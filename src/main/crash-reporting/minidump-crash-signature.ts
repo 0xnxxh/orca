@@ -2,9 +2,9 @@
 //
 // Why: a Chromium CHECK/DCHECK surfaces to `render-process-gone` as exit code
 // 0x80000003 (STATUS_BREAKPOINT) and nothing else, so the exit code alone can
-// never name the failing check. Crashpad stores the fatal log line verbatim in
-// the `LOG_FATAL` annotation, so the check name, file and line are recoverable
-// from the dump itself — no symbol server, no minidump_stackwalk.
+// never name the failing check. Some Crashpad builds expose the fatal line as
+// `LOG_FATAL`; Electron 43 on Windows only carries it in captured process
+// memory. Both forms are recoverable without symbols or minidump_stackwalk.
 //
 // Layouts are from Crashpad's minidump_extensions.h and the Windows
 // MINIDUMP_* structs. Everything here is bounds-checked and returns null
@@ -26,6 +26,19 @@ const MODULE_NAME_RVA_OFFSET = 20
 const EXCEPTION_RECORD_OFFSET = 8
 const EXCEPTION_CODE_OFFSET = EXCEPTION_RECORD_OFFSET + 0
 const EXCEPTION_ADDRESS_OFFSET = EXCEPTION_RECORD_OFFSET + 16
+
+const CHROMIUM_LOG_MARKERS = [
+  Buffer.from(':FATAL:', 'ascii'),
+  Buffer.from(':CHECK:', 'ascii'),
+  Buffer.from(':DFATAL:', 'ascii'),
+  Buffer.from(':ERROR:', 'ascii')
+]
+const MAX_LOG_PREFIX_BYTES = 96
+const MAX_CHECK_LOG_BYTES = 4_000
+const MAX_MARKERS_PER_SEVERITY = 256
+const CHECK_LOG_PATTERN =
+  /^\[(?:\d+:){1,2}\d{4}\/\d{6}\.\d{3,6}:(FATAL|CHECK|DFATAL|ERROR)(?::[^:\]\r\n]{1,80})*:([^:\]\r\n]{1,512}?)(?:\((\d+)\)|:(\d+))\]\s*(.+)$/
+const ERROR_CHECK_PATTERN = /\b(?:Check failed:|D?CHECK failed:|Intentionally causing D?CHECK\b)/i
 
 export type MinidumpCrashSignature = {
   /** Chromium's fatal log line, e.g. `[...:FATAL:node.cc(123)] Check failed: !x.` */
@@ -84,11 +97,52 @@ function toHex(value: bigint): string {
   return `0x${value.toString(16)}`
 }
 
-/**
- * Chromium logs `[pid:tid:MMDD/HHMMSS.uuuuuu:FATAL:file.cc(123)] message`.
- * `LogMessage::Init` strips the directory, so only a basename appears here —
- * which is why the fatal line survives crash-report path redaction intact.
- */
+type LocatedCheckMessage = {
+  readonly message: string
+  readonly file?: string
+  readonly line?: number
+}
+
+function isPrintableLogByte(value: number): boolean {
+  return value === 0x09 || (value >= 0x20 && value <= 0x7e)
+}
+
+/** Electron 43 omits LOG_FATAL but keeps Chromium's formatted log line in memory. */
+function findEmbeddedCheckMessage(dump: Buffer): LocatedCheckMessage | undefined {
+  for (const marker of CHROMIUM_LOG_MARKERS) {
+    let from = 0
+    for (let inspected = 0; inspected < MAX_MARKERS_PER_SEVERITY; inspected += 1) {
+      const markerAt = dump.indexOf(marker, from)
+      if (markerAt < 0) {
+        break
+      }
+      from = markerAt + marker.length
+      const start = dump.lastIndexOf(0x5b, markerAt)
+      if (start < 0 || markerAt - start > MAX_LOG_PREFIX_BYTES) {
+        continue
+      }
+      let end = markerAt + marker.length
+      const limit = Math.min(dump.length, start + MAX_CHECK_LOG_BYTES)
+      while (end < limit && isPrintableLogByte(dump[end])) {
+        end += 1
+      }
+      const candidate = dump.subarray(start, end).toString('utf8')
+      const match = CHECK_LOG_PATTERN.exec(candidate)
+      if (!match || (match[1] === 'ERROR' && !ERROR_CHECK_PATTERN.test(match[5]))) {
+        continue
+      }
+      const line = Number.parseInt(match[3] ?? match[4], 10)
+      return {
+        message: candidate,
+        file: moduleBasename(match[2]),
+        line: Number.isFinite(line) ? line : undefined
+      }
+    }
+  }
+  return undefined
+}
+
+/** Parses the annotation form, which uses `file.cc(123)`. */
 function parseCheckLocation(checkMessage: string): {
   file?: string
   line?: number
@@ -131,12 +185,18 @@ export function parseMinidumpCrashSignature(dump: Buffer): MinidumpCrashSignatur
     -readonly [K in keyof MinidumpCrashSignature]: MinidumpCrashSignature[K]
   } = { annotations }
 
-  const checkMessage = annotations['LOG_FATAL'] ?? annotations['abort-message']
+  const annotatedCheckMessage = annotations['LOG_FATAL'] ?? annotations['abort-message']
+  const embeddedCheck = annotatedCheckMessage ? undefined : findEmbeddedCheckMessage(dump)
+  const checkMessage = annotatedCheckMessage ?? embeddedCheck?.message
   if (checkMessage) {
     signature.checkMessage = checkMessage
-    const { file, line } = parseCheckLocation(checkMessage)
-    signature.checkFile = file
-    signature.checkLine = line
+    const location = embeddedCheck ?? parseCheckLocation(checkMessage)
+    if (location.file) {
+      signature.checkFile = location.file
+    }
+    if (location.line !== undefined) {
+      signature.checkLine = location.line
+    }
   }
   if (annotations['ptype']) {
     signature.processType = annotations['ptype']

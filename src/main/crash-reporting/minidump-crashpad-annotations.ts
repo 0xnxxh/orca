@@ -1,8 +1,8 @@
 // Reads Chromium's crash keys out of a Crashpad minidump's annotation streams.
 //
-// Chromium writes the fatal log line into the `LOG_FATAL` annotation, which is
-// why a CHECK failure is nameable from the dump alone — no symbol server, no
-// minidump_stackwalk. Layouts are from Crashpad's minidump_extensions.h.
+// Some Chromium builds expose the fatal log line as `LOG_FATAL`; the signature
+// parser also handles builds that carry it only in captured process memory.
+// Layouts are from Crashpad's minidump_extensions.h.
 
 import {
   findStream,

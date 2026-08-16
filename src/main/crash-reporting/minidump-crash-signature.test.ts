@@ -197,6 +197,9 @@ function buildDump(options: {
 const FATAL_LINE =
   '[8104:1234:0815/143022.123456:FATAL:render_frame_impl.cc(4821)] Check failed: !is_detached_.'
 
+const ELECTRON_43_CHECK_LINE =
+  '[29136:0815/232206.330:ERROR:third_party\\blink\\common\\chrome_debug_urls.cc:180] Intentionally causing CHECK because user navigated to chrome://checkcrash/'
+
 describe('parseMinidumpCrashSignature', () => {
   it('names the failing CHECK from the LOG_FATAL annotation', () => {
     const { dump } = buildDump({
@@ -209,6 +212,40 @@ describe('parseMinidumpCrashSignature', () => {
     expect(signature?.checkFile).toBe('render_frame_impl.cc')
     expect(signature?.checkLine).toBe(4821)
     expect(signature?.processType).toBe('renderer')
+  })
+
+  it('recovers a CHECK line from Electron 43 dump memory without LOG_FATAL', () => {
+    const { dump } = buildDump({ annotations: { ptype: 'renderer' } })
+    const dumpWithMemory = Buffer.concat([
+      dump,
+      Buffer.from(`\0${ELECTRON_43_CHECK_LINE}\0`, 'utf8')
+    ])
+
+    const signature = parseMinidumpCrashSignature(dumpWithMemory)
+
+    expect(signature?.checkMessage).toBe(ELECTRON_43_CHECK_LINE)
+    expect(signature?.checkFile).toBe('chrome_debug_urls.cc')
+    expect(signature?.checkLine).toBe(180)
+    expect(signature?.processType).toBe('renderer')
+  })
+
+  it('does not promote an unrelated Chromium ERROR line containing CHECK', () => {
+    const { dump } = buildDump({})
+    const unrelated =
+      '[29136:0815/232206.330:ERROR:settings.cc:44] Opened the CHECK settings panel.'
+    const dumpWithMemory = Buffer.concat([dump, Buffer.from(`\0${unrelated}\0`, 'utf8')])
+
+    expect(parseMinidumpCrashSignature(dumpWithMemory)?.checkMessage).toBeUndefined()
+  })
+
+  it('prefers the structured annotation over a dump-memory candidate', () => {
+    const { dump } = buildDump({ annotations: { LOG_FATAL: FATAL_LINE } })
+    const dumpWithMemory = Buffer.concat([
+      dump,
+      Buffer.from(`\0${ELECTRON_43_CHECK_LINE}\0`, 'utf8')
+    ])
+
+    expect(parseMinidumpCrashSignature(dumpWithMemory)?.checkMessage).toBe(FATAL_LINE)
   })
 
   it('reads annotations from the process-level simple string dictionary', () => {
