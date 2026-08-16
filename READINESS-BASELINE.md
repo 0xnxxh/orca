@@ -20,11 +20,23 @@ Gate selection is driven by what CI actually enforces: `.github/workflows/pr.yml
 
 ## 1. Verdict
 
-**PASS.** Every readiness gate that is runnable on this box is green at `93ab6e142e`.
-There is **no new breakage** on main. The briefed "pre-existing main breakage" no longer
-reproduces — it was already fixed on main (see §4).
+**PASS on everything measured — with one uncovered gate.**
 
-Three things the coordinator must act on before landing PRs are in §6.
+Every readiness gate that completed is green at `93ab6e142e`: 18 gates run, 18 passed, 0
+failed. There is **no new breakage** on main, and the briefed "pre-existing main breakage"
+no longer reproduces — it was already fixed on main (see §4.1).
+
+**The root unit test suite did not finish** and produced no signal (§2.6). That is the one
+hole in this baseline and it is a large one. The lane was stopped mid-run when the pipeline
+moved off this box.
+
+`/readiness-checklist` was invocable — the skill is symlinked into
+`.claude/skills/readiness-checklist` and its `SKILL.md` was read and followed. It is a
+seven-category *code review* checklist rather than a gate runner, so this report pairs it
+with the concrete CI gates from `.github/workflows/`: gates in §2, checklist-driven review
+of the incoming PR areas in §7.
+
+Four things the coordinator must act on before landing PRs are in §6.
 
 ---
 
@@ -180,7 +192,28 @@ this is worth re-checking in the closing run.
 
 ### 2.6 Root unit test suite
 
-**STATUS: IN PROGRESS at time of this commit.** Results are filled in below when it finishes.
+**STATUS: NOT COMPLETED. NO RESULT.**
+
+The lane was stopped before this suite finished (the pipeline moved off this box). It ran
+for roughly 25 minutes without reaching its summary and was terminated incomplete.
+
+**This gate produced no pass/fail signal at all — do not read it as passing.** Vitest buffers
+its summary to the end of a non-TTY run, so an unfinished run yields no partial counts, and
+`/tmp/rb-logs/root-tests-run1.log` contains no `Test Files` / `Tests` lines. The only content
+it emitted was incidental stderr from an SSH-relay fixture:
+
+```
+ RUN  v4.1.5 /home/brennan/orca/workspaces/orca/readiness-baseline
+[ssh-relay] GC: lock at /home/u/.orca-remote/relay-0.1.0+aaa/.install-lock is stale; treating as recoverable
+```
+
+That line is fixture output from a test in progress, not a failure.
+
+**Consequence for the closing run:** there is no root-unit-test baseline to diff against.
+The closing run should either run this suite to completion or, more practically on a
+constrained box, run it sharded (`--shard=N/16`, matching CI) so partial coverage is at
+least recorded with real numbers. Everything else in this report is a real, completed
+measurement; this one is a hole.
 
 The suite is large — 5,664 test files match the `config/vitest.config.ts` include globs. CI
 splits this across a 16-shard × 2-Node-version matrix; locally it runs unsharded, so it takes
@@ -348,6 +381,7 @@ reformat all 21 unrelated files into their diff.** Lanes should format by explic
 
 | Gate | Why not |
 |---|---|
+| **Root unit test suite** (`pr.yml` tests matrix) | Started, ran ~25 min, **terminated incomplete** when the lane was stopped. No pass/fail signal. See §2.6. |
 | **Playwright E2E** (`e2e.yml`, 10 shards) | Requires a full `build:electron-vite` + Electron app build, then 10 shards of Electron runs. The box is memory constrained (~15 GB shared, ~2-3 GB free while the unit suite ran) and the lane constraint allows one heavy build at a time. Electron binary and display `:95` are available, so a *golden subset* is feasible on request — see §6. |
 | **`ruby fastlane/ios_release_version_test.rb`** | `ruby: command not found` (exit 127). Not installable within a read-only lane. |
 | **`check:code-quality:changed`**, **`check:react-doctor:changed`** | Both take a PR base SHA and diff against it. On an unmodified `main` the changed set is empty, so they are no-ops and carry no baseline signal. They are PR-context gates, not main-state gates. |
