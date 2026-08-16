@@ -1489,9 +1489,6 @@
         "connectTimedOut": "Connection timed out. It may still be connecting in the background.",
         "connectingHost": "Connecting…",
         "connectHost": "Connect",
-        "setLocation": "Set project location",
-        "setLocationOnHost": "Set project location on {{host}}",
-        "setLocationTooltip": "Choose a folder or clone this project onto {{host}}.",
         "addHost": "Add host",
         "addHostHint": "Register another machine or Orca server",
         "addSshHost": "Add SSH host",
@@ -12465,15 +12462,6 @@
       },
       "new": {
         "workspace": {
-          "SetProjectLocationDialog": {
-            "title": "Set project location",
-            "description": "Choose where {{project}} lives on {{host}}.",
-            "browseFolder": "Browse folder",
-            "browseFolderHelp": "Use an existing checkout or folder on this host.",
-            "cloneFromUrl": "Clone from URL",
-            "cloneFromUrlHelp": "Clone this repository onto {{host}}.",
-            "saveLocation": "Set location"
-          },
           "SmartWorkspaceNameField": {
             "2a0d535f69": "Create new branch",
             "a44229ce4d": "as workspace name",
