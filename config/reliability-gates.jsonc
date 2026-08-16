@@ -8313,9 +8313,11 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-ime-linux-candidate-state.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx src/renderer/src/components/dashboard-popout/AgentTerminalPreview.option-dead-key.test.tsx src/shared/terminal-kitty-keyboard-mode-tracker.test.ts src/main/ipc/terminal-preview.test.ts src/main/ipc/terminal-preview-output-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-snapshot-kitty-flags.test.ts src/main/daemon/daemon-pty-adapter.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-kitty-csi-u-encoding.test.ts src/renderer/src/components/terminal-pane/terminal-shortcut-option-compose.test.ts src/renderer/src/components/terminal-pane/terminal-option-kitty-release.test.ts src/renderer/src/lib/keyboard-layout/layout-base-character.test.ts src/renderer/src/lib/keyboard-layout/option-as-alt-probe.test.ts src/main/ipc/macos-keyboard-layout-snapshot.test.ts src/main/ipc/macos-keyboard-layout-change-notifications.test.ts src/preload/app-restart-checkpoint-routing.test.ts src/renderer/src/web/web-preload-api-ui.test.ts",
-        "pnpm run test:e2e -- tests/e2e/chinese-ime-chat-input-repro.spec.ts"
+        "pnpm run test:e2e -- tests/e2e/chinese-ime-chat-input-repro.spec.ts",
+        "pnpm run test:e2e -- tests/e2e/terminal-option-composed-ascii.spec.ts"
       ],
       "testFiles": [
+        "tests/e2e/terminal-option-composed-ascii.spec.ts",
         "src/renderer/src/components/terminal-pane/terminal-ime-native-text-forwarder.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-ime-substituted-text-commit.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-ime-macos-keybinding-dict-trace.test.ts",
@@ -8407,6 +8409,15 @@
           "file": "src/renderer/src/components/terminal-pane/xterm-bypass-policy.test.ts",
           "assertions": [
             "macOS standalone Process key behavior and composition-owned key suppression stay intact"
+          ]
+        },
+        {
+          "file": "tests/e2e/terminal-option-composed-ascii.spec.ts",
+          "assertions": [
+            "a live kitty-negotiated pane receives the Option-composed ASCII character, not the physical alt chord",
+            "an Option layer that also needs Shift still reaches the pty as text",
+            "configured Option-as-Alt still reports the layout-resolved physical chord",
+            "a non-ASCII Option glyph still reaches the application as its alt hotkey"
           ]
         },
         {
@@ -8567,6 +8578,15 @@
           "result": "passed",
           "durationSeconds": 0.8,
           "summary": "The deterministic Option/layout slice passed exact protocol bytes for filtered committed associated text, physical and alternate key identities, functional and printable numpad keys, press-pinned releases across layout and lock changes, lock modifiers, layout-aware configured Alt across individual flags and dead keys, terminal-engine-owned global legacy handling, IME-owned DOM events, ISO/Space keys, native dead-key release suppression, pending-layout text fallback, release ownership, the two-phase native-read barrier, synchronous cache invalidation, rapid-change coalescing, generation fencing, every-live-window fanout, cleanup, and native/web platform fallbacks."
+        },
+        {
+          "date": "2026-08-16",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm run test:e2e -- tests/e2e/terminal-option-composed-ascii.spec.ts",
+          "result": "passed",
+          "durationSeconds": 66,
+          "summary": "Four live-Electron scenarios passed against a real pty whose kitty flags were armed by the application's own CSI > 1 u: Option-composed `@` and Option+Shift-composed `\\` arrive as text with no alt chord, configured Option-as-Alt still reports the layout-resolved chord, and a non-ASCII Option glyph still reaches the application as its alt hotkey. Discrimination was proven by mutation rather than assumed — restoring the pre-fix policy makes exactly the two composed-text scenarios fail with the character never reaching the pty, while both chord scenarios stay green."
         },
         {
           "date": "2026-08-16",

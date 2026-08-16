@@ -47,6 +47,9 @@ function createRelease(flags: number): TerminalOptionKittyRelease | undefined {
   return (flags & KITTY_REPORT_EVENT_TYPES) === 0 ? undefined : { flags }
 }
 
+// Why ASCII-only: the protocol says a text-producing key sends its text, but #8031 needs Option
+// hotkeys to still reach kitty TUIs. ASCII splits the two — layouts hide `@ $ # [ ] { } \ |` behind
+// Option with no other way to type them, while the glyphs on TUI-bound keys (π, ƒ, ∫) never are.
 function isLayoutComposedAsciiCharacter(
   key: string,
   characterWithoutOption: string | undefined
