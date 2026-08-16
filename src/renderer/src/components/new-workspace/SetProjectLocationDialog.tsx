@@ -114,6 +114,9 @@ function SetProjectLocationDialogBody({
   // form they have since pointed at another host.
   const abandoned = useRef(false)
   useEffect(() => {
+    // Re-armed on mount: StrictMode runs mount/cleanup/mount, and latching this
+    // on the first cleanup would disable the success path for the whole session.
+    abandoned.current = false
     return () => {
       abandoned.current = true
     }
