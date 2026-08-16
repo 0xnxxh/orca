@@ -87,8 +87,12 @@ export function createPruneLastVisitedTimestamps(
           patch.activeWorktreeId = null
           // Leaving the derived workspace key behind would keep the phantom workspace selected.
           // Only the stale worktree's own key is dropped (same equality check as the rename path),
-          // so a folder key or a key pointing at another live worktree survives.
-          if (s.activeWorkspaceKey === worktreeWorkspaceKey(activeId)) {
+          // so a folder key or a key pointing at another live worktree survives. The bare-id form
+          // predates the `worktree:` prefix and is cleared too, matching the purge path.
+          if (
+            s.activeWorkspaceKey === worktreeWorkspaceKey(activeId) ||
+            s.activeWorkspaceKey === activeId
+          ) {
             patch.activeWorkspaceKey = null
           }
           patch.activeWorkspaceExecutionHostId = null

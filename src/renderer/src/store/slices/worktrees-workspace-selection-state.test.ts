@@ -278,6 +278,23 @@ describe('markWorktreeVisited', () => {
     // Only the stale worktree's own derived key is dropped.
     expect(store.getState().activeWorkspaceKey).toBe(worktreeWorkspaceKey('repo1::/a'))
   })
+
+  it('pruneLastVisitedTimestamps clears a legacy unprefixed active workspace key for the stale worktree', () => {
+    const store = createTestStore()
+    const wt = makeWorktree({ id: 'repo1::/a', repoId: 'repo1', path: '/a' })
+    store.setState({
+      worktreesByRepo: { repo1: [wt] },
+      activeWorktreeId: 'repo1::/gone',
+      // Sessions predating the `worktree:` prefix stored the bare id (see the purge path).
+      activeWorkspaceKey: 'repo1::/gone',
+      lastVisitedAtByWorktreeId: {}
+    } as unknown as Partial<AppState>)
+
+    store.getState().pruneLastVisitedTimestamps()
+
+    expect(store.getState().activeWorktreeId).toBeNull()
+    expect(store.getState().activeWorkspaceKey).toBeNull()
+  })
 })
 
 describe('setRenamingWorktreeId', () => {
