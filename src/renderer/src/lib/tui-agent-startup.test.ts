@@ -352,7 +352,7 @@ describe('buildAgentDraftLaunchPlan', () => {
       })
     ).toEqual({
       agent: 'pi',
-      launchCommand: `pi; command test -n "$fish_pid" && set --erase -g ORCA_PI_PREFILL; command test -z "$fish_pid" && unset ORCA_PI_PREFILL; true`,
+      launchCommand: 'pi; unset ORCA_PI_PREFILL',
       expectedProcess: 'pi',
       env: { ORCA_PI_PREFILL: 'https://github.com/acme/repo/issues/42' },
       launchConfig: emptyLaunchConfig('pi')
