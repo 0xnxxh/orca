@@ -15,6 +15,7 @@ import {
   describeError,
   describeFailedPtySweep,
   describeUnstoppedPtys,
+  unverifiableStopVerdict,
   verifyUnstoppedPtys,
   type UnstoppedPtyVerdict
 } from './unstopped-pty-verification'
@@ -234,7 +235,8 @@ export async function killAllProcessesForWorktree(
     const verdict: UnstoppedPtyVerdict =
       failedPtyIds.length === 0
         ? { status: 'exited' }
-        : await verifyUnstoppedPtys(failedPtyIds, deps.localProvider, sweepBudgetMs)
+        : (unverifiableStopVerdict(failedPtyIds, deps.runtime) ??
+          (await verifyUnstoppedPtys(failedPtyIds, deps.localProvider, sweepBudgetMs)))
     if (verdict.status === 'exited') {
       for (const ptyId of failedPtyIds) {
         clearStoppedPtyState(ptyId, deps.onPtyStopped)

@@ -106,13 +106,35 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
           params.dispatch,
           db.markWorkerStopUnknown(
             params.dispatch,
-            `The recorded worker process is ${observation.status}; no terminal was closed.`
+            observation.status === 'unverifiable'
+              ? // Why: losing the link to the worker's host is not a death certificate,
+                // so this must not settle as a stop or read as an observed exit.
+                `The recorded worker process could not be confirmed stopped: ${
+                  observation.reason ?? 'its host could not be reached'
+                }; no terminal was closed.`
+              : `The recorded worker process is ${observation.status}; no terminal was closed.`
           ),
           'none'
         )
       }
       try {
         const close = await runtime.closeTerminal(handle)
+        if (close.ptyStopVerdict) {
+          // The tab is retired, but the agent process was never confirmed stopped —
+          // settling here is the false success this receipt exists to prevent.
+          return unknownReceipt(
+            params.dispatch,
+            db.markWorkerStopUnknown(
+              params.dispatch,
+              `The agent terminal was closed but its process could not be confirmed stopped: ${
+                close.ptyStopVerdict === 'live'
+                  ? 'it is still running'
+                  : (close.ptyStopReason ?? 'its host could not be reached')
+              }.`
+            ),
+            'closed_agent_terminal'
+          )
+        }
         const worker = db.settleWorkerStop(params.dispatch)
         runtime.notifyMessageArrived(`dispatch:${params.dispatch}`, 'status')
         return {

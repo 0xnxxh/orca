@@ -365,6 +365,42 @@ describe('terminal close and handle incarnation continuity', () => {
     expect(harness.kill).not.toHaveBeenCalled()
   })
 
+  it('reports an unconfirmed stop on the close receipt rather than a bare uncertain false', async () => {
+    const harness = createHarness()
+    const [{ handle }] = (await harness.runtime.listTerminals(`id:${WORKTREE_ID}`)).terminals
+    // Mirrors pty.ts when the SSH provider is gone: the lease is tombstoned, the
+    // stop reports false, and the PTY is marked as contact we lost — not a kill.
+    harness.kill.mockReturnValue(false)
+    harness.setVerifiedStopResult(false)
+    harness.runtime.markPtyLivenessUnverifiable(PTY_ID, 'its SSH provider is no longer registered')
+
+    const closing = harness.runtime.closeTerminal(handle)
+    await vi.waitFor(() => expect(harness.closeTerminalTab).toHaveBeenCalled())
+    harness.retirePersistedTab()
+    harness.acknowledged.resolve()
+
+    await expect(closing).resolves.toMatchObject({
+      ptyKilled: false,
+      ptyStopVerdict: 'unverifiable',
+      ptyStopReason: 'its SSH provider is no longer registered'
+    })
+  })
+
+  it('leaves a confirmed kill receipt free of any stop verdict', async () => {
+    const harness = createHarness()
+    const [{ handle }] = (await harness.runtime.listTerminals(`id:${WORKTREE_ID}`)).terminals
+
+    const closing = harness.runtime.closeTerminal(handle)
+    await vi.waitFor(() => expect(harness.closeTerminalTab).toHaveBeenCalled())
+    harness.retirePersistedTab()
+    harness.acknowledged.resolve()
+
+    const close = await closing
+    expect(close.ptyKilled).toBe(true)
+    expect(close.ptyStopVerdict).toBeUndefined()
+    expect(close.ptyStopReason).toBeUndefined()
+  })
+
   it('falls back to kill when verified teardown rejects after retirement', async () => {
     const harness = createHarness()
     const [{ handle }] = (await harness.runtime.listTerminals(`id:${WORKTREE_ID}`)).terminals

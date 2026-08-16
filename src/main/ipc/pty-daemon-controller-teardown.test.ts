@@ -319,7 +319,9 @@ describe('registerPtyHandlers', () => {
           kill: (ptyId: string) => boolean
         }
 
-        expect(controller.kill('ssh:ssh-1@@relay-pty')).toBe(true)
+        // The lease is tombstoned, but nothing observed the detached relay PTY
+        // stop, so the stop itself is reported as unconfirmed.
+        expect(controller.kill('ssh:ssh-1@@relay-pty')).toBe(false)
 
         expect(localShutdown).not.toHaveBeenCalled()
         expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'relay-pty', 'terminated')
@@ -347,7 +349,7 @@ describe('registerPtyHandlers', () => {
           kill: (ptyId: string) => boolean
         }
 
-        expect(controller.kill('remote-pty')).toBe(true)
+        expect(controller.kill('remote-pty')).toBe(false)
 
         expect(store.markSshRemotePtyLease).toHaveBeenCalledWith(
           'ssh-1',

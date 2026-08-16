@@ -1,18 +1,17 @@
 import type { IPtyProvider } from '../providers/types'
+import type { OrcaRuntimeService } from './orca-runtime'
 import {
   UNSTOPPED_PTY_DETAIL_SEPARATOR,
   UNSTOPPED_PTY_LIVE_DETAIL_PREFIX,
   UNSTOPPED_PTY_REMOVAL_PREFIX
 } from '../../shared/worktree/removal'
+import type { PtyLivenessVerdict } from '../../shared/pty-liveness-verdict'
 import { settleBeforeDeadline } from './settle-before-deadline'
 
 // Floor for the verification window when the sweep ran on a very short budget.
 export const WORKTREE_TEARDOWN_VERIFY_GRACE_MS = 2_000
 
-export type UnstoppedPtyVerdict =
-  | { status: 'exited' }
-  | { status: 'live'; ptyIds: string[] }
-  | { status: 'unverifiable'; reason: string }
+export type UnstoppedPtyVerdict = PtyLivenessVerdict
 
 /**
  * Re-lists the provider's processes to decide what a failed stop RPC actually
@@ -54,6 +53,24 @@ export async function verifyUnstoppedPtys(
   const livePtyIds = new Set(sessions.map((session) => session.id))
   const stillLive = failedPtyIds.filter((ptyId) => livePtyIds.has(ptyId))
   return stillLive.length > 0 ? { status: 'live', ptyIds: stillLive } : { status: 'exited' }
+}
+
+/**
+ * A stop that lost contact with the PTY's own host stays unverifiable: the
+ * surviving provider's inventory is silent about a host it cannot reach, and
+ * silence is not evidence of an exit. Force Delete is still the escape hatch.
+ */
+export function unverifiableStopVerdict(
+  failedPtyIds: readonly string[],
+  runtime: OrcaRuntimeService | undefined
+): UnstoppedPtyVerdict | null {
+  for (const ptyId of failedPtyIds) {
+    const verdict = runtime?.getPtyLivenessVerdict?.(ptyId)
+    if (verdict?.status === 'unverifiable') {
+      return verdict
+    }
+  }
+  return null
 }
 
 /** Names the blocking PTYs so a wedged removal is diagnosable, not just refused. */
