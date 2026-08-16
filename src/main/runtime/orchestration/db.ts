@@ -4582,20 +4582,80 @@ export class OrchestrationDb {
   }
 
   updateTaskStatus(id: string, status: TaskStatus, result?: string): TaskRow | undefined {
-    const completedAt =
-      status === 'completed' || status === 'failed' ? new Date().toISOString() : null
-    this.db
-      .prepare(
-        'UPDATE tasks SET status = ?, result = COALESCE(?, result), completed_at = COALESCE(?, completed_at) WHERE id = ?'
-      )
-      .run(status, result ?? null, completedAt, id)
+    const terminalStatus = status === 'completed' || status === 'failed'
+    const requiresActiveDispatch = status === 'dispatched'
+    const permitsActiveDispatch = terminalStatus || requiresActiveDispatch
+    this.db.exec('SAVEPOINT update_task_status')
+    try {
+      const completedAt = terminalStatus ? new Date().toISOString() : null
+      const update = this.db
+        .prepare(
+          `UPDATE tasks
+           SET status = ?, result = COALESCE(?, result),
+               completed_at = COALESCE(?, completed_at)
+           WHERE id = ?
+             AND (
+               ? = 0 OR EXISTS (
+                 SELECT 1 FROM dispatch_contexts
+                 WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
+               )
+             )
+             AND (
+               ? = 1 OR NOT EXISTS (
+                 SELECT 1 FROM dispatch_contexts
+                 WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
+               )
+             )`
+        )
+        .run(
+          status,
+          result ?? null,
+          completedAt,
+          id,
+          requiresActiveDispatch ? 1 : 0,
+          permitsActiveDispatch ? 1 : 0
+        )
+      if (update.changes !== 1) {
+        const task = this.getTask(id)
+        const active = this.db
+          .prepare(
+            `SELECT id FROM dispatch_contexts
+             WHERE task_id = ? AND status IN ('pending', 'dispatched')
+             ORDER BY rowid DESC LIMIT 1`
+          )
+          .get(id) as Pick<DispatchContextRow, 'id'> | undefined
+        if (task && requiresActiveDispatch && !active) {
+          throw new OrchestrationError(
+            'task_not_startable',
+            `Task ${id} cannot move to dispatched without an active Dispatch.`,
+            { taskId: id }
+          )
+        }
+        if (task && active && !permitsActiveDispatch) {
+          throw new OrchestrationError(
+            'task_not_startable',
+            `Task ${id} cannot move to ${status} while Dispatch ${active.id} is active.`,
+            { taskId: id, dispatchId: active.id }
+          )
+        }
+        this.db.exec('RELEASE update_task_status')
+        return task
+      }
 
-    if (status === 'completed') {
-      this.promoteReadyTasks(id)
-      this.completeActiveDispatchForTask(id)
+      if (terminalStatus) {
+        this.settleActiveDispatchesForTask(id, status, result)
+      }
+      if (status === 'completed') {
+        this.promoteReadyTasks(id)
+      }
+      const task = this.getTask(id)
+      this.db.exec('RELEASE update_task_status')
+      return task
+    } catch (error) {
+      this.db.exec('ROLLBACK TO update_task_status')
+      this.db.exec('RELEASE update_task_status')
+      throw error
     }
-
-    return this.getTask(id)
   }
 
   // Why: runs in the status-update transaction, so a completed task never leaves its ready children unpromoted.
@@ -7133,32 +7193,46 @@ export class OrchestrationDb {
     const priorFailures = prior?.max_failures ?? 0
 
     const id = generateId('ctx')
-    this.db
-      .prepare(
-        `INSERT INTO dispatch_contexts (
-           id, run_id, task_id, contract_version, launch_token_hash,
-           assignee_handle, assignee_pane_key, process_incarnation,
-           status, failure_count, dispatched_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now'))`
-      )
-      .run(
-        id,
-        task.run_id,
-        taskId,
-        CURRENT_CONTRACT_VERSION,
-        launchTokenHash ?? null,
-        assigneeHandle,
-        assigneePaneKey ?? null,
-        processIncarnation ?? null,
-        priorFailures
-      )
-    this.hasAnyDispatchContextsCache = true
-
-    this.db.prepare("UPDATE tasks SET status = 'dispatched' WHERE id = ?").run(taskId)
-
-    return this.db
-      .prepare('SELECT * FROM dispatch_contexts WHERE id = ?')
-      .get(id) as DispatchContextRow
+    this.db.exec('SAVEPOINT create_dispatch_context')
+    try {
+      const inserted = this.db
+        .prepare(
+          `INSERT INTO dispatch_contexts (
+             id, run_id, task_id, contract_version, launch_token_hash,
+             assignee_handle, assignee_pane_key, process_incarnation,
+             status, failure_count, dispatched_at
+           )
+           SELECT ?, run_id, id, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now')
+           FROM tasks WHERE id = ? AND status = 'ready'`
+        )
+        .run(
+          id,
+          CURRENT_CONTRACT_VERSION,
+          launchTokenHash ?? null,
+          assigneeHandle,
+          assigneePaneKey ?? null,
+          processIncarnation ?? null,
+          priorFailures,
+          taskId
+        )
+      if (inserted.changes !== 1) {
+        const current = this.getTask(taskId)
+        throw new Error(
+          `Task ${taskId} is ${current?.status ?? 'missing'}; only ready tasks can be dispatched`
+        )
+      }
+      this.db.prepare("UPDATE tasks SET status = 'dispatched' WHERE id = ?").run(taskId)
+      const dispatch = this.db
+        .prepare('SELECT * FROM dispatch_contexts WHERE id = ?')
+        .get(id) as DispatchContextRow
+      this.db.exec('RELEASE create_dispatch_context')
+      this.hasAnyDispatchContextsCache = true
+      return dispatch
+    } catch (error) {
+      this.db.exec('ROLLBACK TO create_dispatch_context')
+      this.db.exec('RELEASE create_dispatch_context')
+      throw error
+    }
   }
 
   getDispatchContext(taskId: string): DispatchContextRow | undefined {
@@ -7359,15 +7433,27 @@ export class OrchestrationDb {
       .run(ctxId)
   }
 
-  completeActiveDispatchForTask(taskId: string): void {
-    const active = this.db
+  completeActiveDispatchesForTask(taskId: string): void {
+    this.settleActiveDispatchesForTask(taskId, 'completed')
+  }
+
+  private settleActiveDispatchesForTask(
+    taskId: string,
+    status: 'completed' | 'failed',
+    failure?: string
+  ): void {
+    this.db
       .prepare(
-        "SELECT * FROM dispatch_contexts WHERE task_id = ? AND status IN ('pending', 'dispatched') ORDER BY rowid DESC LIMIT 1"
+        `UPDATE dispatch_contexts
+         SET status = ?, completed_at = COALESCE(completed_at, datetime('now')),
+             last_failure = CASE
+               WHEN ? = 'failed' THEN COALESCE(?, last_failure, 'Task marked failed')
+               ELSE last_failure
+             END,
+             capability_revoked_at = COALESCE(capability_revoked_at, datetime('now'))
+         WHERE task_id = ? AND status IN ('pending', 'dispatched')`
       )
-      .get(taskId) as DispatchContextRow | undefined
-    if (active) {
-      this.completeDispatch(active.id)
-    }
+      .run(status, status, failure ?? null, taskId)
   }
 
   settleWorkerReport(params: {
@@ -7553,7 +7639,7 @@ export class OrchestrationDb {
         optionsJson
       )
 
-    this.completeActiveDispatchForTask(gate.taskId)
+    this.completeActiveDispatchesForTask(gate.taskId)
     this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(gate.taskId)
 
     return this.db.prepare('SELECT * FROM decision_gates WHERE id = ?').get(id) as DecisionGateRow

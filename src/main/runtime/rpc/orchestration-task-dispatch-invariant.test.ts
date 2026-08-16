@@ -67,41 +67,58 @@ describe('Task/Dispatch state invariant', () => {
     }
   )
 
-  it('atomically fails the active Dispatch, revokes its capability, and frees the terminal', async () => {
+  it('rejects a dispatched Task status without an active Dispatch', async () => {
     const harness = createHarness()
-    const task = harness.db.createTask({ spec: 'failing assignment', runId: harness.runId })
-    const dispatch = await dispatchTask(harness, task.id, WORKER_HANDLE)
-    const capability = harness.db.mintDispatchCapability({
-      dispatchId: dispatch.id,
-      paneKey: WORKER_PANE,
-      processIncarnation: WORKER_PROCESS
+    const task = harness.db.createTask({ spec: 'unassigned work', runId: harness.runId })
+
+    const response = await updateTask(harness, task.id, 'dispatched', 'must not persist')
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: {
+        code: 'task_not_startable',
+        data: { taskId: task.id }
+      }
     })
-
-    const response = await updateTask(harness, task.id, 'failed', 'coordinator stopped work')
-
-    expect(response).toMatchObject({ ok: true, result: { task: { status: 'failed' } } })
-    expect(readPersistedPair(harness.dbPath, task.id, dispatch.id)).toMatchObject({
-      taskStatus: 'failed',
-      taskResult: 'coordinator stopped work',
-      taskCompletedAt: expect.any(String),
-      dispatchStatus: 'failed',
-      dispatchCompletedAt: expect.any(String),
-      capabilityRevokedAt: expect.any(String)
-    })
-    expect(
-      harness.db.verifyDispatchCapability({
-        dispatchId: dispatch.id,
-        capability,
-        paneKey: WORKER_PANE,
-        processIncarnation: WORKER_PROCESS
-      })
-    ).toEqual({ valid: false, reason: `Dispatch ${dispatch.id} capability is revoked.` })
-
-    const laterTask = harness.db.createTask({ spec: 'later assignment', runId: harness.runId })
-    await expect(dispatchTask(harness, laterTask.id, WORKER_HANDLE)).resolves.toMatchObject({
-      status: 'dispatched'
+    expect(readPersistedActiveState(harness.dbPath, task.id)).toEqual({
+      taskStatus: 'ready',
+      activeDispatches: 0
     })
   })
+
+  it.each(['pending', 'dispatched'] as const)(
+    'atomically fails a %s Dispatch, revokes its capability, and frees the terminal',
+    async (dispatchStatus) => {
+      const harness = createHarness()
+      const task = harness.db.createTask({ spec: 'failing assignment', runId: harness.runId })
+      const { dispatch, capability } = await createCapableDispatch(harness, task.id, dispatchStatus)
+
+      const response = await updateTask(harness, task.id, 'failed', 'coordinator stopped work')
+
+      expect(response).toMatchObject({ ok: true, result: { task: { status: 'failed' } } })
+      expect(readPersistedPair(harness.dbPath, task.id, dispatch.id)).toMatchObject({
+        taskStatus: 'failed',
+        taskResult: 'coordinator stopped work',
+        taskCompletedAt: expect.any(String),
+        dispatchStatus: 'failed',
+        dispatchCompletedAt: expect.any(String),
+        capabilityRevokedAt: expect.any(String)
+      })
+      expect(
+        harness.db.verifyDispatchCapability({
+          dispatchId: dispatch.id,
+          capability,
+          paneKey: WORKER_PANE,
+          processIncarnation: WORKER_PROCESS
+        })
+      ).toEqual({ valid: false, reason: `Dispatch ${dispatch.id} capability is revoked.` })
+
+      const laterTask = harness.db.createTask({ spec: 'later assignment', runId: harness.runId })
+      await expect(dispatchTask(harness, laterTask.id, WORKER_HANDLE)).resolves.toMatchObject({
+        status: 'dispatched'
+      })
+    }
+  )
 
   it('preserves completed settlement and terminal reuse', async () => {
     const harness = createHarness()
@@ -124,6 +141,41 @@ describe('Task/Dispatch state invariant', () => {
       status: 'dispatched'
     })
   })
+
+  it.each([
+    ['dispatch first', ['dispatch', 'ready'], false],
+    ['ready first', ['ready', 'dispatch'], true]
+  ] as const)(
+    'serializes concurrent %s arrivals without splitting Task and Dispatch state',
+    async (_label, order, readySucceeds) => {
+      const harness = createHarness()
+      const task = harness.db.createTask({ spec: 'racing assignment', runId: harness.runId })
+      const operations = order.map((operation) =>
+        operation === 'dispatch'
+          ? dispatchTaskResponse(harness, task.id, WORKER_HANDLE)
+          : updateTask(harness, task.id, 'ready', 'race result')
+      )
+
+      const responses = await Promise.all(operations)
+      const dispatchResponse = responses[order.indexOf('dispatch')]
+      const readyResponse = responses[order.indexOf('ready')]
+
+      expect(dispatchResponse).toMatchObject({
+        ok: true,
+        result: { dispatch: { status: 'dispatched' } }
+      })
+      expect(readyResponse.ok).toBe(readySucceeds)
+      if (!readySucceeds) {
+        expect(readyResponse).toMatchObject({
+          error: { code: 'task_not_startable' }
+        })
+      }
+      expect(readPersistedActiveState(harness.dbPath, task.id)).toEqual({
+        taskStatus: 'dispatched',
+        activeDispatches: 1
+      })
+    }
+  )
 })
 
 function createHarness(): Harness {
@@ -162,7 +214,19 @@ async function dispatchTask(
   taskId: string,
   terminalHandle: string
 ): Promise<{ id: string; status: string }> {
-  const response = await harness.dispatcher.dispatch(
+  const response = await dispatchTaskResponse(harness, taskId, terminalHandle)
+  if (!response.ok) {
+    throw new Error(`${response.error.code}: ${response.error.message}`)
+  }
+  return (response.result as { dispatch: { id: string; status: string } }).dispatch
+}
+
+function dispatchTaskResponse(
+  harness: Harness,
+  taskId: string,
+  terminalHandle: string
+): Promise<RpcResponse> {
+  return harness.dispatcher.dispatch(
     request('orchestration.dispatch', {
       task: taskId,
       to: terminalHandle,
@@ -170,16 +234,40 @@ async function dispatchTask(
       run: harness.runId
     })
   )
-  if (!response.ok) {
-    throw new Error(`${response.error.code}: ${response.error.message}`)
+}
+
+async function createCapableDispatch(
+  harness: Harness,
+  taskId: string,
+  status: 'pending' | 'dispatched'
+): Promise<{ dispatch: { id: string }; capability: string }> {
+  if (status === 'pending') {
+    const dispatch = harness.db.createStartingWorkerDispatch({ taskId, startOptions: {} }).dispatch
+    const capability = harness.db.prepareStartingWorkerAuthority({
+      dispatchId: dispatch.id,
+      handle: WORKER_HANDLE,
+      paneKey: WORKER_PANE,
+      processIncarnation: WORKER_PROCESS,
+      worktreeId: 'repo::worker',
+      setupState: 'not_applicable',
+      effects: [],
+      terminalOwnership: 'external'
+    })
+    return { dispatch, capability }
   }
-  return (response.result as { dispatch: { id: string; status: string } }).dispatch
+  const dispatch = await dispatchTask(harness, taskId, WORKER_HANDLE)
+  const capability = harness.db.mintDispatchCapability({
+    dispatchId: dispatch.id,
+    paneKey: WORKER_PANE,
+    processIncarnation: WORKER_PROCESS
+  })
+  return { dispatch, capability }
 }
 
 function updateTask(
   harness: Harness,
   taskId: string,
-  status: 'ready' | 'completed' | 'failed',
+  status: 'ready' | 'dispatched' | 'completed' | 'failed',
   result: string
 ): Promise<RpcResponse> {
   return harness.dispatcher.dispatch(
@@ -228,6 +316,24 @@ function readPersistedPair(dbPath: string, taskId: string, dispatchId: string) {
       dispatchCompletedAt: dispatch.completed_at,
       capabilityRevokedAt: dispatch.capability_revoked_at
     }
+  } finally {
+    sqlite.close()
+  }
+}
+
+function readPersistedActiveState(dbPath: string, taskId: string) {
+  const sqlite = new Database(dbPath, { readonly: true })
+  try {
+    const task = sqlite.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as {
+      status: string
+    }
+    const active = sqlite
+      .prepare(
+        `SELECT COUNT(*) AS count FROM dispatch_contexts
+         WHERE task_id = ? AND status IN ('pending', 'dispatched')`
+      )
+      .get(taskId) as { count: number }
+    return { taskStatus: task.status, activeDispatches: active.count }
   } finally {
     sqlite.close()
   }
