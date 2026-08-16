@@ -1,4 +1,4 @@
-import type { DecoratedDiffComment } from '@/components/diff-comments/useDiffCommentDecorator'
+import type { DecoratedDiffComment } from '@/components/diff-comments/decorated-diff-comment'
 import { formatRelativeTime } from '@/components/github/work-item-state-presentation'
 import type { PRComment } from '../../../../../shared/github/comment-types'
 

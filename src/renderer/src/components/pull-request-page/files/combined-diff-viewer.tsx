@@ -1,4 +1,3 @@
-/* oxlint-disable react-doctor/no-adjust-state-on-prop-change -- Why: switching PRs re-seeds the whole diff view (sections, heights, scroll target, cached loaded set) from the persisted cache, which cannot be derived during render. */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { editor as monacoEditor } from 'monaco-editor'
@@ -34,6 +33,8 @@ import { addPullRequestLineComment } from './line-comment'
 import { usePRFileSectionLoader } from './section-loader'
 import { usePRFilesDiffViewPersistence } from './view-restore'
 import { buildInlineReviewComments } from './inline-comments'
+import { usePRFileSectionHeights } from './section-heights'
+import { usePRFileActiveSection } from './active-section'
 
 export function PRFilesCombinedDiffViewer({
   files,
@@ -106,8 +107,8 @@ export function PRFilesCombinedDiffViewer({
   const [sections, setSections] = useState<DiffSection[]>([])
   const [sideBySide, setSideBySide] = useState(false)
   const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false)
-  const [sectionHeights, setSectionHeights] = useState<Record<number, number>>({})
-  const [activeTreeSectionKey, setActiveTreeSectionKey] = useState<string | null>(null)
+  const [sectionHeights, setSectionHeights] = usePRFileSectionHeights(entrySignature)
+  const [activeTreeSectionKey, setActiveTreeSectionKey] = usePRFileActiveSection(entrySignature)
   // Why: short virtualizer-key token; entrySignature serializes every file and would be copied into every item key.
   const [entryRevision, setEntryRevision] = useState(0)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -147,8 +148,6 @@ export function PRFilesCombinedDiffViewer({
     loadedIndicesRef.current.clear()
     loadingIndicesRef.current.clear()
     pendingRestoreScrollTopRef.current = prFilesDiffScrollTopCache.get(viewStateKey) ?? null
-    setSectionHeights({})
-    setActiveTreeSectionKey(null)
     setSections(
       entries.map((entry) => ({
         key: getPRFileSectionKey(entry.path),
@@ -167,7 +166,7 @@ export function PRFilesCombinedDiffViewer({
         largeDiffRenderLimit: null
       }))
     )
-  }, [entries, entrySignature, viewStateKey])
+  }, [entries, entrySignature, setActiveTreeSectionKey, setSectionHeights, viewStateKey])
 
   const { loadSection, retrySection, toggleSection, setAllSectionsCollapsed } =
     usePRFileSectionLoader({
@@ -189,6 +188,10 @@ export function PRFilesCombinedDiffViewer({
 
   const allSectionsCollapsed = sections.length > 0 && sections.every((section) => section.collapsed)
   const sectionIndexByKey = useMemo(() => createCombinedDiffSectionIndexMap(sections), [sections])
+  const visibleActiveTreeSectionKey =
+    activeTreeSectionKey && sectionIndexByKey.has(activeTreeSectionKey)
+      ? activeTreeSectionKey
+      : null
   const viewedSectionKeys = useMemo(
     () => new Set(files.filter(isPRFileViewed).map((file) => getPRFileSectionKey(file.path))),
     [files]
@@ -237,7 +240,7 @@ export function PRFilesCombinedDiffViewer({
     sectionHeights,
     sideBySide,
     fileTreeCollapsed,
-    activeTreeSectionKey,
+    activeTreeSectionKey: visibleActiveTreeSectionKey,
     loadedIndicesRef,
     scrollContainerRef,
     pendingRestoreScrollTopRef
@@ -257,7 +260,7 @@ export function PRFilesCombinedDiffViewer({
         setActiveTreeSectionKey(sectionsRef.current[navigatedIndex]?.key ?? null)
       }
     },
-    [sectionIndexByKey, toggleSection, virtualizer]
+    [sectionIndexByKey, setActiveTreeSectionKey, toggleSection, virtualizer]
   )
 
   const openFilesOnGitHub = useCallback(() => {
@@ -334,7 +337,7 @@ export function PRFilesCombinedDiffViewer({
           worktreePath={repoPath}
           entries={entries}
           sectionIndexByKey={sectionIndexByKey}
-          activeSectionKey={activeTreeSectionKey}
+          activeSectionKey={visibleActiveTreeSectionKey}
           viewedSectionKeys={viewedSectionKeys}
           collapsed={fileTreeCollapsed}
           onCollapsedChange={setFileTreeCollapsed}
