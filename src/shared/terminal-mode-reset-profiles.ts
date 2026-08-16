@@ -8,18 +8,20 @@ export const RESET_TERMINAL_CURSOR_STYLE = '\x1b[0 q'
 export const RESET_KITTY_KEYBOARD_PROTOCOL = '\x1b[<99u\x1b[=0u'
 // Why: abandoned byte-gap replay drains live chunks, so a dropped intensity reset must not style them (STA-4042).
 export const RESET_GRAPHIC_RENDITION = '\x1b[0m'
+// Last so a dead process cannot leave stale attributes in the DECSC register.
+const SAVE_GROUNDED_CURSOR = '\x1b7'
 // Every mouse mode the daemon can re-arm from a snapshot: protocols 9/1000/1002/1003 + SGR encodings 1006/1016.
 export const RESET_MOUSE_REPORTING =
   '\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l'
 
 // Why: serialized panes can end with a live pen, but the following shell assumes default attributes.
-export const POST_REPLAY_MODE_RESET = `${RESET_GRAPHIC_RENDITION}${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l\x1b[?2004l`
+export const POST_REPLAY_MODE_RESET = `${RESET_GRAPHIC_RENDITION}${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l\x1b[?2004l${SAVE_GROUNDED_CURSOR}`
 
 // Why: same-session live replay; keep cursor/focus cleanup but preserve Kitty flags the running TUI relies on.
 export const POST_REPLAY_LIVE_SNAPSHOT_RESET = `${RESET_TERMINAL_CURSOR_STYLE}\x1b[?25h\x1b[?1004l`
 
-// Why: daemon reattach hits a live session, so skip the full reset; still clear cursor/focus/mouse/Kitty bits harmful to a plain shell after a bad TUI exit — safe for live TUIs since the post-reattach SIGWINCH repaints the cursor.
-export const POST_REPLAY_REATTACH_RESET = `${RESET_GRAPHIC_RENDITION}${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l`
+// Why: daemon reattach hits a live session, so preserve its serialized pen while clearing stale cursor/focus/mouse/Kitty bits.
+export const POST_REPLAY_REATTACH_RESET = `${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l`
 
 // Why: an alt-screen reattach replays the daemon's rehydrateSequences, which re-arm the live TUI's
 // mouse modes; wiping them one write later hands drags back to xterm's row selection (#8291).
@@ -67,8 +69,6 @@ const REPLAY_BASELINE_BUFFER_RESET = '\x1b[r'
 // Last, so the saved-cursor register holds grounded state — otherwise a stranded
 // `ESC 7` is reachable through the live TUI's next `ESC 8`. Only a floor: a
 // snapshot carrying the model's own DECSC epilogue overwrites it.
-const SAVE_GROUNDED_CURSOR = '\x1b7'
-
 /**
  * Prologue that puts a pane on `targetAlternateScreen` and grounds it for a
  * serialized snapshot. Shared because the parity/fuzz harnesses replay the same

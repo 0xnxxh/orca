@@ -1,5 +1,3 @@
-import { RESET_GRAPHIC_RENDITION } from './terminal-mode-reset-profiles'
-
 // Why this module exists: @xterm/addon-serialize restores the cursor with
 // RELATIVE moves (CUD/CUB) computed from where it assumes replay leaves the
 // cursor. When the final content row is filled exactly to the right margin,
@@ -113,12 +111,12 @@ export function buildAbsoluteCursorRestoreSequence(
   // restored to home and clobbered live cells (Bug D in
   // notes/garble-fuzz-divergences.md). Re-establish the register by saving at
   // the source's saved position, then CUP back to the real cursor. Saved SGR/
-  // charset are not carried; ground the synthetic save so a later DECRC cannot
-  // reapply the serializer's trailing pen.
+  // charset are not carried — the synthetic ESC 7 saves the serializer's
+  // final pen, a deliberate position-only fidelity trade.
   // Install the saved register against a full region so its absolute row is
   // representable even when it predates the current DECSTBM/DECOM state.
   const savedRestore = savedCursor
-    ? `\x1b[r\x1b[?6${savedCursor.originMode ? 'h' : 'l'}\x1b[${savedCursor.y + 1};${savedCursor.x + 1}H${RESET_GRAPHIC_RENDITION}\x1b7`
+    ? `\x1b[r\x1b[?6${savedCursor.originMode ? 'h' : 'l'}\x1b[${savedCursor.y + 1};${savedCursor.x + 1}H\x1b7`
     : ''
   const mustRestoreModes = savedCursor != null || options.restoreModesWithoutCursor === true
   const scrollRegionRestore =

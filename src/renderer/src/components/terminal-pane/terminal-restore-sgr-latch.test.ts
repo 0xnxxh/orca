@@ -2,7 +2,10 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 import { afterEach, describe, expect, it } from 'vitest'
 import { serializeWithAbsoluteCursor } from '../../../../shared/terminal-serialize-absolute-cursor'
-import { POST_REPLAY_REATTACH_RESET } from '../../../../shared/terminal-mode-reset-profiles'
+import {
+  POST_REPLAY_MODE_RESET,
+  POST_REPLAY_REATTACH_RESET
+} from '../../../../shared/terminal-mode-reset-profiles'
 import { restoreScrollbackBuffers } from './layout-serialization'
 
 const LEAF_ID = '11111111-1111-4111-8111-111111111111'
@@ -18,16 +21,28 @@ function writeTerminal(terminal: Terminal, data: string): Promise<void> {
   return new Promise((resolve) => terminal.write(data, resolve))
 }
 
-function boldAtText(terminal: Terminal, text: string): number | undefined {
+function boldAtText(terminal: Terminal, text: string): number {
   const buffer = terminal.buffer.normal
   for (let row = 0; row < buffer.length; row += 1) {
     const line = buffer.getLine(row)
     const column = line?.translateToString(true).indexOf(text) ?? -1
     if (line && column >= 0) {
-      return line.getCell(column)?.isBold()
+      return line.getCell(column)?.isBold() ?? 0
     }
   }
-  return undefined
+  throw new Error(`Missing terminal text: ${text}`)
+}
+
+function foregroundAtText(terminal: Terminal, text: string): number {
+  const buffer = terminal.buffer.normal
+  for (let row = 0; row < buffer.length; row += 1) {
+    const line = buffer.getLine(row)
+    const column = line?.translateToString(true).indexOf(text) ?? -1
+    if (line && column >= 0) {
+      return line.getCell(column)?.getFgColor() ?? -1
+    }
+  }
+  throw new Error(`Missing terminal text: ${text}`)
 }
 
 async function restoreBuffer(
@@ -98,14 +113,25 @@ describe('fresh-shell terminal restore SGR state', () => {
     expect(boldAtText(restored, 'fresh-shell')).toBe(0)
   })
 
-  it('clears the captured pen after normal-buffer daemon reattach', async () => {
+  it('preserves a live normal-buffer pen across daemon reattach', async () => {
     const terminal = createTerminal()
-    await writeTerminal(terminal, 'ORCA-SGR-REPRO \x1b[1mBOLD-RUN-LEFT-OPEN\x1b[1;34H')
+    await writeTerminal(terminal, 'ORCA-SGR-REPRO \x1b[1;34mBOLD-RUN-LEFT-OPEN\x1b[1;34H')
     await writeTerminal(terminal, POST_REPLAY_REATTACH_RESET)
-    await writeTerminal(terminal, 'PLAIN-TEXT-NO-SGR-WHATSOEVER')
+    await writeTerminal(terminal, 'LIVE-CONTINUATION')
 
     expect(boldAtText(terminal, 'BOLD-RUN-LEFT-OPEN')).not.toBe(0)
+    expect(boldAtText(terminal, 'LIVE')).not.toBe(0)
+    expect(foregroundAtText(terminal, 'LIVE')).toBe(4)
+  })
+
+  it('clears the captured pen and saved cursor for a fresh shell', async () => {
+    const terminal = createTerminal()
+    await writeTerminal(terminal, '\x1b[1mBOLD-RUN-LEFT-OPEN\x1b7')
+    await writeTerminal(terminal, POST_REPLAY_MODE_RESET)
+    await writeTerminal(terminal, '\x1b8PLAIN')
+
     expect(boldAtText(terminal, 'PLAIN')).toBe(0)
+    expect(foregroundAtText(terminal, 'PLAIN')).toBe(-1)
   })
 
   it('keeps the synthetic saved-cursor register from restoring bold', async () => {

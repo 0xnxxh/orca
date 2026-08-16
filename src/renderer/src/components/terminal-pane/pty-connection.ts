@@ -8429,7 +8429,7 @@ export function connectPanePty(
             // The current xterm grid remains a safe lower bound for blanking.
           }
           // Why: shrinking first would promote clipped stale viewport rows into scrollback, beyond the reach of a later viewport-only clear.
-          writeReplayData('\x1b[2J\x1b[H')
+          writeReplayData(`${RESET_GRAPHIC_RENDITION}\x1b[2J\x1b[H`)
           await waitForTerminalReplayWritesParsed(pane.terminal)
           if (!isCurrentReattachPayload()) {
             return

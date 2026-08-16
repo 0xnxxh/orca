@@ -156,11 +156,11 @@ describe('terminal WebView init surface replacement', () => {
     }
   })
 
-  it('grounds the initial replay and leaves the pen at default', () => {
+  it('grounds the initial replay without clearing the host live pen', () => {
     dispatchInit(80, '\x1b[1mBOLD-RUN-LEFT-OPEN')
     animationFrames.shift()?.()
 
-    expect(writes).toEqual(['\x1b[0m\x1b[1mBOLD-RUN-LEFT-OPEN\x1b[0m'])
+    expect(writes).toEqual(['\x1b[0m\x1b[1mBOLD-RUN-LEFT-OPEN'])
   })
 
   it('commits only the newest surface when phone-fit init calls overlap', () => {
