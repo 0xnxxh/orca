@@ -9,7 +9,6 @@ import {
   normalizeReconcileText,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
-import { rebaseMobileNativeChatPendingBaselines } from './mobile-native-chat-pending-baseline'
 import { retireLandedMobileNativeChatPending } from './mobile-native-chat-pending-retirement'
 import {
   appendMobileNativeChatPending,
@@ -139,9 +138,7 @@ export function useMobileNativeChatDrafts(args: {
         normalizedText,
         baselineOccurrences: countUserTextOccurrences(messagesRef.current, normalizedText),
         baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null,
-        // A hydrating transcript is not yet this session's, so this baseline is
-        // a placeholder the first authoritative read rebases.
-        baselineResolved: !transcriptLoading
+        glueBaselineTrusted: !transcriptLoading
       }
     },
     [draftKey, pendingKey, transcriptLoading]
@@ -294,13 +291,8 @@ export function useMobileNativeChatDrafts(args: {
     }
     setPendingBySession((previous) => {
       const current = previous[pendingKey] ?? []
-      // Rebase before retiring: a hydration-time send has to own a real boundary
-      // before any row can be judged against it.
-      const rebased = transcriptLoading
-        ? current
-        : rebaseMobileNativeChatPendingBaselines(messages, current)
-      const next = retireLandedMobileNativeChatPending(messages, rebased, landedImagePendingIds)
-      if (next === current) {
+      const next = retireLandedMobileNativeChatPending(messages, current, landedImagePendingIds)
+      if (next.length === current.length) {
         return previous
       }
       if (next.length > 0) {
@@ -310,7 +302,7 @@ export function useMobileNativeChatDrafts(args: {
       delete remaining[pendingKey]
       return remaining
     })
-  }, [messages, pending, pendingKey, transcriptLoading])
+  }, [messages, pending, pendingKey])
 
   return {
     composerText: draftKey ? (drafts[draftKey] ?? '') : '',
