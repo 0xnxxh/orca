@@ -1,12 +1,14 @@
 import type { Worktree } from '../../../../shared/worktree/types'
 import type { PreservedBranchCleanup } from '@/lib/preserved-branch-cleanup'
+import { normalizeExecutionHostId } from '../../../../shared/execution-host'
 
 export type WorktreeBatchDeleteOptions = {
   forceConfirm?: boolean
   onDeleted?: (worktreeIds: string[]) => void
 }
 
-export type WorktreeDeleteIdentity = Pick<Worktree, 'id' | 'instanceId'>
+/** `hostId` rides along because `id` alone repeats across hosts (STA-4343). */
+export type WorktreeDeleteIdentity = Pick<Worktree, 'id' | 'instanceId' | 'hostId'>
 
 export type WorktreeDeleteOptions = {
   expectedInstanceId?: string
@@ -23,9 +25,9 @@ export type WorktreeDeleteWithToastOptions = {
 }
 
 export function toWorktreeDeleteIdentities(
-  worktrees: readonly Pick<Worktree, 'id' | 'instanceId'>[]
+  worktrees: readonly Pick<Worktree, 'id' | 'instanceId' | 'hostId'>[]
 ): WorktreeDeleteIdentity[] {
-  return worktrees.map(({ id, instanceId }) => ({ id, instanceId }))
+  return worktrees.map(({ id, instanceId, hostId }) => ({ id, instanceId, hostId }))
 }
 
 export function resolveWorktreeBatchDeleteTargets(
@@ -46,6 +48,13 @@ export function resolveWorktreeBatchDeleteTargets(
     if (typeof request !== 'string' && (!target || target.instanceId !== request.instanceId)) {
       return null
     }
+    // Why (STA-4343): the id-keyed map holds one row per `repoId::path`, so a
+    // refresh can swap in another host's row for the confirmed id. `instanceId`
+    // misses that whenever either row predates instance ids, and confirming a
+    // remote row must never fall through to a local checkout at the same path.
+    if (typeof request !== 'string' && request.hostId && target?.hostId !== request.hostId) {
+      return null
+    }
     if (target && !target.isMainWorktree) {
       targets.push(target)
     }
@@ -62,8 +71,12 @@ export function readWorktreeDeleteIdentities(value: unknown): WorktreeDeleteIden
       return []
     }
     const instanceId = 'instanceId' in entry ? entry.instanceId : undefined
-    return instanceId === undefined || typeof instanceId === 'string'
-      ? [{ id: entry.id, instanceId }]
-      : []
+    if (instanceId !== undefined && typeof instanceId !== 'string') {
+      return []
+    }
+    const hostId = normalizeExecutionHostId(
+      'hostId' in entry && typeof entry.hostId === 'string' ? entry.hostId : null
+    )
+    return [{ id: entry.id, instanceId, ...(hostId ? { hostId } : {}) }]
   })
 }

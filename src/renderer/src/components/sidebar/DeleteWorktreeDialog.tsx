@@ -27,6 +27,7 @@ import {
   isFolderWorkspaceDelete as getIsFolderWorkspaceDelete
 } from './delete-worktree-dialog-copy'
 import { translate } from '@/i18n/i18n'
+import { toWorktreeRemovalTarget } from '../../../../shared/worktree/removal'
 import { useDeleteWorktreeStatusHydration } from './use-delete-worktree-status-hydration'
 import { useConfirmedWorktreeDeleteTargets } from './use-confirmed-worktree-delete-targets'
 
@@ -233,10 +234,19 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
         // inside the dialog — it runs the destructive retry directly without
         // the shared toast wrapper. Close immediately because workspace cards
         // already show the deleting state while the retry runs.
+        // Why the lookup (STA-4343): the confirmed row carries the host the
+        // removal must land on; a bare id would let force delete another host's
+        // checkout at the same path.
+        const forceTarget = currentWorktrees.find((entry) => entry.id === worktreeId)
+        if (!forceTarget) {
+          return
+        }
         const commitFocus = prepareActiveWorktreeFocusAfterDelete(worktreeId)
         // Why (#11960): this IS the explicit Force Delete, so it may also waive
         // the PTY-stop proof — unlike the confirmed delete in the branch below.
-        const deletePromise = removeWorktree(worktreeId, true, { allowUnverifiedPtyStop: true })
+        const deletePromise = removeWorktree(toWorktreeRemovalTarget(forceTarget), true, {
+          allowUnverifiedPtyStop: true
+        })
         closeModal()
         deletePromise
           .then((result) => {

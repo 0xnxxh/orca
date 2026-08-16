@@ -37,7 +37,7 @@ type RemoveWorktreeSliceResult = Awaited<ReturnType<WorktreeSlice['removeWorktre
 function resolveHostQualifiedRemovalRoute(
   get: WorktreeSliceGet,
   worktreeId: string,
-  requiredExecutionHostId: ExecutionHostId | undefined
+  requiredExecutionHostId: ExecutionHostId | null
 ): WorktreeOperationRoute | null {
   return requiredExecutionHostId
     ? resolveWorktreeOperationRouteForHost(get(), worktreeId, requiredExecutionHostId)
@@ -61,7 +61,7 @@ export type HostQualifiedRemovalStart =
 export function beginHostQualifiedRemoval(
   get: WorktreeSliceGet,
   worktreeId: string,
-  requiredExecutionHostId: ExecutionHostId | undefined,
+  requiredExecutionHostId: ExecutionHostId | null,
   forgetLocalOnly: boolean
 ): HostQualifiedRemovalStart {
   const resolveRemovalRoute = (): WorktreeOperationRoute | null =>
@@ -110,7 +110,7 @@ export function beginHostQualifiedRemoval(
 export function findWorktreeOnConfirmedHost(
   get: WorktreeSliceGet,
   worktreeId: string,
-  requiredExecutionHostId: ExecutionHostId | undefined
+  requiredExecutionHostId: ExecutionHostId | null
 ): PreservedBranchWorktree {
   const repoId = getRepoIdFromWorktreeId(worktreeId)
   return get()
@@ -135,9 +135,9 @@ export function findWorktreeOnConfirmedHost(
 export function preservesSameIdRendererState(
   state: ReturnType<WorktreeSliceGet>,
   worktreeId: string,
-  requiredExecutionHostId: ExecutionHostId | undefined
+  requiredExecutionHostId: ExecutionHostId | null
 ): boolean {
-  if (requiredExecutionHostId === undefined) {
+  if (requiredExecutionHostId === null) {
     return false
   }
   if (

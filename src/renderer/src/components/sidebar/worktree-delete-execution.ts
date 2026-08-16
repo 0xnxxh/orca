@@ -8,6 +8,10 @@ import {
   normalizeRuntimePathForComparison
 } from '../../../../shared/cross-platform-path'
 import type { Worktree } from '../../../../shared/worktree/types'
+import {
+  toWorktreeRemovalTarget,
+  type WorktreeRemovalTarget
+} from '../../../../shared/worktree/removal'
 import { prepareActiveWorktreeFocusAfterDelete } from './active-worktree-focus-after-delete'
 import { showDeleteWorktreeFailureToast } from './delete-worktree-failure-toast'
 import { showWorkspaceListChangedToast } from './stale-workspace-list-toast'
@@ -32,7 +36,10 @@ function isStrictDescendantPath(parentPath: string, childPath: string): boolean 
 }
 
 export async function runWorktreeDeletesInParallel(
-  targets: readonly Pick<Worktree, 'id' | 'instanceId' | 'displayName' | 'repoId' | 'path'>[],
+  targets: readonly Pick<
+    Worktree,
+    'id' | 'instanceId' | 'displayName' | 'repoId' | 'path' | 'hostId'
+  >[],
   options: WorktreeDeleteWithToastOptions = {}
 ): Promise<string[]> {
   // A destructive command must run once per identity even if a refresh duplicated rows.
@@ -82,16 +89,20 @@ export async function runWorktreeDeletesInParallel(
             useAppStore.getState().clearWorktreeDeleteState(target.id)
             continue
           }
-          const deleted = await runWorktreeDeleteWithToast(target.id, target.displayName, {
-            ...options,
-            focusSuccessorOnDelete: false,
-            suppressPreservedBranchToast: aggregatePreservedBranches,
-            ...(snapshotPruneBatch ? { snapshotPruneBatchId: snapshotPruneBatch.batchId } : {}),
-            onPreservedBranch: (branch) => {
-              preservedBranches.push(branch)
-              options.onPreservedBranch?.(branch)
+          const deleted = await runWorktreeDeleteWithToast(
+            toWorktreeRemovalTarget(target),
+            target.displayName,
+            {
+              ...options,
+              focusSuccessorOnDelete: false,
+              suppressPreservedBranchToast: aggregatePreservedBranches,
+              ...(snapshotPruneBatch ? { snapshotPruneBatchId: snapshotPruneBatch.batchId } : {}),
+              onPreservedBranch: (branch) => {
+                preservedBranches.push(branch)
+                options.onPreservedBranch?.(branch)
+              }
             }
-          })
+          )
           if (deleted) {
             deletedInGroup.push(target.id)
           } else {
@@ -133,10 +144,11 @@ export async function runWorktreeDeletesInParallel(
 
 /** Shared confirmed and skip-confirm execution with consistent failure recovery. */
 export function runWorktreeDeleteWithToast(
-  worktreeId: string,
+  target: WorktreeRemovalTarget,
   worktreeName: string,
   options: WorktreeDeleteWithToastOptions = {}
 ): Promise<boolean> {
+  const worktreeId = target.id
   const removeWorktree = useAppStore.getState().removeWorktree
   const commitFocus = prepareActiveWorktreeFocusAfterDelete(worktreeId)
   const focusSuccessor = options.focusSuccessorOnDelete !== false
@@ -147,8 +159,8 @@ export function runWorktreeDeleteWithToast(
   }
   const removal =
     Object.keys(removeOptions).length > 0
-      ? removeWorktree(worktreeId, options.force === true, removeOptions)
-      : removeWorktree(worktreeId, options.force === true)
+      ? removeWorktree(target, options.force === true, removeOptions)
+      : removeWorktree(target, options.force === true)
   return removal
     .then((result) => {
       if (result.ok) {
@@ -185,7 +197,7 @@ export function runWorktreeDeleteWithToast(
           // The explicit Force Delete retry may waive an unverified PTY-stop proof.
           const forceRemoval = useAppStore
             .getState()
-            .removeWorktree(worktreeId, true, { allowUnverifiedPtyStop: true })
+            .removeWorktree(target, true, { allowUnverifiedPtyStop: true })
           forceRemoval
             .then((forceResult) => {
               if (!forceResult.ok) {

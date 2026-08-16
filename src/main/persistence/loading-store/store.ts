@@ -2494,12 +2494,12 @@ export class Store {
     const ownerPartition = workspaceSessionOwnerPartitionForHost(owner)
     const preservesSameIdSessionOwner = Boolean(
       preservesDifferentPersistedOwner ||
-        (owner &&
-          hasWorktreeRemovalRepoOwnerOnOtherHost(
-            this,
-            getRepoIdFromWorktreeId(worktreeId),
-            ownerPartition
-          ))
+      (owner &&
+        hasWorktreeRemovalRepoOwnerOnOtherHost(
+          this,
+          getRepoIdFromWorktreeId(worktreeId),
+          ownerPartition
+        ))
     )
     // Skip partitions main never wrote: materializing one fences every sibling worktree of the repo.
     const partitions = new Set<ExecutionHostId>(

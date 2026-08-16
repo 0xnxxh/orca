@@ -25,7 +25,10 @@ import type {
   Worktree
 } from '../../../../shared/worktree/types'
 import type { TaskSourceContext } from '../../../../shared/task-source-context'
-import type { WorktreeForceDeleteReason } from '../../../../shared/worktree/removal'
+import type {
+  WorktreeForceDeleteReason,
+  WorktreeRemovalTarget
+} from '../../../../shared/worktree/removal'
 import type { TerminalGitHubPRLink } from '../../../../shared/terminal-github-pr-link-detector'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type { RemoveWorktreeOptions } from './worktree-removal-options'
@@ -244,8 +247,10 @@ export type WorktreeSlice = {
   /** Point the content panel at a pending creation (or clear it with null). */
   setActivePendingWorktreeCreation: (creationId: string | null) => void
   prefetchWorktreeCreateBase: (repoId: string, baseBranch?: string) => Promise<void>
+  /** Destructive: takes a host-qualified target because `id` alone repeats
+   *  across hosts and would delete another host's checkout (STA-4343). */
   removeWorktree: (
-    worktreeId: string,
+    target: WorktreeRemovalTarget,
     force?: boolean,
     options?: RemoveWorktreeOptions
   ) => Promise<({ ok: true } & RendererRemoveWorktreeResult) | { ok: false; error: string }>

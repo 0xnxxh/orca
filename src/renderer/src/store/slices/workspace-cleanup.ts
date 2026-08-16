@@ -414,7 +414,9 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
       (a, b) => b.candidate.path.length - a.candidate.path.length
     )) {
       const result = await get().removeWorktree(
-        candidate.worktreeId,
+        // The resolved target names the host whose row the user confirmed; the
+        // removal is routed there instead of to the active workspace's host.
+        { id: candidate.worktreeId, executionHostId: target.executionHostId },
         shouldForceWorkspaceCleanupRemoval(candidate),
         // Why: cleanup reports outcomes in its own summary toasts; per-row
         // preserved-branch warnings would stack one toast per removed row.
@@ -422,9 +424,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
           suppressPreservedBranchToast: true,
           ...(options?.snapshotPruneBatchId
             ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
-            : {}),
-          // Fails the removal closed when routing cannot land on this host.
-          ...(target.executionHostId ? { requiredExecutionHostId: target.executionHostId } : {})
+            : {})
         }
       )
       if (result.ok) {

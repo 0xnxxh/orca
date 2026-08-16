@@ -40,16 +40,21 @@ import {
   isRuntimeSelectorNotFoundError
 } from '../listing/runtime-worktree-rpc-errors'
 import { applyRemoveWorktreeSuccessState } from './remove-worktree-store-cleanup'
+import { recordRemovedWorktreeSnapshotPrune } from './removed-worktree-snapshot-prune'
 
 export function createRemoveWorktree(
   set: WorktreeSliceSet,
   get: WorktreeSliceGet
 ): WorktreeSlice['removeWorktree'] {
-  return async (worktreeId, force, options) => {
+  return async (removalTarget, force, options) => {
+    const worktreeId = removalTarget.id
     const forgetLocalOnly = options?.mode === 'forget-local'
-    // Why (STA-4343): a qualified caller confirmed ONE host's row; route at that
-    // host instead of the active workspace's, which owns the same id elsewhere.
-    const requiredExecutionHostId = options?.requiredExecutionHostId
+    // Why (STA-4343): this is the ONE chokepoint every delete entry point shares,
+    // so host qualification is enforced here rather than at any single caller — a
+    // guard bolted onto the sidebar would drift from the cleanup dialog's. The
+    // caller confirmed ONE host's row; route at that host instead of the active
+    // workspace's, which owns the same id elsewhere.
+    const requiredExecutionHostId = removalTarget.executionHostId
     const start = beginHostQualifiedRemoval(
       get,
       worktreeId,
@@ -178,20 +183,11 @@ export function createRemoveWorktree(
       }
 
       if (!snapshotPruneHandledByLocalMain) {
-        try {
-          await window.api.workspaceCleanup?.recordRemovalSnapshotPrune?.({
-            // Why: a single (unbatched) remote delete must still drop the row
-            // from the local persisted snapshots or it resurrects from cache;
-            // an unknown batch id degrades to an immediate one-off prune. The
-            // id must stay bounded — main rejects batch ids over 128 chars,
-            // so it cannot embed the unbounded worktreeId.
-            batchId: options?.snapshotPruneBatchId ?? `single-removal:${crypto.randomUUID()}`,
-            worktreeId,
-            ...(hostId ? { executionHostId: hostId } : {})
-          })
-        } catch (error) {
-          console.warn('Failed to record workspace cleanup snapshot prune:', error)
-        }
+        await recordRemovedWorktreeSnapshotPrune({
+          worktreeId,
+          hostId,
+          snapshotPruneBatchId: options?.snapshotPruneBatchId
+        })
       }
 
       // Why (STA-4343): another host still owns this id, so the shared renderer

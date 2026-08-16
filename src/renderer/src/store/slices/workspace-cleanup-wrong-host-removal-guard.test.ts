@@ -353,7 +353,7 @@ describe('STA-4343: cleanup deletes on the confirmed host, never the active one'
     store.setState({
       removeWorktree: vi.fn(async (...args: Parameters<typeof originalRemoveWorktree>) => {
         const result = await originalRemoveWorktree(...args)
-        if (args[0] === FIRST_WORKTREE_ID) {
+        if (args[0].id === FIRST_WORKTREE_ID) {
           store.setState({
             activeWorktreeId: WORKTREE_ID,
             activeWorkspaceExecutionHostId: HOST_B_HOST_ID,
