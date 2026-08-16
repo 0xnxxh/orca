@@ -11,7 +11,7 @@ import {
   app,
   powerMonitor
 } from 'electron'
-export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
+export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready-bash-rcfile'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
 import { retireTerminalSurfaceFromPersistence } from '../runtime/mobile-session-terminal-persistence-retirement'
@@ -1864,7 +1864,9 @@ export function buildPtyHostEnv(
       hooksEnabled: opts.codexStatusHooksEnabled ?? opts.agentStatusHooksEnabled,
       isPackaged: opts.isPackaged,
       isWsl: opts.isWsl,
-      managedHomePath: opts.selectedCodexHomePath
+      managedHomePath: opts.selectedCodexHomePath,
+      userDataPath: opts.userDataPath,
+      resourcesPath: opts.resourcesPath
     })
     if (preflightCommand) {
       baseEnv.ORCA_CODEX_LAUNCH_PREFLIGHT = preflightCommand
@@ -4739,7 +4741,8 @@ export function registerPtyHandlers(
         rows: args.rows,
         cwd,
         env,
-        ...(isNewDaemonSession ? { isNewSession: true } : {})
+        ...(isNewDaemonSession ? { isNewSession: true } : {}),
+        historyIsolationEnabled: getSettings?.()?.terminalScopeHistoryByWorktree ?? true
       }
       if (!args.connectionId && !isDaemonHostSpawn) {
         spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }
@@ -5428,8 +5431,17 @@ export function registerPtyHandlers(
     },
     write: (ptyId, data) => {
       try {
-        getProviderForPty(ptyId).write(ptyId, data)
-        return true
+        return getProviderForPty(ptyId).write(ptyId, data) !== false
+      } catch {
+        return false
+      }
+    },
+    writeWithSettlement: async (ptyId, data) => {
+      try {
+        const provider = getProviderForPty(ptyId)
+        return provider.writeWithSettlement
+          ? await provider.writeWithSettlement(ptyId, data)
+          : provider.write(ptyId, data) !== false
       } catch {
         return false
       }
@@ -6450,7 +6462,8 @@ export function registerPtyHandlers(
           cwd,
           ...(prevalidatedCwd && !isDaemonHostSpawn ? { prevalidatedCwd } : {}),
           env: spawnEnv,
-          ...(isMintedSessionId ? { isNewSession: true } : {})
+          ...(isMintedSessionId ? { isNewSession: true } : {}),
+          historyIsolationEnabled: getSettings?.()?.terminalScopeHistoryByWorktree ?? true
         }
         if (!args.connectionId && !isDaemonHostSpawn) {
           spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }
