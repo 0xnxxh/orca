@@ -1,8 +1,6 @@
 export type KeyboardLayoutKeyCharacters = {
   unmodified: string | null
   shifted: string | null
-  optionUnmodified: string | null
-  optionShifted?: string | null
 }
 
 export type KeyboardLayoutSnapshot = {

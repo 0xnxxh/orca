@@ -35,11 +35,7 @@ type TerminalOptionKeyboardEvent = {
   numLock?: boolean
 }
 
-type LayoutCharacterResolver = (
-  code: string,
-  shifted: boolean,
-  option?: boolean
-) => string | undefined
+type LayoutCharacterResolver = (code: string, shifted: boolean) => string | undefined
 
 const PC_101_PUNCTUATION_BY_CODE: Readonly<Record<string, string>> = {
   Period: '.',

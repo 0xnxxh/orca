@@ -11,11 +11,9 @@ describe('parseKeyboardLayoutSnapshot', () => {
           keyCharacters: {
             Digit2: {
               unmodified: '2',
-              shifted: '@',
-              optionUnmodified: '„',
-              optionShifted: '“'
+              shifted: '@'
             },
-            KeyE: { unmodified: 'e', shifted: null, optionUnmodified: null }
+            KeyE: { unmodified: 'e', shifted: null }
           }
         })
       )
@@ -25,15 +23,11 @@ describe('parseKeyboardLayoutSnapshot', () => {
       keyCharacters: {
         Digit2: {
           unmodified: '2',
-          shifted: '@',
-          optionUnmodified: '„',
-          optionShifted: '“'
+          shifted: '@'
         },
         KeyE: {
           unmodified: 'e',
-          shifted: null,
-          optionUnmodified: null,
-          optionShifted: null
+          shifted: null
         }
       }
     })

@@ -52,9 +52,7 @@ export function parseKeyboardLayoutSnapshot(stdout: string): KeyboardLayoutSnaps
     const characters = value as Record<string, unknown>
     keyCharacters[code] = {
       unmodified: optionalString(characters.unmodified),
-      shifted: optionalString(characters.shifted),
-      optionUnmodified: optionalString(characters.optionUnmodified),
-      optionShifted: optionalString(characters.optionShifted)
+      shifted: optionalString(characters.shifted)
     }
   }
   return {

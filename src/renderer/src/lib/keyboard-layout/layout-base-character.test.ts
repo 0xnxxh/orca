@@ -54,38 +54,34 @@ describe('getLayoutBaseCharacterForCode', () => {
     expect(getLayoutBaseCharacterForCode('KeyZ')).toBeUndefined()
   })
 
-  it('uses the native modifier layer for Shift and falls back safely', () => {
+  it('uses the native Shift layer and falls back safely', () => {
     _setLayoutMapForTests({ get: (code) => (code === 'Digit2' ? '2' : 'q'), size: 2 })
     _setLayoutSnapshotForTests({
       inputSourceId: 'com.apple.keylayout.Latvian',
       keyCharacters: {
         Digit2: {
           unmodified: '2',
-          shifted: '@',
-          optionUnmodified: '„',
-          optionShifted: '“'
+          shifted: '@'
         },
-        KeyQ: { unmodified: 'q', shifted: 'Q', optionUnmodified: '@', optionShifted: 'Ω' }
+        KeyQ: { unmodified: 'q', shifted: 'Q' }
       }
     })
 
     expect(getLayoutCharacterForCode('Digit2', false)).toBe('2')
     expect(getLayoutCharacterForCode('Digit2', true)).toBe('@')
     expect(getLayoutCharacterForCode('KeyQ', true)).toBe('Q')
-    expect(getLayoutCharacterForCode('KeyQ', false, true)).toBe('@')
-    expect(getLayoutCharacterForCode('KeyQ', true, true)).toBe('Ω')
 
     _setLayoutSnapshotForTests(null)
+    // Without the native snapshot only Key* codes can be uppercased physically.
     expect(getLayoutCharacterForCode('Digit2', true)).toBeUndefined()
     expect(getLayoutCharacterForCode('KeyQ', true)).toBe('Q')
-    expect(getLayoutCharacterForCode('KeyQ', false, true)).toBeUndefined()
   })
 
   it('keeps the last complete snapshot until an atomic refresh settles', async () => {
     _setLayoutSnapshotForTests({
       inputSourceId: 'old',
       keyCharacters: {
-        Digit7: { unmodified: '7', shifted: '/', optionUnmodified: '{', optionShifted: '\\' }
+        Digit7: { unmodified: '7', shifted: '/' }
       }
     })
     let resolveMap!: (map: { get: (code: string) => string | undefined; size: number }) => void
@@ -96,8 +92,6 @@ describe('getLayoutBaseCharacterForCode', () => {
         {
           unmodified: string
           shifted: string
-          optionUnmodified: string
-          optionShifted: string
         }
       >
     }) => void
@@ -123,7 +117,7 @@ describe('getLayoutBaseCharacterForCode', () => {
     resolveSnapshot({
       inputSourceId: 'new',
       keyCharacters: {
-        Digit7: { unmodified: '7', shifted: '?', optionUnmodified: '[', optionShifted: ']' }
+        Digit7: { unmodified: '7', shifted: '?' }
       }
     })
     await refresh
@@ -135,7 +129,7 @@ describe('getLayoutBaseCharacterForCode', () => {
     _setLayoutSnapshotForTests({
       inputSourceId: 'partial',
       keyCharacters: {
-        Digit7: { unmodified: '7', shifted: '/', optionUnmodified: '{', optionShifted: '\\' }
+        Digit7: { unmodified: '7', shifted: '/' }
       }
     })
 
@@ -146,7 +140,7 @@ describe('getLayoutBaseCharacterForCode', () => {
     _setLayoutSnapshotForTests({
       inputSourceId: 'old',
       keyCharacters: {
-        KeyQ: { unmodified: 'q', shifted: 'Q', optionUnmodified: null }
+        KeyQ: { unmodified: 'q', shifted: 'Q' }
       }
     })
     let notifyLayoutChanged: ((event: KeyboardLayoutChangeEvent) => void) | undefined
@@ -192,7 +186,7 @@ describe('getLayoutBaseCharacterForCode', () => {
     resolveOldSnapshot({
       inputSourceId: 'stale',
       keyCharacters: {
-        KeyQ: { unmodified: 'x', shifted: 'X', optionUnmodified: null }
+        KeyQ: { unmodified: 'x', shifted: 'X' }
       }
     })
     await Promise.resolve()
@@ -204,7 +198,7 @@ describe('getLayoutBaseCharacterForCode', () => {
     resolveNewSnapshot({
       inputSourceId: 'new',
       keyCharacters: {
-        KeyQ: { unmodified: 'a', shifted: 'A', optionUnmodified: null }
+        KeyQ: { unmodified: 'a', shifted: 'A' }
       }
     })
     await Promise.resolve()

@@ -83,7 +83,7 @@ export function resolveTerminalShortcutAction(
   // Why: exact flags distinguish ordinary kitty negotiation from report-all mode.
   getKittyKeyboardFlagsActivePane?: () => number,
   // Why: composition is the difference between event.key and the current layout with Option absent.
-  layoutCharacterForCode?: (code: string, shifted: boolean, option?: boolean) => string | undefined,
+  layoutCharacterForCode?: (code: string, shifted: boolean) => string | undefined,
   // Why: lazy so agent-state lookup for the pane's Windows encoding runs only on Shift+Enter, not every keystroke.
   getWindowsShiftEnterEncoding?: () => WindowsShiftEnterEncoding,
   // Why: keybindings follow the client OS, but byte protocols follow the PTY host — they differ for macOS clients on Windows runtimes.

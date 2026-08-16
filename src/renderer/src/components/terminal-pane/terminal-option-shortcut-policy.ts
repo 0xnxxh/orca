@@ -40,7 +40,7 @@ type TerminalOptionShortcutContext = {
   macOptionAsAlt: MacOptionAsAlt
   optionKeyLocations: OptionKeyLocationState
   getKittyKeyboardFlags: () => number
-  layoutCharacterForCode?: (code: string, shifted: boolean, option?: boolean) => string | undefined
+  layoutCharacterForCode?: (code: string, shifted: boolean) => string | undefined
 }
 
 function createRelease(flags: number): TerminalOptionKittyRelease | undefined {

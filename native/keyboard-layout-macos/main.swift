@@ -4,8 +4,6 @@ import Foundation
 struct KeyCharacters: Codable {
   let unmodified: String?
   let shifted: String?
-  let optionUnmodified: String?
-  let optionShifted: String?
 }
 
 struct KeyboardLayoutSnapshot: Codable {
@@ -83,16 +81,6 @@ func readStableSnapshot() -> KeyboardLayoutSnapshot? {
             layout: layout,
             keyCode: keyCode,
             modifiers: UInt32(shiftKey >> 8)
-          ),
-          optionUnmodified: translatedCharacter(
-            layout: layout,
-            keyCode: keyCode,
-            modifiers: UInt32(optionKey >> 8)
-          ),
-          optionShifted: translatedCharacter(
-            layout: layout,
-            keyCode: keyCode,
-            modifiers: UInt32((optionKey | shiftKey) >> 8)
           )
         )
       }

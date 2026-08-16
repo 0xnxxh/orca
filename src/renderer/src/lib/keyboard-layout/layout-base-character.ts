@@ -140,17 +140,7 @@ export function getLayoutBaseCharacterForCode(code: string): string | undefined 
 }
 
 /** Character produced by this layout with Shift optionally held and Option absent. */
-export function getLayoutCharacterForCode(
-  code: string,
-  shifted: boolean,
-  option = false
-): string | undefined {
-  if (option) {
-    const characters = cachedLayoutCharacters.nativeKeyCharacters?.[code]
-    return normalizeLayoutCharacter(
-      shifted ? characters?.optionShifted : characters?.optionUnmodified
-    )
-  }
+export function getLayoutCharacterForCode(code: string, shifted: boolean): string | undefined {
   if (!shifted) {
     return getLayoutBaseCharacterForCode(code)
   }

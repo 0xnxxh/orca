@@ -23,11 +23,7 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     input: TerminalShortcutEvent,
     macOptionAsAlt: 'true' | 'false' | 'left' | 'right' = 'false',
     optionKeyLocations: OptionKeyLocationState = 0,
-    layoutCharacterForCode?: (
-      code: string,
-      shifted: boolean,
-      option?: boolean
-    ) => string | undefined,
+    layoutCharacterForCode?: (code: string, shifted: boolean) => string | undefined,
     kittyKeyboardFlags = 1
   ) =>
     resolveTerminalShortcutAction(
@@ -66,8 +62,8 @@ describe('Option-composed characters in kitty keyboard panes', () => {
 
   it('types composed ASCII that needs Shift as well', () => {
     // German composes '\' on Option+Shift+7.
-    const german = (code: string, shifted: boolean, option = false): string | undefined =>
-      code === 'Digit7' ? (option ? '{' : shifted ? '/' : '7') : undefined
+    const german = (code: string, shifted: boolean): string | undefined =>
+      code === 'Digit7' ? (shifted ? '/' : '7') : undefined
     expect(
       resolveKitty(
         event({ key: '\\', code: 'Digit7', altKey: true, shiftKey: true }),
@@ -79,8 +75,8 @@ describe('Option-composed characters in kitty keyboard panes', () => {
   })
 
   it('types a dead-key-layer ASCII character with event reporting balanced', () => {
-    const abc = (code: string, shifted: boolean, option = false): string | undefined =>
-      code === 'Backquote' ? (option ? '`' : shifted ? '~' : '`') : undefined
+    const abc = (code: string, shifted: boolean): string | undefined =>
+      code === 'Backquote' ? (shifted ? '~' : '`') : undefined
     expect(
       resolveKitty(
         event({ key: '`', code: 'Backquote', altKey: true, shiftKey: true }),
@@ -106,8 +102,8 @@ describe('Option-composed characters in kitty keyboard panes', () => {
   })
 
   it('tracks a compose-side dead key while preserving its native keydown', () => {
-    const abc = (code: string, shifted: boolean, option = false): string | undefined =>
-      code === 'KeyE' ? (option ? '´' : shifted ? 'E' : 'e') : undefined
+    const abc = (code: string, shifted: boolean): string | undefined =>
+      code === 'KeyE' ? (shifted ? 'E' : 'e') : undefined
     expect(
       resolveKitty(event({ key: 'Dead', code: 'KeyE', altKey: true }), 'false', 0, abc, 30)
     ).toEqual({ type: 'trackNativeOptionDeadKey' })
@@ -276,8 +272,8 @@ describe('Option-composed characters in kitty keyboard panes', () => {
   })
 
   it('uses no-Option layout layers for alternate-key reports', () => {
-    const german = (code: string, shifted: boolean, option = false): string | undefined =>
-      code === 'Digit7' ? (option ? '{' : shifted ? '/' : '7') : undefined
+    const german = (code: string, shifted: boolean): string | undefined =>
+      code === 'Digit7' ? (shifted ? '/' : '7') : undefined
     expect(
       resolveKitty(
         event({ key: '\\', code: 'Digit7', altKey: true, shiftKey: true }),
@@ -351,19 +347,15 @@ describe('Option-composed characters in kitty keyboard panes', () => {
     ).toEqual({ type: 'sendInput', data: '\x1b[113;67;64u' })
   })
 
-  it('types shifted ASCII when the Option layer is unavailable but keyup can resolve physically', () => {
-    const germanWithoutOptionLayer = (
-      code: string,
-      shifted: boolean,
-      option = false
-    ): string | undefined =>
-      option ? undefined : code === 'Digit7' ? (shifted ? '/' : '7') : undefined
+  it('types shifted ASCII when the layout resolves the physical key for the keyup', () => {
+    const german = (code: string, shifted: boolean): string | undefined =>
+      code === 'Digit7' ? (shifted ? '/' : '7') : undefined
     expect(
       resolveKitty(
         event({ key: '\\', code: 'Digit7', altKey: true, shiftKey: true }),
         'false',
         0,
-        germanWithoutOptionLayer,
+        german,
         2
       )
     ).toEqual({

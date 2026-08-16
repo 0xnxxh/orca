@@ -128,7 +128,8 @@ function prepareMacDevElectronApp() {
 
   const title = process.env.ORCA_DEV_DOCK_TITLE || 'Orca: dev'
   const identityKey = process.env.ORCA_DEV_INSTANCE_KEY || repoRoot
-  // v10: refresh the keyboard-layout helper's complete modifier-layer schema.
+  // v10: add the keyboard-layout helper. A stale copy only emits extra fields
+  // the parser ignores, so narrowing its schema needs no bump.
   const bundleLayoutVersion = 'dock-title-app-preserve-framework-symlinks-v10'
   const hash = createHash('sha1')
     .update(
