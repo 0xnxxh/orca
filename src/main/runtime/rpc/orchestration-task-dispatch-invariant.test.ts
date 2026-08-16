@@ -86,23 +86,70 @@ describe('Task/Dispatch state invariant', () => {
     })
   })
 
-  it.each(['pending', 'dispatched'] as const)(
-    'atomically fails a %s Dispatch, revokes its capability, and frees the terminal',
-    async (dispatchStatus) => {
+  it('atomically fails a context-only Dispatch, revokes its capability, and frees the terminal', async () => {
+    const harness = createHarness()
+    const task = harness.db.createTask({ spec: 'failing assignment', runId: harness.runId })
+    const { dispatch, capability } = await createCapableDispatch(harness, task.id, 'dispatched')
+
+    const response = await updateTask(harness, task.id, 'failed', 'coordinator stopped work')
+
+    expect(response).toMatchObject({ ok: true, result: { task: { status: 'failed' } } })
+    expect(readPersistedPair(harness.dbPath, task.id, dispatch.id)).toMatchObject({
+      taskStatus: 'failed',
+      taskResult: 'coordinator stopped work',
+      taskCompletedAt: expect.any(String),
+      dispatchStatus: 'failed',
+      dispatchCompletedAt: expect.any(String),
+      capabilityRevokedAt: expect.any(String)
+    })
+    expect(
+      harness.db.verifyDispatchCapability({
+        dispatchId: dispatch.id,
+        capability,
+        paneKey: WORKER_PANE,
+        processIncarnation: WORKER_PROCESS
+      })
+    ).toEqual({ valid: false, reason: `Dispatch ${dispatch.id} capability is revoked.` })
+
+    const laterTask = harness.db.createTask({ spec: 'later assignment', runId: harness.runId })
+    await expect(dispatchTask(harness, laterTask.id, WORKER_HANDLE)).resolves.toMatchObject({
+      status: 'dispatched'
+    })
+  })
+
+  it.each([
+    ['pending', 'failed'],
+    ['pending', 'completed'],
+    ['dispatched', 'failed'],
+    ['dispatched', 'completed']
+  ] as const)(
+    'rejects moving a %s supervised Dispatch Task to %s without mutating lifecycle state',
+    async (dispatchStatus, taskStatus) => {
       const harness = createHarness()
-      const task = harness.db.createTask({ spec: 'failing assignment', runId: harness.runId })
-      const { dispatch, capability } = await createCapableDispatch(harness, task.id, dispatchStatus)
+      const task = harness.db.createTask({ spec: 'supervised assignment', runId: harness.runId })
+      const { dispatch, capability } = createSupervisedDispatch(harness, task.id, dispatchStatus)
 
-      const response = await updateTask(harness, task.id, 'failed', 'coordinator stopped work')
+      const response = await updateTask(harness, task.id, taskStatus, 'must not persist')
 
-      expect(response).toMatchObject({ ok: true, result: { task: { status: 'failed' } } })
-      expect(readPersistedPair(harness.dbPath, task.id, dispatch.id)).toMatchObject({
-        taskStatus: 'failed',
-        taskResult: 'coordinator stopped work',
-        taskCompletedAt: expect.any(String),
-        dispatchStatus: 'failed',
-        dispatchCompletedAt: expect.any(String),
-        capabilityRevokedAt: expect.any(String)
+      expect(response).toMatchObject({
+        ok: false,
+        error: {
+          code: 'task_not_startable',
+          data: { taskId: task.id, dispatchId: dispatch.id }
+        }
+      })
+      expect(readPersistedPair(harness.dbPath, task.id, dispatch.id)).toEqual({
+        taskStatus: 'dispatched',
+        taskResult: null,
+        taskCompletedAt: null,
+        dispatchStatus,
+        dispatchCompletedAt: null,
+        capabilityRevokedAt: null
+      })
+      expect(readPersistedWorkerState(harness.dbPath, dispatch.id)).toEqual({
+        workerState: dispatchStatus === 'pending' ? 'starting' : 'ready',
+        ownershipState: 'owned',
+        releaseState: 'not_requested'
       })
       expect(
         harness.db.verifyDispatchCapability({
@@ -111,12 +158,7 @@ describe('Task/Dispatch state invariant', () => {
           paneKey: WORKER_PANE,
           processIncarnation: WORKER_PROCESS
         })
-      ).toEqual({ valid: false, reason: `Dispatch ${dispatch.id} capability is revoked.` })
-
-      const laterTask = harness.db.createTask({ spec: 'later assignment', runId: harness.runId })
-      await expect(dispatchTask(harness, laterTask.id, WORKER_HANDLE)).resolves.toMatchObject({
-        status: 'dispatched'
-      })
+      ).toEqual({ valid: true })
     }
   )
 
@@ -146,17 +188,18 @@ describe('Task/Dispatch state invariant', () => {
     ['dispatch first', ['dispatch', 'ready'], false],
     ['ready first', ['ready', 'dispatch'], true]
   ] as const)(
-    'serializes concurrent %s arrivals without splitting Task and Dispatch state',
+    'preserves the invariant when %s RPC calls run in order',
     async (_label, order, readySucceeds) => {
       const harness = createHarness()
       const task = harness.db.createTask({ spec: 'racing assignment', runId: harness.runId })
-      const operations = order.map((operation) =>
-        operation === 'dispatch'
-          ? dispatchTaskResponse(harness, task.id, WORKER_HANDLE)
-          : updateTask(harness, task.id, 'ready', 'race result')
-      )
-
-      const responses = await Promise.all(operations)
+      const responses: RpcResponse[] = []
+      for (const operation of order) {
+        responses.push(
+          await (operation === 'dispatch'
+            ? dispatchTaskResponse(harness, task.id, WORKER_HANDLE)
+            : updateTask(harness, task.id, 'ready', 'race result'))
+        )
+      }
       const dispatchResponse = responses[order.indexOf('dispatch')]
       const readyResponse = responses[order.indexOf('ready')]
 
@@ -264,6 +307,28 @@ async function createCapableDispatch(
   return { dispatch, capability }
 }
 
+function createSupervisedDispatch(
+  harness: Harness,
+  taskId: string,
+  status: 'pending' | 'dispatched'
+): { dispatch: { id: string }; capability: string } {
+  const dispatch = harness.db.createStartingWorkerDispatch({ taskId, startOptions: {} }).dispatch
+  const capability = harness.db.prepareStartingWorkerAuthority({
+    dispatchId: dispatch.id,
+    handle: WORKER_HANDLE,
+    paneKey: WORKER_PANE,
+    processIncarnation: WORKER_PROCESS,
+    worktreeId: 'repo::worker',
+    setupState: 'not_applicable',
+    effects: [],
+    terminalOwnership: 'created'
+  })
+  if (status === 'dispatched') {
+    harness.db.markWorkerDispatchReady(dispatch.id)
+  }
+  return { dispatch, capability }
+}
+
 function updateTask(
   harness: Harness,
   taskId: string,
@@ -334,6 +399,31 @@ function readPersistedActiveState(dbPath: string, taskId: string) {
       )
       .get(taskId) as { count: number }
     return { taskStatus: task.status, activeDispatches: active.count }
+  } finally {
+    sqlite.close()
+  }
+}
+
+function readPersistedWorkerState(dbPath: string, dispatchId: string) {
+  const sqlite = new Database(dbPath, { readonly: true })
+  try {
+    const row = sqlite
+      .prepare(
+        `SELECT worker.state AS worker_state, resource.ownership_state, resource.release_state
+         FROM worker_dispatches worker
+         JOIN worker_terminal_resources resource ON resource.owner_dispatch_id = worker.dispatch_id
+         WHERE worker.dispatch_id = ?`
+      )
+      .get(dispatchId) as {
+      worker_state: string
+      ownership_state: string
+      release_state: string
+    }
+    return {
+      workerState: row.worker_state,
+      ownershipState: row.ownership_state,
+      releaseState: row.release_state
+    }
   } finally {
     sqlite.close()
   }

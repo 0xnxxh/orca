@@ -4605,6 +4605,16 @@ export class OrchestrationDb {
                  SELECT 1 FROM dispatch_contexts
                  WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
                )
+             )
+             AND (
+               ? = 0 OR NOT EXISTS (
+                 SELECT 1
+                 FROM dispatch_contexts active
+                 JOIN worker_dispatches worker ON worker.dispatch_id = active.id
+                 WHERE active.task_id = tasks.id
+                   AND active.status IN ('pending', 'dispatched')
+                   AND worker.state NOT IN ('failed', 'succeeded', 'stopped', 'abandoned')
+               )
              )`
         )
         .run(
@@ -4613,7 +4623,8 @@ export class OrchestrationDb {
           completedAt,
           id,
           requiresActiveDispatch ? 1 : 0,
-          permitsActiveDispatch ? 1 : 0
+          permitsActiveDispatch ? 1 : 0,
+          terminalStatus ? 1 : 0
         )
       if (update.changes !== 1) {
         const task = this.getTask(id)
@@ -4624,6 +4635,25 @@ export class OrchestrationDb {
              ORDER BY rowid DESC LIMIT 1`
           )
           .get(id) as Pick<DispatchContextRow, 'id'> | undefined
+        const activeWorker = terminalStatus
+          ? (this.db
+              .prepare(
+                `SELECT active.id
+                 FROM dispatch_contexts active
+                 JOIN worker_dispatches worker ON worker.dispatch_id = active.id
+                 WHERE active.task_id = ? AND active.status IN ('pending', 'dispatched')
+                   AND worker.state NOT IN ('failed', 'succeeded', 'stopped', 'abandoned')
+                 ORDER BY active.rowid DESC LIMIT 1`
+              )
+              .get(id) as Pick<DispatchContextRow, 'id'> | undefined)
+          : undefined
+        if (task && activeWorker) {
+          throw new OrchestrationError(
+            'task_not_startable',
+            `Task ${id} cannot move to ${status} while supervised Dispatch ${activeWorker.id} is active; stop or settle its worker first.`,
+            { taskId: id, dispatchId: activeWorker.id }
+          )
+        }
         if (task && requiresActiveDispatch && !active) {
           throw new OrchestrationError(
             'task_not_startable',
@@ -4900,27 +4930,33 @@ export class OrchestrationDb {
     // explicit --terminal reuse; ownership transfers only from an exact owned settled resource.
     terminalOwnership?: 'created' | 'external'
   }): string {
-    const dispatch = this.getDispatchContextById(params.dispatchId)
-    const worker = this.getWorkerDispatch(params.dispatchId)
-    if (!dispatch || dispatch.status !== 'pending' || worker?.state !== 'starting') {
-      throw new OrchestrationError(
-        'dispatch_inactive',
-        `Dispatch ${params.dispatchId} is not starting.`
-      )
-    }
-    if (
-      dispatch.launch_token_hash &&
-      params.launchTokenHash &&
-      dispatch.launch_token_hash !== params.launchTokenHash
-    ) {
-      throw new OrchestrationError(
-        'request_mismatch',
-        `Dispatch ${params.dispatchId} already has a different launch-token commitment.`
-      )
-    }
-    const capability = `dcap_${randomBytes(32).toString('base64url')}`
     this.db.exec('BEGIN IMMEDIATE')
     try {
+      const dispatch = this.getDispatchContextById(params.dispatchId)
+      const worker = this.getWorkerDispatch(params.dispatchId)
+      if (!dispatch || dispatch.status !== 'pending' || worker?.state !== 'starting') {
+        throw new OrchestrationError(
+          'dispatch_inactive',
+          `Dispatch ${params.dispatchId} is not starting.`
+        )
+      }
+      if (
+        dispatch.launch_token_hash &&
+        params.launchTokenHash &&
+        dispatch.launch_token_hash !== params.launchTokenHash
+      ) {
+        throw new OrchestrationError(
+          'request_mismatch',
+          `Dispatch ${params.dispatchId} already has a different launch-token commitment.`
+        )
+      }
+      const existing = this.findActiveDispatchForAssignee(params.handle, params.paneKey)
+      if (existing && existing.id !== params.dispatchId) {
+        throw new Error(
+          `Terminal ${params.handle} already has an active dispatch (${existing.id} for task ${existing.task_id})`
+        )
+      }
+      const capability = `dcap_${randomBytes(32).toString('base64url')}`
       this.db
         .prepare(
           `UPDATE dispatch_contexts
@@ -7191,6 +7227,8 @@ export class OrchestrationDb {
       .prepare('SELECT MAX(failure_count) as max_failures FROM dispatch_contexts WHERE task_id = ?')
       .get(taskId) as { max_failures: number | null } | undefined
     const priorFailures = prior?.max_failures ?? 0
+    const paneSuffix =
+      assigneePaneKey && parsePaneKey(assigneePaneKey) ? paneKeyMatchSuffix(assigneePaneKey) : null
 
     const id = generateId('ctx')
     this.db.exec('SAVEPOINT create_dispatch_context')
@@ -7203,7 +7241,24 @@ export class OrchestrationDb {
              status, failure_count, dispatched_at
            )
            SELECT ?, run_id, id, ?, ?, ?, ?, ?, 'dispatched', ?, datetime('now')
-           FROM tasks WHERE id = ? AND status = 'ready'`
+           FROM tasks
+           WHERE id = ? AND status = 'ready'
+             AND NOT EXISTS (
+               SELECT 1 FROM dispatch_contexts active
+               WHERE active.status IN ('pending', 'dispatched')
+                 AND (
+                   active.assignee_handle = ?
+                   OR (? IS NOT NULL AND active.assignee_pane_key = ?)
+                   OR (
+                     ? IS NOT NULL AND active.assignee_pane_key IS NOT NULL
+                     AND instr(active.assignee_pane_key, ':') > 1
+                     AND substr(
+                       active.assignee_pane_key,
+                       instr(active.assignee_pane_key, ':') + 1
+                     ) = ?
+                   )
+                 )
+             )`
         )
         .run(
           id,
@@ -7213,10 +7268,21 @@ export class OrchestrationDb {
           assigneePaneKey ?? null,
           processIncarnation ?? null,
           priorFailures,
-          taskId
+          taskId,
+          assigneeHandle,
+          assigneePaneKey ?? null,
+          assigneePaneKey ?? null,
+          paneSuffix,
+          paneSuffix
         )
       if (inserted.changes !== 1) {
         const current = this.getTask(taskId)
+        const occupied = this.findActiveDispatchForAssignee(assigneeHandle, assigneePaneKey)
+        if (current?.status === 'ready' && occupied) {
+          throw new Error(
+            `Terminal ${assigneeHandle} already has an active dispatch (${occupied.id} for task ${occupied.task_id})`
+          )
+        }
         throw new Error(
           `Task ${taskId} is ${current?.status ?? 'missing'}; only ready tasks can be dispatched`
         )
@@ -7615,7 +7681,15 @@ export class OrchestrationDb {
 
     // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
     const taskStatus: TaskStatus = newStatus === 'circuit_broken' ? 'failed' : 'ready'
-    this.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(taskStatus, ctx.task_id)
+    this.db
+      .prepare(
+        `UPDATE tasks SET status = ?
+         WHERE id = ? AND NOT EXISTS (
+           SELECT 1 FROM dispatch_contexts
+           WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
+         )`
+      )
+      .run(taskStatus, ctx.task_id)
 
     return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
       | DispatchContextRow

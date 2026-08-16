@@ -23,7 +23,6 @@ export function releaseContextOnlyDispatch(
     }
   }
 
-  const releasedCurrentTask = latestDispatchId === dispatch.id
   db.prepare(
     `UPDATE dispatch_contexts
      SET status = 'failed', last_failure = ?,
@@ -31,6 +30,13 @@ export function releaseContextOnlyDispatch(
          completed_at = COALESCE(completed_at, datetime('now'))
      WHERE id = ? AND status IN ('pending', 'dispatched')`
   ).run(requestedState, dispatch.id)
+  const remaining = db
+    .prepare(
+      `SELECT 1 FROM dispatch_contexts
+       WHERE task_id = ? AND status IN ('pending', 'dispatched') LIMIT 1`
+    )
+    .get(dispatch.task_id)
+  const releasedCurrentTask = latestDispatchId === dispatch.id && !remaining
   if (releasedCurrentTask) {
     db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(dispatch.task_id)
   }

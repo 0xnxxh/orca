@@ -139,6 +139,36 @@ describe('Task/Dispatch invariant transactions', () => {
     }
   )
 
+  it('does not requeue a legacy split Task while another Dispatch remains active', () => {
+    const { db } = createDatabase()
+    const task = db.createTask({ spec: 'legacy split retry' })
+    const first = db.createDispatchContext(task.id, 'term_first')
+    sqliteFor(db).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+    const second = db.createDispatchContext(task.id, 'term_second')
+
+    db.failDispatch(second.id, 'targeted failure')
+
+    expect(db.getTask(task.id)?.status).toBe('dispatched')
+    expect(db.getDispatchContextById(first.id)?.status).toBe('dispatched')
+    expect(db.getDispatchContextById(second.id)?.status).toBe('failed')
+  })
+
+  it('does not block a legacy split Task while another Dispatch remains active', () => {
+    const { db } = createDatabase()
+    const task = db.createTask({ spec: 'legacy split release' })
+    const first = db.createDispatchContext(task.id, 'term_first')
+    sqliteFor(db).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+    const second = db.createDispatchContext(task.id, 'term_second')
+
+    expect(db.beginWorkerStop(second.id)).toMatchObject({
+      disposition: 'context_only',
+      releasedCurrentTask: false
+    })
+    expect(db.getTask(task.id)?.status).toBe('dispatched')
+    expect(db.getDispatchContextById(first.id)?.status).toBe('dispatched')
+    expect(db.getDispatchContextById(second.id)?.status).toBe('failed')
+  })
+
   it.each(['pending', 'ready', 'blocked'] as const)(
     'rejects moving a Task to %s while a Dispatch remains active',
     (status) => {
@@ -191,6 +221,155 @@ describe('Task/Dispatch invariant transactions', () => {
     expect(injected).toBe(true)
     expect(first.db.getTask(task.id)).toMatchObject({ status: 'failed', result: 'failure won' })
     expect(first.db.getDispatchContext(task.id)).toBeUndefined()
+  })
+
+  it('atomically rejects a same-pane Dispatch that loses the occupancy race', () => {
+    const first = createDatabase()
+    const concurrent = createDatabase(first.path)
+    const firstTask = first.db.createTask({ spec: 'first terminal claimant' })
+    const secondTask = first.db.createTask({ spec: 'second terminal claimant' })
+    const sqlite = sqliteFor(first.db)
+    const prepare = sqlite.prepare.bind(sqlite)
+    let winnerId: string | undefined
+    vi.spyOn(sqlite, 'prepare').mockImplementation((sql) => {
+      if (!winnerId && sql.includes('INSERT INTO dispatch_contexts')) {
+        winnerId = concurrent.db.createDispatchContext(
+          secondTask.id,
+          'term_reminted',
+          'tab_new:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        ).id
+      }
+      return prepare(sql)
+    })
+
+    expect(() =>
+      first.db.createDispatchContext(
+        firstTask.id,
+        'term_worker',
+        'tab_old:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      )
+    ).toThrow(/already has an active dispatch/)
+    expect(winnerId).toBeDefined()
+    expect(first.db.getTask(firstTask.id)?.status).toBe('ready')
+    expect(first.db.getTask(secondTask.id)?.status).toBe('dispatched')
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM dispatch_contexts WHERE status IN ('pending', 'dispatched')"
+        )
+        .get()
+    ).toEqual({ count: 1 })
+  })
+
+  it('rejects worker authority when another Dispatch owns the pane', () => {
+    const { db } = createDatabase()
+    const ownerTask = db.createTask({ spec: 'current pane owner' })
+    const owner = db.createDispatchContext(
+      ownerTask.id,
+      'term_owner',
+      'tab_old:cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    )
+    const workerTask = db.createTask({ spec: 'competing supervised worker' })
+    const started = db.createStartingWorkerDispatch({
+      taskId: workerTask.id,
+      startOptions: {}
+    })
+
+    expect(() =>
+      db.prepareStartingWorkerAuthority({
+        dispatchId: started.dispatch.id,
+        handle: 'term_reminted',
+        paneKey: 'tab_new:cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        processIncarnation: 'worker:1',
+        worktreeId: 'repo::worker',
+        effects: [],
+        setupState: 'not_applicable',
+        terminalOwnership: 'external'
+      })
+    ).toThrow(`already has an active dispatch (${owner.id} for task ${ownerTask.id})`)
+    expect(db.getDispatchContextById(started.dispatch.id)).toMatchObject({
+      status: 'pending',
+      assignee_handle: null,
+      capability_hash: null
+    })
+    expect(db.getWorkerDispatch(started.dispatch.id)).toMatchObject({
+      state: 'starting',
+      stage: 'accepted',
+      agent_terminal_handle: null
+    })
+  })
+
+  it.each(['completed', 'failed'] as const)(
+    'rejects a %s Task update while its supervised worker remains active',
+    (status) => {
+      const { db } = createDatabase()
+      const task = db.createTask({ spec: 'supervised lifecycle' })
+      const started = db.createStartingWorkerDispatch({ taskId: task.id, startOptions: {} })
+      const capability = db.prepareStartingWorkerAuthority({
+        dispatchId: started.dispatch.id,
+        handle: 'term_worker',
+        paneKey: 'tab_worker:dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        processIncarnation: 'worker:1',
+        worktreeId: 'repo::worker',
+        effects: [],
+        setupState: 'not_applicable',
+        terminalOwnership: 'created'
+      })
+
+      expect(() => db.updateTaskStatus(task.id, status, 'must not persist')).toThrowError(
+        expect.objectContaining({
+          code: 'task_not_startable',
+          data: { taskId: task.id, dispatchId: started.dispatch.id }
+        })
+      )
+      expect(db.getTask(task.id)).toMatchObject({
+        status: 'dispatched',
+        result: null,
+        completed_at: null
+      })
+      expect(db.getDispatchContextById(started.dispatch.id)).toMatchObject({
+        status: 'pending',
+        completed_at: null,
+        capability_revoked_at: null
+      })
+      expect(db.getWorkerDispatch(started.dispatch.id)?.state).toBe('starting')
+      expect(
+        db.verifyDispatchCapability({
+          dispatchId: started.dispatch.id,
+          capability,
+          paneKey: 'tab_worker:dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          processIncarnation: 'worker:1'
+        })
+      ).toEqual({ valid: true })
+    }
+  )
+
+  it('keeps a federated late start authoritative after rejecting Task failure', () => {
+    const { db } = createDatabase()
+    const task = db.createTask({ spec: 'federated lifecycle' })
+    const started = db.createStartingWorkerDispatch({
+      taskId: task.id,
+      startOptions: {},
+      federation: {
+        environmentId: 'server-1',
+        environmentName: 'worker server',
+        peerFingerprint: 'peer-1',
+        protocolVersion: 3
+      }
+    })
+
+    expect(() =>
+      db.updateTaskStatus(task.id, 'failed', 'must not outrun remote start')
+    ).toThrowError(
+      expect.objectContaining({
+        code: 'task_not_startable',
+        data: { taskId: task.id, dispatchId: started.dispatch.id }
+      })
+    )
+    expect(() => db.markWorkerDispatchReady(started.dispatch.id)).not.toThrow()
+    expect(db.getTask(task.id)?.status).toBe('dispatched')
+    expect(db.getDispatchContextById(started.dispatch.id)?.status).toBe('dispatched')
+    expect(db.getWorkerDispatch(started.dispatch.id)?.state).toBe('ready')
   })
 })
 
