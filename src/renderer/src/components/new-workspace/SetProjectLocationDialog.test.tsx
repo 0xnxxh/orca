@@ -166,6 +166,50 @@ describe('SetProjectLocationDialog', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('does not retarget the composer when a slow clone lands after dismissal', async () => {
+    // An SSH clone is unbounded and the dialog stays dismissable while it runs.
+    let finishClone: (result: { setup: { id: string } }) => void = () => {}
+    storeMocks.setupProjectClone.mockReturnValue(
+      new Promise((resolve) => {
+        finishClone = resolve
+      })
+    )
+    const onReady = vi.fn()
+    const onClose = vi.fn()
+    const { rerender } = render(
+      <SetProjectLocationDialog
+        option={option}
+        projectName="orca"
+        projectKind="git"
+        defaultCloneUrl="https://github.com/stablyai/orca.git"
+        onClose={onClose}
+        onReady={onReady}
+      />
+    )
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: /Clone from URL/ }))
+    await user.type(screen.getByPlaceholderText('/destination/on/host'), '/remote/orca')
+    await user.click(screen.getByRole('button', { name: 'Clone' }))
+
+    // The user backs out and points the composer somewhere else.
+    rerender(
+      <SetProjectLocationDialog
+        option={null}
+        projectName="orca"
+        projectKind="git"
+        defaultCloneUrl="https://github.com/stablyai/orca.git"
+        onClose={onClose}
+        onReady={onReady}
+      />
+    )
+    await act(async () => {
+      finishClone({ setup: { id: 'setup-openclaw-clone' } })
+    })
+
+    expect(onReady).not.toHaveBeenCalled()
+  })
+
   it('notifies the parent when dismissed', async () => {
     const onClose = vi.fn()
     renderDialog({ onClose })
