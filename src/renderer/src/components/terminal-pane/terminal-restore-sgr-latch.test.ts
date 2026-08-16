@@ -3,12 +3,15 @@ import { Terminal } from '@xterm/headless'
 import { afterEach, describe, expect, it } from 'vitest'
 import { serializeWithAbsoluteCursor } from '../../../../shared/terminal-serialize-absolute-cursor'
 import {
+  POST_REPLAY_LIVE_AGENT_REATTACH_RESET,
   POST_REPLAY_MODE_RESET,
-  POST_REPLAY_REATTACH_RESET
+  POST_REPLAY_REATTACH_RESET,
+  POST_REPLAY_REATTACH_RESET_KEEP_MOUSE
 } from '../../../../shared/terminal-mode-reset-profiles'
 import { restoreScrollbackBuffers } from './layout-serialization'
 
 const LEAF_ID = '11111111-1111-4111-8111-111111111111'
+const UNCLOSED_BOLD_FIXTURE = 'ORCA-SGR-REPRO \x1b[1mBOLD-RUN-LEFT-OPEN\x1b[1;34H'
 const terminals: Terminal[] = []
 
 function createTerminal(): Terminal {
@@ -113,10 +116,23 @@ describe('fresh-shell terminal restore SGR state', () => {
     expect(boldAtText(restored, 'fresh-shell')).toBe(0)
   })
 
-  it('preserves a live normal-buffer pen across daemon reattach', async () => {
+  it('clears the captured pen after normal-buffer daemon reattach', async () => {
+    const terminal = createTerminal()
+    await writeTerminal(terminal, UNCLOSED_BOLD_FIXTURE)
+    await writeTerminal(terminal, POST_REPLAY_REATTACH_RESET)
+    await writeTerminal(terminal, 'PLAIN-TEXT-NO-SGR-WHATSOEVER')
+
+    expect(boldAtText(terminal, 'BOLD-RUN-LEFT-OPEN')).not.toBe(0)
+    expect(boldAtText(terminal, 'PLAIN')).toBe(0)
+  })
+
+  it.each([
+    ['live agent', POST_REPLAY_LIVE_AGENT_REATTACH_RESET],
+    ['alternate-screen TUI', POST_REPLAY_REATTACH_RESET_KEEP_MOUSE]
+  ])('preserves a %s pen across daemon reattach', async (_kind, reset) => {
     const terminal = createTerminal()
     await writeTerminal(terminal, 'ORCA-SGR-REPRO \x1b[1;34mBOLD-RUN-LEFT-OPEN\x1b[1;34H')
-    await writeTerminal(terminal, POST_REPLAY_REATTACH_RESET)
+    await writeTerminal(terminal, reset)
     await writeTerminal(terminal, 'LIVE-CONTINUATION')
 
     expect(boldAtText(terminal, 'BOLD-RUN-LEFT-OPEN')).not.toBe(0)
@@ -146,6 +162,23 @@ describe('fresh-shell terminal restore SGR state', () => {
     const restored = await restoreBuffer(snapshot, { followingOutput: '\x1b8after-restore' })
 
     expect(boldAtText(restored, 'after-restore')).toBe(0)
+  })
+
+  it('grounds the synthetic saved cursor after normal-buffer daemon reattach', async () => {
+    const source = serialize('\x1b[1mBOLD')
+    await writeTerminal(source.terminal, source.data)
+    const snapshot = serializeWithAbsoluteCursor(source.addon, source.terminal, undefined, {
+      x: 10,
+      y: 0,
+      originMode: false
+    })
+    const restored = createTerminal()
+
+    await writeTerminal(restored, snapshot)
+    await writeTerminal(restored, POST_REPLAY_REATTACH_RESET)
+    await writeTerminal(restored, '\x1b8after-reattach')
+
+    expect(boldAtText(restored, 'after-reattach')).toBe(0)
   })
 
   it('restores alt-screen scrollback without leaking its bold frame', async () => {

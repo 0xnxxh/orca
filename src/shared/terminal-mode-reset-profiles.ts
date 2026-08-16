@@ -20,8 +20,8 @@ export const POST_REPLAY_MODE_RESET = `${RESET_GRAPHIC_RENDITION}${RESET_TERMINA
 // Why: same-session live replay; keep cursor/focus cleanup but preserve Kitty flags the running TUI relies on.
 export const POST_REPLAY_LIVE_SNAPSHOT_RESET = `${RESET_TERMINAL_CURSOR_STYLE}\x1b[?25h\x1b[?1004l`
 
-// Why: daemon reattach hits a live session, so preserve its serialized pen while clearing stale cursor/focus/mouse/Kitty bits.
-export const POST_REPLAY_REATTACH_RESET = `${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l`
+// Why: the normal-buffer fallback can follow a dead TUI, so its stale pen and saved pen must not reach the surviving shell.
+export const POST_REPLAY_REATTACH_RESET = `${RESET_GRAPHIC_RENDITION}${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l${SAVE_GROUNDED_CURSOR}`
 
 // Why: an alt-screen reattach replays the daemon's rehydrateSequences, which re-arm the live TUI's
 // mouse modes; wiping them one write later hands drags back to xterm's row selection (#8291).

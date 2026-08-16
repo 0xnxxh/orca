@@ -151,10 +151,10 @@ describe('connectPanePty', () => {
     await restoreTerminalTestGlobals()
   })
 
-  it('grounds daemon snapshot replay without clearing the live pen', async () => {
+  it('clears the captured pen for a normal-buffer fallback reattach', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')
-    const snapshot = 'ORCA-SGR-REPRO \x1b[1;31mBOLD-RUN-LEFT-OPEN\x1b[1;34H'
+    const snapshot = 'ORCA-SGR-REPRO \x1b[1mBOLD-RUN-LEFT-OPEN\x1b[1;34H'
     transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
       if (sessionId) {
         return { id: sessionId, snapshot }
@@ -207,13 +207,13 @@ describe('connectPanePty', () => {
           await writeHeadlessTerminal(rendered, data)
         }
       }
-      await writeHeadlessTerminal(rendered, 'LIVE')
+      await writeHeadlessTerminal(rendered, 'PLAIN')
       const line = rendered.buffer.active.getLine(rendered.buffer.active.baseY)
-      const liveColumn = line?.translateToString(true).indexOf('LIVE') ?? -1
+      const plainColumn = line?.translateToString(true).indexOf('PLAIN') ?? -1
 
-      expect(line?.getCell(liveColumn)?.isBold()).not.toBe(0)
-      expect(line?.getCell(liveColumn)?.getFgColor()).toBe(1)
-      expect(line?.getCell(liveColumn)?.getBgColor()).toBe(-1)
+      expect(line?.getCell(plainColumn)?.isBold()).toBe(0)
+      expect(line?.getCell(plainColumn)?.getFgColor()).toBe(-1)
+      expect(line?.getCell(plainColumn)?.getBgColor()).toBe(-1)
       expect(rendered.buffer.active.getLine(5)?.getCell(39)?.getBgColor()).toBe(-1)
     } finally {
       rendered.dispose()

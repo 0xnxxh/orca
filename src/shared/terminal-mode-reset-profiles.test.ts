@@ -30,9 +30,9 @@ describe('terminal mode reset profiles', () => {
 
   it('pins the daemon-reattach profile, which keeps bracketed paste', () => {
     expect(POST_REPLAY_REATTACH_RESET).toBe(
-      '\x1b[0 q\x1b[<99u\x1b[=0u\x1b[?25h\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l\x1b[?1004l'
+      '\x1b[0m\x1b[0 q\x1b[<99u\x1b[=0u\x1b[?25h\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l\x1b[?1004l\x1b7'
     )
-    expect(POST_REPLAY_REATTACH_RESET).not.toContain(RESET_GRAPHIC_RENDITION)
+    expect(POST_REPLAY_REATTACH_RESET).toContain(RESET_GRAPHIC_RENDITION)
     expect(POST_REPLAY_REATTACH_RESET).not.toContain('\x1b[?2004l')
   })
 
