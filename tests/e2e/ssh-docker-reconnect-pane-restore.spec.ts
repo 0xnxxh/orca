@@ -1,5 +1,3 @@
-import type { Page } from '@stablyai/playwright-test'
-
 import { test, expect } from './helpers/orca-app'
 import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 import {
@@ -19,6 +17,7 @@ import {
   connectDockerSshRelayTarget,
   reconnectDockerSshRelayTarget
 } from './helpers/docker-ssh-relay-connection'
+import { openTerminalTabInActiveGroup } from './helpers/terminal-tab-open'
 
 const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
 
@@ -50,33 +49,12 @@ const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
  *   client-supplied through pty.openClient (dispatcher.ts:1219) and RequestContext carries no
  *   generation of its own.
  *
- * Which points at the likeliest real cause, unverified: the SSH client presents the SAME
- * clientGeneration across a reconnect, so the relay cannot tell a new connection from the old one
- * and reuses its delivery. The fix is probably that reattachSshPtySession participates in the
- * recovery protocol at all — it never sends sourceRecovery — rather than anything in the relay.
- * Start there, not at onClientDetached.
+ * The real cause is now established, and it is broader than this spec: a reconnect reuses the same
+ * clientId (setWrite keeps the primary client), so the relay's activate() matches on it and returns
+ * 'existing' before ever reaching the recovery branch. Checkpointed source recovery therefore has
+ * never run on an SSH reconnect at all, and the byte tail is not a fallback but the only path. Full
+ * chain and the fix it implies: docs/reference/ssh-reconnect-source-recovery.md.
  */
-async function openTerminalTab(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const store = window.__store
-    if (!store) {
-      throw new Error('Store unavailable')
-    }
-    const state = store.getState()
-    const worktreeId = state.activeWorktreeId
-    if (!worktreeId) {
-      throw new Error('No active worktree to open a terminal tab in')
-    }
-    // Why: the tab-bar caller only invokes this with the group it is opening into; passing the
-    // active group is what makes the new tab land beside the existing one instead of nowhere.
-    const groupId = state.activeGroupIdByWorktree[worktreeId]
-    if (!groupId) {
-      throw new Error(`No active tab group for worktree ${worktreeId}`)
-    }
-    await state.openNewTerminalTabInActiveWorkspace(groupId)
-  })
-}
-
 test.describe('SSH reconnect pane restore', () => {
   test.skip(!RUN_DOCKER_SSH, 'Set ORCA_E2E_SSH_DOCKER=1 to run the dockerized SSH relay tests')
 
@@ -111,9 +89,36 @@ test.describe('SSH reconnect pane restore', () => {
       // REGRESSION 1: the pane painted nothing at all here, because the relay withheld the replay.
       await waitForTerminalOutput(orcaPage, marker, 60_000)
 
+      // A FULL-SCREEN app is the second case: a reconnect must leave a TUI pane alive and drawing,
+      // not blank or frozen.
+      //
+      // Deliberately run in the ORIGINAL tab, and deliberately BEFORE the new-tab case below. A tab
+      // created after a reconnect is destroyed by an unrelated session-sync bug on the next one (see
+      // ssh-reconnect-tab-destruction.spec.ts), so staging the TUI there conflated two failures and
+      // left this guard red for a reason that has nothing to do with painting. This tab predates
+      // every reconnect, so it is in the host snapshot and survives.
+      //
+      // SCOPE, because it is easy to over-read: this does NOT prove which payload painted the pane.
+      // top redraws itself every few seconds, so these assertions pass whichever way the paint-source
+      // gate decided — including with it reverted. What discriminates model-vs-tail is unit-level, in
+      // ssh-reconnect-model-paint-gate.test.ts, because the interesting cases are disagreements
+      // between main's pre-outage alt-screen belief and a replay produced during the outage, which
+      // is not something this fixture can stage. Kept anyway: it is the only coverage that a
+      // reconnected TUI pane recovers at all.
+      await execInTerminal(orcaPage, ptyId, 'top -b -n 1 > /dev/null; top')
+      await waitForTerminalOutput(orcaPage, 'load average', 30_000, 8000)
+
+      await reconnectDockerSshRelayTarget(orcaPage, remote.targetId)
+      await waitForActiveTerminalManager(orcaPage, 60_000)
+      await waitForActivePanePtyId(orcaPage, 60_000)
+
+      await waitForTerminalOutput(orcaPage, 'load average', 60_000, 8000)
+      const tuiContent = await getTerminalContent(orcaPage, 8000)
+      expect(tuiContent).toContain('PID')
+
       // REGRESSION 2: opening a tab AFTER a reconnect. The prepaint could still fire on this mount
       // and write over the new shell, leaving a pane with no prompt and a generic tab title.
-      await openTerminalTab(orcaPage)
+      await openTerminalTabInActiveGroup(orcaPage)
       await waitForActiveTerminalManager(orcaPage, 60_000)
       const freshPtyId = await waitForActivePanePtyId(orcaPage, 60_000)
       expect(freshPtyId).not.toBe(ptyId)
@@ -127,27 +132,6 @@ test.describe('SSH reconnect pane restore', () => {
       // And it must be a FRESH shell, not a repaint of the old pane's history.
       const freshContent = await getTerminalContent(orcaPage, 8000)
       expect(freshContent).not.toContain(marker)
-
-      // A FULL-SCREEN app is the third case: a reconnect must leave a TUI pane alive and drawing,
-      // not blank or frozen.
-      //
-      // SCOPE, because it is easy to over-read: this does NOT prove which payload painted the pane.
-      // top redraws itself every few seconds, so these assertions pass whichever way the paint-source
-      // gate decided — including with it reverted. What discriminates model-vs-tail is unit-level, in
-      // ssh-reconnect-model-paint-gate.test.ts, because the interesting cases are disagreements
-      // between main's pre-outage alt-screen belief and a replay produced during the outage, which
-      // is not something this fixture can stage. Kept anyway: it is the only coverage that a
-      // reconnected TUI pane recovers at all.
-      await execInTerminal(orcaPage, freshPtyId, 'top -b -n 1 > /dev/null; top')
-      await waitForTerminalOutput(orcaPage, 'load average', 30_000, 8000)
-
-      await reconnectDockerSshRelayTarget(orcaPage, remote.targetId)
-      await waitForActiveTerminalManager(orcaPage, 60_000)
-      await waitForActivePanePtyId(orcaPage, 60_000)
-
-      await waitForTerminalOutput(orcaPage, 'load average', 60_000, 8000)
-      const tuiContent = await getTerminalContent(orcaPage, 8000)
-      expect(tuiContent).toContain('PID')
 
       // The title is the cheap signal the reported bug showed: it only stays generic when the shell
       // never printed a prompt for Orca to read one from.
