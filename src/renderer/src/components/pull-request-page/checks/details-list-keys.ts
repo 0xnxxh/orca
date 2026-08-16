@@ -13,6 +13,7 @@ export function assignUniqueListKeys<T>(
     const base = contentKey(item)
     const seen = occurrences.get(base) ?? 0
     occurrences.set(base, seen + 1)
-    return { item, key: seen === 0 ? base : `${base}#${seen}` }
+    // JSON-encoded pair, not `base#seen`: a separator suffix would collide with a real content key.
+    return { item, key: JSON.stringify([base, seen]) }
   })
 }

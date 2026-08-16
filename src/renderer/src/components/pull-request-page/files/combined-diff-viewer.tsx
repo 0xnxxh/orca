@@ -27,6 +27,7 @@ import {
   type PRFilesCombinedDiffViewerProps
 } from '@/components/github/pr-file-diff-mapping'
 import { githubRepoIdentityKey } from '../../../../../shared/github/repository-identity-key'
+import { LOCAL_EXECUTION_HOST_ID } from '../../../../../shared/execution-host'
 import { prFilesDiffScrollTopCache, prFilesDiffViewStateCache } from '../cache/files-diff-view'
 import { PRFilesDiffToolbar } from './toolbar'
 import { addPullRequestLineComment } from './line-comment'
@@ -80,27 +81,35 @@ export function PRFilesCombinedDiffViewer({
     () => buildInlineReviewComments(comments, repoId, prNumber),
     [comments, prNumber, repoId]
   )
+  // Why: section contents are fetched through sourceContext, so local and remote hosts must not share cache entries.
+  const sourceScope = sourceContext?.hostId ?? LOCAL_EXECUTION_HOST_ID
   const entrySignature = useMemo(
     () =>
       JSON.stringify({
         repoId,
         prNumber,
         prRepo: prRepo ? githubRepoIdentityKey(prRepo) : null,
+        sourceScope,
         headSha: headSha ?? null,
         baseSha: baseSha ?? null,
         files: diffEntrySignature
       }),
-    [baseSha, diffEntrySignature, headSha, prNumber, prRepo, repoId]
+    [baseSha, diffEntrySignature, headSha, prNumber, prRepo, repoId, sourceScope]
   )
   const viewStateKey = useMemo(
-    () => [repoId || repoPath, prNumber, prRepo ? githubRepoIdentityKey(prRepo) : ''].join('\0'),
-    [prNumber, prRepo, repoId, repoPath]
+    () =>
+      [repoId || repoPath, prNumber, prRepo ? githubRepoIdentityKey(prRepo) : '', sourceScope].join(
+        '\0'
+      ),
+    [prNumber, prRepo, repoId, repoPath, sourceScope]
   )
   const [sections, setSections] = useState<DiffSection[]>([])
   const [sideBySide, setSideBySide] = useState(false)
   const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false)
   const [sectionHeights, setSectionHeights] = useState<Record<number, number>>({})
   const [activeTreeSectionKey, setActiveTreeSectionKey] = useState<string | null>(null)
+  // Why: short virtualizer-key token; entrySignature serializes every file and would be copied into every item key.
+  const [entryRevision, setEntryRevision] = useState(0)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const pendingRestoreScrollTopRef = useRef<number | null>(null)
   const loadedIndicesRef = useRef<Set<number>>(new Set())
@@ -117,6 +126,7 @@ export function PRFilesCombinedDiffViewer({
   useEffect(() => {
     // Why: bump generation so stale async diff loads from the previous view can't patch the restored sections.
     generationRef.current += 1
+    setEntryRevision((revision) => revision + 1)
     const cached = prFilesDiffViewStateCache.get(viewStateKey)
     if (cached && cached.entrySignature === entrySignature) {
       const restoredSections = cached.sections
@@ -210,8 +220,8 @@ export function PRFilesCombinedDiffViewer({
     getItemKey: (index) => {
       const section = sections[index]
       return section
-        ? `${section.key}:${section.collapsed ? 'collapsed' : 'expanded'}:${entrySignature}`
-        : `${index}:${entrySignature}`
+        ? `${section.key}:${section.collapsed ? 'collapsed' : 'expanded'}:${entryRevision}`
+        : `${index}:${entryRevision}`
     }
   })
 
