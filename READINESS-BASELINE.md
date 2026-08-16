@@ -162,7 +162,23 @@ EXIT=0
 Two environment facts behind these numbers are recorded in §5 and §6 — `mobile/node_modules`
 was **empty** at the start of this run, and bare `npx tsc` in `mobile/` produces bogus errors.
 
-### 2.5 Root unit test suite
+### 2.5 Test-focus hygiene
+
+No focused tests anywhere, so neither suite is silently skipping coverage:
+
+```
+$ grep -rnE "\b(describe|it|test)\.only\(" --include='*.test.ts' --include='*.test.tsx' \
+    --include='*.test.mjs' src config tests | wc -l
+0
+$ grep -rnE "\b(describe|it|test)\.only\(" --include='*.test.ts' --include='*.test.tsx' \
+    mobile/src | wc -l
+0
+```
+
+A stray `.only` on a pipeline branch would shrink the suite while still reporting green, so
+this is worth re-checking in the closing run.
+
+### 2.6 Root unit test suite
 
 **STATUS: IN PROGRESS at time of this commit.** Results are filled in below when it finishes.
 
@@ -200,7 +216,7 @@ run, so no partial pass/fail counts are available mid-run.
 ## 3. Flaky vs deterministic
 
 Every gate in §2.1-§2.4 passed, so there is nothing to re-run to separate flake from a real
-failure — a pass is a pass. Re-runs are reserved for the root suite in §2.5 if it reports
+failure — a pass is a pass. Re-runs are reserved for the root suite in §2.6 if it reports
 any failure.
 
 Two gates were run twice for unrelated reasons, and both were stable:
