@@ -50,6 +50,47 @@ describe('creator authority lookup performance', () => {
     expect(paneDetails).toContain('idx_dispatch_assignee_pane_leaf')
   })
 
+  it('uses active-assignee indexes for Dispatch occupancy claims', () => {
+    db = new OrchestrationDb(':memory:')
+    const plan = sqliteFor(db)
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT 1 FROM tasks
+         WHERE id = ? AND status = 'ready'
+           AND NOT EXISTS (
+             SELECT 1 FROM dispatch_contexts active
+             WHERE active.assignee_handle = ?
+               AND active.status IN ('pending', 'dispatched')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM dispatch_contexts active
+             WHERE active.assignee_pane_key = ?
+               AND active.status IN ('pending', 'dispatched')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM dispatch_contexts active
+             WHERE active.assignee_pane_key IS NOT NULL
+               AND active.status IN ('pending', 'dispatched')
+               AND instr(active.assignee_pane_key, ':') > 1
+               AND substr(
+                 active.assignee_pane_key,
+                 instr(active.assignee_pane_key, ':') + 1
+               ) = ?
+           )`
+      )
+      .all(
+        'task_claimant',
+        'term_worker',
+        'tab_worker:33333333-3333-4333-8333-333333333333',
+        '33333333-3333-4333-8333-333333333333'
+      ) as { detail: string }[]
+    const details = plan.map((row) => row.detail).join(' | ')
+
+    expect(details).toContain('idx_dispatch_active_assignee_handle')
+    expect(details).toContain('idx_dispatch_active_assignee_pane_key')
+    expect(details).toContain('idx_dispatch_assignee_pane_leaf')
+  })
+
   it('keeps 300 Task reads bounded with 50,000 retained Runs', () => {
     db = new OrchestrationDb(':memory:')
     const run = db.createRun({

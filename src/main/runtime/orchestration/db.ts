@@ -7245,19 +7245,27 @@ export class OrchestrationDb {
            WHERE id = ? AND status = 'ready'
              AND NOT EXISTS (
                SELECT 1 FROM dispatch_contexts active
-               WHERE active.status IN ('pending', 'dispatched')
-                 AND (
-                   active.assignee_handle = ?
-                   OR (? IS NOT NULL AND active.assignee_pane_key = ?)
-                   OR (
-                     ? IS NOT NULL AND active.assignee_pane_key IS NOT NULL
-                     AND instr(active.assignee_pane_key, ':') > 1
-                     AND substr(
-                       active.assignee_pane_key,
-                       instr(active.assignee_pane_key, ':') + 1
-                     ) = ?
-                   )
-                 )
+               WHERE active.assignee_handle = ?
+                 AND active.status IN ('pending', 'dispatched')
+             )
+             AND (
+               ? IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM dispatch_contexts active
+                 WHERE active.assignee_pane_key = ?
+                   AND active.status IN ('pending', 'dispatched')
+               )
+             )
+             AND (
+               ? IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM dispatch_contexts active
+                 WHERE active.assignee_pane_key IS NOT NULL
+                   AND active.status IN ('pending', 'dispatched')
+                   AND instr(active.assignee_pane_key, ':') > 1
+                   AND substr(
+                     active.assignee_pane_key,
+                     instr(active.assignee_pane_key, ':') + 1
+                   ) = ?
+               )
              )`
         )
         .run(
@@ -7659,41 +7667,44 @@ export class OrchestrationDb {
   }
 
   failDispatch(ctxId: string, error: string): DispatchContextRow | undefined {
-    const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
-      | DispatchContextRow
-      | undefined
-    if (!ctx) {
-      return undefined
+    this.db.exec('SAVEPOINT fail_dispatch')
+    try {
+      const updated = this.db
+        .prepare(
+          `UPDATE dispatch_contexts
+           SET status = CASE WHEN failure_count + 1 >= 3 THEN 'circuit_broken' ELSE 'failed' END,
+               failure_count = failure_count + 1, last_failure = ?,
+               completed_at = COALESCE(completed_at, datetime('now')),
+               capability_revoked_at = COALESCE(capability_revoked_at, datetime('now'))
+           WHERE id = ? AND status IN ('pending', 'dispatched')`
+        )
+        .run(error, ctxId)
+      const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
+        | DispatchContextRow
+        | undefined
+      if (updated.changes !== 1 || !ctx) {
+        this.db.exec('RELEASE fail_dispatch')
+        return ctx
+      }
+
+      // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
+      const taskStatus: TaskStatus = ctx.status === 'circuit_broken' ? 'failed' : 'ready'
+      this.db
+        .prepare(
+          `UPDATE tasks SET status = ?
+           WHERE id = ? AND status = 'dispatched' AND NOT EXISTS (
+             SELECT 1 FROM dispatch_contexts
+             WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
+           )`
+        )
+        .run(taskStatus, ctx.task_id)
+      this.db.exec('RELEASE fail_dispatch')
+      return ctx
+    } catch (error) {
+      this.db.exec('ROLLBACK TO fail_dispatch')
+      this.db.exec('RELEASE fail_dispatch')
+      throw error
     }
-
-    const newFailureCount = ctx.failure_count + 1
-    const newStatus: DispatchStatus = newFailureCount >= 3 ? 'circuit_broken' : 'failed'
-
-    this.db
-      .prepare(
-        `UPDATE dispatch_contexts
-         SET status = ?, failure_count = ?, last_failure = ?,
-             completed_at = COALESCE(completed_at, datetime('now')),
-             capability_revoked_at = COALESCE(capability_revoked_at, datetime('now'))
-         WHERE id = ?`
-      )
-      .run(newStatus, newFailureCount, error, ctxId)
-
-    // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
-    const taskStatus: TaskStatus = newStatus === 'circuit_broken' ? 'failed' : 'ready'
-    this.db
-      .prepare(
-        `UPDATE tasks SET status = ?
-         WHERE id = ? AND NOT EXISTS (
-           SELECT 1 FROM dispatch_contexts
-           WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
-         )`
-      )
-      .run(taskStatus, ctx.task_id)
-
-    return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
-      | DispatchContextRow
-      | undefined
   }
 
   // ── Decision Gates ──
