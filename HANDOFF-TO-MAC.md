@@ -203,11 +203,71 @@ So you must **not** consult the whole pool. Consult only the **retired set** —
 spent. If a typed name really is retired, that cwd holds another workspace's history and
 redirecting is correct.
 
-### Unproven
+### VERIFIED BY ME after the lane went silent — this is no longer unproven
 
-**I did not personally verify this lane's RED→GREEN.** The lane was stopped mid-pass. Treat
-`7dd1413a66` as unverified WIP. Its wire-compat reasoning against
-`docs/reference/remote-wire-compatibility.md` also needs an independent read.
+I reconstructed and then verified this lane's work myself. **STA-4471 is proven.**
+
+The fix extracts `planWorktreeCreateNames()` into `src/main/worktree-create-name-plan.ts`, shared
+by all three create paths so a retirement rule cannot hold on one and not the others. Its core
+move is to **split the two decisions #14350 conflated**, which the module documents itself:
+
+- *Whether to walk the creature tier ladder* stays gated on the client's `nameWasGenerated` bit,
+  so a user-typed name keeps its literal spelling and plain `-2`/`-3` suffixes.
+- *Whether a retired cwd may be reused* is decided by the **host alone**.
+
+Consulting the **retired set** rather than the generator pool is what makes host-side enforcement
+safe, and the code says why: the pool is ordinary English (`orca`, `runner`, `emperor`) so matching
+against it would hijack deliberate names, whereas the retired set only ever names cwds this host
+issued. A name outside the pool never even loads the registry.
+
+**Non-vacuity proof.** I restored the exact #14350 defect as a mutation — making the retirement
+lookup conditional on the client's flag again (`isPoolShaped` → `usesGeneratedLadder`) — and four
+tests went RED, covering all three create paths, which is precisely what the ticket asked for:
+
+```
+× refuses a retired cwd even when the client sends no provenance bit
+× skips a retired cwd on the SSH create path when the client omits provenance
+× skips a retired cwd on the local create path when the client omits provenance
+× skips a retired cwd when an older client omits nameWasGenerated
+Tests  4 failed | 1182 passed | 1 skipped (1187)
+```
+
+Still owed on this one: an independent read against
+`docs/reference/remote-wire-compatibility.md`. My read is that it is wire-safe — the host becomes
+*stricter* using state it already holds, no request/response field or opcode changes — but that
+should be confirmed, not taken from me.
+
+### `fix-4472-4473` is far better than "salvage" — I re-checked it
+
+I wrote earlier in this file that this branch should be treated as salvaged fragments because of
+torn-write risk. **I then tested it, and that warning does not apply to its head `efeec371c8`:**
+
+- `tsc --noEmit -p config/tsconfig.node.json` → **exit 0**
+- Its six relevant suites → **63 passed, 0 failed**
+
+So the final state is coherent. Individual intermediate commits may still hold torn writes — do
+not bisect through them — but the branch **head** is sound and is a real starting point.
+
+What it contains:
+
+- **`worktree-retirement-discovery.ts`** (STA-4472) — routes WSL UNC listings through the existing
+  bounded gate (`wslGatedReaddir`) and resolves distro homes via `getWslHomeAsync`, so each
+  distro's `<wslHome>/.claude/projects` is included in discovery. It matches leaf names
+  *generously* on a stated principle: over-retiring costs one name out of 552; under-retiring
+  reissues a path whose agent history is still on disk.
+- **`worktree-retirement-backfill-scan.ts`** (STA-4473) — a 15 s scan deadline and a 60 s
+  failure backoff replacing the cache-forever Promise. The comments give the real reason the
+  backoff matters: an unabortable `readdir` pins a libuv threadpool thread until the OS releases
+  it, and four of those cost the whole process its filesystem access.
+- Four new suites whose names describe behaviour rather than implementation, e.g.
+  *"gives up on a listing that never returns instead of blocking create forever"*,
+  *"retries a timed-out namespace once its backoff lapses, rather than wedging until restart"*,
+  *"fails the scan when the gate refuses, rather than memoizing a half-read answer"*.
+
+**I did not mutation-test 4472/4473.** They are green and coherent; they are not proven
+non-vacuous. That is the next thing to do on this branch.
+
+**STA-4479 and STA-4480 were never started.**
 
 ### Not started at all: STA-4472, STA-4473, STA-4479, STA-4480
 
