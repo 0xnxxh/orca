@@ -401,6 +401,71 @@ describe('Windows managed hook stdin structure', () => {
       }
     }
   )
+
+  // Why (#14818): this asserts the effect a Claude-hooks-compat consumer actually observes —
+  // running the exact `command` string from settings.json and parsing its stdout — rather than
+  // what the installer intended to write. The shipped `conhost.exe --headless` wrapper passed
+  // every intent-level test while relaying neither stdout nor an exit code, so cursor-agent saw
+  // empty stdout on PreToolUse, called it invalid JSON, and blocked every shell command.
+  it.skipIf(process.platform !== 'win32')(
+    'emits parseable JSON on stdout from the registered Claude hook command, through cmd.exe and Git Bash',
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), 'orca-hook-stdout-json-'))
+      homedirMock.mockReturnValue(home)
+      try {
+        expect(new ClaudeHookService().install().state).toBe('installed')
+        const settings = JSON.parse(
+          readFileSync(join(home, '.claude', 'settings.json'), 'utf8')
+        ) as { hooks: Record<string, { hooks: { command: string; args?: string[] }[] }[]> }
+        const entry = settings.hooks.PreToolUse[0].hooks[0]
+        // Why (#14815): a consumer that ignores `args` must still get a runnable invocation.
+        expect(entry.args).toBeUndefined()
+
+        // Why: Git Bash is the reported execution context (#14815) — MSYS rewrites `/`-prefixed
+        // switches and collapses backslash paths, so the command must survive both shells.
+        const shells = [
+          { name: 'cmd.exe', executable: 'cmd.exe', args: ['/d', '/c', entry.command] },
+          { name: 'Git Bash', executable: findGitBash(), args: ['-lc', entry.command] }
+        ]
+        // Why: USERPROFILE (not homedir()) is what the registered command resolves the script
+        // through at run time, so the child must see the test home for the script to be found.
+        // Why: all three reachable paths must speak JSON — the guard exit (no Orca env), the
+        // reached-curl path (env present, nothing listening), and the launcher's own
+        // missing-script fallback, which never enters the script at all.
+        const environments = [
+          { name: 'no Orca env', env: hookEnvironment({ USERPROFILE: home }) },
+          {
+            name: 'Orca env with dead listener',
+            env: hookEnvironment({
+              USERPROFILE: home,
+              ORCA_AGENT_HOOK_PORT: '59999',
+              ORCA_AGENT_HOOK_TOKEN: 'token',
+              ORCA_PANE_KEY: 'tab:leaf'
+            })
+          },
+          {
+            name: 'missing managed script',
+            env: hookEnvironment({ USERPROFILE: join(home, 'absent') })
+          }
+        ]
+        for (const shell of shells) {
+          for (const environment of environments) {
+            const label = `${shell.name} / ${environment.name}`
+            const result = await runHookProcess(shell.executable, shell.args, environment.env)
+            expect(result.exitCode, `${label} exit code`).toBe(0)
+            expect(() => JSON.parse(result.stdout.trim()), `${label} stdout is JSON`).not.toThrow()
+            expect(JSON.parse(result.stdout.trim()), `${label} stdout`).toEqual({})
+          }
+        }
+      } finally {
+        homedirMock.mockImplementation(() => process.env.HOME ?? tmpdir())
+        rmSync(home, { recursive: true, force: true })
+      }
+    },
+    // Why: six real process launches, and a Git Bash login shell is slow to start — that overruns
+    // the 5s default once the rest of the suite is competing for cores.
+    60_000
+  )
 })
 
 describe.skipIf(process.platform === 'win32')('managed hook stdin lifecycle', () => {

@@ -6,7 +6,9 @@ import {
   getSharedManagedScriptPath,
   isPlainObject,
   MANAGED_HOOK_TIMEOUT_SECONDS,
+  quotePowerShellString,
   removeManagedCommands,
+  wrapWindowsPowerShellEncodedCommand,
   type HookCommandConfig,
   type HookDefinition,
   type HooksConfig
@@ -16,38 +18,59 @@ import { wrapRuntimeHomeHookCommand } from '../agent-hooks/runtime-home-hook-com
 export type ClaudeCompatibleHookSettings = {
   configDirName: '.claude' | '.openclaude'
   scriptBaseName: 'claude-hook' | 'openclaude-hook'
-  supportsExecHookArgs: boolean
+  usesWindowsPowerShellLauncher: boolean
 }
 
 export const CLAUDE_HOOK_SETTINGS: ClaudeCompatibleHookSettings = {
   configDirName: '.claude',
   scriptBaseName: 'claude-hook',
-  supportsExecHookArgs: true
+  usesWindowsPowerShellLauncher: true
 }
 
 export const OPENCLAUDE_HOOK_SETTINGS: ClaudeCompatibleHookSettings = {
   configDirName: '.openclaude',
   scriptBaseName: 'openclaude-hook',
-  supportsExecHookArgs: false
+  usesWindowsPowerShellLauncher: false
 }
 
 export const CLAUDE_EVENTS = [
   // Why: SessionStart is the only event a resumed/idle session emits before the
   // first prompt; without it the sidebar row can't exist until the user types (STA-3386).
-  { eventName: 'SessionStart', definition: { hooks: [{ type: 'command', command: '' }] } },
-  { eventName: 'UserPromptSubmit', definition: { hooks: [{ type: 'command', command: '' }] } },
-  { eventName: 'Stop', definition: { hooks: [{ type: 'command', command: '' }] } },
+  {
+    eventName: 'SessionStart',
+    definition: { hooks: [{ type: 'command', command: '' }] }
+  },
+  {
+    eventName: 'UserPromptSubmit',
+    definition: { hooks: [{ type: 'command', command: '' }] }
+  },
+  {
+    eventName: 'Stop',
+    definition: { hooks: [{ type: 'command', command: '' }] }
+  },
   // Why: OpenClaude skips normal Stop hooks after API/model errors and emits
   // StopFailure instead; without this hook Orca leaves the turn spinning.
-  { eventName: 'StopFailure', definition: { hooks: [{ type: 'command', command: '' }] } },
+  {
+    eventName: 'StopFailure',
+    definition: { hooks: [{ type: 'command', command: '' }] }
+  },
   // Why: subagent/teammate lifecycle feeds the sidebar's child rows and keeps
   // a pane 'working' while background children outlive the lead's turn.
   // TeammateIdle parks turn-based teammates without trusting their permanently
   // "running" background_tasks entry to gate the pane.
   // Older Claude builds ignore unregistered event names (StopFailure precedent).
-  { eventName: 'SubagentStart', definition: { hooks: [{ type: 'command', command: '' }] } },
-  { eventName: 'SubagentStop', definition: { hooks: [{ type: 'command', command: '' }] } },
-  { eventName: 'TeammateIdle', definition: { hooks: [{ type: 'command', command: '' }] } },
+  {
+    eventName: 'SubagentStart',
+    definition: { hooks: [{ type: 'command', command: '' }] }
+  },
+  {
+    eventName: 'SubagentStop',
+    definition: { hooks: [{ type: 'command', command: '' }] }
+  },
+  {
+    eventName: 'TeammateIdle',
+    definition: { hooks: [{ type: 'command', command: '' }] }
+  },
   // Why: PreToolUse gives the dashboard a live readout of the in-flight tool
   // (name + input preview) before it completes.
   {
@@ -120,25 +143,34 @@ export function getManagedLifecycleHook(
   scriptPath: string,
   settings = CLAUDE_HOOK_SETTINGS
 ): HookCommandConfig {
-  if (process.platform !== 'win32' || !settings.supportsExecHookArgs) {
+  if (process.platform !== 'win32' || !settings.usesWindowsPowerShellLauncher) {
     return buildManagedCommandHook(getManagedCommand(scriptPath))
   }
   return getWindowsManagedLifecycleHook(scriptPath)
 }
 
+// Why: `args` is valid Claude Code hook syntax, but `~/.claude/settings.json` is also read by
+// third-party Claude-hooks-compat layers that reimplement execution and ignore it — cursor-agent
+// spawns `command` alone, so the old exec form ran bare conhost.exe, which opens an interactive
+// console that never closes (#14815). A single self-contained `command` string depends on nothing
+// optional, so it survives every consumer.
 export function getWindowsManagedLifecycleHook(scriptPath: string): HookCommandConfig {
-  const system32 = win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
-  const runtimeScriptPath = win32.join(
-    '%USERPROFILE%',
-    '.orca',
-    'agent-hooks',
-    win32.basename(scriptPath)
-  )
-  // Why: Claude's Windows shell form opens Git Bash consoles; exec form hosts the client in a windowless console.
+  const scriptFileName = win32.basename(scriptPath)
+  // Why: $env:USERPROFILE (resolved at run time by powershell.exe, not baked in) keeps the
+  // managed entry portable across machines/usernames (STA-3348), matching the prior cmd.exe
+  // %USERPROFILE% form.
+  const quotedRelativePath = quotePowerShellString(`.orca\\agent-hooks\\${scriptFileName}`)
+  // Why (#14818): the missing-script fallback must speak JSON too. A Claude-hooks-compat consumer
+  // parses stdout on every event, so a cleaned ~/.orca or a half-finished install would otherwise
+  // hand it empty stdout and get every tool call blocked — the same failure the script's own `{}`
+  // prevents. `{}` is a no-op decision for real Claude Code, identical to writing nothing.
+  const innerCommand =
+    `$scriptPath = Join-Path $env:USERPROFILE ${quotedRelativePath}; ` +
+    'if (Test-Path -LiteralPath $scriptPath -PathType Leaf) { & $scriptPath; exit $LASTEXITCODE }; ' +
+    "[Console]::In.ReadToEnd() | Out-Null; Write-Output '{}'; exit 0"
   return {
     type: 'command',
-    command: win32.join(system32, 'conhost.exe'),
-    args: ['--headless', win32.join(system32, 'cmd.exe'), '/d', '/c', runtimeScriptPath],
+    command: wrapWindowsPowerShellEncodedCommand(innerCommand),
     timeout: MANAGED_HOOK_TIMEOUT_SECONDS
   }
 }
