@@ -3,6 +3,7 @@ import { makePaneKey } from '../../shared/stable-pane-id'
 import { AgentHookServer } from './server'
 
 const PANE = makePaneKey('tab-opencode', '11111111-1111-4111-8111-111111111111')
+const TARGET_PANE = makePaneKey('tab-opencode', '22222222-2222-4222-8222-222222222222')
 
 describe('AgentHookServer OpenCode lifecycle', () => {
   const servers: AgentHookServer[] = []
@@ -16,7 +17,11 @@ describe('AgentHookServer OpenCode lifecycle', () => {
 
   async function setup(): Promise<{
     server: AgentHookServer
-    post: (payload: Record<string, unknown>, launchToken: string) => Promise<Response>
+    post: (
+      payload: Record<string, unknown>,
+      launchToken: string,
+      paneKey?: string
+    ) => Promise<Response>
   }> {
     const server = new AgentHookServer()
     servers.push(server)
@@ -24,7 +29,7 @@ describe('AgentHookServer OpenCode lifecycle', () => {
     const env = server.buildPtyEnv()
     return {
       server,
-      post: (payload, launchToken) =>
+      post: (payload, launchToken, paneKey = PANE) =>
         fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/opencode`, {
           method: 'POST',
           headers: {
@@ -32,7 +37,7 @@ describe('AgentHookServer OpenCode lifecycle', () => {
             'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
           },
           body: JSON.stringify({
-            paneKey: PANE,
+            paneKey,
             launchToken,
             tabId: 'tab-opencode',
             worktreeId: 'wt-opencode',
@@ -119,6 +124,36 @@ describe('AgentHookServer OpenCode lifecycle', () => {
 
     expect(server.getStatusSnapshot()).toEqual([
       expect.objectContaining({ state: 'working', prompt: '' })
+    ])
+  })
+
+  it('replaces a destination token fence when pane authority transfers', async () => {
+    const { server, post } = await setup()
+    await post(
+      { hook_event_name: 'SessionBusy', sessionID: 'target-old' },
+      'target-old-token',
+      TARGET_PANE
+    )
+    server.retirePaneAuthority(TARGET_PANE)
+    await post(
+      { hook_event_name: 'SessionStart', sessionID: 'target-fresh' },
+      'target-fresh-token',
+      TARGET_PANE
+    )
+    await post({ hook_event_name: 'SessionBusy', sessionID: 'source' }, 'source-token')
+
+    server.transferPaneAuthority(PANE, TARGET_PANE, 'pty-opencode')
+    await post(
+      { hook_event_name: 'SessionBusy', sessionID: 'source-after-transfer' },
+      'source-token',
+      TARGET_PANE
+    )
+
+    expect(server.getStatusSnapshot()).toEqual([
+      expect.objectContaining({
+        paneKey: TARGET_PANE,
+        providerSession: { key: 'session_id', id: 'source-after-transfer' }
+      })
     ])
   })
 })

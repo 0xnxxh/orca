@@ -1026,7 +1026,7 @@ export class AgentHookServer {
     // Why: a new session boundary or explicit prompt proves a live lifecycle, while its
     // token fences follow-up status without restoring retired orchestration authority.
     const freshOpenCodePrompt =
-      (event?.source === 'opencode' || event?.source === 'mimo-code') &&
+      event?.source === 'opencode' &&
       event.hookEventName === 'MessagePart' &&
       event.hasExplicitPrompt === true
     if (
@@ -1621,8 +1621,9 @@ export class AgentHookServer {
     }
     const restartedTokenHash =
       this.restartedStatusLaunchTokenHashByPaneKey.get(previousOwnerPaneKey)
+    this.restartedStatusLaunchTokenHashByPaneKey.delete(previousOwnerPaneKey)
+    this.restartedStatusLaunchTokenHashByPaneKey.delete(toPaneKey)
     if (restartedTokenHash) {
-      this.restartedStatusLaunchTokenHashByPaneKey.delete(previousOwnerPaneKey)
       this.restartedStatusLaunchTokenHashByPaneKey.set(toPaneKey, restartedTokenHash)
     }
     const authorityObservation = this.currentAuthorityObservations.get(previousOwnerPaneKey)

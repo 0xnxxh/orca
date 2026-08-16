@@ -12747,10 +12747,8 @@ export class OrcaRuntimeService {
       this.retirePtyAgentLaunchAuthority(ptyId)
       return
     }
-    const foregroundRead = this.readPtyForegroundProcessFromController(
-      ptyId,
-      pty.lastOscTitleAt ?? 0
-    )
+    const titleObservedAt = pty.lastOscTitleAt ?? null
+    const foregroundRead = this.readPtyForegroundProcessFromController(ptyId, titleObservedAt ?? 0)
     if (!foregroundRead) {
       this.retirePtyAgentLaunchAuthority(ptyId)
       return
@@ -12761,6 +12759,7 @@ export class OrcaRuntimeService {
       if (
         current !== pty ||
         current.incarnationId !== incarnationId ||
+        current.lastOscTitleAt !== titleObservedAt ||
         result.controller !== this.ptyController
       ) {
         return

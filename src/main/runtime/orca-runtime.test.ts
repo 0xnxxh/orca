@@ -13133,6 +13133,56 @@ describe('OrcaRuntimeService', () => {
     expect(runtime.verifyOrchestrationCompatibilityCaller(evidence)).not.toBeNull()
   })
 
+  it('ignores a stale OpenCode foreground result after a newer title observation', async () => {
+    let resolveForegroundProcess: ((process: string | null) => void) | undefined
+    const foregroundProcess = new Promise<string | null>((resolve) => {
+      resolveForegroundProcess = resolve
+    })
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-opencode-race', incarnationId: 'process-1' })
+    const retireAuthority = vi.fn()
+    const getForegroundProcess = vi.fn(() => foregroundProcess)
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      retireAgentHookCompatibilityAuthority: retireAuthority
+    })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess
+    })
+    runtime.setNotifier({
+      worktreesChanged: vi.fn(),
+      reposChanged: vi.fn(),
+      activateWorktree: vi.fn(),
+      createTerminal: vi.fn(),
+      revealTerminalSession: vi.fn().mockResolvedValue({ tabId: 'tab-opencode-race' }),
+      splitTerminal: vi.fn(),
+      renameTerminal: vi.fn(),
+      focusTerminal: vi.fn(),
+      closeTerminal: vi.fn(),
+      sleepWorktree: vi.fn(),
+      terminalFitOverrideChanged: vi.fn(),
+      terminalDriverChanged: vi.fn()
+    })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+
+    await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      command: 'opencode',
+      launchConfig: { agentCommand: 'opencode', agentArgs: '', agentEnv: {} },
+      launchAgent: 'opencode'
+    })
+
+    runtime.onPtyData('pty-opencode-race', '\x1b]133;D;0\x07', 100)
+    await vi.waitFor(() => expect(getForegroundProcess).toHaveBeenCalled())
+    runtime.onPtyData('pty-opencode-race', '\x1b]0;OpenCode working\x07', 101)
+    resolveForegroundProcess?.(null)
+    await foregroundProcess
+    await Promise.resolve()
+
+    expect(retireAuthority).not.toHaveBeenCalled()
+  })
+
   it('retires only receipted restored PTY authority on command completion and exit', () => {
     const retireAuthority = vi.fn()
     const runtime = new OrcaRuntimeService(store, undefined, {

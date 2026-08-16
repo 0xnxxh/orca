@@ -2437,8 +2437,9 @@ function isNewTurnEvent(source: AgentHookSource, eventName: unknown): boolean {
     case 'amp':
       return eventName === 'agent.start'
     case 'opencode':
-    case 'mimo-code':
       return eventName === 'SessionStart'
+    case 'mimo-code':
+      return false
     case 'cursor':
       return eventName === 'beforeSubmitPrompt' || eventName === 'sessionStart'
     case 'pi':
@@ -3781,7 +3782,7 @@ function normalizeOpenCodeFamilyEvent(
       ? 'working'
       : eventName === 'SessionIdle'
         ? 'done'
-        : eventName === 'SessionStart'
+        : source === 'opencode' && eventName === 'SessionStart'
           ? 'done'
           : eventName === 'PermissionRequest' || eventName === 'AskUserQuestion'
             ? 'waiting'
@@ -3808,7 +3809,7 @@ function normalizeOpenCodeFamilyEvent(
     toolInput: snapshot.toolInput,
     interactivePrompt: snapshot.interactivePrompt,
     lastAssistantMessage: snapshot.lastAssistantMessage,
-    sessionBoundary: eventName === 'SessionStart' ? true : undefined
+    sessionBoundary: source === 'opencode' && eventName === 'SessionStart' ? true : undefined
   })
 }
 
