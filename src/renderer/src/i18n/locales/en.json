@@ -334,6 +334,7 @@
           "runtimeScopeForbiddenTitle": "This connection has limited (mobile) access",
           "runtimeScopeForbiddenDescription": "Workspaces are unavailable on a mobile-scope pairing. Reconnect using the browser access link from Settings → Runtime Environments → Share this Orca server.",
           "a17f4d2e93": "Could not update this workspace.",
+          "preservedBranchCleanupHostAmbiguous": "Multiple preserved branch cleanups are pending for \"{{value0}}\"; specify the host.",
           "metadata": {
             "worktree": {
               "meta": {
