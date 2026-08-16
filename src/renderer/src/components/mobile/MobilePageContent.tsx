@@ -36,6 +36,7 @@ type MobilePageContentProps = {
   setIosChannel: (channel: IosChannel) => void
   loadNetworkInterfaces: () => void
   networkInterfaces: MobileNetworkInterface[]
+  openAndroidInstallGuide: () => void
   openInstallUrl: () => void
   pairAnotherDevice: () => void
   pairLoading: boolean
@@ -82,6 +83,7 @@ export function MobilePageContent({
   setIosChannel,
   loadNetworkInterfaces,
   networkInterfaces,
+  openAndroidInstallGuide,
   openInstallUrl,
   pairAnotherDevice,
   pairLoading,
@@ -133,6 +135,7 @@ export function MobilePageContent({
               installCopy={getInstallCopy(platform, iosChannel)}
               iosChannel={iosChannel}
               onIosChannelChange={setIosChannel}
+              onOpenAndroidInstallGuide={openAndroidInstallGuide}
               onOpenInstallUrl={openInstallUrl}
               onCopyInstallUrl={copyInstallUrl}
               pairQrDataUrl={pairQrDataUrl}
