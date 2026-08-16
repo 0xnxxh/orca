@@ -224,7 +224,10 @@ export function ChecksTabCheckDetails({
                 className="h-7 gap-1 px-2 text-[11px]"
                 onClick={() => window.api.shell.openUrl(openUrl)}
               >
-                {translate('auto.components.GitHubItemDialog.5dddefdf58', 'Open in GitHub')}
+                {translate(
+                  'auto.components.GitHubItemDialog.checkOpenInBrowser',
+                  'Open in browser'
+                )}
                 <ExternalLink className="size-3" />
               </Button>
             </div>

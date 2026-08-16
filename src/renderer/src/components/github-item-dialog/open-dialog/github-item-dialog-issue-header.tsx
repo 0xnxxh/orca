@@ -62,7 +62,6 @@ export function GitHubItemDialogIssueHeader({
 
   return (
     <>
-      {/* Row 1: breadcrumb-style strip mirroring GitHub's canvas-subtle header */}
       <div className="flex-none border-b border-border/60 bg-muted/30 px-6 py-2.5">
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <Button
@@ -137,7 +136,6 @@ export function GitHubItemDialogIssueHeader({
         </div>
       </div>
 
-      {/* Row 2: large title block */}
       <div className="flex-none border-b border-border/60 bg-card px-6 py-4">
         <div className="flex items-start gap-4">
           <h1 className="min-w-0 flex-1 text-[28px] font-medium leading-tight text-foreground">
