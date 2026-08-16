@@ -64,6 +64,25 @@ heads from origin** rather than trusting these two rows:
 | `brennanb2025/review-4363-scratch` | `c7f5903a10` | Scratch, **NOT FOR MERGE** | PR #14581's head + a 21-mutation review harness. |
 | `brennanb2025/blocker-pipeline-coordinator` | latest on branch | Coordination | This file, `PIPELINE-STATUS.html`, `LINEAR-TICKETS.md`, `scripts/runtime-watchdog.sh`. |
 
+> ### ⚠️ My teardown snapshots can contain TORN WRITES — read this before using them
+>
+> To avoid losing work I committed two still-running lanes' trees myself, repeatedly, while they
+> were mid-edit. **That is not a free operation and it demonstrably damaged work once.**
+>
+> On `fix-glue-cluster`, my snapshot `0eeb30f93c` captured `mobile-native-chat-pending-echo.ts`
+> and `use-mobile-native-chat-drafts.ts` in the instant *after* the lane had deleted code and
+> *before* it wrote the replacement — a torn write (8 insertions / 19 deletions). The lane
+> noticed and repaired it in `c30c9890f2` ("restore reland wiring clobbered by a WIP snapshot").
+> I verified the repair: `git diff fae8802099 c30c9890f2` over those two files is **empty**, so
+> that pair cancels out cleanly and there is no residue on that branch.
+>
+> **`brennanb2025/fix-4472-4473` did not get that luck.** It received four teardown snapshots and
+> the lane was stopped immediately afterwards, so **no one repaired any torn writes there**. Any
+> of those commits may hold a half-written file. Do not read that branch as a coherent sequence
+> of intended states. Treat it as a bag of salvaged fragments: diff it, expect breakage, and
+> rebuild rather than resume. `git diff origin/main...HEAD` on it is the honest starting point,
+> not any individual commit.
+>
 > **On the `wip(...) — UNVERIFIED WIP` commits.** The two lanes working on STA-4472/4473 and the
 > STA-4482 reland were still mid-edit when the box was torn down. Rather than lose that work I
 > committed their trees myself, four times, as clearly-labelled teardown snapshots. They were captured
