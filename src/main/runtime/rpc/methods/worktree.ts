@@ -201,15 +201,18 @@ export const WORKTREE_METHODS: RpcMethod[] = [
     name: 'worktree.rm',
     params: WorktreeRemove,
     handler: async (params, { runtime }) => {
+      // Older mobile clients omit hostId, so resolve through the ambiguity gate before pinning removal.
+      const hostId = params.hostId ?? (await runtime.showManagedWorktree(params.worktree)).hostId
+      if (!hostId) {
+        throw new Error('worktree.rm could not resolve the workspace host')
+      }
       const removalArgs = [
         params.worktree,
         params.force === true,
         params.runHooks === true,
         params.allowUnverifiedPtyStop === true
       ] as const
-      const result = params.hostId
-        ? await runtime.removeManagedWorktree(...removalArgs, params.hostId)
-        : await runtime.removeManagedWorktree(...removalArgs)
+      const result = await runtime.removeManagedWorktree(...removalArgs, hostId)
       return { removed: true, ...result }
     }
   }),

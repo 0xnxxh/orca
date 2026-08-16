@@ -15,18 +15,21 @@ import { forgetHugeRepoWarningDismissalsForWorktrees } from '@/lib/source-contro
 import { clearSessionCommitDraftForWorktree } from '@/lib/source-control-commit-draft-session'
 import { showPreservedBranchToast } from '@/components/sidebar/preserved-branch-toast'
 import {
-  resolveWorktreeOperationRoute,
   resolveWorktreeOperationRouteResult,
+  resolveWorktreeOperationRouteResultForHost,
   settingsForWorktreeOperationRoute
 } from '@/lib/worktree-operation-route'
-import { captureWorktreeOperationGenerationGuard } from '@/lib/worktree-operation-generation'
+import {
+  beginHostQualifiedRemoval,
+  completeSameIdHostScopedRemoval,
+  findWorktreeOnConfirmedHost
+} from './host-qualified-worktree-removal'
 import {
   classifyWorktreeForceDeleteReason,
   getLockedWorktreeRemovalReason,
   isLockedWorktreeRemovalError
 } from '../../../../../../shared/worktree/removal'
 import { preservedBranchCleanupKey } from '../../../../../../shared/preserved-branch-cleanup'
-import { WORKTREE_REMOVAL_AMBIGUOUS_ERROR } from '../listing/worktree-slice-constants'
 import { detachedHeadAutoDerivedDisplayNames } from '../metadata/detached-head-display-name'
 import { pruneHostedReviewLinkMutationGenerations } from '../metadata/hosted-review-link-mutation'
 import { rememberAuthoritativelyRemovedWorktrees } from '../listing/authoritative-worktree-removal-memory'
@@ -44,19 +47,19 @@ export function createRemoveWorktree(
 ): WorktreeSlice['removeWorktree'] {
   return async (worktreeId, force, options) => {
     const forgetLocalOnly = options?.mode === 'forget-local'
-    const removalRoute = resolveWorktreeOperationRoute(get(), worktreeId)
-    if (!forgetLocalOnly && !removalRoute) {
-      return { ok: false, error: WORKTREE_REMOVAL_AMBIGUOUS_ERROR }
+    // Why (STA-4343): a qualified caller confirmed ONE host's row; route at that
+    // host instead of the active workspace's, which owns the same id elsewhere.
+    const requiredExecutionHostId = options?.requiredExecutionHostId
+    const start = beginHostQualifiedRemoval(
+      get,
+      worktreeId,
+      requiredExecutionHostId,
+      forgetLocalOnly
+    )
+    if (!start.ok) {
+      return { ok: false, error: start.error }
     }
-    const hostId = removalRoute?.executionHostId ?? undefined
-    const removalGenerationGuard = removalRoute
-      ? captureWorktreeOperationGenerationGuard(
-          get,
-          worktreeId,
-          removalRoute,
-          () => new Error(WORKTREE_REMOVAL_AMBIGUOUS_ERROR)
-        )
-      : null
+    const { removalRoute, hostId, removalGenerationGuard, sameIdSurvivesOnAnotherHost } = start
     set((s) => ({
       deleteStateByWorktreeId: {
         ...s.deleteStateByWorktreeId,
@@ -82,9 +85,11 @@ export function createRemoveWorktree(
             removalRoute?.runtimeEnvironmentId
           )) === 'skip'
 
-      const worktreeBeforeRemoval = get()
-        .allWorktrees()
-        .find((entry) => entry.id === worktreeId)
+      const worktreeBeforeRemoval = findWorktreeOnConfirmedHost(
+        get,
+        worktreeId,
+        requiredExecutionHostId
+      )
       const terminalPtyIdsBeforeRemoval = (get().tabsByWorktree[worktreeId] ?? []).flatMap(
         (tab) => get().ptyIdsByTabId[tab.id] ?? []
       )
@@ -142,7 +147,9 @@ export function createRemoveWorktree(
           (isRuntimeRepoNotFoundError(error) || isRuntimeSelectorNotFoundError(error))
         ) {
           // Missing means stale mirror; ambiguous or changed ownership must fail closed.
-          const currentResolution = resolveWorktreeOperationRouteResult(get(), worktreeId)
+          const currentResolution = requiredExecutionHostId
+            ? resolveWorktreeOperationRouteResultForHost(get(), worktreeId, requiredExecutionHostId)
+            : resolveWorktreeOperationRouteResult(get(), worktreeId)
           if (currentResolution.kind === 'ambiguous') {
             throw error
           }
@@ -185,6 +192,23 @@ export function createRemoveWorktree(
         } catch (error) {
           console.warn('Failed to record workspace cleanup snapshot prune:', error)
         }
+      }
+
+      // Why (STA-4343): another host still owns this id, so the shared renderer
+      // state (tabs, terminals, browsers) belongs to that live workspace — drop
+      // only the confirmed host's row instead of tearing all of it down.
+      if (sameIdSurvivesOnAnotherHost && requiredExecutionHostId) {
+        return completeSameIdHostScopedRemoval({
+          set,
+          get,
+          worktreeId,
+          requiredExecutionHostId,
+          removalResult,
+          removalRoute,
+          target,
+          worktreeBeforeRemoval,
+          suppressPreservedBranchToast: options?.suppressPreservedBranchToast === true
+        })
       }
 
       // Why: invalidate stale probes once deletion is authoritative, so an old toast can't mutate a same-path replacement.

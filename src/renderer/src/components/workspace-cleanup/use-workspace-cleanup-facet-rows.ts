@@ -39,8 +39,8 @@ import {
 
 export type WorkspaceCleanupFacetRows = {
   rows: WorkspaceCleanupFacets[]
-  selectableWorktreeIds: string[]
-  facetMatchedWorktreeIds: ReadonlySet<string>
+  selectableIdentities: string[]
+  facetMatchedIdentities: ReadonlySet<string>
   matchedCount: number
   totalCount: number
   facetCounts: WorkspaceCleanupFacetCounts
@@ -238,9 +238,9 @@ export function useWorkspaceCleanupFacetRows({
   )
   // Identity churn here is harmless: the only consumer reads the latest set
   // inside a useEffectEvent body and never keys an effect on it.
-  const facetMatchedWorktreeIds = useMemo<ReadonlySet<string>>(
+  const facetMatchedIdentities = useMemo<ReadonlySet<string>>(
     () =>
-      new Set(filterWorkspaceCleanupFacets(facets, facetFilters, now).map((row) => row.worktreeId)),
+      new Set(filterWorkspaceCleanupFacets(facets, facetFilters, now).map((row) => row.identity)),
     [facetFilters, facets, now]
   )
   const measuredSizeCount = useMemo(() => countWorkspaceCleanupMeasuredRows(facets), [facets])
@@ -275,8 +275,8 @@ export function useWorkspaceCleanupFacetRows({
 
   return {
     rows: result.rows,
-    selectableWorktreeIds: result.selectableWorktreeIds,
-    facetMatchedWorktreeIds,
+    selectableIdentities: result.selectableIdentities,
+    facetMatchedIdentities,
     matchedCount: result.matchedCount,
     totalCount: result.totalCount,
     facetCounts,

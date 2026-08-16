@@ -823,6 +823,7 @@ import {
   RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
   type RepoWorktreeRowDeps
 } from './repo-worktree-row-resolution'
+import { getRepoOwnedWorktreeMeta } from '../worktree-metadata-ownership'
 import { withTimeout } from '../../shared/promise-timeout-fallback'
 import {
   getLocalWorktreePathAccess,
@@ -1088,6 +1089,11 @@ import {
   stripOrcaProvenanceMetaUpdates,
   UNREGISTERED_MISSING_WORKTREE_MESSAGE
 } from '../worktree-removal-safety'
+import {
+  hasWorktreeRemovalRepoOwnerOnOtherHost,
+  resolveWorktreeRemovalMetadata,
+  resolveWorktreeRemovalRepoOwner
+} from '../worktree-removal-repo-owner'
 import { prefetchWorktreeCreateBase } from '../worktree-create-base-prefetch'
 import { prepareLocalWorktreeRootForRepo } from '../worktree-root-preparation'
 import {
@@ -2326,13 +2332,17 @@ function getRuntimeFolderWorkspaceInstanceIdentity(repo: Repo, worktreeId: strin
 }
 
 function listRuntimeFolderWorkspaces(
-  store: Pick<RuntimeStore, 'getAllWorktreeMeta' | 'setWorktreeMeta'>,
+  store: Pick<RuntimeStore, 'getAllWorktreeMeta' | 'getRepos' | 'setWorktreeMeta'>,
   repo: Repo
 ): Worktree[] {
   const rootId = getRuntimeFolderWorkspaceRootId(repo)
   const allMeta = store.getAllWorktreeMeta()
-  const ids = Object.keys(allMeta).filter((worktreeId) =>
-    isRuntimeFolderWorkspaceIdForRepo(repo, worktreeId)
+  const expectedHostId = getRepoExecutionHostId(repo)
+  const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
+  const ids = Object.keys(allMeta).filter(
+    (worktreeId) =>
+      isRuntimeFolderWorkspaceIdForRepo(repo, worktreeId) &&
+      (repoOwnerCount === 1 || allMeta[worktreeId]?.hostId === expectedHostId)
   )
   if (!ids.includes(rootId)) {
     ids.unshift(rootId)
@@ -2349,14 +2359,19 @@ function listRuntimeFolderWorkspaces(
   }
 
   return ids.map((worktreeId) => {
-    const existing = allMeta[worktreeId]
-    const meta = existing?.instanceId
+    const existing = getRepoOwnedWorktreeMeta(repo, worktreeId, allMeta, repoOwnerCount)
+    const meta: Partial<WorktreeMeta> = existing?.instanceId
       ? existing
-      : store.setWorktreeMeta(worktreeId, {
-          instanceId: getRuntimeFolderWorkspaceInstanceIdentity(repo, worktreeId),
-          ...(existing ? {} : { displayName: repo.displayName, lastActivityAt: Date.now() })
-        })
-    return mergeRuntimeFolderWorkspace(repo, worktreeId, meta)
+      : existing || repoOwnerCount === 1
+        ? store.setWorktreeMeta(worktreeId, {
+            instanceId: getRuntimeFolderWorkspaceInstanceIdentity(repo, worktreeId),
+            ...(existing ? {} : { displayName: repo.displayName, lastActivityAt: Date.now() })
+          })
+        : {}
+    return {
+      ...mergeRuntimeFolderWorkspace(repo, worktreeId, meta),
+      hostId: repoOwnerCount === 1 ? (meta.hostId ?? expectedHostId) : expectedHostId
+    }
   })
 }
 
@@ -22259,12 +22274,20 @@ export class OrcaRuntimeService {
     const visibilitySettings = { ...settings, worktreeVisibilityDefaults: visibilityDefaults }
     if (isFolderRepo(repo)) {
       const worktrees = listRuntimeFolderWorkspaces(store, repo)
+      const metaById = store.getAllWorktreeMeta()
+      const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
       const matcher = createWorktreeVisibilitySourceMatcher(
         [repo.path, ...worktrees.map((worktree) => worktree.path)],
         resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults)
       )
       const detected = worktrees.map((worktree) =>
-        this.toRuntimeDetectedWorktree(repo, worktree, matcher, visibilitySettings)
+        this.toRuntimeDetectedWorktree(
+          repo,
+          worktree,
+          matcher,
+          visibilitySettings,
+          getRepoOwnedWorktreeMeta(repo, worktree.id, metaById, repoOwnerCount) ?? null
+        )
       )
       return {
         repoId: repo.id,
@@ -22286,18 +22309,22 @@ export class OrcaRuntimeService {
       [repo.path, ...scan.worktrees.map((worktree) => worktree.path)],
       resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults)
     )
+    const expectedHostId = getRepoExecutionHostId(repo)
+    const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
+    const metaById = store.getAllWorktreeMeta()
     const detected = scan.worktrees.map((gitWorktree) => {
       const worktreeId = `${repo.id}::${gitWorktree.path}`
-      const meta = store.getWorktreeMeta(worktreeId)
+      const meta = getRepoOwnedWorktreeMeta(repo, worktreeId, metaById, repoOwnerCount)
       const worktree = {
         ...mergeWorktree(repo.id, gitWorktree, meta, repo.displayName),
-        hostId: meta?.hostId ?? getRepoExecutionHostId(repo)
+        hostId: repoOwnerCount === 1 ? (meta?.hostId ?? expectedHostId) : expectedHostId
       }
       const detectedWorktree = this.toRuntimeDetectedWorktree(
         repo,
         worktree,
         worktreeVisibilitySourceMatcher,
-        visibilitySettings
+        visibilitySettings,
+        meta ?? null
       )
       if (scan.ok) {
         return detectedWorktree
@@ -22402,7 +22429,8 @@ export class OrcaRuntimeService {
     repo: Repo,
     worktree: Worktree,
     worktreeVisibilitySourceMatcher?: WorktreeVisibilitySourceMatcher,
-    providedSettings?: ReturnType<RuntimeStore['getSettings']>
+    providedSettings?: ReturnType<RuntimeStore['getSettings']>,
+    providedMeta?: WorktreeMeta | null
   ): DetectedWorktree {
     const settings = providedSettings ?? this.store?.getSettings()
     if (!settings) {
@@ -22416,7 +22444,10 @@ export class OrcaRuntimeService {
     return toDetectedWorktree({
       repo,
       worktree,
-      meta: this.store?.getWorktreeMeta(worktree.id),
+      meta:
+        providedMeta === undefined
+          ? this.store?.getWorktreeMeta(worktree.id)
+          : (providedMeta ?? undefined),
       settings,
       knownOrcaLayouts: buildKnownOrcaWorkspaceLayouts(settings, repo),
       isLegacyRepoForVisibility: isLegacyRepoForExternalWorktreeVisibility(repo),
@@ -25523,10 +25554,18 @@ export class OrcaRuntimeService {
   }
 
   private async resolveWorktreeRemovalTarget(
-    worktreeSelector: string
+    worktreeSelector: string,
+    requiredHostId?: ExecutionHostId
   ): Promise<RuntimeWorktreeRemovalTarget> {
     try {
-      const worktree = await this.resolveWorktreeSelector(worktreeSelector)
+      const exactTarget = parseExactWorktreeIdSelector(worktreeSelector)
+      const worktree =
+        exactTarget && requiredHostId
+          ? ((await this.resolveExplicitWorktreeIdScoped(exactTarget.id, requiredHostId)) ??
+            (() => {
+              throw new Error('selector_not_found')
+            })())
+          : await this.resolveWorktreeSelector(worktreeSelector)
       const removalTarget = {
         id: worktree.id,
         repoId: worktree.repoId,
@@ -25541,7 +25580,11 @@ export class OrcaRuntimeService {
       }
       const removalTarget = parseExactWorktreeIdSelector(worktreeSelector)
       const meta = removalTarget ? this.store?.getWorktreeMeta(removalTarget.id) : undefined
-      if (!removalTarget || !meta) {
+      if (
+        !removalTarget ||
+        !meta ||
+        (requiredHostId !== undefined && meta.hostId !== requiredHostId)
+      ) {
         throw error
       }
       // Why: delete requests can arrive after Git no longer lists the worktree.
@@ -25551,21 +25594,33 @@ export class OrcaRuntimeService {
     }
   }
 
-  private removeWorktreeMetadataAndHistory(store: RuntimeStore, worktreeId: string): void {
+  private removeWorktreeMetadataAndHistory(
+    store: RuntimeStore,
+    worktreeId: string,
+    hostId?: ExecutionHostId
+  ): void {
     // Why: worktree IDs are path-derived and can be recreated, so removal must
     // purge history and process-local caches before the ID points at new state.
-    const hostId = store.getWorktreeMeta(worktreeId)?.hostId
+    const persistedHostId = store.getWorktreeMeta(worktreeId)?.hostId
+    const repoId = splitWorktreeId(worktreeId)?.repoId
+    const preservesSameIdOwner = Boolean(
+      hostId &&
+      ((persistedHostId && persistedHostId !== hostId) ||
+        (repoId && hasWorktreeRemovalRepoOwnerOnOtherHost(store, repoId, hostId)))
+    )
     if (hostId) {
       store.removeWorktreeMeta(worktreeId, hostId)
     } else {
       store.removeWorktreeMeta(worktreeId)
     }
-    this.mobileSessionTabsByWorktree.delete(worktreeId)
-    this.mobileSessionTabsAgentStatusHeartbeat.removeWorktree(worktreeId)
-    this.acceptedRendererMobileSnapshotByWorktree.delete(worktreeId)
-    advertisedUrlWatcher.forgetWorktree(worktreeId)
-    deleteWorktreeHistoryDir(worktreeId)
-    this.closeHeadlessBrowserPagesForWorktree(worktreeId)
+    if (!preservesSameIdOwner) {
+      this.mobileSessionTabsByWorktree.delete(worktreeId)
+      this.mobileSessionTabsAgentStatusHeartbeat.removeWorktree(worktreeId)
+      this.acceptedRendererMobileSnapshotByWorktree.delete(worktreeId)
+      advertisedUrlWatcher.forgetWorktree(worktreeId)
+      deleteWorktreeHistoryDir(worktreeId)
+      this.closeHeadlessBrowserPagesForWorktree(worktreeId)
+    }
   }
 
   // Why: headless offscreen browser pages are main-process BrowserWindows that
@@ -25662,7 +25717,17 @@ export class OrcaRuntimeService {
       throw new Error(`No preserved branch cleanup is pending for "${branchName}".`)
     }
 
-    const repo = this.store.getRepo(removalTarget.repoId)
+    const repoOwner = resolveWorktreeRemovalRepoOwner(
+      this.store,
+      removalTarget.repoId,
+      cleanupTarget.hostId
+    )
+    if (repoOwner.kind === 'ambiguous') {
+      throw new Error(
+        `Workspace identity is ambiguous across hosts: ${removalTarget.id}. Retry with an explicit host.`
+      )
+    }
+    const repo = repoOwner.kind === 'resolved' ? repoOwner.repo : undefined
     if (!repo) {
       throw new Error('repo_not_found')
     }
@@ -25729,13 +25794,13 @@ export class OrcaRuntimeService {
     }
     const store = this.store
     const cleanupHostId = parseExecutionHostId(hostId)?.id
-    const removalTarget = await this.resolveWorktreeRemovalTarget(worktreeSelector)
+    const removalTarget = await this.resolveWorktreeRemovalTarget(worktreeSelector, cleanupHostId)
     const cleanupScopeKey = preservedBranchCleanupScopeKey({
       worktreeId: removalTarget.id,
       hostId: cleanupHostId
     })
     const optionsKey = getRuntimeWorktreeRemovalOptionsKey(force, runHooks, allowUnverifiedPtyStop)
-    const inFlightRemoval = this.removeManagedWorktreeInFlight.get(removalTarget.id)
+    const inFlightRemoval = this.removeManagedWorktreeInFlight.get(cleanupScopeKey)
     if (inFlightRemoval) {
       if (inFlightRemoval.optionsKey === optionsKey) {
         return inFlightRemoval.promise
@@ -25744,14 +25809,32 @@ export class OrcaRuntimeService {
     }
 
     // Why: runtime callers can race the same workspace through CLI/mobile
-    // retries. Share one destructive Git/filesystem operation per worktree ID.
+    // retries. Share one destructive operation per host-qualified workspace.
     const removal = (async (): Promise<RemoveWorktreeResult & { warning?: string }> => {
       // Why: CLI, mobile and headless serve delete through here rather than the IPC handler; without
       // this span their freezes are as invisible as desktop deletes were before `worktree.remove`.
       return withWorktreeSpan({ stage: 'remove', path: removalTarget.path }, async () => {
-        const repo = store.getRepo(removalTarget.repoId)
+        // Why (STA-4343): a repo id can exist once per host. Honor the caller's
+        // host qualifier, and refuse an unqualified delete the runtime cannot
+        // pin to one owner rather than deleting a same-id workspace elsewhere.
+        const repoOwner = resolveWorktreeRemovalRepoOwner(
+          store,
+          removalTarget.repoId,
+          cleanupHostId
+        )
+        if (repoOwner.kind === 'ambiguous') {
+          throw new Error(
+            `Workspace identity is ambiguous across hosts: ${removalTarget.id}. Retry with an explicit host.`
+          )
+        }
+        const repo = repoOwner.kind === 'resolved' ? repoOwner.repo : undefined
         if (!repo) {
           const orphanHost = parseExecutionHostId(store.getWorktreeMeta(removalTarget.id)?.hostId)
+          if (cleanupHostId && orphanHost?.id !== cleanupHostId) {
+            throw new Error(
+              `Workspace identity for ${removalTarget.id} no longer belongs to ${cleanupHostId}. Refresh projects and try again.`
+            )
+          }
           const sshPtyProvider =
             orphanHost?.kind === 'ssh' ? this.getSshProviderFn?.(orphanHost.targetId) : undefined
           const ptyProvider = sshPtyProvider ?? this.getLocalProvider()
@@ -25796,7 +25879,11 @@ export class OrcaRuntimeService {
               .catch(() => {})
           }
           this.clearOptimisticReconcileToken(removalTarget.id)
-          this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+          this.removeWorktreeMetadataAndHistory(
+            store,
+            removalTarget.id,
+            cleanupHostId ?? orphanHost?.id
+          )
           this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
           this.invalidateResolvedWorktreeCache()
           this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
@@ -25839,7 +25926,7 @@ export class OrcaRuntimeService {
               console.warn(`[worktree-teardown] failed for ${removalTarget.id}:`, err)
             })
           }
-          this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+          this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
           this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
           this.invalidateResolvedWorktreeCache()
           this.notifyWorktreesChanged(repo.id)
@@ -25856,7 +25943,12 @@ export class OrcaRuntimeService {
           : hasLocalWorktreeGitOptions
             ? await listWorktreesStrict(repo.path, localWorktreeGitOptions)
             : await listWorktreesStrict(repo.path)
-        const removedMeta = store.getWorktreeMeta(removalTarget.id)
+        const removedMeta = resolveWorktreeRemovalMetadata(
+          store,
+          removalTarget.repoId,
+          removalTarget.id,
+          cleanupHostId ?? getRepoExecutionHostId(repo)
+        )
         const removedPushTarget = removedMeta?.pushTarget ?? removalTarget.pushTarget
         const registeredWorktree = findRegisteredDeletableWorktree(
           repo.path,
@@ -25944,7 +26036,7 @@ export class OrcaRuntimeService {
               )
             }
             this.clearOptimisticReconcileToken(removalTarget.id)
-            this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+            this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
             this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
             this.invalidateResolvedWorktreeCache()
             this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
@@ -25993,7 +26085,7 @@ export class OrcaRuntimeService {
                 localWorktreeGitOptions
               )
               this.clearOptimisticReconcileToken(removalTarget.id)
-              this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+              this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
               this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
               this.invalidateResolvedWorktreeCache()
               this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
@@ -26029,7 +26121,7 @@ export class OrcaRuntimeService {
                   localWorktreeGitOptions
                 ))
             this.clearOptimisticReconcileToken(removalTarget.id)
-            this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+            this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
             this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
             this.invalidateResolvedWorktreeCache()
             this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
@@ -26083,7 +26175,7 @@ export class OrcaRuntimeService {
             removedPushTarget
           )
           this.clearOptimisticReconcileToken(removalTarget.id)
-          this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+          this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
           this.invalidateResolvedWorktreeCache()
           this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
           invalidateAuthorizedRootsCache()
@@ -26129,7 +26221,7 @@ export class OrcaRuntimeService {
             removedPushTarget
           )
           this.clearOptimisticReconcileToken(removalTarget.id)
-          this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+          this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
           this.invalidateResolvedWorktreeCache()
           this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
           invalidateAuthorizedRootsCache()
@@ -26285,7 +26377,7 @@ export class OrcaRuntimeService {
                 localWorktreeGitOptions
               )
               this.clearOptimisticReconcileToken(removalTarget.id)
-              this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+              this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
               this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
               this.invalidateResolvedWorktreeCache()
               this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
@@ -26319,7 +26411,7 @@ export class OrcaRuntimeService {
           removedPushTarget
         )
         this.clearOptimisticReconcileToken(removalTarget.id)
-        this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+        this.removeWorktreeMetadataAndHistory(store, removalTarget.id, cleanupHostId)
         this.invalidateResolvedWorktreeCache()
         this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
         invalidateAuthorizedRootsCache()
@@ -26330,7 +26422,7 @@ export class OrcaRuntimeService {
         }
       })
     })()
-    this.removeManagedWorktreeInFlight.set(removalTarget.id, { optionsKey, promise: removal })
+    this.removeManagedWorktreeInFlight.set(cleanupScopeKey, { optionsKey, promise: removal })
     try {
       const result = await removal
       this.emitWorktreeLifecycle({
@@ -26340,8 +26432,8 @@ export class OrcaRuntimeService {
       })
       return result
     } finally {
-      if (this.removeManagedWorktreeInFlight.get(removalTarget.id)?.promise === removal) {
-        this.removeManagedWorktreeInFlight.delete(removalTarget.id)
+      if (this.removeManagedWorktreeInFlight.get(cleanupScopeKey)?.promise === removal) {
+        this.removeManagedWorktreeInFlight.delete(cleanupScopeKey)
       }
     }
   }
@@ -30773,9 +30865,9 @@ export class OrcaRuntimeService {
         async (repo) => await resolveRepoWorktreeRows(deps, repo, metaById, projectRuntimeByRepoId)
       )
     )
-    const worktrees = projectResolvedWorktreeLineage(
-      perRepoWorktrees.flat(),
-      this.store?.getAllWorktreeLineage?.() ?? {}
+    const lineageById = this.store?.getAllWorktreeLineage?.() ?? {}
+    const worktrees = perRepoWorktrees.flatMap((rows) =>
+      projectResolvedWorktreeLineage(rows, lineageById)
     )
     // Why: short TTL avoids shelling out on every frequent poll while still catching worktree changes made outside Orca.
     // Why stamped on completion, not entry: a compute that spent longer than the TTL would otherwise publish an
@@ -30802,12 +30894,13 @@ export class OrcaRuntimeService {
   }
 
   private async resolveExplicitWorktreeIdScoped(
-    worktreeId: string
+    worktreeId: string,
+    requiredHostId?: ExecutionHostId
   ): Promise<ResolvedWorktree | null> {
     if (!this.store) {
       return null
     }
-    return await resolveScopedWorktreeIdRow(this.repoWorktreeRowDeps(), worktreeId)
+    return await resolveScopedWorktreeIdRow(this.repoWorktreeRowDeps(), worktreeId, requiredHostId)
   }
 
   private async listRepoWorktreesForResolution(
@@ -30815,12 +30908,13 @@ export class OrcaRuntimeService {
     projectRuntimeByRepoId?: ReadonlyMap<string, ProjectExecutionRuntimeResolution>
   ): Promise<RuntimeWorktreeScanResult> {
     const now = Date.now()
-    const generation = this.worktreeScanGenerations.get(repo.id) ?? 0
-    const projectRuntime = projectRuntimeByRepoId
-      ? projectRuntimeByRepoId.get(repo.id)
-      : !repo.connectionId
-        ? resolveLocalProjectRuntimeForRepo(this.requireStore(), repo)
-        : undefined
+    const scanScopeKey = `${repo.id}\0${getRepoExecutionHostId(repo)}`
+    const generation = this.worktreeScanGenerations.get(scanScopeKey) ?? 0
+    const projectRuntime = repo.connectionId
+      ? undefined
+      : projectRuntimeByRepoId
+        ? projectRuntimeByRepoId.get(repo.id)
+        : resolveLocalProjectRuntimeForRepo(this.requireStore(), repo)
     const runtimeKey = projectRuntime
       ? projectRuntime.status === 'resolved'
         ? projectRuntime.runtime.cacheKey
@@ -30828,7 +30922,7 @@ export class OrcaRuntimeService {
       : repo.connectionId
         ? `ssh:${repo.connectionId}:${getSshGitProviderGeneration(repo.connectionId)}`
         : 'local:default'
-    const cached = this.worktreeScanCache.get(repo.id)
+    const cached = this.worktreeScanCache.get(scanScopeKey)
     if (
       cached?.generation === generation &&
       cached.runtimeKey === runtimeKey &&
@@ -30836,21 +30930,21 @@ export class OrcaRuntimeService {
     ) {
       return cached.result
     }
-    const inFlight = this.worktreeScanInFlight.get(repo.id)
+    const inFlight = this.worktreeScanInFlight.get(scanScopeKey)
     if (inFlight?.generation === generation && inFlight.runtimeKey === runtimeKey) {
       return (await inFlight.promise).result
     }
     const reusableCached =
       cached?.generation === generation && cached.runtimeKey === runtimeKey ? cached : null
     const promise = this.refreshRepoWorktreeScan(repo, projectRuntime, reusableCached)
-    this.worktreeScanInFlight.set(repo.id, { generation, runtimeKey, promise })
+    this.worktreeScanInFlight.set(scanScopeKey, { generation, runtimeKey, promise })
     try {
       const refresh = await promise
       // Why: back off local spawn failures under resource pressure while disconnected SSH can recover on the next poll.
       if (
         (refresh.result.ok || !repo.connectionId) &&
-        generation === (this.worktreeScanGenerations.get(repo.id) ?? 0) &&
-        this.worktreeScanInFlight.get(repo.id)?.promise === promise
+        generation === (this.worktreeScanGenerations.get(scanScopeKey) ?? 0) &&
+        this.worktreeScanInFlight.get(scanScopeKey)?.promise === promise
       ) {
         const entry: RuntimeWorktreeScanCache = {
           generation,
@@ -30860,19 +30954,19 @@ export class OrcaRuntimeService {
           adminFingerprint: refresh.adminFingerprint,
           scannedAt: refresh.scannedAt
         }
-        this.worktreeScanCache.set(repo.id, entry)
+        this.worktreeScanCache.set(scanScopeKey, entry)
         // Why a writeback instead of storing the promise: a probe that never settles must not be
         // awaited by a later refresh. Identity check keeps a stale probe out of a newer entry.
         void refresh.adminFingerprintProbe?.then((fingerprint) => {
-          if (this.worktreeScanCache.get(repo.id) === entry) {
+          if (this.worktreeScanCache.get(scanScopeKey) === entry) {
             entry.adminFingerprint = fingerprint
           }
         })
       }
       return refresh.result
     } finally {
-      if (this.worktreeScanInFlight.get(repo.id)?.promise === promise) {
-        this.worktreeScanInFlight.delete(repo.id)
+      if (this.worktreeScanInFlight.get(scanScopeKey)?.promise === promise) {
+        this.worktreeScanInFlight.delete(scanScopeKey)
       }
     }
   }
@@ -30980,22 +31074,43 @@ export class OrcaRuntimeService {
   }
 
   private invalidateWorktreeScanCacheForRepo(repoId: string): void {
-    this.worktreeScanGenerations.set(repoId, (this.worktreeScanGenerations.get(repoId) ?? 0) + 1)
-    this.worktreeScanCache.delete(repoId)
-    this.worktreeScanInFlight.delete(repoId)
+    const prefix = `${repoId}\0`
+    const scopeKeys = new Set(
+      this.store
+        ?.getRepos()
+        .filter((repo) => repo.id === repoId)
+        .map((repo) => `${repoId}\0${getRepoExecutionHostId(repo)}`) ?? []
+    )
+    for (const keys of [
+      this.worktreeScanGenerations.keys(),
+      this.worktreeScanCache.keys(),
+      this.worktreeScanInFlight.keys()
+    ]) {
+      for (const key of keys) {
+        if (key.startsWith(prefix)) {
+          scopeKeys.add(key)
+        }
+      }
+    }
+    for (const key of scopeKeys) {
+      this.worktreeScanGenerations.set(key, (this.worktreeScanGenerations.get(key) ?? 0) + 1)
+      this.worktreeScanCache.delete(key)
+      this.worktreeScanInFlight.delete(key)
+    }
   }
 
   private invalidateSshWorktreeScanCacheInternal(targetId: string): void {
     const repos = this.store?.getRepos() ?? []
-    const affectedRepoIds = new Set(
-      repos.filter((repo) => repo.connectionId === targetId).map((repo) => repo.id)
+    const affectedRepos = repos.filter((repo) => repo.connectionId === targetId)
+    const affectedScopeKeys = new Set(
+      affectedRepos.map((repo) => `${repo.id}\0${getRepoExecutionHostId(repo)}`)
     )
-    for (const repoId of affectedRepoIds) {
-      this.worktreeScanGenerations.set(repoId, (this.worktreeScanGenerations.get(repoId) ?? 0) + 1)
-      this.worktreeScanCache.delete(repoId)
-      this.worktreeScanInFlight.delete(repoId)
+    for (const key of affectedScopeKeys) {
+      this.worktreeScanGenerations.set(key, (this.worktreeScanGenerations.get(key) ?? 0) + 1)
+      this.worktreeScanCache.delete(key)
+      this.worktreeScanInFlight.delete(key)
     }
-    if (affectedRepoIds.size > 0) {
+    if (affectedScopeKeys.size > 0) {
       this.resolvedWorktreeGeneration += 1
       this.resolvedWorktreeCache = null
     }
