@@ -1,5 +1,8 @@
 import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
-import { normalizeRuntimePathForComparison } from '../../../../shared/cross-platform-path'
+import {
+  prepareRuntimePathPrefixKey,
+  type RuntimePathPrefixKey
+} from '../../../../shared/runtime-path-prefix-match'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type { WorkspaceStatusDefinition } from '../../../../shared/worktree/types'
 import { getWorkspaceStatus } from '../../../../shared/workspace-statuses'
@@ -76,7 +79,7 @@ export type WorkspaceCleanupFacets = {
   isCompletelyEmpty: boolean
   searchText: string
   /** Comparison key for the path-prefix facet; never render or splice this. */
-  comparisonPath: string
+  pathPrefixKey: RuntimePathPrefixKey
 }
 
 const EMPTY_REVIEW_INFO: WorkspaceCleanupReviewInfo = {
@@ -107,7 +110,7 @@ export function buildWorkspaceCleanupFacets(
   const localContextCount = getLocalContextCount(candidate)
   const hasComment = (worktree?.comment ?? '').trim().length > 0
   const branch = getBranchDisplayName(worktree?.branch ?? candidate.branch)
-  const facets: Omit<WorkspaceCleanupFacets, 'searchText' | 'comparisonPath'> = {
+  const facets: Omit<WorkspaceCleanupFacets, 'searchText' | 'pathPrefixKey'> = {
     candidate,
     worktreeId: candidate.worktreeId,
     repoId: candidate.repoId,
@@ -156,7 +159,7 @@ export function buildWorkspaceCleanupFacets(
   return {
     ...facets,
     searchText: buildSearchText(facets),
-    comparisonPath: normalizeRuntimePathForComparison(facets.path)
+    pathPrefixKey: prepareRuntimePathPrefixKey(facets.path)
   }
 }
 
@@ -202,7 +205,7 @@ function getTicketSources(
 }
 
 function buildSearchText(
-  facets: Omit<WorkspaceCleanupFacets, 'searchText' | 'comparisonPath'>
+  facets: Omit<WorkspaceCleanupFacets, 'searchText' | 'pathPrefixKey'>
 ): string {
   return [
     facets.displayName,

@@ -1,7 +1,4 @@
-import {
-  createNormalizedPathInsideOrEqualMatcher,
-  normalizeRuntimePathForComparison
-} from '../../../../shared/cross-platform-path'
+import { matchesRuntimePathPrefix } from '../../../../shared/runtime-path-prefix-match'
 import type { WorkspaceCleanupFacets } from './workspace-cleanup-facets'
 import type {
   WorkspaceCleanupActivityFilter,
@@ -169,41 +166,13 @@ export function matchesWorkspaceCleanupLocation(
   const prefix = filter.pathPrefix.trim()
   return (
     prefix.length === 0 ||
-    matchesWorkspaceCleanupPathPrefix(facets.path, facets.comparisonPath, prefix)
+    // Deliberately redundant: `matchesRuntimePathPrefix` already covers this. It
+    // keeps the cheap exact-typing case allocation-free, and makes "preparation
+    // may only reveal rows, never hide one the raw comparison showed" structural
+    // rather than something every future edit has to re-argue.
+    facets.path.startsWith(prefix) ||
+    matchesRuntimePathPrefix(facets.pathPrefixKey, prefix)
   )
-}
-
-/**
- * Compares a typed prefix against one candidate, by literal spelling then by
- * normalized spelling.
- *
- * Why normalize at all: the same workspace has several valid spellings — Windows
- * drive/UNC case and backslashes, doubled separators, and the NFD form macOS file
- * pickers hand back for a path Orca stored as NFC. Any of those silently hid rows.
- *
- * Why still accept the literal spelling: normalizing may only ever reveal rows,
- * never hide one the literal comparison showed. A half-typed Windows prefix (`C`,
- * `C:`, a first `\`) cannot prove its own flavor, and a WSL comparison key folds
- * only the distro segment — so a normalized-only test would blank the list
- * mid-keystroke on exactly the rows the user is aiming at.
- *
- * `comparisonPath` must already be normalized; `normalizeRuntimePathForComparison`
- * is not idempotent for WSL UNC paths.
- */
-export function matchesWorkspaceCleanupPathPrefix(
-  rawPath: string,
-  comparisonPath: string,
-  typedPrefix: string
-): boolean {
-  if (rawPath.startsWith(typedPrefix)) {
-    return true
-  }
-  // Why: a trailing separator is how a user pins the prefix to a whole segment,
-  // so `/repo/` must not start matching `/repository`. Without one this stays a
-  // free-text prefix, which is what the "Path starts with" control promises.
-  return /[\\/]$/.test(typedPrefix)
-    ? createNormalizedPathInsideOrEqualMatcher(typedPrefix)(comparisonPath)
-    : comparisonPath.startsWith(normalizeRuntimePathForComparison(typedPrefix))
 }
 
 export function matchesWorkspaceCleanupSafety(

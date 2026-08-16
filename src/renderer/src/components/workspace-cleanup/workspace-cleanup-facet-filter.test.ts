@@ -613,12 +613,26 @@ describe('path prefix never hides a literally-matching row', () => {
     expect(showsPath('/repo/foo\\bar', '/repo/foo')).toBe(true)
   })
 
-  // Why: only the distro segment of a WSL comparison key is case-folded, so the
-  // remainder must keep comparing case-sensitively against the literal path.
-  it('keeps matching a WSL UNC candidate below the distro alias', () => {
+  // Why: Windows folds the share alias and the distro case-insensitively, but
+  // everything below the distro is a case-sensitive Linux filesystem.
+  it('matches partial and aliased WSL UNC prefixes above the distro', () => {
     const wsl = '//wsl.localhost/Ubuntu/home/Ada/Repo'
-    expect(showsPath(wsl, '//wsl.localhost/Ubuntu/home/Ada')).toBe(true)
-    expect(showsPath(wsl, '//wsl.localhost/ubuntu/home/Ada')).toBe(true)
+    for (const prefix of [
+      '//WSL.LOCALHOST',
+      '//wsl$',
+      '\\\\WSL.LOCALHOST',
+      '//WSL.LOCALHOST/UBUNTU',
+      '//wsl$/Ubuntu/home/Ada',
+      '//wsl.localhost/ubuntu/home/Ada'
+    ]) {
+      expect(showsPath(wsl, prefix)).toBe(true)
+    }
+  })
+
+  it('keeps a WSL UNC candidate case-sensitive below the distro', () => {
+    const wsl = '//wsl.localhost/Ubuntu/home/Ada/Repo'
+    expect(showsPath(wsl, '//wsl.localhost/Ubuntu/home/ada')).toBe(false)
+    expect(showsPath(wsl, '//wsl.localhost/Ubuntu/HOME')).toBe(false)
   })
 
   it('still refuses a prefix that matches neither spelling', () => {
