@@ -5,7 +5,7 @@ name: Daily macOS Dev Build
 # hourly.
 #
 # Schedule is a single UTC cron (GH Actions has no timezone-aware schedules).
-# 14:15 UTC is early morning Pacific year-round (6:15am PST / 7:15am PDT). Minute
+# 18:15 UTC is late morning Pacific year-round (10:15am PST / 11:15am PDT). Minute
 # 15 avoids stacking with hourly-mac-build, which fires at minute 0 every hour.
 #
 # Deliberately narrow scope:
@@ -45,8 +45,8 @@ name: Daily macOS Dev Build
 
 on:
   schedule:
-    # Once a day, early morning Pacific. Single cron — no DST twin, no clock gate.
-    - cron: '15 14 * * *'
+    # Once a day, late morning Pacific. Single cron — no DST twin, no clock gate.
+    - cron: '15 18 * * *'
   workflow_dispatch:
     inputs:
       force:
