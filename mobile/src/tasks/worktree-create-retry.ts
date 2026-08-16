@@ -67,8 +67,17 @@ export async function createWorktreeWithNameRetry(
       supportsIdempotentCutoverRetry
     )
     if (response.ok) {
-      const result = (response as RpcSuccess).result as { worktree: { id: string } }
-      return { worktreeId: result.worktree.id, name: candidateName }
+      const result = (response as RpcSuccess).result as {
+        worktree: { id: string; displayName?: unknown }
+      }
+      // Why not `candidateName`: the host advances past a retired cwd on its own, so the workspace
+      // it created can carry a later candidate than the one proposed here. Routing on the proposal
+      // titles the new workspace wrongly until the live-name hook corrects it.
+      const createdName = result.worktree.displayName
+      return {
+        worktreeId: result.worktree.id,
+        name: typeof createdName === 'string' && createdName ? createdName : candidateName
+      }
     }
     lastError = response.error.message
     if (!isRetryableWorktreeCreateConflict(lastError ?? '')) {
