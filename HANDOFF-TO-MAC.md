@@ -44,16 +44,26 @@ Base for everything: `origin/main` @ `93ab6e142e`.
 
 ## 1. Branch inventory
 
+All nine branches below are **pushed to origin**. Head SHAs are the pushed heads.
+
 | Branch | Head | State | Contains |
 |---|---|---|---|
-| `brennanb2025/fix-4449-4491` | `46294c668d` | **PR #14917 OPEN** | STA-4449 + STA-4491. Verified, squashed, clean single commit. |
-| `brennanb2025/fix-4471` | `7dd1413a66` | WIP, **stacked on the above** | STA-4471. Lane's own commit on top of `46294c668d`. |
-| `brennanb2025/fix-glue-cluster` | `3092531c63` | WIP | STA-4477 fix. Reland work was still uncommitted when the box was torn down — see §4. |
-| `brennanb2025/fix-4451` | `2d2326e07c` | **UNVERIFIED**, rescued WIP | STA-4451. Predecessor's work. I audited it but did not prove it. |
-| `brennanb2025/repro-4449-4491` | `e5f7adf8c9` | Reference only | The original repro test + REPRO-FINDINGS.md. Superseded by PR #14917. |
+| `brennanb2025/fix-4449-4491` | `46294c668d` | **PR #14917 OPEN** — verified | STA-4449 + STA-4491. Squashed, clean single commit, all gates green. |
+| `brennanb2025/fix-4471` | `7dd1413a66` | WIP, **stacked on the above** | STA-4471. Lane's own commit on top of `46294c668d`. Not verified by me. |
+| `brennanb2025/fix-4472-4473` | `76e918f7c7` | **UNVERIFIED WIP** | STA-4472/4473 backfill scan + discovery extraction. Two teardown snapshots I committed on the lane's behalf mid-edit — **may not compile**. |
+| `brennanb2025/fix-glue-cluster` | `ff83d0c8d5` | Mixed | STA-4477 fix (committed by the lane) + **UNVERIFIED WIP** reland tests I snapshotted at teardown. |
+| `brennanb2025/fix-4451` | `2d2326e07c` | **UNVERIFIED**, rescued WIP | STA-4451. Predecessor's work. I audited it but never ran it. |
+| `brennanb2025/repro-4449-4491` | `e5f7adf8c9` | Reference only | Original repro test + REPRO-FINDINGS.md. Superseded by PR #14917. |
 | `brennanb2025/readiness-baseline` | `4413d59810` | Complete | `READINESS-BASELINE.md`, 622 lines. Read it — it is high quality. |
 | `brennanb2025/review-4363-scratch` | `c7f5903a10` | Scratch, **NOT FOR MERGE** | PR #14581's head + a 21-mutation review harness. |
-| `brennanb2025/blocker-pipeline-coordinator` | (this) | Coordination | This file, `PIPELINE-STATUS.html`, `LINEAR-TICKETS.md`, `scripts/runtime-watchdog.sh`. |
+| `brennanb2025/blocker-pipeline-coordinator` | `03cf410459`+ | Coordination | This file, `PIPELINE-STATUS.html`, `LINEAR-TICKETS.md`, `scripts/runtime-watchdog.sh`. |
+
+> **On the `wip(...) — UNVERIFIED WIP` commits.** The two lanes working on STA-4472/4473 and the
+> STA-4482 reland were still mid-edit when the box was torn down. Rather than lose that work I
+> committed their trees myself, twice, as clearly-labelled teardown snapshots. They were captured
+> mid-edit: they are not verified, not proven RED→GREEN, and may not compile. Treat them as
+> salvage material, not as a starting point you can trust. Their authors' reasoning did **not**
+> survive — only the files did.
 
 **Do not touch** `~/orca-sta-4448-host-qualified-delete` or branch
 `sta-4448-host-qualified-delete` — that is catshark's live STA-4448 work.
@@ -205,22 +215,22 @@ Do not collapse these into one PR (couples unrelated risk) and do not split into
 STA-4477 is the one glue ticket that **should still reproduce on `origin/main` today**, since
 #14663 was never reverted. **Do not revert #14663 — that re-opens #14262.**
 
-### ⚠️ UNCOMMITTED AT TEARDOWN — recover this first
+### STA-4482 reland — in progress, salvaged at teardown
 
-At the moment the box was torn down the lane still had, uncommitted in
-`/home/brennan/orca/workspaces/orca/fix-glue-cluster`:
+The lane pushed its own work up to `077b276895`, and I snapshotted two further rounds of
+in-flight edits on its behalf (`83590ec82a`, `ff83d0c8d5`). The reland introduced:
 
 ```
- M mobile/src/session/mobile-native-chat-pending-echo.ts
-?? mobile/src/session/mobile-native-chat-pending-baseline.ts
-?? mobile/src/session/mobile-native-chat-pending-retirement.ts
+mobile/src/session/mobile-native-chat-pending-baseline.ts
+mobile/src/session/mobile-native-chat-pending-retirement.ts
+mobile/src/session/mobile-native-chat-pending-baseline.test.ts
+mobile/src/session/mobile-native-chat-pending-retirement.test.ts
 ```
 
-That is the **STA-4482 reland in progress**. It was instructed to commit and push; if
-`3092531c63` is still the head on origin, that work did not make it and **must be recreated**.
-The new file `mobile-native-chat-pending-baseline.ts` suggests it was building an explicit
-baseline concept rather than re-applying #14665's `glueBaselineTrusted` flag — which is the
-right instinct.
+The new `mobile-native-chat-pending-baseline.ts` suggests it was building an explicit baseline
+concept rather than re-applying #14665's `glueBaselineTrusted` flag — which is the right
+instinct, since that flag is precisely what STA-4492 says becomes a permanent glue barrier.
+**None of it is verified and it may not compile.** The lane's reasoning did not survive.
 
 ### STA-4482 / STA-4492 — what you must know before writing any code
 
