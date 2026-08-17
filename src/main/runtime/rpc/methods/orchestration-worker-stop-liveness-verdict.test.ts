@@ -98,6 +98,49 @@ describe('worker-stop against a terminal we lost contact with', () => {
     expect(stopped.lastError).not.toContain('exited')
   })
 
+  it('does not settle a bare false close as stopped', async () => {
+    vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
+      handle: 'term_worker',
+      worktreeId: 'repo::worktree',
+      connected: true,
+      status: 'running'
+    } as never)
+    vi.spyOn(runtime, 'closeTerminal').mockResolvedValue({
+      handle: 'term_worker',
+      tabId: 'tab_worker',
+      ptyKilled: false
+    })
+    const dispatch = createWorker()
+
+    const stopped = (await call('orchestration.workerStop', { dispatch: dispatch.id })) as {
+      state: string
+      lastError: string
+    }
+
+    expect(stopped.state).toBe('stop_unknown')
+    expect(stopped.lastError).toContain('could not be confirmed stopped')
+  })
+
+  it('uses the canonical live verdict for an observed running process', async () => {
+    vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
+      handle: 'term_worker',
+      worktreeId: 'repo::worktree',
+      connected: true,
+      status: 'running'
+    } as never)
+    vi.spyOn(runtime, 'getTerminalLivenessVerdict').mockReturnValue({
+      status: 'live',
+      ptyIds: ['runtime:pty:1']
+    })
+    const dispatch = createWorker()
+
+    await expect(
+      call('orchestration.workerShow', { dispatch: dispatch.id })
+    ).resolves.toMatchObject({
+      observation: { status: 'live', exactWorker: true }
+    })
+  })
+
   it('still reports a locally observed exit as exited', async () => {
     const dispatch = createWorker()
 

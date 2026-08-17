@@ -4,7 +4,9 @@ import {
   registerPtyHandlers,
   deletePtyOwnership,
   setPtyOwnership,
-  getLocalPtyProvider
+  getLocalPtyProvider,
+  registerSshPtyProvider,
+  unregisterSshPtyProvider
 } from './pty'
 
 vi.mock('electron', () => import('./pty-ipc-mock-registry').then((m) => m.electronModuleMock()))
@@ -65,12 +67,14 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
       setPtyController: ReturnType<typeof vi.fn>
       onPtyExit: ReturnType<typeof vi.fn>
       markPtyLivenessUnverifiable: ReturnType<typeof vi.fn>
+      markPtyLivenessLive: ReturnType<typeof vi.fn>
     }
   } {
     const runtime = {
       setPtyController: vi.fn(),
       onPtyExit: vi.fn(),
-      markPtyLivenessUnverifiable: vi.fn()
+      markPtyLivenessUnverifiable: vi.fn(),
+      markPtyLivenessLive: vi.fn()
     }
     handlers.clear()
     registerPtyHandlers(mainWindow as never, runtime as never)
@@ -118,5 +122,51 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
       expect.objectContaining({ immediate: true })
     )
     expect(runtime.markPtyLivenessUnverifiable).not.toHaveBeenCalled()
+  })
+
+  it('reports lost contact when a registered provider drops during the stop', async () => {
+    const connectionId = 'ssh-mid-stop-drop'
+    const ptyId = 'ssh-mid-stop-pty'
+    const provider = {
+      onExit: vi.fn(() => () => {}),
+      shutdown: vi.fn(async () => {
+        throw new Error('relay disconnected during stop')
+      })
+    }
+    registerSshPtyProvider(connectionId, provider as never)
+    setPtyOwnership(ptyId, connectionId)
+    try {
+      const { controller, runtime } = installController()
+
+      await expect(controller.stopAndWait(ptyId)).resolves.toBe(false)
+      expect(runtime.markPtyLivenessUnverifiable).toHaveBeenCalledWith(
+        ptyId,
+        'relay disconnected during stop'
+      )
+    } finally {
+      deletePtyOwnership(ptyId)
+      unregisterSshPtyProvider(connectionId)
+    }
+  })
+
+  it('reports a provider-observed survivor as live', async () => {
+    const connectionId = 'ssh-still-live'
+    const ptyId = 'ssh-still-live-pty'
+    const provider = {
+      onExit: vi.fn(() => () => {}),
+      shutdown: vi.fn(async () => {}),
+      listProcesses: vi.fn(async () => [{ id: ptyId }])
+    }
+    registerSshPtyProvider(connectionId, provider as never)
+    setPtyOwnership(ptyId, connectionId)
+    try {
+      const { controller, runtime } = installController()
+
+      await expect(controller.stopAndWait(ptyId)).resolves.toBe(false)
+      expect(runtime.markPtyLivenessLive).toHaveBeenCalledWith(ptyId)
+    } finally {
+      deletePtyOwnership(ptyId)
+      unregisterSshPtyProvider(connectionId)
+    }
   })
 })

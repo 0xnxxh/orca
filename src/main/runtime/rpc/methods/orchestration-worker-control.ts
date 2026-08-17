@@ -99,7 +99,11 @@ export const ORCHESTRATION_WORKER_CONTROL_METHODS: RpcMethod[] = [
           server: { environmentId: server.environmentId, name: server.name },
           remoteRuntimeEpoch: remote.runtimeEpoch,
           terminal: remote.terminal,
-          observation: remote.observation
+          observation: {
+            ...remote.observation,
+            // Legacy servers published `running`; normalize at the compatibility boundary.
+            status: remote.observation.status === 'running' ? 'live' : remote.observation.status
+          }
         }
       }
       if (worker.runtime_epoch && worker.runtime_epoch !== runtime.getRuntimeId()) {

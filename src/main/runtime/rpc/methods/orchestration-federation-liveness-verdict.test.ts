@@ -82,6 +82,23 @@ describe('federation host liveness verdicts', () => {
     })
   })
 
+  it('uses the canonical live verdict for an observed running process', async () => {
+    vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
+      handle: HANDLE,
+      worktreeId: 'repo::remote-worktree',
+      connected: true,
+      status: 'running'
+    } as never)
+    vi.spyOn(runtime, 'getTerminalLivenessVerdict').mockReturnValue({
+      status: 'live',
+      ptyIds: [HANDLE]
+    })
+
+    await expect(
+      call('orchestration.federationShow', { dispatchId: DISPATCH_ID })
+    ).resolves.toMatchObject({ observation: { status: 'live', exactWorker: true } })
+  })
+
   it('still reports a locally observed exit as exited', async () => {
     await expect(
       call('orchestration.federationShow', { dispatchId: DISPATCH_ID })
@@ -89,7 +106,7 @@ describe('federation host liveness verdicts', () => {
   })
 
   it('still serves output for a terminal we merely lost stop-contact with', async () => {
-    // Why this matters: the read gate used to be `status !== 'running'`, which
+    // Why this matters: the read gate used to reject every status except live, which
     // would refuse a connected terminal the moment a stop lost contact with it.
     vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
       handle: HANDLE,
@@ -128,6 +145,22 @@ describe('federation host liveness verdicts', () => {
 
     // Losing contact is a reason to report honestly, never to stop trying.
     expect(closeTerminal).toHaveBeenCalledWith(HANDLE)
+    expect(stopped.state).not.toBe('stopped')
+    expect(stopped.lastError).toContain('could not be confirmed stopped')
+  })
+
+  it('does not settle a bare false close as a stop', async () => {
+    vi.spyOn(runtime, 'closeTerminal').mockResolvedValue({
+      handle: HANDLE,
+      tabId: 'tab_remote',
+      ptyKilled: false
+    })
+
+    const stopped = (await call('orchestration.federationStop', { dispatchId: DISPATCH_ID })) as {
+      state: string
+      lastError?: string
+    }
+
     expect(stopped.state).not.toBe('stopped')
     expect(stopped.lastError).toContain('could not be confirmed stopped')
   })

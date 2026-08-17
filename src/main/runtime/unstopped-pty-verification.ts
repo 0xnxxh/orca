@@ -73,6 +73,20 @@ export function unverifiableStopVerdict(
   return null
 }
 
+export async function resolveUnstoppedPtyVerdict(
+  failedPtyIds: readonly string[],
+  provider: IPtyProvider,
+  sweepBudgetMs: number,
+  providerObservesOwningHost: boolean,
+  runtime?: OrcaRuntimeService
+): Promise<UnstoppedPtyVerdict> {
+  if (failedPtyIds.length === 0) {
+    return { status: 'exited' }
+  }
+  const cached = providerObservesOwningHost ? null : unverifiableStopVerdict(failedPtyIds, runtime)
+  return cached ?? verifyUnstoppedPtys(failedPtyIds, provider, sweepBudgetMs)
+}
+
 /** Names the blocking PTYs so a wedged removal is diagnosable, not just refused. */
 export function describeUnstoppedPtys(
   worktreeId: string,

@@ -10,7 +10,7 @@ export async function inspectWorkerTerminal(
 ): Promise<{
   terminal: Awaited<ReturnType<OrcaRuntimeService['showTerminal']>> | null
   exact: boolean
-  status: 'unattached' | 'missing' | 'identity_changed' | 'running' | 'exited' | 'unverifiable'
+  status: 'unattached' | 'missing' | 'identity_changed' | 'live' | 'exited' | 'unverifiable'
   /** Set with `unverifiable`; names what we lost contact with. */
   reason?: string
 }> {
@@ -38,12 +38,12 @@ export async function inspectWorkerTerminal(
     return { terminal, exact, status: 'unverifiable', reason: verdict.reason }
   }
   if (verdict?.status === 'live') {
-    return { terminal, exact, status: 'running' }
+    return { terminal, exact, status: 'live' }
   }
   return {
     terminal,
     exact,
-    status: terminal.connected === false ? 'exited' : 'running'
+    status: terminal.connected === false ? 'exited' : 'live'
   }
 }
 

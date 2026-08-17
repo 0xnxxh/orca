@@ -9,6 +9,14 @@ import { getDefaultWorkspaceSession } from '../../shared/constants'
 const WORKTREE_ID = 'repo-1::/tmp/inventory-verdict'
 const REMOTE_PTY_ID = 'ssh:conn-1@@relay-9'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
 function makeStore() {
   const session = getDefaultWorkspaceSession()
   return {
@@ -32,13 +40,16 @@ function makeStore() {
   }
 }
 
-function makeRuntimeMissingFromInventory(hasPty: () => boolean | null): OrcaRuntimeService {
+function makeRuntimeMissingFromInventory(
+  hasPty: () => boolean | null,
+  listProcesses: () => Promise<{ id: string; worktreeId: string }[]> = vi.fn(async () => [])
+): OrcaRuntimeService {
   const runtime = new OrcaRuntimeService(makeStore() as never)
   runtime.setPtyController({
     write: () => true,
     kill: () => true,
     hasPty,
-    listProcesses: vi.fn(async () => []),
+    listProcesses,
     getForegroundProcess: async () => null
   } as never)
   runtime.attachWindow(1)
@@ -66,5 +77,68 @@ describe('inventory sweep liveness verdicts', () => {
 
     // An observed absence is the death certificate callers already act on.
     expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toBeNull()
+  })
+
+  it('clears lost-contact doubt when reconnect inventory observes the PTY live', async () => {
+    let reconnected = false
+    const runtime = makeRuntimeMissingFromInventory(
+      () => null,
+      vi.fn(async () => (reconnected ? [{ id: REMOTE_PTY_ID, worktreeId: WORKTREE_ID }] : []))
+    )
+
+    await runtime.listTerminals(`id:${WORKTREE_ID}`)
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)?.status).toBe('unverifiable')
+
+    reconnected = true
+    await runtime.listTerminals(`id:${WORKTREE_ID}`)
+
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toBeNull()
+  })
+
+  it('does not let a pre-drop inventory clear a newer lost-contact verdict', async () => {
+    const inventory = deferred<{ id: string; worktreeId: string }[]>()
+    const listProcesses = vi.fn(() => inventory.promise)
+    const runtime = makeRuntimeMissingFromInventory(() => null, listProcesses)
+
+    const listing = runtime.listTerminals(`id:${WORKTREE_ID}`)
+    await vi.waitFor(() => expect(listProcesses).toHaveBeenCalled())
+    runtime.markPtyLivenessUnverifiable(REMOTE_PTY_ID, 'relay disconnected during stop')
+    inventory.resolve([{ id: REMOTE_PTY_ID, worktreeId: WORKTREE_ID }])
+    await listing
+
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toEqual({
+      status: 'unverifiable',
+      reason: 'relay disconnected during stop'
+    })
+  })
+
+  it('clears stale doubt when a new PTY lifecycle is positively registered', () => {
+    const runtime = makeRuntimeMissingFromInventory(() => null)
+    runtime.markPtyLivenessUnverifiable(REMOTE_PTY_ID, 'old incarnation lost contact')
+
+    runtime.onPtySpawned(REMOTE_PTY_ID, 'incarnation-2')
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toBeNull()
+
+    runtime.markPtyLivenessUnverifiable(REMOTE_PTY_ID, 'registration raced reconnect')
+    runtime.registerPty(REMOTE_PTY_ID, WORKTREE_ID, 'conn-1', {
+      tabId: 'tab-new',
+      leafId: '00000000-0000-4000-8000-000000000001',
+      incarnationId: 'incarnation-2'
+    })
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toBeNull()
+  })
+
+  it('retains unresolved verdicts for every still-addressable PTY', () => {
+    const runtime = new OrcaRuntimeService(makeStore() as never)
+    for (let index = 0; index < 257; index += 1) {
+      const ptyId = `ssh:conn-1@@relay-${index}`
+      runtime.registerPty(ptyId, WORKTREE_ID, 'conn-1')
+      runtime.markPtyLivenessUnverifiable(ptyId, 'provider disconnected')
+    }
+
+    expect(runtime.getPtyLivenessVerdict('ssh:conn-1@@relay-0')).toEqual({
+      status: 'unverifiable',
+      reason: 'provider disconnected'
+    })
   })
 })

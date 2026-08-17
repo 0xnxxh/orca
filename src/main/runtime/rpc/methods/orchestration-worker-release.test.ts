@@ -93,7 +93,8 @@ describe('orchestration worker release', () => {
     })
     vi.spyOn(runtime, 'closeTerminal').mockResolvedValue({
       handle: 'term_worker',
-      closed: true
+      tabId: 'tab-worker',
+      ptyKilled: true
     } as never)
     vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
     activeRunId = db.createRun({

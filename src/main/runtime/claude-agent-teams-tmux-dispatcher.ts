@@ -4,6 +4,7 @@ import {
   tmuxSendKeysText,
   tmuxValue
 } from '../../shared/claude-agent-teams-tmux-compat'
+import { describeUnconfirmedAgentStop } from '../../shared/pty-liveness-verdict'
 import {
   formatContext,
   paneEnv,
@@ -172,9 +173,15 @@ export class ClaudeAgentTeamsTmuxDispatcher {
       activate: false
     })
     try {
-      await api.closeTerminal(previousHandle)
+      const close = await api.closeTerminal(previousHandle)
+      if (!close.ptyKilled) {
+        pane.handle = split.handle
+        throw new Error(describeUnconfirmedAgentStop(close))
+      }
     } catch (error) {
-      await api.closeTerminal(split.handle).catch(() => {})
+      if (pane.handle === previousHandle) {
+        await api.closeTerminal(split.handle).catch(() => {})
+      }
       throw error
     }
     pane.handle = split.handle
@@ -266,7 +273,10 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     if (pane.fakePaneId === team.leaderPane) {
       throw new Error('refusing to kill leader pane')
     }
-    await api.closeTerminal(pane.handle)
+    const close = await api.closeTerminal(pane.handle)
+    if (!close.ptyKilled) {
+      throw new Error(describeUnconfirmedAgentStop(close))
+    }
     team.panes.delete(pane.fakePaneId)
     team.paneOrder = team.paneOrder.filter((id) => id !== pane.fakePaneId)
     if (team.mainVertical?.lastColumnPane === pane.fakePaneId) {

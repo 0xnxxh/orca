@@ -28,6 +28,6 @@ export function describeUnconfirmedAgentStop(close: {
   const detail =
     close.ptyStopVerdict === 'live'
       ? 'it is still running'
-      : (close.ptyStopReason ?? 'its host could not be reached')
+      : (close.ptyStopReason ?? 'the stop outcome could not be verified')
   return `The agent terminal was closed but its process could not be confirmed stopped: ${detail}.`
 }

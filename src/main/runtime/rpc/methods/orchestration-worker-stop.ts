@@ -106,7 +106,7 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
       // the outcome honestly, never a reason to stop trying to stop the worker.
       if (
         !observation.exact ||
-        (observation.status !== 'running' && observation.status !== 'unverifiable')
+        (observation.status !== 'live' && observation.status !== 'unverifiable')
       ) {
         return unknownReceipt(
           params.dispatch,
@@ -119,7 +119,7 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
       }
       try {
         const close = await runtime.closeTerminal(handle)
-        if (close.ptyStopVerdict) {
+        if (!close.ptyKilled) {
           // The tab is retired, but the agent process was never confirmed stopped —
           // settling here is the false success this receipt exists to prevent.
           return unknownReceipt(

@@ -1557,8 +1557,13 @@ function isAgentSessionOperationOutcomeUnknown(error: unknown): boolean {
   )
 }
 
-// Bounded because verdicts outlive their pty records; oldest-first eviction.
+// Orphaned verdicts are bounded; active PTYs retain theirs until new evidence resolves them.
 const MAX_TRACKED_PTY_LIVENESS_VERDICTS = 256
+
+type TrackedPtyLivenessVerdict = {
+  verdict: PtyLivenessVerdict
+  observedAt: number
+}
 
 const AGENT_SESSION_OPERATION_PER_CLIENT_LIMIT = 512
 const AGENT_SESSION_OPERATION_GLOBAL_LIMIT = 4_096
@@ -3136,7 +3141,8 @@ export class OrcaRuntimeService {
   // clears, so it cannot distinguish an observed exit from lost contact. This
   // records the last liveness verdict we actually earned, and outlives the pty
   // record so a close/stop receipt can still say the stop was unconfirmed.
-  private ptyLivenessVerdictByPtyId = new Map<string, PtyLivenessVerdict>()
+  private ptyLivenessVerdictByPtyId = new Map<string, TrackedPtyLivenessVerdict>()
+  private ptyLivenessObservationSequence = 0
   private readonly pairedRendererSessionOwnedPtyIds = new Set<string>()
   private wslDistroByPtyId = new Map<string, string>()
   private titleObservationSequence = 0
@@ -10458,6 +10464,7 @@ export class OrcaRuntimeService {
     incarnationId?: PtyIncarnationId,
     options: { awaitsRegistration?: boolean } = {}
   ): void {
+    this.forgetPtyLivenessVerdict(ptyId)
     if (options.awaitsRegistration !== false) {
       // Why: surface absence cannot distinguish an in-flight admission from a completed headless lifecycle.
       this.pendingPtyRegistrationIncarnations.set(ptyId, incarnationId ?? null)
@@ -10491,6 +10498,7 @@ export class OrcaRuntimeService {
     isWsl?: boolean
   ): void {
     this.assertPtyDidNotExitBeforeRegistration(ptyId, binding?.incarnationId)
+    this.forgetPtyLivenessVerdict(ptyId)
     this.spawnPublishedPtys.add(ptyId)
     // Why: record the renderer pane identity at spawn time so a stalled graph
     // sync can't hide that a live PTY already backs a pending mobile create.
@@ -17544,9 +17552,13 @@ export class OrcaRuntimeService {
     this.rememberPtyLivenessVerdict(ptyId, { status: 'unverifiable', reason })
   }
 
+  markPtyLivenessLive(ptyId: string): void {
+    this.rememberPtyLivenessVerdict(ptyId, { status: 'live', ptyIds: [ptyId] })
+  }
+
   /** Null when nothing has been observed either way, so callers keep their own default. */
   getPtyLivenessVerdict(ptyId: string): PtyLivenessVerdict | null {
-    return this.ptyLivenessVerdictByPtyId.get(ptyId) ?? null
+    return this.ptyLivenessVerdictByPtyId.get(ptyId)?.verdict ?? null
   }
 
   getTerminalLivenessVerdict(handle: string): PtyLivenessVerdict | null {
@@ -17561,17 +17573,35 @@ export class OrcaRuntimeService {
       return
     }
     this.ptyLivenessVerdictByPtyId.delete(ptyId)
-    this.ptyLivenessVerdictByPtyId.set(ptyId, verdict)
+    this.ptyLivenessObservationSequence += 1
+    this.ptyLivenessVerdictByPtyId.set(ptyId, {
+      verdict,
+      observedAt: this.ptyLivenessObservationSequence
+    })
     while (this.ptyLivenessVerdictByPtyId.size > MAX_TRACKED_PTY_LIVENESS_VERDICTS) {
-      const oldest = this.ptyLivenessVerdictByPtyId.keys().next()
-      if (oldest.done) {
+      let oldestOrphaned: string | null = null
+      for (const candidate of this.ptyLivenessVerdictByPtyId.keys()) {
+        if (
+          !this.ptysById.has(candidate) &&
+          !this.handleByPtyId.has(candidate) &&
+          !this.leafExistsForPty(candidate)
+        ) {
+          oldestOrphaned = candidate
+          break
+        }
+      }
+      if (!oldestOrphaned) {
         return
       }
-      this.ptyLivenessVerdictByPtyId.delete(oldest.value)
+      this.ptyLivenessVerdictByPtyId.delete(oldestOrphaned)
     }
   }
 
-  private forgetPtyLivenessVerdict(ptyId: string): void {
+  private forgetPtyLivenessVerdict(ptyId: string, observedNoLaterThan?: number): void {
+    const tracked = this.ptyLivenessVerdictByPtyId.get(ptyId)
+    if (observedNoLaterThan !== undefined && tracked && tracked.observedAt > observedNoLaterThan) {
+      return
+    }
     this.ptyLivenessVerdictByPtyId.delete(ptyId)
   }
 
@@ -28491,13 +28521,29 @@ export class OrcaRuntimeService {
     let addressedPtyStopped = false
     const deadlineMs = Date.now() + EXPLICIT_TERMINAL_CLOSE_STOP_TIMEOUT_MS
     for (const ptyId of ptyIds) {
-      let verifiedStopped = false
-      try {
-        verifiedStopped = (await this.ptyController?.stopAndWait?.(ptyId, { deadlineMs })) ?? false
-      } catch {
-        // Why: verified teardown is preferred, but its transport failure must not suppress the legacy provider kill.
+      let stopped = false
+      if (this.ptyController?.stopAndWait) {
+        try {
+          stopped = await this.ptyController.stopAndWait(ptyId, { deadlineMs })
+        } catch (error) {
+          this.markPtyLivenessUnverifiable(
+            ptyId,
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+        if (!stopped) {
+          this.ptyController.kill(ptyId)
+          const verdict = this.getPtyLivenessVerdict(ptyId)
+          if (!verdict || verdict.status === 'live') {
+            this.markPtyLivenessUnverifiable(
+              ptyId,
+              'a follow-up stop was issued but its outcome could not be verified'
+            )
+          }
+        }
+      } else {
+        stopped = this.ptyController?.kill(ptyId) ?? false
       }
-      const stopped = verifiedStopped || (this.ptyController?.kill(ptyId) ?? false)
       if (ptyId === addressedPtyId) {
         addressedPtyStopped = stopped
       }
@@ -28707,7 +28753,7 @@ export class OrcaRuntimeService {
         const ptyKilled = await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, pty.pty.ptyId)
         return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
       }
-      const ptyKilled = this.ptyController?.kill(pty.pty.ptyId) ?? false
+      const ptyKilled = await this.stopExplicitlyClosedTabPtys([pty.pty.ptyId], pty.pty.ptyId)
       if (!ptyKilled || siblingCount <= 1) {
         if (surface) {
           // Why: paired viewers keep ended streams mounted until the HUB publishes removal, so explicit close uses the durable host-tab transaction instead of viewer-local exit handling.
@@ -31325,6 +31371,7 @@ export class OrcaRuntimeService {
     }
     const inventoryGeneration = this.ptyControllerInventorySequence + 1
     this.ptyControllerInventorySequence = inventoryGeneration
+    const livenessObservationAtStart = this.ptyLivenessObservationSequence
     const providerKey = typeof connectionId === 'string' ? `ssh:${connectionId}` : 'local'
     if (connectionId === undefined) {
       this.ptyControllerAggregateInventoryGeneration = inventoryGeneration
@@ -31409,6 +31456,8 @@ export class OrcaRuntimeService {
     const allLivePtyIds = new Set(sessions.map((session) => session.id))
     const selectedLivePtyIds = new Set<string>()
     for (const session of sessions) {
+      // The owning inventory positively observed this PTY again; prior lost-contact doubt is stale.
+      this.forgetPtyLivenessVerdict(session.id, livenessObservationAtStart)
       const sessionConnectionId =
         parseAppSshPtyId(session.id)?.connectionId ??
         (typeof connectionId === 'string' ? connectionId : null)
@@ -31616,6 +31665,7 @@ export class OrcaRuntimeService {
         if (pty) {
           pty.connected = true
           pty.disconnectedAt = null
+          this.forgetPtyLivenessVerdict(ptyId)
           this.refreshPtyForegroundAgent(ptyId)
         }
       } else if (pty && !this.leafExistsForPty(ptyId)) {

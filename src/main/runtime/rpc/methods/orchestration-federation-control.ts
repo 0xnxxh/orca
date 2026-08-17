@@ -51,7 +51,7 @@ export const ORCHESTRATION_FEDERATION_CONTROL_METHODS: RpcMethod[] = [
     handler: async (params, { runtime, authenticatedCallerFingerprint }) => {
       requireHomeAttachment(runtime, params.dispatchId, authenticatedCallerFingerprint)
       const observation = await inspectRemoteAttachment(runtime, params.dispatchId)
-      // Why `=== 'exited'` rather than `!== 'running'`: the other non-running
+      // Why `=== 'exited'` rather than `!== 'live'`: the other non-live
       // statuses are already covered by the two guards, and an unverifiable
       // terminal is still readable — losing stop-contact is not an exit.
       if (!observation.exact || !observation.terminal || observation.status === 'exited') {
@@ -142,7 +142,7 @@ export const ORCHESTRATION_FEDERATION_CONTROL_METHODS: RpcMethod[] = [
       }
       try {
         const close = await runtime.closeTerminal(observation.terminal.handle)
-        if (close.ptyStopVerdict) {
+        if (!close.ptyKilled) {
           // The tab is retired but the process was never confirmed stopped, so
           // the coordinator must not be told this dispatch reached 'stopped'.
           const attachment = db.markRemoteAttachmentStopUnknown(
@@ -202,7 +202,7 @@ async function inspectRemoteAttachment(
 ): Promise<{
   terminal: Awaited<ReturnType<OrcaRuntimeService['showTerminal']>> | null
   exact: boolean
-  status: 'unattached' | 'missing' | 'identity_changed' | 'running' | 'exited' | 'unverifiable'
+  status: 'unattached' | 'missing' | 'identity_changed' | 'live' | 'exited' | 'unverifiable'
   /** Set with `unverifiable`; names what we lost contact with. */
   reason?: string
 }> {
@@ -233,7 +233,7 @@ async function inspectRemoteAttachment(
   return {
     terminal,
     exact,
-    status: verdict?.status !== 'live' && terminal.connected === false ? 'exited' : 'running'
+    status: verdict?.status !== 'live' && terminal.connected === false ? 'exited' : 'live'
   }
 }
 
