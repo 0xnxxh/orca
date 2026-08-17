@@ -36887,7 +36887,11 @@ export class OrcaRuntimeService {
         }
         const driver = this.getBrowserDriver(activeBrowserPageId)
         if (driver.kind === 'mobile' && driver.clientId === connectionKey) {
-          this.setBrowserDriver(activeBrowserPageId, { kind: 'idle' })
+          const fallback = Array.from(pageStreams ?? []).at(-1)
+          this.setBrowserDriver(
+            activeBrowserPageId,
+            fallback ? { kind: 'mobile', clientId: fallback.connectionKey } : { kind: 'idle' }
+          )
         }
       }
       resolveActiveDone()
