@@ -8,6 +8,7 @@ import type {
   CookieImportWriteStore
 } from './browser-cookie-import-clear'
 import { restoreEveryCookieIdentity } from './browser-cookie-identity-restore'
+import { normalizeCookiePartitionSite } from './browser-cookie-source-partition'
 
 type CdpCookiePartitionKey = {
   topLevelSite?: string
@@ -24,7 +25,7 @@ type CdpCookie = {
   session?: boolean
   expires?: number
   sameSite?: string
-  partitionKey?: CdpCookiePartitionKey
+  partitionKey?: CdpCookiePartitionKey | null
 }
 
 type CookieClearDebugger = {
@@ -63,13 +64,13 @@ function electronSameSite(sameSite: string | undefined): Cookie['sameSite'] {
 }
 
 function partitionKeyFromCdp(
-  partitionKey: CdpCookiePartitionKey | undefined
+  partitionKey: CdpCookiePartitionKey | null | undefined
 ): CookieClearPartitionKey | undefined {
-  const topLevelSite = partitionKey?.topLevelSite
-  if (!topLevelSite) {
+  if (partitionKey === undefined) {
     return undefined
   }
-  if (typeof partitionKey.hasCrossSiteAncestor !== 'boolean') {
+  const topLevelSite = normalizeCookiePartitionSite(partitionKey?.topLevelSite ?? '')
+  if (!topLevelSite || typeof partitionKey?.hasCrossSiteAncestor !== 'boolean') {
     throw new Error('Could not snapshot cookie identity for an atomic clear')
   }
   return {

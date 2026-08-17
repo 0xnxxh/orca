@@ -26,7 +26,7 @@ function readSqliteFlag(raw: unknown): boolean | null {
   return null
 }
 
-function normalizeTopLevelSite(raw: string): string | null {
+export function normalizeCookiePartitionSite(raw: string): string | null {
   try {
     const site = new URL(raw)
     if (
@@ -72,7 +72,7 @@ export function readChromiumRowPartition(
   if (typeof rawSite !== 'string') {
     return { status: 'unreadable', reason: 'partition site column was not text' }
   }
-  const topLevelSite = normalizeTopLevelSite(rawSite)
+  const topLevelSite = normalizeCookiePartitionSite(rawSite)
   if (!topLevelSite) {
     return { status: 'unreadable', reason: 'partition site column was not a valid schemeful site' }
   }
@@ -139,7 +139,7 @@ export function readJsonCookiePartition(raw: unknown): SourcePartitionRead {
   if (typeof topLevelSite !== 'string' || topLevelSite.length === 0) {
     return { status: 'unreadable', reason: 'partitionKey.topLevelSite was missing or not text' }
   }
-  const normalizedTopLevelSite = normalizeTopLevelSite(topLevelSite)
+  const normalizedTopLevelSite = normalizeCookiePartitionSite(topLevelSite)
   if (!normalizedTopLevelSite) {
     return {
       status: 'unreadable',

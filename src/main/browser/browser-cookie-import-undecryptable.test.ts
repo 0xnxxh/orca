@@ -189,6 +189,7 @@ describe('importCookiesFromBrowser — undecryptable cookies', () => {
         encryptedValue: encryptLinuxChromiumCookie('wrong-key-garbage', 'peanuts', 'v11'),
         topFrameSiteKey: 'https://top.example'
       },
+      { domain: 'sub.preserved.example', name: 'readable-sibling', value: 'do-not-write' },
       { domain: '.replace.test', name: 'plain', value: 'plain-value' }
     ])
     sourceDb.exec("UPDATE cookies SET has_cross_site_ancestor = 2 WHERE name = 'undecryptable'")
@@ -220,11 +221,14 @@ describe('importCookiesFromBrowser — undecryptable cookies', () => {
     expect(writeCookieIdentityMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'plain', value: 'plain-value' })
     )
+    expect(writeCookieIdentityMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'readable-sibling' })
+    )
     expect(result.summary).toMatchObject({
-      totalCookies: 2,
+      totalCookies: 3,
       importedCookies: 1,
-      skippedCookies: 1,
-      partitionSkippedCookies: 1,
+      skippedCookies: 2,
+      partitionSkippedCookies: 2,
       warning: {
         code: 'cookies-undecryptable',
         failedCookies: 1,

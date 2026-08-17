@@ -165,4 +165,41 @@ describe('removeTransplantableCookies — preserved families on a POPULATED jar'
 
     expect(target.names()).toEqual(['kept'])
   })
+
+  it('keeps skip-path removals at concurrency eight', async () => {
+    let releaseRemovals: (() => void) | undefined
+    const removalsReleased = new Promise<void>((resolve) => {
+      releaseRemovals = resolve
+    })
+    let active = 0
+    let maxActive = 0
+    const remove = vi.fn(async (_url: string, _name: string) => {
+      active++
+      maxActive = Math.max(maxActive, active)
+      await removalsReleased
+      active--
+    })
+    const cookies = [
+      cookie('.preserved.example', 'live-session'),
+      ...Array.from({ length: 12 }, (_, index) => cookie('.other.example', `stale-${index}`))
+    ]
+    const clearData = vi.fn()
+    const session = {
+      cookies: { get: async () => cookies, remove },
+      clearData,
+      snapshotClearIdentities: async (items: { cookie: Cookie; url: string }[]) =>
+        items.map(({ cookie: entry, url }) => ({ url, ...entry })),
+      restoreClearIdentities: async () => undefined
+    } as unknown as CookieClearSession
+
+    const clearing = removeTransplantableCookies(session, new Set(['preserved.example']))
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledTimes(8))
+    expect(maxActive).toBe(8)
+    expect(clearData).not.toHaveBeenCalled()
+    releaseRemovals?.()
+    await clearing
+
+    expect(remove).toHaveBeenCalledTimes(12)
+    expect(remove.mock.calls.map(([, name]) => name)).not.toContain('live-session')
+  })
 })

@@ -72,6 +72,28 @@ describe('cookie clear CDP identities', () => {
     ).toThrow(/Could not snapshot cookie identity/)
   })
 
+  it.each([
+    { hasCrossSiteAncestor: true },
+    { topLevelSite: 'not-a-site', hasCrossSiteAncestor: true },
+    { topLevelSite: 'ftp://top.example', hasCrossSiteAncestor: true },
+    { topLevelSite: 'https://top.example/path', hasCrossSiteAncestor: true }
+  ])('fails closed when a CDP partition key has an invalid site (%o)', (partitionKey) => {
+    expect(() =>
+      cookieClearIdentitiesFromCdp(
+        [{ cookie: chipsCookie, url: 'https://app.acme-chips.test/' }],
+        [
+          {
+            name: 'chips-auth',
+            value: 'keep-me',
+            domain: 'app.acme-chips.test',
+            path: '/',
+            partitionKey
+          }
+        ]
+      )
+    ).toThrow(/Could not snapshot cookie identity/)
+  })
+
   it('keeps host-only and domain cookies with the same coordinates distinct', () => {
     const cookies: Cookie[] = [
       { ...chipsCookie, domain: 'example.com', hostOnly: true, name: 'twin', value: 'host' },
