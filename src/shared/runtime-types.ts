@@ -532,7 +532,7 @@ export type RuntimeTerminalListResult = {
   topologyRevisions?: Record<string, number>
   totalCount: number
   truncated: boolean
-  /** Absent from hosts that predate the field — treat that as unknown scope. */
+  /** Absent from hosts that predate the field — treat that scope as unverifiable. */
   hostScope?: RuntimeTerminalListHostScope
 }
 

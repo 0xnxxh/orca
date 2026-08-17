@@ -36,7 +36,7 @@ describe('formatTerminalList host identity', () => {
   it('prints unknown, not local, for a row whose host the runtime could not name', () => {
     const output = formatTerminalList(listResult({ terminals: [terminal()] }))
 
-    expect(output).toContain('host=unknown')
+    expect(output).toContain('host=unverifiable')
     expect(output).not.toContain('host=local')
   })
 })
@@ -70,7 +70,7 @@ describe('formatTerminalList scope declaration', () => {
   it('says the scope is unknown when the host predates the field', () => {
     const output = formatTerminalList(listResult())
 
-    expect(output).toContain('scope: unknown')
+    expect(output).toContain('scope: unverifiable')
     expect(output).not.toContain('scope: local')
   })
 })

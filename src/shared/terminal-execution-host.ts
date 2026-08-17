@@ -24,5 +24,8 @@ export function getPtyExecutionHost(ptyId: string | null | undefined): PtyExecut
   if (remote) {
     return remote.environmentId ? toRuntimeExecutionHostId(remote.environmentId) : 'foreign'
   }
+  if (ptyId.startsWith('ssh:') || ptyId.startsWith('remote:')) {
+    return 'foreign'
+  }
   return null
 }

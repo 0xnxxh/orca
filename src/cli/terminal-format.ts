@@ -24,7 +24,7 @@ export function formatTerminalList(result: RuntimeTerminalListResult): string {
   const body = result.terminals
     .map(
       (terminal) =>
-        `${terminal.handle}  ${terminal.title ?? '(untitled)'}  ${terminal.connected ? 'connected' : 'disconnected'}  host=${terminal.executionHostId ?? 'unknown'}  ${terminal.worktreePath}\n${terminal.preview ? `preview: ${terminal.preview}` : 'preview: <empty>'}`
+        `${terminal.handle}  ${terminal.title ?? '(untitled)'}  ${terminal.connected ? 'connected' : 'disconnected'}  host=${terminal.executionHostId ?? 'unverifiable'}  ${terminal.worktreePath}\n${terminal.preview ? `preview: ${terminal.preview}` : 'preview: <empty>'}`
     )
     .join('\n\n')
   const visualLayout = formatTerminalVisualLayouts(result.visualLayouts)
@@ -39,7 +39,7 @@ export function formatTerminalList(result: RuntimeTerminalListResult): string {
 // absent scope means the host is too old to know — not that it covered everything.
 function formatTerminalListHostScope(scope: RuntimeTerminalListHostScope | undefined): string {
   if (!scope) {
-    return 'scope: unknown — this host does not report which hosts it lists'
+    return 'scope: unverifiable — this host does not report which hosts it lists'
   }
   const covered = scope.hostIds.length > 0 ? scope.hostIds.join(', ') : 'none'
   const omitted =

@@ -122,7 +122,7 @@ describe('orca terminal list host scope', () => {
     await main(['terminal', 'list'], '/tmp/repo')
 
     const printed = String(logSpy.mock.calls[0]?.[0])
-    expect(printed).toContain('scope: unknown')
+    expect(printed).toContain('scope: unverifiable')
     expect(printed).not.toContain('scope: local')
   })
 })
