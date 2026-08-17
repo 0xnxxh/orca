@@ -503,7 +503,7 @@ describe('runner execFile timeout handling', () => {
 
       expect(execFileMock).toHaveBeenCalledWith(
         'wsl.exe',
-        ['-d', 'Ubuntu', '--', 'sh', '-lc', expect.any(String)],
+        ['-d', 'Ubuntu', '--exec', 'sh', '-lc', expect.any(String)],
         expect.objectContaining({ cwd: undefined }),
         expect.any(Function)
       )
@@ -533,7 +533,7 @@ describe('runner execFile timeout handling', () => {
 
       expect(execFileMock).toHaveBeenCalledWith(
         'wsl.exe',
-        ['-d', 'Ubuntu', '--', 'bash', '-c', expect.any(String)],
+        ['-d', 'Ubuntu', '--exec', 'bash', '-c', expect.any(String)],
         expect.objectContaining({ cwd: undefined }),
         expect.any(Function)
       )

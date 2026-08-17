@@ -709,7 +709,7 @@ describe('fetchCodexRateLimits', () => {
 
       const [spawnFile, spawnArgs, spawnOptions] = childSpawnMock.mock.calls[0]
       expect(spawnFile).toBe('wsl.exe')
-      expect(spawnArgs.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--', 'sh', '-c'])
+      expect(spawnArgs.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--exec', 'sh', '-c'])
       const shellCommand = spawnArgs.at(-1) as string
       expect(shellCommand).toContain('_orca_wsl_shell=\\$(getent passwd')
       expect(shellCommand).toContain('bash|zsh|ksh|mksh|ash) exec "\\$_orca_wsl_shell" -ilc')
@@ -830,7 +830,7 @@ describe('fetchCodexRateLimits', () => {
 
       const [spawnFile, spawnArgs, spawnOptions] = ptySpawnMock.mock.calls[0]
       expect(spawnFile).toBe('wsl.exe')
-      expect(spawnArgs.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--', 'sh', '-c'])
+      expect(spawnArgs.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--exec', 'sh', '-c'])
       const shellCommand = spawnArgs.at(-1) as string
       expect(shellCommand).toContain('_orca_wsl_shell=\\$(getent passwd')
       expect(shellCommand).toContain('bash|zsh|ksh|mksh|ash) exec "\\$_orca_wsl_shell" -ilc')

@@ -1122,7 +1122,7 @@ export class CodexRuntimeHomeService {
       [
         '-d',
         distro,
-        '--',
+        '--exec',
         'bash',
         '-lc',
         [
