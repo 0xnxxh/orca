@@ -15,6 +15,13 @@ import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pendin
  * the send permanently untrustworthy, which stranded it as a queued bubble and
  * as a glue barrier for its neighbours for the rest of the session — leaves it
  * matching exactly the rows that arrive from now on.
+ *
+ * Residual: if this read was taken AFTER the send already echoed — a re-subscribe
+ * on tab switch or reconnect, when the first load never completed — its own echo
+ * is counted as history and the bubble waits for a row that will not come. The
+ * transport writes keystrokes into a TUI, so there is no client message id to
+ * tell the two apart; the send is bounded instead by serializing submits per PTY
+ * so the glue never forms.
  */
 export function rebaseMobileNativeChatPendingBaselines(
   messages: readonly NativeChatMessage[],
