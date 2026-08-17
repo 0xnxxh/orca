@@ -164,13 +164,13 @@ function launchLegacyCloseClient(options: {
 async function terminateLegacyCloseClient(
   client: ReturnType<typeof launchLegacyCloseClient>,
   identity: Awaited<ReturnType<typeof recordProcessIdentity>> | null
-): Promise<void> {
+): Promise<'already-exited' | 'termination-attempted'> {
   if (legacyCloseClientExited(client)) {
-    return
+    return 'already-exited'
   }
   if (identity) {
     await terminateRecordedTree(await recordProcessTree(identity))
-    return
+    return 'termination-attempted'
   }
   // Why: identity capture can race with teardown; the direct child handle is the last cleanup path.
   client.child.kill('SIGKILL')
@@ -179,6 +179,7 @@ async function terminateLegacyCloseClient(
     () => legacyCloseClientExited(client),
     5_000
   )
+  return 'termination-attempted'
 }
 
 function legacyCloseClientExited(client: ReturnType<typeof launchLegacyCloseClient>): boolean {
@@ -209,9 +210,10 @@ async function finishLegacyCloseClient(
   try {
     await waitForCondition('legacy close client exit', () => legacyCloseClientExited(client), 2_000)
   } catch {
-    forcedCleanup = true
     try {
-      await terminateLegacyCloseClient(client, identity)
+      // Why: the wait can time out while the client exits on its own; only a real termination counts.
+      forcedCleanup =
+        (await terminateLegacyCloseClient(client, identity)) === 'termination-attempted'
     } catch (cleanupError) {
       if (finishFailed) {
         throw new AggregateError(
