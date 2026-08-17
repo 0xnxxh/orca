@@ -95,21 +95,34 @@ function chromeBrowser(cookiesPath: string): DetectedBrowser {
 describe('importCookiesFromBrowser — undecryptable cookies', () => {
   let tmpDir: string
   let cookiesSetMock: ReturnType<typeof vi.fn>
+  let cookiesRemoveMock: ReturnType<typeof vi.fn>
+  let clearDataMock: ReturnType<typeof vi.fn>
+  let targetJar: Record<string, unknown>[]
   let platformSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'orca-linux-keyring-test-'))
     cookiesSetMock = vi.fn().mockResolvedValue(undefined)
+    targetJar = []
+    cookiesRemoveMock = vi.fn(async (_url: string, name: string) => {
+      const index = targetJar.findIndex((cookie) => cookie.name === name)
+      if (index !== -1) {
+        targetJar.splice(index, 1)
+      }
+    })
+    clearDataMock = vi.fn(async () => {
+      targetJar.splice(0)
+    })
     writeCookieIdentityMock.mockReset().mockResolvedValue(undefined)
     appGetPathMock.mockReturnValue(join(tmpDir, 'userData'))
     sessionFromPartitionMock.mockReturnValue({
       cookies: {
-        get: vi.fn().mockResolvedValue([]),
+        get: vi.fn(async () => targetJar),
         set: cookiesSetMock,
-        remove: vi.fn().mockResolvedValue(undefined),
+        remove: cookiesRemoveMock,
         flushStore: vi.fn().mockResolvedValue(undefined)
       },
-      clearData: vi.fn().mockResolvedValue(undefined),
+      clearData: clearDataMock,
       setUserAgent: vi.fn(),
       // Why (STA-4300): the importer derives the partition dir from the session rather than
       // trusting a caller-supplied partition, so the double must expose it.
@@ -164,6 +177,63 @@ describe('importCookiesFromBrowser — undecryptable cookies', () => {
       reason: 'linux-keyring-unavailable'
     })
     expect(cookiesSetMock).not.toHaveBeenCalled()
+  })
+
+  it('preserves a populated family when its unreadable partition row cannot decrypt', async () => {
+    const sourceCookiesPath = join(tmpDir, 'Chrome', 'Default', 'Network', 'Cookies')
+    const sourceDb = createChromiumCookieTestDatabase(sourceCookiesPath, [
+      {
+        domain: '.preserved.example',
+        name: 'undecryptable',
+        value: '',
+        encryptedValue: encryptLinuxChromiumCookie('wrong-key-garbage', 'peanuts', 'v11'),
+        topFrameSiteKey: 'https://top.example'
+      },
+      { domain: '.replace.test', name: 'plain', value: 'plain-value' }
+    ])
+    sourceDb.exec("UPDATE cookies SET has_cross_site_ancestor = 2 WHERE name = 'undecryptable'")
+    sourceDb.close()
+    createChromiumCookieTestDatabase(
+      join(tmpDir, 'userData', 'Partitions', 'test', 'Network', 'Cookies'),
+      []
+    ).close()
+    targetJar.push({
+      name: 'live-session',
+      value: 'must-survive',
+      domain: '.preserved.example',
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'no_restriction'
+    })
+
+    const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(clearDataMock).not.toHaveBeenCalled()
+    expect(cookiesRemoveMock).not.toHaveBeenCalledWith(expect.any(String), 'live-session')
+    expect(targetJar).toEqual([expect.objectContaining({ name: 'live-session' })])
+    expect(writeCookieIdentityMock).toHaveBeenCalledTimes(1)
+    expect(writeCookieIdentityMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'plain', value: 'plain-value' })
+    )
+    expect(result.summary).toMatchObject({
+      totalCookies: 2,
+      importedCookies: 1,
+      skippedCookies: 1,
+      partitionSkippedCookies: 1,
+      warning: {
+        code: 'cookies-undecryptable',
+        failedCookies: 1,
+        reason: 'linux-keyring-unavailable'
+      }
+    })
+    expect(result.summary.totalCookies).toBe(
+      result.summary.importedCookies + result.summary.skippedCookies
+    )
   })
 
   it.each(['v10', 'v99'])(

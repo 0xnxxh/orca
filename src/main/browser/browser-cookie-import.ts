@@ -1719,6 +1719,33 @@ export async function importCookiesFromBrowser(
       return { ok: false, reason: `No cookies found in ${browser.label}.` }
     }
 
+    // Why (STA-4300): partition fidelity is a property of the source row, even when its value
+    // cannot be decrypted. Plan first so decryption failure cannot discard a family's skip.
+    const partitionCandidates = sourceRows.flatMap((sourceRow) => {
+      const domain = sourceRow.host_key as string
+      const name = sourceRow.name as string
+      return isGoogleSourceBoundCookie(name, domain) || isNonTransplantableCookieDomain(domain)
+        ? []
+        : [{ sourceRow, domain, partition: readChromiumRowPartition(sourceRow, sourceColumns) }]
+    })
+    const nativePlan = planImportWrites(partitionCandidates)
+    const plannedSourceRows = new Set(nativePlan.writes.map((candidate) => candidate.sourceRow))
+    const partitionBySourceRow = new Map(
+      partitionCandidates.map((candidate) => [candidate.sourceRow, candidate.partition])
+    )
+
+    // Why (§4.3c): a family we cannot name is one we cannot exclude from the clear, and clearing a
+    // family we cannot protect is the P0. Refuse before the jar is touched.
+    if (nativePlan.hasUnrepresentableSkip) {
+      closeStagingDb()
+      discardStagingFile()
+      return {
+        ok: false,
+        reason:
+          'Could not import: a cookie with an unreadable site partition has no registrable domain, so its existing session cannot be protected.'
+      }
+    }
+
     const needsSourceKey = sourceRows.some((sourceRow) => {
       const encRaw = sourceRow.encrypted_value
       if (!(encRaw instanceof Uint8Array) || encRaw.length === 0) {
@@ -1748,7 +1775,7 @@ export async function importCookiesFromBrowser(
     let keyringUnavailableFailed = 0
     let integritySkipped = 0
     let nonTransplantableSkipped = 0
-    let partitionSkipped = 0
+    const partitionSkipped = nativePlan.skips.length
     let memoryLoaded = 0
     let memoryFailed = 0
     const domainSet = new Set<string>()
@@ -1787,6 +1814,14 @@ export async function importCookiesFromBrowser(
       }
     } else if (stagingAvailable) {
       disableStaging('staged database exposed no cookies columns')
+    }
+
+    // Why (§4.3b): a staged image is a whole-DB replacement on next start, so it cannot represent
+    // "preserve this family". When anything is preserved, this import gets no cold-start fallback.
+    if (nativePlan.skippedFamilies.size > 0) {
+      disableStaging(
+        `${nativePlan.skippedFamilies.size} preserved cookie families cannot be represented in a staged image`
+      )
     }
 
     for (const sourceRow of sourceRows) {
@@ -1853,12 +1888,19 @@ export async function importCookiesFromBrowser(
         continue
       }
 
+      // Decryption failures are already counted above. Every other row suppressed by the
+      // pre-decryption family plan is counted once here, keeping partitionSkipped a breakdown.
+      if (!plannedSourceRows.has(sourceRow)) {
+        skipped++
+        continue
+      }
+
       const path = sourceRow.path as string
       const secure = sourceRow.is_secure === 1n
       const httpOnly = sourceRow.is_httponly === 1n
       const sameSite = chromiumSameSite(Number(sourceRow.samesite ?? 0))
       const expiresUtc = chromiumTimestampToUnix(sourceRow.expires_utc as bigint)
-      const partition = readChromiumRowPartition(sourceRow, sourceColumns)
+      const partition = partitionBySourceRow.get(sourceRow)!
       // Why: cookie values are raw bytes, not UTF-8; latin1 preserves 0x00–0xFF without lossy replacement.
       const value = decryptedValue.toString('latin1')
 
@@ -1883,39 +1925,9 @@ export async function importCookiesFromBrowser(
       })
     }
 
-    // Why: family-atomic skip is a property of the WHOLE input, so it cannot be decided per row.
-    const nativePlan = planImportWrites(scanned.map((row) => row.entry))
-    const plannedRows = new Set<DecryptedCookie>(nativePlan.writes)
-    partitionSkipped = nativePlan.skips.length
-    skipped += partitionSkipped
-
-    // Why (§4.3c): a family we cannot name is one we cannot exclude from the clear, and clearing a
-    // family we cannot protect is the P0. Refuse before the jar is touched.
-    if (nativePlan.hasUnrepresentableSkip) {
-      closeStagingDb()
-      discardStagingFile()
-      return {
-        ok: false,
-        reason:
-          'Could not import: a cookie with an unreadable site partition has no registrable domain, so its existing session cannot be protected.'
-      }
-    }
-
-    // Why (§4.3b): a staged image is a whole-DB replacement on next start, so it cannot represent
-    // "preserve this family". When anything is preserved, this import gets no cold-start fallback;
-    // main's existing memoryFailed arm then reports restart-fallback-unavailable.
-    if (nativePlan.skippedFamilies.size > 0) {
-      disableStaging(
-        `${nativePlan.skippedFamilies.size} preserved cookie families cannot be represented in a staged image`
-      )
-    }
-
     // EMIT: everything downstream derives from the plan, so there is no second place a row can
     // leak in.
     for (const { entry, sourceRow } of scanned) {
-      if (!plannedRows.has(entry)) {
-        continue
-      }
       decryptedCookies.push(entry)
       const cleanDomain = entry.domain.startsWith('.') ? entry.domain.slice(1) : entry.domain
       domainSet.add(cleanDomain)
