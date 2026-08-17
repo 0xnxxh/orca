@@ -103,19 +103,27 @@ export function advancedNativeChatUserContentCounts(
   return advanced
 }
 
-/** User texts that already have a later non-user turn (ready to prune echoes). */
+/** A transcript user row as the glue matcher sees it. `imageCount` is the budget
+ *  that lets the row own image-carrying pendings — a folded image turn must stay
+ *  glueable, but a text-only row must never consume a send that carried a photo. */
+export type NativeChatUserTextRow = { text: string; imageCount: number }
+
+function nativeChatUserTextRow(message: NativeChatMessage): NativeChatUserTextRow | null {
+  const text = nativeChatUserMessageMatchText(message)
+  return text ? { text, imageCount: nativeChatUserMessageImageEvidenceCount(message) } : null
+}
+
+/** User rows that already have a later non-user turn (ready to prune echoes). */
 export function advancedNativeChatUserTexts(
   messages: readonly NativeChatMessage[]
-): readonly string[] {
-  const advanced: string[] = []
-  const waiting: string[] = []
+): readonly NativeChatUserTextRow[] {
+  const advanced: NativeChatUserTextRow[] = []
+  const waiting: NativeChatUserTextRow[] = []
   for (const message of messages) {
     if (message.role === 'user') {
-      const text = message.blocks.some(isImageRefBlock)
-        ? null
-        : nativeChatUserMessageMatchText(message)
-      if (text) {
-        waiting.push(text)
+      const row = nativeChatUserTextRow(message)
+      if (row) {
+        waiting.push(row)
       }
       continue
     }
@@ -125,20 +133,18 @@ export function advancedNativeChatUserTexts(
   return advanced
 }
 
-/** All user texts (for hiding optimistic echoes once the turn exists). */
+/** All user rows (for hiding optimistic echoes once the turn exists). */
 export function matchingNativeChatUserTexts(
   messages: readonly NativeChatMessage[]
-): readonly string[] {
-  const texts: string[] = []
+): readonly NativeChatUserTextRow[] {
+  const rows: NativeChatUserTextRow[] = []
   for (const message of messages) {
-    const text = message.blocks.some(isImageRefBlock)
-      ? null
-      : nativeChatUserMessageMatchText(message)
-    if (text) {
-      texts.push(text)
+    const row = message.role === 'user' ? nativeChatUserTextRow(message) : null
+    if (row) {
+      rows.push(row)
     }
   }
-  return texts
+  return rows
 }
 
 /**
@@ -183,32 +189,38 @@ export function countLeadingPendingTextsGluedToUserText(
  * matches stay in the content-key/occurrence path so repeated prompts and
  * send boundaries keep their existing semantics.
  *
- * `userTexts` must already be filtered to rows after the oldest entry's send
+ * `userRows` must already be filtered to rows after the oldest entry's send
  * boundary — this matcher has no clock of its own.
  */
 export function selectPendingIndicesRepresentedByUserTexts(
   pending: readonly NativeChatPendingOccurrence[],
-  userTexts: readonly string[]
+  userRows: readonly NativeChatUserTextRow[]
 ): Set<number> {
   const represented = new Set<number>()
-  if (pending.length < 2 || userTexts.length === 0) {
+  if (pending.length < 2 || userRows.length === 0) {
     return represented
   }
   const remaining = pending.map((entry, index) => ({
     index,
     text: nativeChatPendingMatchText(entry),
-    hasImages: Boolean(entry.imagePaths?.some(Boolean))
+    imageCount: entry.imagePaths?.filter(Boolean).length ?? 0
   }))
-  for (const userText of userTexts) {
-    const open = remaining.filter(
-      (entry) => !entry.hasImages && !represented.has(entry.index) && entry.text.length > 0
-    )
+  for (const row of userRows) {
+    const open = remaining.filter((entry) => !represented.has(entry.index) && entry.text.length > 0)
     const gluedCount = countLeadingPendingTextsGluedToUserText(
       open.map((entry) => entry.text),
-      userText
+      row.text
     )
     // Why: gluedCount === 1 is an exact match — leave it to occurrence counting.
     if (gluedCount < 2) {
+      continue
+    }
+    // Why: a folded image turn must stay glueable, but a row can only own as many
+    // image-carrying sends as it actually shows evidence for.
+    const gluedImages = open
+      .slice(0, gluedCount)
+      .reduce((count, entry) => count + entry.imageCount, 0)
+    if (gluedImages > row.imageCount) {
       continue
     }
     for (let i = 0; i < gluedCount; i += 1) {

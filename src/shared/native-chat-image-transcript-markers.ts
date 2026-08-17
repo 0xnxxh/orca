@@ -101,7 +101,7 @@ export function nativeChatUserMessageMatchText(message: NativeChatMessage): stri
 
 /** `limit` is the number of images the run actually carried. Only that many
  *  markers can be placeholders; the rest are text the user typed. */
-function stripImagePromptMarkersFromTextBlocks(
+export function stripImagePromptMarkersFromTextBlocks(
   blocks: readonly NativeChatBlock[],
   limit: number
 ): NativeChatBlock[] {
@@ -163,11 +163,29 @@ export function nativeChatUserMessageImageEvidenceCount(message: NativeChatMessa
   return Math.max(imageRefCount, countImagePromptMarkers(message))
 }
 
+export type NormalizeImageTranscriptOptions = {
+  /**
+   * True when older messages exist above this window. The read window is a hard
+   * count slice, so its head can sit *inside* an image run whose
+   * `[Image: source: …]` turns were trimmed. Markers at the head are then
+   * un-anchorable evidence rather than proof the user typed them, and stripping
+   * is the safer read: leaving them shows agent-internal markup in a message the
+   * user already sent, and the run's real image count is no longer knowable, so
+   * the count bound can't apply either.
+   *
+   * Only the head is ambiguous — a marker turn anywhere else in the window would
+   * have its source run visible above it, so its absence there is real evidence.
+   */
+  hasEarlierHistory?: boolean
+}
+
 /** Claude records image paths as source turns followed by a prompt carrying
  *  image markers. Merge the whole run back into one native user turn. */
 export function normalizeImageTranscriptMessages(
-  messages: readonly NativeChatMessage[]
+  messages: readonly NativeChatMessage[],
+  options?: NormalizeImageTranscriptOptions
 ): NativeChatMessage[] {
+  const headMayBeMidRun = options?.hasEarlierHistory === true
   let normalized: NativeChatMessage[] | null = null
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]!
@@ -195,11 +213,14 @@ export function normalizeImageTranscriptMessages(
         prompt.source === message.source &&
         hasImagePromptMarker(prompt)
       ) {
+        // Why: a run touching the window head may have lost earlier source turns,
+        // so the visible image count is a floor, not the run's real size.
+        const limit = headMayBeMidRun && index === 0 ? Number.POSITIVE_INFINITY : imagePaths.length
         normalized.push({
           ...prompt,
           blocks: [
             ...imagePaths.map((path) => ({ type: 'image-ref' as const, path })),
-            ...stripImagePromptMarkersFromTextBlocks(prompt.blocks, imagePaths.length)
+            ...stripImagePromptMarkersFromTextBlocks(prompt.blocks, limit)
           ]
         })
         index = nextIndex
@@ -211,7 +232,12 @@ export function normalizeImageTranscriptMessages(
       })
       continue
     }
-    const blocks = removeEmptyFirstTextBlock(message.blocks)
+    // Why: the whole source run above the head can be trimmed away, leaving the
+    // prompt alone at index 0 with markers no anchor can vouch for.
+    const blocks =
+      headMayBeMidRun && index === 0 && hasImagePromptMarker(message)
+        ? stripImagePromptMarkersFromTextBlocks(message.blocks, Number.POSITIVE_INFINITY)
+        : removeEmptyFirstTextBlock(message.blocks)
     if (blocks === message.blocks) {
       normalized?.push(message)
     } else {

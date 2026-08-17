@@ -343,3 +343,67 @@ describe('normalizeImageTranscriptMessages', () => {
     expect(normalizeImageTranscriptMessages([assistant])).toEqual([assistant])
   })
 })
+
+// The read window is a hard count slice (`boundNativeChatWindow`), so as a session
+// ages past the limit its head cuts straight through `[Image: source: …]` runs.
+// Without the paging signal the fold reads a trimmed run as "the user typed these
+// markers" and leaks agent-internal markup into a message they already sent.
+describe('normalizeImageTranscriptMessages with earlier history above the window', () => {
+  it('strips markers from a head prompt whose whole source run was trimmed', () => {
+    const out = normalizeImageTranscriptMessages([userText('b', '[Image #1] what do you see')], {
+      hasEarlierHistory: true
+    })
+    expect(out[0]!.blocks).toEqual([{ type: 'text', text: 'what do you see' }])
+  })
+
+  it('spends an unbounded budget on a run that starts at the window head', () => {
+    const out = normalizeImageTranscriptMessages(
+      [
+        userText('a', '[Image: source: /tmp/b.png]'),
+        userText('b', '[Image #1] [Image #2] compare these')
+      ],
+      { hasEarlierHistory: true }
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/b.png' },
+      { type: 'text', text: 'compare these' }
+    ])
+  })
+
+  // Why: only the head is ambiguous. Anywhere else the source run would be visible
+  // above the prompt, so its absence really is proof the markers are user text —
+  // this is the STA-4363 case and it must survive the paging signal.
+  it('keeps literal markers verbatim when the turn is not at the window head', () => {
+    const out = normalizeImageTranscriptMessages(
+      [
+        { ...userText('a', 'hello'), role: 'assistant' as const },
+        userText('b', 'use [Image #1] as a label')
+      ],
+      { hasEarlierHistory: true }
+    )
+    expect(out[1]!.blocks).toEqual([{ type: 'text', text: 'use [Image #1] as a label' }])
+  })
+
+  it('keeps a head prompt verbatim when no older history exists', () => {
+    const out = normalizeImageTranscriptMessages([userText('b', '[Image #1] what do you see')], {
+      hasEarlierHistory: false
+    })
+    expect(out[0]!.blocks).toEqual([{ type: 'text', text: '[Image #1] what do you see' }])
+  })
+
+  it('still bounds the strip by image count for a run below the head', () => {
+    const out = normalizeImageTranscriptMessages(
+      [
+        { ...userText('z', 'earlier'), role: 'assistant' as const },
+        userText('a', '[Image: source: /tmp/b.png]'),
+        userText('b', '[Image #1] compare with the [Image #2] I mentioned')
+      ],
+      { hasEarlierHistory: true }
+    )
+    expect(out[1]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/b.png' },
+      { type: 'text', text: 'compare with the [Image #2] I mentioned' }
+    ])
+  })
+})

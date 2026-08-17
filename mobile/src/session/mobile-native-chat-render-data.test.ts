@@ -173,7 +173,10 @@ describe('buildMobileNativeChatTransientData', () => {
     ])
   })
 
-  it('restores a local preview without treating it as proof to strip marker text', () => {
+  // A marker-only turn is the documented normal echo shape for some hosts, and a
+  // bound preview is proof the markers stand in for the photo now beside them —
+  // captioning the user's own image with a literal `[Image #1]` is never right.
+  it('restores the local preview onto a marker-only transcript turn', () => {
     const result = buildMobileNativeChatTransientData({
       folded: foldMobileNativeChatMessages([user('prompt', '[Image #1]')]),
       streaming: null,
@@ -181,10 +184,34 @@ describe('buildMobileNativeChatTransientData', () => {
       imagePreviewsByMessageId: { prompt: ['file:///phone-photo.jpg'] }
     })
 
+    expect(result.data[0]?.blocks).toEqual([{ type: 'image-ref', url: 'file:///phone-photo.jpg' }])
+  })
+
+  // Why: the bound preview only vouches for as many markers as it shows images.
+  it('keeps surplus marker text the previews cannot vouch for', () => {
+    const result = buildMobileNativeChatTransientData({
+      folded: foldMobileNativeChatMessages([user('prompt', '[Image #1] next to [Image #2]')]),
+      streaming: null,
+      pending: [],
+      imagePreviewsByMessageId: { prompt: ['file:///phone-photo.jpg'] }
+    })
+
     expect(result.data[0]?.blocks).toEqual([
-      { type: 'text', text: '[Image #1]' },
+      { type: 'text', text: 'next to [Image #2]' },
       { type: 'image-ref', url: 'file:///phone-photo.jpg' }
     ])
+  })
+
+  // Why: no preview binding means no evidence, so the ticket's rule still holds.
+  it('leaves marker text alone when no preview is bound', () => {
+    const result = buildMobileNativeChatTransientData({
+      folded: foldMobileNativeChatMessages([user('prompt', '[Image #1]')]),
+      streaming: null,
+      pending: [],
+      imagePreviewsByMessageId: {}
+    })
+
+    expect(result.data[0]?.blocks).toEqual([{ type: 'text', text: '[Image #1]' }])
   })
 
   it('appends a synthetic bubble for gated streaming text, between transcript and pending', () => {

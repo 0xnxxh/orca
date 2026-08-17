@@ -309,7 +309,8 @@ export function useNativeChatLiveSession(
     agent,
     sessionId,
     baseMessages,
-    appended
+    appended,
+    hasEarlierHistory: hasMore
   })
 
   return useMemo<NativeChatLiveSession>(() => {

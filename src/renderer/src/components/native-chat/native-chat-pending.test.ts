@@ -219,6 +219,25 @@ function advancedGlueTranscript(row: string): NativeChatMessage[] {
   return [...glueTranscript(row), assistantMessage('glue-answer', 'done', 6100)]
 }
 
+/** The shape `normalizeImageTranscriptMessages` folds an image send into. */
+function foldedImageGlueTranscript(paths: readonly string[], row: string): NativeChatMessage[] {
+  return [
+    userMessage('glue-history', 'hello', 900),
+    GLUE_BOUNDARY,
+    {
+      id: 'glue-row',
+      role: 'user',
+      blocks: [
+        ...paths.map((path) => ({ type: 'image-ref' as const, path })),
+        { type: 'text' as const, text: row }
+      ],
+      timestamp: 6000,
+      source: 'transcript'
+    },
+    assistantMessage('glue-answer', 'done', 6100)
+  ]
+}
+
 describe('glued rapid sends', () => {
   it('retires both echoes when a lost Enter glued the pair into one row', () => {
     const pending = [gluePending('p1', 'tell me a joke'), gluePending('p2', 'continue')]
@@ -246,6 +265,47 @@ describe('glued rapid sends', () => {
     expect(
       prunePendingSends(pending, advancedGlueTranscript('tell me a joke \t\n continue'))
     ).toEqual([])
+  })
+
+  // Why: the folded image turn is the only transcript evidence of a glued send
+  // that carried a photo. Ignoring rows with image blocks left both optimistic
+  // bubbles — one a duplicate of the user's photo — on screen indefinitely.
+  it('retires a glued pair whose first send carried an image', () => {
+    const pending = [
+      { ...gluePending('p1', 'look at this'), imagePaths: ['/tmp/a.png'] },
+      gluePending('p2', 'please')
+    ]
+
+    expect(
+      prunePendingSends(pending, foldedImageGlueTranscript(['/tmp/a.png'], 'look at this please'))
+    ).toEqual([])
+  })
+
+  it('hides a glued image pair as soon as the folded row lands', () => {
+    const pending = [
+      { ...gluePending('p1', 'look at this'), imagePaths: ['/tmp/a.png'] },
+      gluePending('p2', 'please')
+    ]
+
+    expect(
+      pendingSendsAsMessages(
+        pending,
+        foldedImageGlueTranscript(['/tmp/a.png'], 'look at this please')
+      )
+    ).toEqual([])
+  })
+
+  // Why: the image budget. A row carrying no image evidence must never retire a
+  // send whose photo has not landed, or the preview vanishes before it arrives.
+  it('does not let a text-only row consume a send that carried an image', () => {
+    const pending = [
+      { ...gluePending('p1', 'look at this'), imagePaths: ['/tmp/a.png'] },
+      gluePending('p2', 'please')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('look at this please'))).toEqual(
+      pending
+    )
   })
 
   it('retires three prompts collapsed into one row with mixed boundaries', () => {

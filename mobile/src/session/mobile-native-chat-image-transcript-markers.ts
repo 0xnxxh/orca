@@ -13,5 +13,6 @@ export {
   normalizeImageTranscriptMessages,
   normalizeNativeChatUserText,
   normalizedNativeChatUserMessageText,
-  stripImagePromptMarker
+  stripImagePromptMarker,
+  stripImagePromptMarkersFromTextBlocks
 } from '../../../src/shared/native-chat-image-transcript-markers'
