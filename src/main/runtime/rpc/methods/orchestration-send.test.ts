@@ -8,7 +8,9 @@ import type { OrcaRuntimeService } from '../../orca-runtime'
 import type { RuntimeTerminalSummary } from '../../../../shared/runtime-types'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../../../shared/protocol-version'
 
-function lifecycleGroupRecipientError(type: 'worker_done' | 'heartbeat'): string {
+function lifecycleGroupRecipientError(
+  type: 'worker_done' | 'heartbeat' | 'escalation' | 'decision_gate'
+): string {
   return `${type} messages belong to one exact Dispatch and cannot target a group address.`
 }
 
@@ -633,6 +635,27 @@ describe('orchestration RPC methods', () => {
       expect(listTerminals).not.toHaveBeenCalled()
       expect(db.getInbox(100)).toHaveLength(0)
     })
+
+    it.each(['escalation', 'decision_gate'] as const)(
+      'rejects %s group sends before inserting rows',
+      async (type) => {
+        setup()
+        const listTerminals = vi.spyOn(runtime, 'listTerminals')
+
+        await expect(
+          call('orchestration.send', {
+            from: 'term_worker',
+            to: '@all',
+            subject: `${type} broadcast`,
+            type,
+            payload: JSON.stringify({ taskId: 'task_1' })
+          })
+        ).rejects.toThrow(lifecycleGroupRecipientError(type))
+
+        expect(listTerminals).not.toHaveBeenCalled()
+        expect(db.getInbox(100)).toHaveLength(0)
+      }
+    )
 
     it('continues to send worker_done to a concrete terminal handle', async () => {
       setup()

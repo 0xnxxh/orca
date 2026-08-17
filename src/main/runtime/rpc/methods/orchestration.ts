@@ -64,7 +64,20 @@ async function routeAllMailboxPages(
   }
 }
 
-function getLifecycleGroupRecipientError(type: 'worker_done' | 'heartbeat'): string {
+type DispatchMutationMessageType = 'worker_done' | 'heartbeat' | 'escalation' | 'decision_gate'
+
+function isDispatchMutationMessageType(
+  type: string | undefined
+): type is DispatchMutationMessageType {
+  return (
+    type === 'worker_done' ||
+    type === 'heartbeat' ||
+    type === 'escalation' ||
+    type === 'decision_gate'
+  )
+}
+
+function getLifecycleGroupRecipientError(type: DispatchMutationMessageType): string {
   return `${type} messages belong to one exact Dispatch and cannot target a group address.`
 }
 
@@ -115,11 +128,7 @@ const SendParams = z
     devMode: OptionalBoolean
   })
   .superRefine((params, ctx) => {
-    if (
-      (params.type !== 'worker_done' && params.type !== 'heartbeat') ||
-      !params.to ||
-      !isGroupAddress(params.to)
-    ) {
+    if (!isDispatchMutationMessageType(params.type) || !params.to || !isGroupAddress(params.to)) {
       return
     }
     // Why: dispatch lifecycle messages are authority/liveness signals for one coordinator; fanout would create lifecycle mail in unrelated terminals.
@@ -639,11 +648,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         const dispatch = routing.dispatchId
           ? db.getDispatchContextById(routing.dispatchId)
           : undefined
-        const dispatchMutationMessage =
-          msg.type === 'worker_done' ||
-          msg.type === 'heartbeat' ||
-          msg.type === 'escalation' ||
-          msg.type === 'decision_gate'
+        const dispatchMutationMessage = isDispatchMutationMessageType(msg.type)
         if (
           dispatchMutationMessage &&
           dispatch &&
