@@ -7814,6 +7814,7 @@
           "file": "src/main/providers/ssh-pty-restore-required-reattach.test.ts",
           "assertions": [
             "restoreRequired retries one fresh delivery over the live PTY and never reports exited",
+            "transport loss during fresh-delivery verification remains unverifiable through the tri-state liveness probe",
             "authoritative PTY absence still expires the lease"
           ]
         },
