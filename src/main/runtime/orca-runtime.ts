@@ -5874,7 +5874,13 @@ export class OrcaRuntimeService {
         ] as const
       })
     )
-    const hostIds = this.listKnownExecutionHostIds()
+    const hostIds = new Set<ExecutionHostId>([LOCAL_EXECUTION_HOST_ID])
+    for (const repo of repos) {
+      hostIds.add(getRepoExecutionHostId(repo))
+    }
+    for (const hostId of this.store?.getWorkspaceSessionHostIds?.() ?? []) {
+      hostIds.add(hostId)
+    }
 
     const targets = new Map<string, WorkspaceSessionState>()
     for (const hostId of hostIds) {
