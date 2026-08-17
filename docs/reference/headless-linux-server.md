@@ -24,9 +24,11 @@ sudo apt-get update
 sudo apt-get install -y curl file jq xvfb zlib1g-dev
 ```
 
-On Ubuntu 22.04, install `libfuse2` to execute the AppImage through FUSE. On
-Ubuntu 24.04 and Debian, the equivalent package may be `libfuse2t64`. FUSE is
-optional: without it, use the AppImage's supported extraction path:
+FUSE is only needed to launch the AppImage as a single file. On Ubuntu 22.04
+install `libfuse2` for that; on Ubuntu 24.04 and Debian the equivalent package
+may be `libfuse2t64`. Without FUSE, extract the payload once and run from the
+extracted tree — the registered CLI does exactly this internally, so nothing
+about the CLI depends on FUSE being present:
 
 ```bash
 cd /opt/orca
@@ -292,6 +294,16 @@ the command:
 
 This disables a security boundary. Prefer a dedicated unprivileged service
 user, especially when the listener is reachable beyond localhost.
+
+Registering the CLI from an AppImage (Orca Settings, or `orca serve` on a
+headless host) extracts the payload once into
+`${XDG_CACHE_HOME:-~/.cache}/orca/appimage/<key>` and points the installed
+`orca-ide` command at the launcher inside it. That costs roughly 540 MB, pruned
+to the current build on each upgrade and reclaimed when you unregister the CLI.
+It is what makes the command work with no FUSE device, and on hosts where
+unprivileged user namespaces are restricted (the Ubuntu 24.04+ default) — there
+the AppImage's own `AppRun` prepends Chromium's `--no-sandbox`, which Node mode
+rejects outright.
 
 ## Pairing troubleshooting
 

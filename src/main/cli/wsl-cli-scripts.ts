@@ -1,3 +1,4 @@
+import { quoteShell } from './posix-shell-quote'
 const MANAGED_MARKER = '# Orca managed WSL CLI launcher'
 const BRIDGE_MANAGED_MARKER = '# Orca managed WSL CLI PowerShell bridge'
 
@@ -187,8 +188,4 @@ export function getWslLauncherMarker(): string {
 
 export function getWslBridgeMarker(): string {
   return BRIDGE_MANAGED_MARKER
-}
-
-export function quoteShell(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`
 }

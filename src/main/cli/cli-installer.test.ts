@@ -1,4 +1,13 @@
-import { chmod, lstat, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,8 +27,18 @@ vi.mock('node:child_process', () => ({
 }))
 
 import { CliInstaller } from './cli-installer'
-import { buildAppImageCliWrapper } from './appimage-cli-wrapper'
 import { makeFixture } from './cli-installer-test-fixtures'
+
+// Stands in for the AppImage runtime's `--appimage-extract`, which writes the
+// payload to ./squashfs-root relative to cwd.
+async function fakeAppImageExtractRunner(_appImagePath: string, cwd: string): Promise<void> {
+  const launcherDir = join(cwd, 'squashfs-root', 'resources', 'bin')
+  await mkdir(launcherDir, { recursive: true })
+  await writeFile(join(launcherDir, 'orca-ide'), '#!/usr/bin/env bash\n', {
+    encoding: 'utf8',
+    mode: 0o755
+  })
+}
 
 describe('CliInstaller', () => {
   beforeEach(() => {
@@ -127,15 +146,18 @@ describe('CliInstaller', () => {
     }
   )
 
-  // Why: AppImage resources live under a per-launch FUSE mount, so the
-  // installed shell command must be a stable wrapper rather than a symlink.
+  // Why: an AppImage's payload is only reachable through a FUSE mount that its
+  // own AppRun sets up, and AppRun prepends `--no-sandbox` into node mode on
+  // userns-restricted hosts (#11609). Extracting once gives the command the
+  // same plain launcher a deb install ships, so registration is a symlink.
   it.skipIf(process.platform === 'win32')(
-    'creates an AppImage wrapper under the linux command path',
+    'symlinks the linux command at the extracted AppImage launcher',
     async () => {
       const fixture = await makeFixture()
       const commandDir = join(fixture.root, '.local', 'bin')
       const installPath = join(commandDir, 'orca-ide')
       const appImagePath = join(fixture.root, 'Orca.AppImage')
+      const cacheRootPath = join(fixture.root, 'cache')
       await writeFile(appImagePath, '#!/usr/bin/env bash\n', {
         encoding: 'utf8',
         mode: 0o755
@@ -145,76 +167,74 @@ describe('CliInstaller', () => {
         platform: 'linux',
         isPackaged: true,
         appImagePath,
+        appImageCacheRootPath: cacheRootPath,
+        appImageExtractRunner: fakeAppImageExtractRunner,
         commandPathOverride: installPath,
         processPathEnv: commandDir
       })
 
       const initial = await installer.getStatus()
-      expect(initial).toMatchObject({
-        state: 'not_installed',
-        installMethod: 'wrapper',
-        launcherPath: appImagePath
-      })
+      expect(initial).toMatchObject({ state: 'not_installed', installMethod: 'symlink' })
 
       const installed = await installer.install()
       expect(installed).toMatchObject({
         state: 'installed',
         commandName: 'orca-ide',
-        installMethod: 'wrapper',
-        launcherPath: appImagePath,
-        currentTarget: appImagePath,
+        installMethod: 'symlink',
         pathConfigured: true
       })
-
-      const commandStats = await lstat(installPath)
-      expect(commandStats.isFile()).toBe(true)
-      expect(commandStats.mode & 0o111).not.toBe(0)
-      await expect(readlink(installPath)).rejects.toMatchObject({ code: 'EINVAL' })
-      await expect(readFile(installPath, 'utf8')).resolves.toBe(
-        buildAppImageCliWrapper(appImagePath)
-      )
+      // The command resolves through the extracted payload, never the AppImage.
+      expect(installed.launcherPath).toMatch(/cache\/[0-9a-f]{24}\/resources\/bin\/orca-ide$/)
+      expect(installed.currentTarget).toBe(installed.launcherPath)
+      await expect(readlink(installPath)).resolves.toBe(installed.launcherPath)
 
       const removed = await installer.remove()
       expect(removed.state).toBe('not_installed')
+      // Unregistering reclaims the ~540 MB payload instead of orphaning it.
+      await expect(readdir(cacheRootPath)).resolves.toEqual([])
     }
   )
 
   it.skipIf(process.platform === 'win32')(
-    'reports a stale AppImage wrapper when the AppImage path changes',
+    're-extracts and re-points the command when the AppImage is replaced',
     async () => {
       const fixture = await makeFixture()
       const commandDir = join(fixture.root, '.local', 'bin')
       const installPath = join(commandDir, 'orca-ide')
-      const oldAppImagePath = join(fixture.root, 'Old-Orca.AppImage')
-      const newAppImagePath = join(fixture.root, 'Orca.AppImage')
-      await mkdir(commandDir, { recursive: true })
-      await writeFile(installPath, buildAppImageCliWrapper(oldAppImagePath), {
+      const appImagePath = join(fixture.root, 'Orca.AppImage')
+      const cacheRootPath = join(fixture.root, 'cache')
+      await writeFile(appImagePath, '#!/usr/bin/env bash\n', {
         encoding: 'utf8',
         mode: 0o755
       })
-      await writeFile(newAppImagePath, '#!/usr/bin/env bash\n', {
+      const makeInstaller = (): CliInstaller =>
+        new CliInstaller({
+          platform: 'linux',
+          isPackaged: true,
+          appImagePath,
+          appImageCacheRootPath: cacheRootPath,
+          appImageExtractRunner: fakeAppImageExtractRunner,
+          commandPathOverride: installPath,
+          processPathEnv: commandDir
+        })
+
+      const first = await makeInstaller().install()
+      expect(first.state).toBe('installed')
+
+      // An update replaces the file in place, so size and mtime both change.
+      await writeFile(appImagePath, '#!/usr/bin/env bash\n# next version\n', {
         encoding: 'utf8',
         mode: 0o755
       })
 
-      const installer = new CliInstaller({
-        platform: 'linux',
-        isPackaged: true,
-        appImagePath: newAppImagePath,
-        commandPathOverride: installPath,
-        processPathEnv: commandDir
-      })
+      await expect(makeInstaller().getStatus()).resolves.toMatchObject({ state: 'stale' })
 
-      await expect(installer.getStatus()).resolves.toMatchObject({
-        state: 'stale',
-        installMethod: 'wrapper',
-        currentTarget: newAppImagePath
-      })
-
-      await expect(installer.install()).resolves.toMatchObject({ state: 'installed' })
-      await expect(readFile(installPath, 'utf8')).resolves.toBe(
-        buildAppImageCliWrapper(newAppImagePath)
-      )
+      const second = await makeInstaller().install()
+      expect(second.state).toBe('installed')
+      expect(second.launcherPath).not.toBe(first.launcherPath)
+      await expect(readlink(installPath)).resolves.toBe(second.launcherPath)
+      // Only the live payload survives the upgrade.
+      await expect(readdir(cacheRootPath)).resolves.toHaveLength(1)
     }
   )
 
@@ -251,7 +271,7 @@ describe('CliInstaller', () => {
   )
 
   it.skipIf(process.platform === 'win32')(
-    'removes a legacy linux orca symlink when installing an AppImage wrapper',
+    'removes a legacy linux orca symlink when registering from an AppImage',
     async () => {
       const fixture = await makeFixture()
       const homePath = join(fixture.root, 'home')
@@ -269,6 +289,8 @@ describe('CliInstaller', () => {
         platform: 'linux',
         isPackaged: true,
         appImagePath,
+        appImageCacheRootPath: join(fixture.root, 'cache'),
+        appImageExtractRunner: fakeAppImageExtractRunner,
         homePath,
         processPathEnv: commandDir
       })

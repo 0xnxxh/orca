@@ -1,13 +1,14 @@
 import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
   app: { isPackaged: true }
 }))
 
+import { resolveAppImageCacheKey } from './appimage-extracted-root'
 import { ensureLinuxTerminalOrcaCliShimDir } from './linux-terminal-orca-cli-shim'
 
 const created: string[] = []
@@ -76,19 +77,47 @@ describe('ensureLinuxTerminalOrcaCliShimDir', () => {
     expect(statSync(healedPath).mode & 0o111).not.toBe(0)
   })
 
-  it('execs the stable AppImage (not the ephemeral mount) when running from an AppImage', async () => {
+  // Why: a terminal spawn must not block on a ~540 MB extraction, so the shim
+  // prefers an extracted payload only when one already exists and otherwise
+  // uses the live mount — correct for as long as those terminals are alive.
+  it('prefers an already-extracted AppImage payload over the ephemeral mount', async () => {
     const { userDataPath, resourcesPath } = await makeFixture()
-    const appImagePath = join(userDataPath, 'Applications', 'Orca.AppImage')
+    const appImagePath = join(userDataPath, 'Orca.AppImage')
+    await mkdir(userDataPath, { recursive: true })
+    await writeFile(appImagePath, '#!/usr/bin/env bash\n', { encoding: 'utf8', mode: 0o755 })
+    const cacheRootPath = join(userDataPath, 'cache')
+    const cacheKey = resolveAppImageCacheKey(appImagePath)
+    const extractedLauncher = join(cacheRootPath, cacheKey!, 'resources', 'bin', 'orca-ide')
+    await mkdir(dirname(extractedLauncher), { recursive: true })
+    await writeFile(extractedLauncher, '', { encoding: 'utf8', mode: 0o755 })
 
     const shimDir = ensureLinuxTerminalOrcaCliShimDir({
       userDataPath,
       resourcesPath,
-      appImagePath
+      appImagePath,
+      appImageCacheRootPath: cacheRootPath
     })
 
     const content = readFileSync(join(shimDir!, 'orca'), 'utf8')
-    expect(content).toContain(appImagePath)
-    expect(content).not.toContain(resourcesPath)
+    expect(content).toContain(extractedLauncher)
+    expect(content).not.toContain(appImagePath)
+  })
+
+  it('falls back to the live resources launcher when nothing is extracted yet', async () => {
+    const { userDataPath, resourcesPath } = await makeFixture()
+    const appImagePath = join(userDataPath, 'Orca.AppImage')
+    await mkdir(userDataPath, { recursive: true })
+    await writeFile(appImagePath, '#!/usr/bin/env bash\n', { encoding: 'utf8', mode: 0o755 })
+
+    const shimDir = ensureLinuxTerminalOrcaCliShimDir({
+      userDataPath,
+      resourcesPath,
+      appImagePath,
+      appImageCacheRootPath: join(userDataPath, 'empty-cache')
+    })
+
+    const content = readFileSync(join(shimDir!, 'orca'), 'utf8')
+    expect(content).toContain(join(resourcesPath, 'bin', 'orca-ide'))
   })
 
   it('returns null (and does not memoize) when the bundled launcher is missing', async () => {

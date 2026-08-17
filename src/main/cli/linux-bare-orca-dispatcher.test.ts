@@ -84,18 +84,35 @@ describe('installLinuxBareOrcaDispatcher', () => {
     expect(content).toContain(`exec '${join(resourcesPath, 'bin', 'orca-ide')}' "$@"`)
   })
 
-  it('execs the stable AppImage (not the ephemeral mount) when running from an AppImage', async () => {
+  // Why: this dispatcher must survive a restart, and an AppImage's resourcesPath
+  // is a mount that dies with the app. Point it at the extracted payload, which
+  // also keeps it clear of AppRun's `--no-sandbox` injection (#11609).
+  it('execs the extracted payload (not the ephemeral mount) when running from an AppImage', async () => {
     const { homePath, resourcesPath } = await makeFixture()
-    const appImagePath = join(homePath, 'Applications', 'Orca.AppImage')
+    const appImagePath = join(homePath, 'Orca.AppImage')
+    await mkdir(homePath, { recursive: true })
+    await writeFile(appImagePath, '#!/usr/bin/env bash\n', { encoding: 'utf8', mode: 0o755 })
+    const cacheRootPath = join(homePath, 'cache')
 
-    const result = await installLinuxBareOrcaDispatcher({ resourcesPath, homePath, appImagePath })
+    const result = await installLinuxBareOrcaDispatcher({
+      resourcesPath,
+      homePath,
+      appImagePath,
+      appImageCacheRootPath: cacheRootPath,
+      appImageExtractRunner: async (_appImagePath, cwd) => {
+        const launcherDir = join(cwd, 'squashfs-root', 'resources', 'bin')
+        await mkdir(launcherDir, { recursive: true })
+        await writeFile(join(launcherDir, 'orca-ide'), '', { encoding: 'utf8', mode: 0o755 })
+      }
+    })
 
     expect(result.state).toBe('installed')
-    expect(result.target).toBe(appImagePath)
+    expect(result.target).toMatch(/cache\/[0-9a-f]{24}\/resources\/bin\/orca-ide$/)
     const content = await readFile(result.dispatcherPath, 'utf8')
-    // The AppImage wrapper references the stable outer path, never resourcesPath.
-    expect(content).toContain(appImagePath)
+    expect(content).toContain(result.target as string)
+    // Neither the ephemeral mount nor the outer AppImage may appear.
     expect(content).not.toContain(resourcesPath)
+    expect(content).not.toContain(appImagePath)
   })
 
   it('skips (does not clobber) a user-owned orca already at ~/.local/bin', async () => {

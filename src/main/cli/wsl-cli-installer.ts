@@ -15,9 +15,9 @@ import {
   getPosixDirname,
   getWslBridgeMarker,
   getWslLauncherMarker,
-  parseManagedLauncherTarget,
-  quoteShell
+  parseManagedLauncherTarget
 } from './wsl-cli-scripts'
+import { quoteShell } from './posix-shell-quote'
 
 const MANAGED_MARKER = getWslLauncherMarker()
 const BRIDGE_MANAGED_MARKER = getWslBridgeMarker()

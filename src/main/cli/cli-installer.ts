@@ -18,7 +18,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { promisify } from 'node:util'
 import type { CliInstallMethod, CliInstallStatus } from '../../shared/cli-install-types'
 import { expandWindowsEnvironmentVariables } from '../../shared/windows-environment-expansion'
-import { buildAppImageCliWrapper } from './appimage-cli-wrapper'
+import {
+  ensureAppImageExtractedRoot,
+  getAppImageCacheRootPath,
+  pruneAppImageExtractedRoots,
+  resolveAppImageExtractedRoot,
+  type AppImageExtractedRoot,
+  type AppImageExtractionOptions
+} from './appimage-extracted-root'
 import { getBundledLauncherPath, LINUX_CLI_COMMAND_NAME } from './bundled-cli-launcher-path'
 import {
   invalidateWindowsUserPathRegistryCache,
@@ -55,6 +62,10 @@ type CliInstallerOptions = {
   windowsEnvironment?: NodeJS.ProcessEnv
   /** Why: AppImage reports a stable outer file path via $APPIMAGE while bundled resources live in an ephemeral FUSE mount. */
   appImagePath?: string | null
+  /** Test seam — defaults to $XDG_CACHE_HOME/orca/appimage. */
+  appImageCacheRootPath?: string
+  /** Test seam — defaults to running the AppImage's own `--appimage-extract`. */
+  appImageExtractRunner?: (appImagePath: string, cwd: string) => Promise<void>
 }
 
 type InstallSpec = {
@@ -81,6 +92,8 @@ export class CliInstaller {
   private readonly userPathCacheInvalidator: () => void
   private readonly windowsEnvironment: NodeJS.ProcessEnv
   private readonly appImagePath: string | null
+  private readonly appImageCacheRootPath: string
+  private readonly appImageExtractRunner?: (appImagePath: string, cwd: string) => Promise<void>
 
   private get commandName(): string {
     if (!this.isPackaged && !this.commandPathOverride) {
@@ -123,6 +136,9 @@ export class CliInstaller {
       this.platform === 'linux' && this.isPackaged
         ? (options.appImagePath ?? process.env.APPIMAGE ?? null)
         : null
+    this.appImageCacheRootPath =
+      options.appImageCacheRootPath ?? getAppImageCacheRootPath(this.homePath)
+    this.appImageExtractRunner = options.appImageExtractRunner
   }
 
   async getStatus(): Promise<CliInstallStatus> {
@@ -172,15 +188,14 @@ export class CliInstaller {
     const baseStatus =
       spec.installMethod === 'symlink'
         ? await this.inspectSymlink(spec.commandPath, launcherPath)
-        : this.isLinuxAppImage()
-          ? await this.inspectAppImageWrapper(spec.commandPath, launcherPath)
-          : await this.inspectWindowsWrapper(spec.commandPath, launcherPath)
+        : await this.inspectWindowsWrapper(spec.commandPath, launcherPath)
     const pathDirectory = dirname(spec.commandPath)
     const pathProbe = await this.probePathConfiguration(pathDirectory)
     return this.withPathInfo(baseStatus, pathDirectory, pathProbe)
   }
 
   async install(): Promise<CliInstallStatus> {
+    const extractedRoot = await this.ensureLinuxAppImagePayload()
     const status = await this.getStatus()
     if (!status.supported || !status.commandPath || !status.launcherPath || !status.installMethod) {
       throw new Error(status.detail ?? 'CLI registration is unavailable on this build.')
@@ -193,9 +208,6 @@ export class CliInstaller {
     if (status.installMethod === 'symlink') {
       await this.installSymlink(status)
       await this.removeLegacyLinuxCommandIfManaged(status.launcherPath)
-    } else if (this.isLinuxAppImage()) {
-      await this.installAppImageWrapper(status.commandPath, status.launcherPath)
-      await this.removeLegacyLinuxCommandIfManaged(status.launcherPath)
     } else if (this.isWindowsPackagedBundledCommand(status.commandPath, status.launcherPath)) {
       // Why: packaged Windows already ships resources/bin/orca.exe; registration only owns the PATH entry.
     } else {
@@ -207,6 +219,11 @@ export class CliInstaller {
     if (this.platform === 'win32') {
       // Why: Windows shells find commands via user PATH, so the installer owns that entry, not the desktop installer.
       await this.ensureWindowsPathEntry(dirname(status.commandPath))
+    }
+    if (extractedRoot) {
+      // Why: prune only after the command points at the new payload, so an
+      // upgrade never unlinks the tree the live command still resolves through.
+      await pruneAppImageExtractedRoots(extractedRoot.rootPath, this.appImageCacheRootPath)
     }
 
     return this.getStatus()
@@ -235,6 +252,11 @@ export class CliInstaller {
     if (status.installMethod === 'symlink') {
       await this.removeSymlink(status.commandPath)
       await this.removeLegacyLinuxCommandIfManaged(status.launcherPath)
+      if (this.isLinuxAppImage()) {
+        // Why: the extracted payload is ~540 MB and exists only to back this
+        // command, so unregistering reclaims it rather than orphaning it.
+        await pruneAppImageExtractedRoots('', this.appImageCacheRootPath)
+      }
     } else if (this.isWindowsPackagedBundledCommand(status.commandPath, status.launcherPath)) {
       await this.removeWindowsPathEntry(dirname(status.commandPath))
     } else {
@@ -252,10 +274,7 @@ export class CliInstaller {
     }
 
     if (this.platform === 'darwin' || this.platform === 'linux') {
-      return {
-        commandPath,
-        installMethod: this.isLinuxAppImage() ? 'wrapper' : 'symlink'
-      }
+      return { commandPath, installMethod: 'symlink' }
     }
 
     if (this.platform === 'win32') {
@@ -368,7 +387,14 @@ export class CliInstaller {
     }
 
     if (this.isLinuxAppImage()) {
-      return this.appImagePath && existsSync(this.appImagePath) ? this.appImagePath : null
+      // Why: the payload is extracted once to a stable cache root so the command
+      // targets the same launcher a deb install ships. Re-entering the outer
+      // AppImage would go through AppRun (which prepends `--no-sandbox` into
+      // node mode, #11609) and require a FUSE mount (#12530).
+      if (!this.appImagePath || !existsSync(this.appImagePath)) {
+        return null
+      }
+      return resolveAppImageExtractedRoot(this.appImageExtractionOptions())?.launcherPath ?? null
     }
 
     if (this.isPackaged) {
@@ -474,60 +500,24 @@ export class CliInstaller {
     await writeFile(commandPath, buildWindowsForwarder(launcherPath), 'utf8')
   }
 
-  private async installAppImageWrapper(commandPath: string, appImagePath: string): Promise<void> {
-    // Why: the AppImage command dir is user-writable, so create it before writing the wrapper.
-    await mkdir(dirname(commandPath), { recursive: true })
-    await writeFile(commandPath, buildAppImageCliWrapper(appImagePath), {
-      encoding: 'utf8',
-      mode: 0o755
-    })
+  private async ensureLinuxAppImagePayload(): Promise<AppImageExtractedRoot | null> {
+    if (!this.isLinuxAppImage() || !this.appImagePath) {
+      return null
+    }
+    const extractedRoot = await ensureAppImageExtractedRoot(this.appImageExtractionOptions())
+    if (!extractedRoot) {
+      throw new Error(
+        `Could not extract the Orca AppImage at ${this.appImagePath}. Check that it is executable and that ${this.appImageCacheRootPath} has free space.`
+      )
+    }
+    return extractedRoot
   }
 
-  private async inspectAppImageWrapper(
-    commandPath: string,
-    appImagePath: string
-  ): Promise<CliInstallStatus> {
-    try {
-      const stats = await lstat(commandPath)
-      if (!stats.isFile()) {
-        return this.buildStatus({
-          commandPath,
-          launcherPath: appImagePath,
-          installMethod: 'wrapper',
-          supported: true,
-          state: 'conflict',
-          currentTarget: null,
-          detail: `${commandPath} exists but is not an Orca launcher script.`
-        })
-      }
-
-      const currentContent = await readFile(commandPath, 'utf8')
-      const expectedContent = buildAppImageCliWrapper(appImagePath)
-      return this.buildStatus({
-        commandPath,
-        launcherPath: appImagePath,
-        installMethod: 'wrapper',
-        supported: true,
-        state: currentContent === expectedContent ? 'installed' : 'stale',
-        currentTarget: appImagePath,
-        detail:
-          currentContent === expectedContent
-            ? `Registered at ${commandPath}.`
-            : `${commandPath} points to a different launcher.`
-      })
-    } catch (error) {
-      if (isMissingError(error)) {
-        return this.buildStatus({
-          commandPath,
-          launcherPath: appImagePath,
-          installMethod: 'wrapper',
-          supported: true,
-          state: 'not_installed',
-          currentTarget: null,
-          detail: `Register ${commandPath} to use Orca from the terminal.`
-        })
-      }
-      throw error
+  private appImageExtractionOptions(): AppImageExtractionOptions {
+    return {
+      appImagePath: this.appImagePath as string,
+      cacheRootPath: this.appImageCacheRootPath,
+      runExtract: this.appImageExtractRunner
     }
   }
 

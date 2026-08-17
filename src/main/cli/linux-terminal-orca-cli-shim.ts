@@ -1,5 +1,10 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+  isAppImageExtractionComplete,
+  resolveAppImageExtractedRoot
+} from './appimage-extracted-root'
+import { getBundledLauncherPath } from './bundled-cli-launcher-path'
 import { buildBareOrcaCliScript } from './linux-bare-orca-dispatcher'
 
 const SHIM_DIR_NAME = 'linux-orca-cli-shim'
@@ -15,6 +20,8 @@ export type LinuxTerminalOrcaCliShimOptions = {
   resourcesPath?: string | null
   /** Test seam — defaults to $APPIMAGE (set only when running from an AppImage). */
   appImagePath?: string | null
+  /** Test seam — defaults to $XDG_CACHE_HOME/orca/appimage. */
+  appImageCacheRootPath?: string
 }
 
 // Why: on Linux the CLI installs as `orca-ide` so it never shadows the GNOME
@@ -32,24 +39,18 @@ export function ensureLinuxTerminalOrcaCliShimDir(
     return cached
   }
 
-  const resourcesPath = options.resourcesPath ?? process.resourcesPath
-  if (!resourcesPath) {
+  const launcher = resolveShimLauncherPath(options)
+  if (!launcher) {
     return null
   }
-  const resolved = buildBareOrcaCliScript(
-    resourcesPath,
-    options.appImagePath ?? process.env.APPIMAGE ?? null
-  )
-  if (!resolved) {
-    return null
-  }
+  const script = buildBareOrcaCliScript(launcher)
 
   const shimDir = join(options.userDataPath, SHIM_DIR_NAME)
   const shimPath = join(shimDir, 'orca')
   try {
-    if (readShim(shimPath) !== resolved.script) {
+    if (readShim(shimPath) !== script) {
       mkdirSync(shimDir, { recursive: true })
-      writeFileSync(shimPath, resolved.script, 'utf8')
+      writeFileSync(shimPath, script, 'utf8')
     }
     // Why: always re-assert the exec bit — a shim written by an older run (or
     // restored from backup) with mode stripped would fail every agent CLI call.
@@ -59,6 +60,32 @@ export function ensureLinuxTerminalOrcaCliShimDir(
   }
   ensuredShimDirs.set(options.userDataPath, shimDir)
   return shimDir
+}
+
+/**
+ * Prefers an already-extracted AppImage payload because it outlives this app
+ * process, but never triggers an extraction: a terminal spawn must not block on
+ * ~540 MB of I/O. The live resources root is correct for every other install
+ * method, and for an AppImage it is the current mount — good for as long as the
+ * terminals using it exist.
+ */
+function resolveShimLauncherPath(options: LinuxTerminalOrcaCliShimOptions): string | null {
+  const appImagePath = options.appImagePath ?? process.env.APPIMAGE ?? null
+  if (appImagePath) {
+    const extractedRoot = resolveAppImageExtractedRoot({
+      appImagePath,
+      cacheRootPath: options.appImageCacheRootPath
+    })
+    if (extractedRoot && isAppImageExtractionComplete(extractedRoot)) {
+      return extractedRoot.launcherPath
+    }
+  }
+  const resourcesPath = options.resourcesPath ?? process.resourcesPath
+  if (!resourcesPath) {
+    return null
+  }
+  const launcher = getBundledLauncherPath('linux', resourcesPath)
+  return launcher && existsSync(launcher) ? launcher : null
 }
 
 function readShim(shimPath: string): string | null {
