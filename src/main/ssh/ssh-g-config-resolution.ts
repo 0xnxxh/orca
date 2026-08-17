@@ -137,32 +137,46 @@ export async function siteConfigMayRestrictHostKeys(
 }
 
 /**
- * One Include's arguments, or null when a quote or escape never completes.
+ * One Include's arguments, or null when the line cannot be read with confidence.
  *
  * Every spelling OpenSSH accepts for a path with a space has to hold together here, because the ones
  * that don't fail OPEN: splitting produces fragments that resolve to nothing, and "nothing there" is
- * indistinguishable from "no site policy". All three were confirmed honoured against 10.2p1 —
- * `"a b/x"`, `'a b/x'` and `a\ b/x` — and a path with a space is ordinary on Windows.
+ * indistinguishable from "no site policy". `"a b/x"`, `'a b/x'` and `a\ b/x` are all honoured, on
+ * BOTH platforms — measured against 10.2p1 and against Windows OpenSSH, where a path with a space is
+ * ordinary. An UNQUOTED space still splits, which also matches OpenSSH: it reads that as two paths.
  *
- * An UNQUOTED space still splits, which also matches OpenSSH: it reads that as two paths.
+ * `backslashIsSeparator` exists because there is no single correct rule, and shipping either one
+ * everywhere fails open on the other platform. Both halves are measured, not reasoned:
+ * - POSIX (10.2p1): a backslash before an ordinary character ESCAPES it — `conf\.d` resolves as
+ *   `conf.d`, and it takes four backslashes to survive as one, because argv_split and glob() each
+ *   consume a level. Preserving it there means looking for a path with a literal backslash, missing,
+ *   and reading "no policy". Rather than reimplement two rounds of glob escaping for a question this
+ *   coarse, POSIX answers doubt — a backslash in a POSIX system config path is vanishingly rare, so
+ *   fail-closed costs nothing here.
+ * - Windows: a backslash is the SEPARATOR and is preserved. `Include C:\Users\...\x.conf` resolves,
+ *   as does `C:\...\sp\ ace\x.conf` — so escaping-before-whitespace holds there too. Consuming
+ *   backslashes generally would eat every separator beneath C:\ProgramData\ssh and reinstate the
+ *   fail-open on the platform this matters most for; answering doubt for any backslash would
+ *   reinstate the lockout, since every absolute Windows Include contains them.
  */
-function splitIncludeArguments(pattern: string): string[] | null {
+export function splitIncludeArguments(
+  pattern: string,
+  backslashIsSeparator: boolean = process.platform === 'win32'
+): string[] | null {
   const tokens: string[] = []
   let current = ''
   let quote: '"' | "'" | null = null
   let started = false
   for (let index = 0; index < pattern.length; index += 1) {
     const char = pattern[index]
-    // ONLY a backslash before whitespace is an escape. Treating every backslash as one would be
-    // catastrophic on the platform this function most needs to be right for: the Windows site config
-    // lives at C:\ProgramData\ssh\ssh_config, and a general escape would eat every separator in an
-    // Include beneath it — C:\ProgramData\ssh\x.conf becomes C:ProgramDatasshx.conf, which resolves
-    // to nothing, which reads as "no policy". That is the very fail-open this narrowing exists to
-    // close, so the escape is limited to the one spelling that needs it.
     if (char === '\\' && /\s/.test(pattern[index + 1] ?? '')) {
+      // An escaped space, honoured on both platforms.
       current += pattern[index + 1]
       index += 1
       started = true
+    } else if (char === '\\' && !backslashIsSeparator) {
+      // POSIX: this escapes the next character and we do not emulate that. See the header.
+      return null
     } else if (quote ? char === quote : char === '"' || char === "'") {
       quote = quote ? null : (char as '"' | "'")
       started = true

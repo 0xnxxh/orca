@@ -42,8 +42,7 @@ export function mergeDirectSshRemoteWorkspaceSession(
   // resolveActiveTabOwnerWorktreeId already prefers when it has to pick an owner, so the merge and
   // the repair agree instead of each choosing differently.
   const orderedWorktreeIds = [...mergedWorktreeIds].sort(
-    (a, b) =>
-      Number(b === current.activeWorktreeId) - Number(a === current.activeWorktreeId)
+    (a, b) => Number(b === current.activeWorktreeId) - Number(a === current.activeWorktreeId)
   )
   // Every id already emitted by an earlier worktree in THIS merge. Without it the host-unknown
   // branch below only excludes ids the host knows, so a tab id that local state already holds under
@@ -52,8 +51,14 @@ export function mergeDirectSshRemoteWorkspaceSession(
   // that active-tab-owner-worktree.ts exists to mitigate (React #185).
   //
   // The merge does not create that state; it used to destroy it, by deleting every local tab under a
-  // replaced worktree. Keeping live panes cost that accidental cure, so the guarantee is restored
-  // for the part this function rewrites: no tab id is emitted twice ACROSS THE REPLACED WORKTREES.
+  // replaced worktree. Keeping live panes cost that accidental cure, so the guarantee is restored for
+  // exactly the branch below: a LOCALLY-HELD tab is never re-added under a worktree this walk has
+  // already emitted it in.
+  //
+  // Deliberately not phrased as "no id twice". The set is consulted only by the host-unknown filter;
+  // `reconciled` maps the host's own list verbatim, so a snapshot that lists one tab id under two
+  // worktrees still propagates both. That is pre-existing and unchanged — the old code mapped those
+  // same entries — and it is the host's own contradiction rather than one this function introduces.
   //
   // Deliberately not stronger than that. A worktree that is neither replaced nor named by the host is
   // never walked — its tabs pass through from `current` verbatim — so a duplicate straddling that

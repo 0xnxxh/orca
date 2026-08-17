@@ -21,7 +21,11 @@ vi.mock('node:os', async (importOriginal) => ({
   userInfo: userInfoMock
 }))
 
-import { siteConfigMayRestrictHostKeys, sshGArgsForHost } from './ssh-g-config-resolution'
+import {
+  siteConfigMayRestrictHostKeys,
+  splitIncludeArguments,
+  sshGArgsForHost
+} from './ssh-g-config-resolution'
 
 describe('sshGArgsForHost', () => {
   beforeEach(() => {
@@ -306,6 +310,78 @@ describe('siteConfigMayRestrictHostKeys', () => {
       await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
     } finally {
       await chmod(file, 0o600)
+    }
+  })
+})
+
+/**
+ * The measured oracle. Every expectation below was produced by running a real `ssh` and reading what
+ * it resolved to — OpenSSH 10.2p1 for the POSIX rows, Windows OpenSSH for the win32 ones — not by
+ * reading the source or reasoning from shell conventions.
+ *
+ * Pinned because the tokenizer's whole job is to agree with `ssh` about which file it would read: a
+ * spelling we disagree on resolves for ssh and misses for us, and a path that misses is silently
+ * read as "there is no site policy". Every fix in this area has been one of these.
+ */
+describe('splitIncludeArguments against a measured ssh', () => {
+  const posix = (pattern: string) => splitIncludeArguments(pattern, false)
+  const windows = (pattern: string) => splitIncludeArguments(pattern, true)
+
+  it('holds a spaced path together in all three spellings both platforms honour', () => {
+    for (const split of [posix, windows]) {
+      expect(split('"/etc/ssh/sp ace/x.conf"')).toEqual(['/etc/ssh/sp ace/x.conf'])
+      expect(split("'/etc/ssh/sp ace/x.conf'")).toEqual(['/etc/ssh/sp ace/x.conf'])
+      expect(split('/etc/ssh/sp\\ ace/x.conf')).toEqual(['/etc/ssh/sp ace/x.conf'])
+    }
+  })
+
+  it('consumes an escaped space INSIDE either quote, as ssh does', () => {
+    // Measured: `"a\ b.conf"` and `'a\ b.conf'` both resolve to the SPACE-named file, not the
+    // backslash-named one. Shell-style single-quote literalness would have been the wrong model.
+    expect(posix('"/etc/a\\ b.conf"')).toEqual(['/etc/a b.conf'])
+    expect(posix("'/etc/a\\ b.conf'")).toEqual(['/etc/a b.conf'])
+  })
+
+  it('treats a single quote inside double quotes as an ordinary character', () => {
+    // Measured as resolved. One quote-state variable reproduces this; two independent toggles would
+    // have closed the double quote early and split the path.
+    expect(posix('"/etc/it\'s here/x.conf"')).toEqual(["/etc/it's here/x.conf"])
+  })
+
+  it('splits an UNQUOTED space into two paths, as ssh does', () => {
+    expect(posix('/etc/a.conf /etc/b.conf')).toEqual(['/etc/a.conf', '/etc/b.conf'])
+  })
+
+  it('answers doubt on POSIX for a backslash before an ordinary character', () => {
+    // Measured: ssh resolves `conf\.d` as `conf.d`, and four backslashes are needed to survive as
+    // one — argv_split and glob() each eat a level. Preserving it means looking for a path with a
+    // literal backslash, missing, and reading "no site policy", which is the fail-open. We answer
+    // uncertain rather than reimplement two rounds of glob escaping.
+    expect(posix('/etc/ssh/conf\\.d/x.conf')).toBeNull()
+    expect(posix('/etc/ssh/a\\\\b/x.conf')).toBeNull()
+  })
+
+  it('keeps backslashes as separators on Windows', () => {
+    // Measured on Windows OpenSSH: `Include C:\\Users\\...\\x.conf` resolves. Answering doubt here
+    // would reinstate the lockout, since every absolute Windows Include contains backslashes.
+    expect(windows('C:\\Users\\neil\\conf\\x.conf')).toEqual(['C:\\Users\\neil\\conf\\x.conf'])
+    // Measured too: an escaped space still escapes, even amid separators.
+    expect(windows('C:\\Users\\neil\\sp\\ ace\\x.conf')).toEqual([
+      'C:\\Users\\neil\\sp ace\\x.conf'
+    ])
+  })
+
+  it('answers doubt when a quote never closes, which ssh rejects outright', () => {
+    expect(posix('"/etc/ssh/x.conf')).toBeNull()
+    expect(windows('"C:\\x.conf')).toBeNull()
+  })
+
+  it('returns an ordinary path unchanged, on both platforms', () => {
+    // The invariant every fix in this area has had to preserve: no whitespace, quote or backslash
+    // means one token, byte-for-byte.
+    for (const path of ['/etc/ssh/ssh_config.d/10-site.conf', 'relative/x.conf', 'x']) {
+      expect(posix(path)).toEqual([path])
+      expect(windows(path)).toEqual([path])
     }
   })
 })
