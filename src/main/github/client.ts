@@ -77,7 +77,6 @@ import {
   getSshGitProvider,
   SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE
 } from '../providers/ssh-git-dispatch'
-import { assertRemoteUrlReadable } from '../git/remote-url-probe'
 import {
   hasHostedReviewLocalGitOptions,
   getHostedReviewLocalGitOptions,
@@ -3269,9 +3268,6 @@ export async function getPRForBranchOutcome(
     // Why: connection-backed gh runs without a repository cwd. A bare lookup
     // here can honor process GH_REPO/GH_HOST and return an unrelated PR.
     if (connectionId && candidates.length === 0) {
-      // Why: candidate discovery intentionally tolerates unknown forges, but a
-      // lost SSH probe is unverifiable and must not clear cached review state.
-      await assertRemoteUrlReadable(context)
       return { kind: 'no-pr', fetchedAt: Date.now() }
     }
     // Why (#11532): account every lookup, not just the coordinator's queue —

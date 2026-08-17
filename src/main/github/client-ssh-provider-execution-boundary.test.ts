@@ -132,9 +132,10 @@ describe('getPRForBranch SSH execution boundary', () => {
     expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
   })
 
-  it('reports an upstream error when candidate discovery finds no SSH provider', async () => {
-    resolvePRRepositoryCandidatesMock.mockResolvedValue({ candidates: [], headRepo: null })
-    getSshGitProviderMock.mockReturnValue(undefined)
+  it('reports an upstream error when SSH candidate discovery is unverifiable', async () => {
+    resolvePRRepositoryCandidatesMock.mockRejectedValue(
+      new Error('Remote repository identity is unverifiable.')
+    )
 
     const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
 
@@ -143,17 +144,14 @@ describe('getPRForBranch SSH execution boundary', () => {
     expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
   })
 
-  it('reports an upstream error when candidate discovery loses SSH mid-flight', async () => {
+  it('keeps a verified empty SSH candidate set as no PR', async () => {
     resolvePRRepositoryCandidatesMock.mockResolvedValue({ candidates: [], headRepo: null })
-    getSshGitProviderMock.mockReturnValue({
-      exec: vi.fn().mockRejectedValue(new Error('SSH transport closed'))
-    })
 
     const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
 
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
-    expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
+    expect(outcome).toMatchObject({ kind: 'no-pr' })
   })
 
   it('rev-parses HEAD through the SSH provider when it is registered', async () => {

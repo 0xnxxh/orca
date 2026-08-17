@@ -1,7 +1,11 @@
 import { runCoalescedProbe, type CoalescedProbes } from '../git/coalesced-probe'
 import { readRemoteUrl } from '../git/remote-url-probe'
 import type { GitHubOwnerRepo } from '../../shared/github/pull-request-types'
-import { getSshGitProviderGeneration } from '../providers/ssh-git-dispatch'
+import {
+  getSshGitProvider,
+  getSshGitProviderGeneration,
+  SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE
+} from '../providers/ssh-git-dispatch'
 import { readLocalGitConfigSignature } from './local-git-config-signature'
 import {
   parseGitHubOwnerRepo,
@@ -111,6 +115,9 @@ export async function getOwnerRepoForRemote(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<OwnerRepo | null> {
   const context = githubRepoContext(repoPath, connectionId, localGitOptions)
+  if (context.connectionId && !getSshGitProvider(context.connectionId)) {
+    throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+  }
   const runtimeKey = context.connectionId
     ? `ssh:${context.connectionId}:${getSshGitProviderGeneration(context.connectionId)}`
     : `local:${context.wslDistro ?? 'host'}`
@@ -160,6 +167,9 @@ async function resolveOwnerRepoForRemote(
   try {
     const remoteUrl = await getRemoteUrlForRepo(context, remoteName)
     if (!remoteUrl) {
+      if (context.connectionId && !getSshGitProvider(context.connectionId)) {
+        throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+      }
       // Empty remote URL is stable until git config changes.
       ownerRepoCache.set(cacheKey, {
         value: null,
@@ -181,6 +191,9 @@ async function resolveOwnerRepoForRemote(
     }
     if (classification.kind === 'indeterminate') {
       // Why: a failed ssh -G probe is not a stable "not GitHub" result.
+      if (context.connectionId) {
+        throw new Error('Remote repository identity is unverifiable.')
+      }
       return null
     }
     const stableConfigSignature = classification.cacheWithGitConfigSignature
@@ -197,6 +210,9 @@ async function resolveOwnerRepoForRemote(
     // Why: only stable "no such remote" misses are safe to hold for minutes.
     // Transient git lock/IO failures must retry on the next lookup.
     if (!isStableMissingGitRemoteError(error)) {
+      if (context.connectionId) {
+        throw error
+      }
       return null
     }
   }
