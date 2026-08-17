@@ -161,6 +161,39 @@ describe('agent prompt submission runtime', () => {
     expect(writes).toEqual([])
   })
 
+  it('does not paste into a coalesced live permission title', async () => {
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    runtime.onPtyData(
+      'pty-prompt',
+      '\x1b]9999;{"state":"working","agentType":"aider"}\x07' +
+        '\x1b]0;Codex waiting for permission\x07',
+      Date.now()
+    )
+
+    await expect(runtime.sendTerminalAgentPrompt(handle, 'review this')).rejects.toThrow(
+      'agent_prompt_blocked'
+    )
+    expect(writes).toEqual([])
+  })
+
+  it('does not block on permission text restored only as history', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data === '\r') {
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+      }
+    })
+    runtime.seedTerminalRestoreTail('pty-prompt', {
+      text: 'Permission required\r\nAllow once\r\nAllow always\r\nReject\r\n'
+    })
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    await vi.runAllTimersAsync()
+
+    await expect(submission).resolves.toMatchObject({ accepted: true })
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+  })
+
   it('does not send Enter after output-only permission appears during settlement', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
@@ -225,6 +258,31 @@ describe('agent prompt submission runtime', () => {
     expect(writes).not.toContain('\r')
   })
 
+  it('stops a chunked paste after transient output-only permission', async () => {
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    runtime.onPtyData('pty-prompt', 'initial output\n', Date.now())
+    let writeChecks = 0
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'x'.repeat(20_000), {
+      beforeWrite: () => {
+        writeChecks += 1
+        if (writeChecks === 2) {
+          runtime.onPtyData(
+            'pty-prompt',
+            'Permission required\nAllow once\nAllow always\nReject\n',
+            Date.now()
+          )
+          runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+        }
+      }
+    })
+
+    await expect(submission).rejects.toThrow('agent_prompt_blocked')
+    expect(writes).toHaveLength(2)
+    expect(writes[1]).toBe(AGENT_PROMPT_BRACKETED_PASTE_END)
+    expect(writes).not.toContain('\r')
+  })
+
   it('prefers a later permission title over an earlier explicit idle status', async () => {
     const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
     runtime.onPtyData(
@@ -238,6 +296,54 @@ describe('agent prompt submission runtime', () => {
       'agent_prompt_blocked'
     )
     expect(writes).toEqual([])
+  })
+
+  it('prefers later explicit idle evidence over stale permission output', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    let handle = ''
+    const writes: string[] = []
+    const runtime = new OrcaRuntimeService(makeStore() as never, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey: 'prompt-pane',
+          terminalHandle: handle,
+          state: 'done',
+          prompt: '',
+          agentType: 'aider',
+          connectionId: null,
+          receivedAt: Date.now(),
+          stateStartedAt: Date.now()
+        }
+      ]
+    })
+    runtime.setPtyController({
+      spawn: vi.fn().mockResolvedValue({ id: 'pty-prompt' }),
+      write: (_ptyId, data) => {
+        writes.push(data)
+        if (data === '\r') {
+          runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+        }
+        return true
+      },
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    handle = (await runtime.createTerminal(`path:${WORKTREE_PATH}`, { launchAgent: 'aider' }))
+      .handle
+    runtime.onPtyData(
+      'pty-prompt',
+      'Permission required\nAllow once\nAllow always\nReject\n' +
+        '\x1b]0;Codex waiting for permission\x07',
+      Date.now()
+    )
+    vi.setSystemTime(2_000)
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    await vi.runAllTimersAsync()
+
+    await expect(submission).resolves.toMatchObject({ accepted: true })
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
   it('prefers a later working title over an earlier explicit idle status', async () => {
@@ -337,6 +443,37 @@ describe('agent prompt submission runtime', () => {
     controller.abort()
     await vi.runAllTimersAsync()
     await rejected
+  })
+
+  it('does not reuse output-only permission across a provider generation reset', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data === '\r') {
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+      }
+    })
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-prompt',
+      { value: 0, generation: 'continued' },
+      0
+    )
+    runtime.onPtyData(
+      'pty-prompt',
+      'Permission required\nAllow once\nAllow always\nReject\n',
+      Date.now()
+    )
+    const sequenceAtSpawnStart = runtime.getPtyOutputSequence('pty-prompt')
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-prompt',
+      { value: 0, generation: 'reset' },
+      sequenceAtSpawnStart
+    )
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    await vi.runAllTimersAsync()
+
+    await expect(submission).resolves.toMatchObject({ accepted: true })
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
   it('reports permission reached after the first Enter as blocked', async () => {

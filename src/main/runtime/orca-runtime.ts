@@ -3,6 +3,7 @@
 /* eslint-disable no-control-regex -- Why: terminal normalization must strip ANSI and OSC control sequences from PTY output before returning bounded text to agents. */
 import {
   detectAgentStatusFromTitle,
+  extractLastOscTitle,
   isClaudeManagementTitle,
   isCursorNativeAgentTitle,
   isOpenCodeNativeTitle,
@@ -10985,6 +10986,7 @@ export class OrcaRuntimeService {
         // bell — the chunk's agentStatus:set events must reach the renderer
         // before its pty:sideEffect batch.
         retainedAgentStatusChanged = this.emitTerminalAgentStatusEvents(ptyId, agentStatusChunk)
+        this.restoreAgentPromptLifecycleByteOrder(ptyId, data)
       } finally {
         // Why: flushed in the finally so a throwing tracker callback cannot
         // strand this chunk's facts to be emitted under the next chunk's seq.
@@ -11665,6 +11667,7 @@ export class OrcaRuntimeService {
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
     this.agentPromptLifecycleByPtyId.delete(ptyId)
     this.agentPromptPermissionSequenceByPtyId.delete(ptyId)
+    this.clearWaitBlockedCheckState(ptyId)
     const pty = this.ptysById.get(ptyId)
     if (pty) {
       pty.lastOscTitle = null
@@ -11678,13 +11681,18 @@ export class OrcaRuntimeService {
       pty.lastAgentStatusRichInvalidatedAtEpochMs = Date.now()
       pty.managementTitle = null
       pty.managementTitleAt = null
+      pty.waitBlockedAt = null
+      pty.tailWaitState = undefined
     }
     for (const leaf of this.getLeavesForPty(ptyId)) {
       leaf.lastOscTitle = null
       leaf.lastOscTitleAt = null
       leaf.lastAgentStatus = null
       leaf.lastAgentStatusObservedLive = false
+      leaf.waitBlockedAt = null
+      leaf.tailWaitState = undefined
     }
+    this.primeWaitBlockedBaselineFromSeededTail(ptyId)
     this.clearAgentRowSnapshotsForPty(ptyId)
   }
 
@@ -11937,6 +11945,28 @@ export class OrcaRuntimeService {
       ptyId,
       (this.agentPromptPermissionSequenceByPtyId.get(ptyId) ?? 0) + 1
     )
+  }
+
+  private restoreAgentPromptLifecycleByteOrder(ptyId: string, data: string): void {
+    const titleStart = findLastCompleteOscTitleStart(data)
+    if (titleStart <= data.lastIndexOf('\x1b]9999;')) {
+      return
+    }
+    const title = extractLastOscTitle(data)
+    if (title === null) {
+      return
+    }
+    const status = detectAgentStatusFromTitle(title)
+    const current = this.agentPromptLifecycleByPtyId.get(ptyId)
+    if (!current || current.status === status) {
+      return
+    }
+    this.agentPromptLifecycleByPtyId.set(ptyId, {
+      status,
+      workingSequence:
+        current.workingSequence + (status === 'working' && current.status !== 'working' ? 1 : 0),
+      updatedAt: Date.now()
+    })
   }
 
   private getPtyLifecycleGeneration(ptyId: string): number {
@@ -18160,22 +18190,24 @@ export class OrcaRuntimeService {
     if (!blockedByWaitText) {
       return false
     }
-    if (explicitStatus?.status === 'permission' || lifecycle?.status === 'permission') {
-      return true
-    }
-    const newestClearAt = Math.max(
-      explicitStatus?.updatedAt ?? -1,
-      lifecycle?.status ? lifecycle.updatedAt : -1
-    )
-    if (terminal.waitBlockedAt !== null) {
-      return terminal.waitBlockedAt >= newestClearAt
-    }
     const liveTitleClearsBlockedText =
       terminal.titleStatusIsLive &&
       terminal.titleStatus !== null &&
       terminal.titleStatus !== 'permission' &&
       !isOpenCodeNativeTitle(terminal.title)
-    return !liveTitleClearsBlockedText && !explicitStatus
+    if (liveTitleClearsBlockedText && lifecycle?.status !== terminal.titleStatus) {
+      return false
+    }
+    const newestPermissionAt = Math.max(
+      explicitStatus?.status === 'permission' ? explicitStatus.updatedAt : -1,
+      lifecycle?.status === 'permission' ? lifecycle.updatedAt : -1,
+      terminal.waitBlockedAt ?? -1
+    )
+    const newestClearAt = Math.max(
+      explicitStatus && explicitStatus.status !== 'permission' ? explicitStatus.updatedAt : -1,
+      lifecycle?.status && lifecycle.status !== 'permission' ? lifecycle.updatedAt : -1
+    )
+    return newestPermissionAt >= 0 && newestPermissionAt >= newestClearAt
   }
 
   private async terminalHasShellForegroundProcess(handle: string, ptyId: string): Promise<boolean> {
@@ -37368,7 +37400,7 @@ export class OrcaRuntimeService {
 const WAIT_BLOCKED_CHECK_MIN_INTERVAL_MS = 50
 // Why: chunks that could complete an actionable prompt bypass the throttle so blocked stamps stay immediate; scanned over the new chunk + short carry, never the whole window.
 const WAIT_BLOCKED_KEYWORD_PATTERN =
-  /press enter|press t to trust|do you trust|trust this|trusted workspace|update available|choose working directory|codex just got an upgrade|hooks need review/
+  /press enter|press t to trust|do you trust|trust this|trusted workspace|permission required|requires permission|allow once|allow always|update available|choose working directory|codex just got an upgrade|hooks need review/
 const WAIT_BLOCKED_KEYWORD_CARRY_CHARS = 31
 const MAX_TAIL_LINES = 2000
 const MAX_TAIL_CHARS = 256 * 1024
@@ -39449,6 +39481,27 @@ function isTerminalSendSettlementAgent(
   agent: TuiAgent | null | undefined
 ): agent is 'claude' | 'codex' {
   return agent === 'claude' || agent === 'codex'
+}
+
+function findLastCompleteOscTitleStart(data: string): number {
+  let searchFrom = data.length
+  while (searchFrom > 0) {
+    const start = data.lastIndexOf('\x1b]', searchFrom - 1)
+    if (start === -1) {
+      return -1
+    }
+    const commandEnd = data.indexOf(';', start + 2)
+    const command = commandEnd === -1 ? '' : data.slice(start + 2, commandEnd)
+    if (command === '0' || command === '1' || command === '2') {
+      const bel = data.indexOf('\x07', commandEnd + 1)
+      const stringTerminator = data.indexOf('\x1b\\', commandEnd + 1)
+      if (bel !== -1 || stringTerminator !== -1) {
+        return start
+      }
+    }
+    searchFrom = start
+  }
+  return -1
 }
 
 function terminalTitleBlocksExplicitAgentStatus(title: string | null): boolean {
