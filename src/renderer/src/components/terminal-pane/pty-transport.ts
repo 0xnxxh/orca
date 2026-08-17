@@ -73,6 +73,7 @@ export { extractLastOscTitle } from '../../../../shared/agent-detection'
 
 const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
 const SSH_PTY_RESTORE_REQUIRED_ERROR = 'SSH_PTY_RESTORE_REQUIRED'
+const SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR = 'SSH_PTY_LIVENESS_UNVERIFIABLE'
 // Why: main rejects a session reattached under a different SSH connection with this phrase; treat as stale (spawn fresh), not a crash.
 const SSH_PTY_CONNECTION_MISMATCH_MARKER = 'belongs to SSH connection'
 const STALE_TITLE_TIMEOUT = 3000 // ms before stale working title is cleared
@@ -949,7 +950,8 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         if (
           connectionId &&
           options.sessionId &&
-          msg.includes(SSH_PTY_RESTORE_REQUIRED_ERROR)
+          (msg.includes(SSH_PTY_RESTORE_REQUIRED_ERROR) ||
+            msg.includes(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR))
         ) {
           storedCallbacks.onError?.(msg)
           return {

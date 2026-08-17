@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { SSH_PTY_RESTORE_REQUIRED_ERROR, SSH_SESSION_EXPIRED_ERROR } from './ssh-pty-errors'
+import {
+  SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR,
+  SSH_PTY_RESTORE_REQUIRED_ERROR,
+  SSH_SESSION_EXPIRED_ERROR
+} from './ssh-pty-errors'
 import { SshPtyProvider } from './ssh-pty-provider'
 
 // The relay answers `restoreRequired` from its DELIVERY layer only: `requireRestore`
@@ -69,7 +73,7 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(true)
   })
 
-  it('keeps the verified live PTY when the fresh delivery attach loses contact', async () => {
+  it('reports unverifiable when the fresh delivery attach loses contact', async () => {
     const mux = createMockMux()
     mux.request
       .mockResolvedValueOnce(restoreRequiredAnswer)
@@ -78,9 +82,9 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
 
     const message = await spawnError(provider)
 
-    expect(message).toContain(SSH_PTY_RESTORE_REQUIRED_ERROR)
+    expect(message).toContain(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
     expect(message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
-    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(true)
+    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(false)
     expect(mux.request.mock.calls.filter((call) => call[0] === 'pty.attach')).toHaveLength(2)
   })
 

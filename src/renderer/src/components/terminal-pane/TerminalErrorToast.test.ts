@@ -156,6 +156,14 @@ describe('humanizeTerminalError', () => {
     expect(humanized).toContain('session is live')
   })
 
+  it('reports unverifiable liveness after verification loses contact', () => {
+    const humanized = humanizeTerminalError('SSH_PTY_LIVENESS_UNVERIFIABLE: orca:2f1c@@pty-7')
+    expect(humanized).not.toContain('SSH_PTY_LIVENESS_UNVERIFIABLE')
+    expect(humanized).not.toContain('orca:2f1c@@pty-7')
+    expect(humanized).toContain('session is unverifiable')
+    expect(humanized).not.toContain('session is live')
+  })
+
   it('replaces only the unreattachable line in an aggregated error', () => {
     const humanized = humanizeTerminalError('Paste failed.\nSSH_SESSION_EXPIRED: orca:2f1c@@pty-7')
     expect(humanized.startsWith('Paste failed.\n')).toBe(true)

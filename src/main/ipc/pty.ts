@@ -92,6 +92,7 @@ import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery
 import {
   SSH_SESSION_EXPIRED_ERROR,
   isSshPtyIdentityMismatchError,
+  isSshPtyLivenessUnverifiableError,
   isSshPtyNotFoundError,
   isSshPtyRestoreRequiredError
 } from '../providers/ssh-pty-errors'
@@ -5173,7 +5174,10 @@ export function registerPtyHandlers(
           if (
             args.connectionId &&
             effectiveSessionRelayId !== undefined &&
-            (isSshPtyRestoreRequiredError(spawnError) || isSshPtyRestoreRequiredError(rawMessage))
+            (isSshPtyRestoreRequiredError(spawnError) ||
+              isSshPtyRestoreRequiredError(rawMessage) ||
+              isSshPtyLivenessUnverifiableError(spawnError) ||
+              isSshPtyLivenessUnverifiableError(rawMessage))
           ) {
             // Why: the relay lost delivery, not the PTY; keep the lease reattachable so the next
             // attach recovers the live remote session instead of cold-starting a duplicate over it.
@@ -6733,7 +6737,10 @@ export function registerPtyHandlers(
           if (
             args.connectionId &&
             effectiveSessionRelayId !== undefined &&
-            (isSshPtyRestoreRequiredError(spawnError) || isSshPtyRestoreRequiredError(rawMessage))
+            (isSshPtyRestoreRequiredError(spawnError) ||
+              isSshPtyRestoreRequiredError(rawMessage) ||
+              isSshPtyLivenessUnverifiableError(spawnError) ||
+              isSshPtyLivenessUnverifiableError(rawMessage))
           ) {
             // Why: the relay lost delivery, not the PTY; keep the lease reattachable so the next
             // attach recovers the live remote session instead of cold-starting a duplicate over it.

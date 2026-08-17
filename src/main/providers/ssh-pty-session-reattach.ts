@@ -2,6 +2,7 @@ import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { isPtyIncarnationId, type PtyIncarnationId } from '../../shared/pty-incarnation'
 import {
   SSH_PTY_IDENTITY_MISMATCH_ERROR,
+  SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR,
   SSH_PTY_RESTORE_REQUIRED_ERROR,
   SSH_SESSION_EXPIRED_ERROR,
   isSshPtyIdentityMismatchError,
@@ -282,11 +283,9 @@ export async function reattachSshPtySessionForSpawn(
         ) {
           throw error
         }
-        // Why: the first answer proved the PTY live; losing contact during fresh delivery cannot
-        // turn that into an exited verdict or authorize a duplicate spawn.
-        args.acceptLivePty(unresumable.id)
+        // Why: losing contact during verification is unverifiable, not live or exited.
         throw new Error(
-          `${SSH_PTY_RESTORE_REQUIRED_ERROR}: ${toRelaySshPtyId(args.connectionId, unresumable.id)}`,
+          `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${toRelaySshPtyId(args.connectionId, unresumable.id)}`,
           { cause: error }
         )
       }
