@@ -140,12 +140,13 @@ describe('ANTI_DETECTION_SCRIPT — PermissionStatus', () => {
     })
 
     runInNewContext(ANTI_DETECTION_SCRIPT, context)
-    const status = await context.navigator.permissions.query({ name: 'geolocation' })
+    const status = await context.navigator.permissions.query({ name: 'camera' })
     const expectedSource = Function.prototype.toString.call(
       context.PermissionStatus.prototype.addEventListener
     )
 
     expect(status).toBeInstanceOf(context.PermissionStatus)
+    expect(status.state).toBe('prompt')
     expect(status.constructor.name).toBe('PermissionStatus')
     expect(status.marker).toBe('real-status')
     expect(status.addEventListener.name).toBe('addEventListener')
