@@ -3,6 +3,7 @@ import type { WorktreeLineage } from '../../../../../../shared/worktree/lineage-
 import type { Worktree } from '../../../../../../shared/worktree/types'
 import { getWorktreeExecutionHostId } from '../../../../../../shared/execution-host'
 import type { ExecutionHostId } from '../../../../../../shared/execution-host'
+import { getWorktreeHostIdentity } from '../../../../../../shared/worktree/host-qualified-identity'
 import { getLineageRenderInfo } from '../../worktree-lineage-projection'
 import { PINNED_GROUP_KEY, PINNED_GROUP_META, getLineageGroupKey } from './group-keys'
 import type {
@@ -82,7 +83,7 @@ export function emitPinnedGroup(
     for (const [index, worktree] of pinned.entries()) {
       result.push(
         buildWorktreeRow(worktree, repoMap, {
-          rowKey: `${PINNED_GROUP_KEY}:${worktree.id}`,
+          rowKey: `${PINNED_GROUP_KEY}:${getWorktreeHostIdentity(worktree)}`,
           sectionKey: PINNED_GROUP_KEY,
           depth: 0,
           groupDepth: 0,
@@ -190,7 +191,7 @@ export function appendWorktreeRows(
     for (const worktree of worktrees) {
       result.push(
         buildWorktreeRow(worktree, repoMap, {
-          rowKey: `${sectionKey}:${worktree.id}`,
+          rowKey: `${sectionKey}:${getWorktreeHostIdentity(worktree)}`,
           sectionKey,
           depth: 0,
           groupDepth,
@@ -199,7 +200,7 @@ export function appendWorktreeRows(
           lineageChildCount: 0,
           lineageCollapsed: false,
           hostContextLabel:
-            hostContextLabelByWorktreeId?.get(worktree.id) ??
+            hostContextLabelByWorktreeId?.get(getWorktreeHostIdentity(worktree)) ??
             hostContextLabelByRepoId?.get(worktree.repoId)
         })
       )
@@ -209,13 +210,16 @@ export function appendWorktreeRows(
 
   const visibleIds = new Set(worktrees.map((worktree) => worktree.id))
   const childrenByParentId = new Map<string, Worktree[]>()
-  const childIds = new Set<string>()
+  // Why (STA-4343): lineage itself is keyed by the bare id, so parent/child
+  // lookups stay id-based — but membership must be host-qualified or the second
+  // host's row for a colliding id is silently never emitted.
+  const childIdentities = new Set<string>()
   for (const worktree of worktrees) {
     const lineage = getLineageRenderInfo(worktree, lineageById, worktreeMap, cyclicLineageIds)
     if (lineage.state !== 'valid' || !visibleIds.has(lineage.parent.id)) {
       continue
     }
-    childIds.add(worktree.id)
+    childIdentities.add(getWorktreeHostIdentity(worktree))
     const children = childrenByParentId.get(lineage.parent.id) ?? []
     children.push(worktree)
     childrenByParentId.set(lineage.parent.id, children)
@@ -228,16 +232,16 @@ export function appendWorktreeRows(
     lineageTrail: boolean[],
     isLastChild: boolean
   ): void => {
-    if (emitted.has(worktree.id)) {
+    if (emitted.has(getWorktreeHostIdentity(worktree))) {
       return
     }
     const children = childrenByParentId.get(worktree.id) ?? []
     const lineageGroupKey = getLineageGroupKey(worktree.id)
     const lineageCollapsed = collapsedGroups.has(lineageGroupKey)
-    emitted.add(worktree.id)
+    emitted.add(getWorktreeHostIdentity(worktree))
     result.push(
       buildWorktreeRow(worktree, repoMap, {
-        rowKey: `${sectionKey}:${worktree.id}`,
+        rowKey: `${sectionKey}:${getWorktreeHostIdentity(worktree)}`,
         sectionKey,
         depth,
         groupDepth,
@@ -246,7 +250,7 @@ export function appendWorktreeRows(
         lineageChildCount: children.length,
         lineageCollapsed,
         hostContextLabel:
-          hostContextLabelByWorktreeId?.get(worktree.id) ??
+          hostContextLabelByWorktreeId?.get(getWorktreeHostIdentity(worktree)) ??
           hostContextLabelByRepoId?.get(worktree.repoId)
       })
     )
@@ -263,13 +267,15 @@ export function appendWorktreeRows(
     })
   }
 
-  const roots = worktrees.filter((worktree) => !childIds.has(worktree.id))
+  const roots = worktrees.filter(
+    (worktree) => !childIdentities.has(getWorktreeHostIdentity(worktree))
+  )
   for (const [index, worktree] of roots.entries()) {
     emit(worktree, 0, [], index === roots.length - 1)
   }
   if (roots.length === 0) {
     for (const worktree of worktrees) {
-      if (!emitted.has(worktree.id)) {
+      if (!emitted.has(getWorktreeHostIdentity(worktree))) {
         // Why: malformed cyclic lineage should not hide every participant.
         // Render any leftovers as roots rather than recursing forever.
         emit(worktree, 0, [], true)

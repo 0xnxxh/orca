@@ -12,7 +12,18 @@ export function getWorkspaceDeleteLineage(
   worktrees: readonly Worktree[],
   lineageById: Record<string, WorktreeLineage>
 ): WorkspaceDeleteLineage {
-  const worktreeById = new Map(worktrees.map((worktree) => [worktree.id, worktree]))
+  // Why (STA-4343): lineage is recorded against the bare `repoId::path` id, so a
+  // colliding id resolves to one of two hosts here. A lineage child of a workspace
+  // on host X is on host X, so prefer the parent's host — otherwise "delete all"
+  // could route a descendant's removal at the other machine's checkout.
+  const worktreeById = new Map<string, Worktree>()
+  for (const worktree of worktrees) {
+    const claimed = worktreeById.get(worktree.id)
+    if (claimed && claimed.hostId === parent.hostId && worktree.hostId !== parent.hostId) {
+      continue
+    }
+    worktreeById.set(worktree.id, worktree)
+  }
   const childrenByParentId = getProjectedWorktreeLineageChildrenByParentId(
     lineageById,
     worktreeById
