@@ -239,6 +239,9 @@ export function useMobileNativeChatController(args: {
     agent: activeChatResolution?.agent ?? null,
     scopeKey: mobileNativeChatScopeKey(hostId, worktreeId, activeSessionTabId),
     reportedModel: activeSessionTab?.agentStatus?.model ?? null,
+    client,
+    hostId,
+    worktreeId,
     dispatchCommand: handleNativeChatDispatchCommand,
     onAgentPicker: handleAgentPicker
   })
