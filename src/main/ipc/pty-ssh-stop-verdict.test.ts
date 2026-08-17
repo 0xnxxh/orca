@@ -62,6 +62,8 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
   function installController(): {
     controller: {
       kill: (ptyId: string) => boolean
+      listProcesses: (connectionId?: string | null) => Promise<{ id: string }[]>
+      retireRejectedPty: (ptyId: string, stopConfirmed: boolean) => void
       stopAndWait: (ptyId: string, opts?: { deadlineMs?: number }) => Promise<boolean>
     }
     runtime: {
@@ -129,6 +131,24 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
     }
   })
 
+  it('retires a rejected split without asserting an unconfirmed exit', () => {
+    const ptyId = 'ssh-rejected-split'
+    setPtyOwnership(ptyId, 'ssh-dropped')
+    const { controller, runtime } = installController()
+    try {
+      controller.retireRejectedPty(ptyId, false)
+
+      expect(runtime.markPtyLivenessUnverifiable).toHaveBeenCalledWith(
+        ptyId,
+        'a follow-up stop was issued but its outcome could not be verified'
+      )
+      expect(runtime.onPtyExit).toHaveBeenCalledWith(ptyId, -1, undefined)
+      expect(runtime.onPtyExit).not.toHaveBeenCalledWith(ptyId, 0, expect.anything())
+    } finally {
+      deletePtyOwnership(ptyId)
+    }
+  })
+
   it('still confirms a stop the owning provider actually performed', async () => {
     const daemon = installObservableDaemonTestProvider()
     vi.spyOn(getLocalPtyProvider(), 'listProcesses').mockResolvedValue([])
@@ -140,6 +160,28 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
       expect.objectContaining({ immediate: true })
     )
     expect(runtime.markPtyLivenessUnverifiable).not.toHaveBeenCalled()
+  })
+
+  it('records provider-confirmed absence when the exit event was missed', async () => {
+    const connectionId = 'ssh-confirmed-absent'
+    const ptyId = 'ssh-confirmed-absent-pty'
+    const provider = {
+      onExit: vi.fn(() => () => {}),
+      shutdown: vi.fn(async () => {}),
+      listProcesses: vi.fn(async () => [])
+    }
+    registerSshPtyProvider(connectionId, provider as never)
+    setPtyOwnership(ptyId, connectionId)
+    try {
+      const { controller, runtime } = installController()
+
+      await expect(controller.stopAndWait(ptyId)).resolves.toBe(true)
+      expect(runtime.onPtyExit).toHaveBeenCalledWith(ptyId, 0, undefined)
+      expect(runtime.markPtyLivenessUnverifiable).not.toHaveBeenCalled()
+    } finally {
+      deletePtyOwnership(ptyId)
+      unregisterSshPtyProvider(connectionId)
+    }
   })
 
   it('reports lost contact when a registered provider drops during the stop', async () => {
@@ -192,6 +234,43 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
     } finally {
       deletePtyOwnership(ptyId)
       unregisterSshPtyProvider(connectionId)
+    }
+  })
+
+  it('isolates a failed SSH inventory from healthy providers', async () => {
+    const failedConnectionId = 'ssh-inventory-failed'
+    const healthyConnectionId = 'ssh-inventory-healthy'
+    const failedPtyId = 'ssh-inventory-failed-pty'
+    const healthyPtyId = 'ssh-inventory-healthy-pty'
+    registerSshPtyProvider(failedConnectionId, {
+      listProcesses: vi.fn(async () => {
+        throw new Error('inventory transport failed')
+      })
+    } as never)
+    registerSshPtyProvider(healthyConnectionId, {
+      listProcesses: vi.fn(async () => [{ id: healthyPtyId }])
+    } as never)
+    setPtyOwnership(failedPtyId, failedConnectionId)
+    setPtyOwnership(healthyPtyId, healthyConnectionId)
+    try {
+      const { controller, runtime } = installController()
+
+      await expect(controller.listProcesses()).resolves.toEqual(
+        expect.arrayContaining([{ id: healthyPtyId }])
+      )
+      expect(runtime.markPtyLivenessUnverifiable).toHaveBeenCalledWith(
+        failedPtyId,
+        'inventory transport failed'
+      )
+      expect(runtime.markPtyLivenessUnverifiable).not.toHaveBeenCalledWith(
+        healthyPtyId,
+        expect.anything()
+      )
+    } finally {
+      deletePtyOwnership(failedPtyId)
+      deletePtyOwnership(healthyPtyId)
+      unregisterSshPtyProvider(failedConnectionId)
+      unregisterSshPtyProvider(healthyConnectionId)
     }
   })
 

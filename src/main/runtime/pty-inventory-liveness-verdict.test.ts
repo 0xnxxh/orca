@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { OrcaRuntimeService } from './orca-runtime'
 import { getDefaultWorkspaceSession } from '../../shared/constants'
+import { SSH_EXIT_UNCONFIRMED_REASON } from '../../shared/pty-liveness-verdict'
 
 // The aggregate inventory only enumerates registered providers, so a dropped
 // relay clears `connected` for every one of its PTYs at once. Only the
@@ -59,6 +60,29 @@ function makeRuntimeMissingFromInventory(
 }
 
 describe('inventory sweep liveness verdicts', () => {
+  it('records an abnormal SSH exit as unverifiable at the runtime boundary', () => {
+    const runtime = makeRuntimeMissingFromInventory(() => null)
+
+    runtime.onPtyExit(REMOTE_PTY_ID, -1)
+
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toEqual({
+      status: 'unverifiable',
+      reason: SSH_EXIT_UNCONFIRMED_REASON
+    })
+  })
+
+  it('preserves a more specific lost-contact reason across an abnormal SSH exit', () => {
+    const runtime = makeRuntimeMissingFromInventory(() => null)
+    runtime.markPtyLivenessUnverifiable(REMOTE_PTY_ID, 'inventory transport failed')
+
+    runtime.onPtyExit(REMOTE_PTY_ID, -1)
+
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toEqual({
+      status: 'unverifiable',
+      reason: 'inventory transport failed'
+    })
+  })
+
   it('records lost contact when no provider can answer for the PTY', async () => {
     const runtime = makeRuntimeMissingFromInventory(() => null)
 
@@ -109,6 +133,23 @@ describe('inventory sweep liveness verdicts', () => {
     expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toEqual({
       status: 'unverifiable',
       reason: 'relay disconnected during stop'
+    })
+  })
+
+  it('does not let a partial inventory overwrite a concurrent provider failure', async () => {
+    const inventory = deferred<{ id: string; worktreeId: string }[]>()
+    const listProcesses = vi.fn(() => inventory.promise)
+    const runtime = makeRuntimeMissingFromInventory(() => false, listProcesses)
+
+    const listing = runtime.listTerminals(`id:${WORKTREE_ID}`)
+    await vi.waitFor(() => expect(listProcesses).toHaveBeenCalled())
+    runtime.markPtyLivenessUnverifiable(REMOTE_PTY_ID, 'inventory transport failed')
+    inventory.resolve([])
+    await listing
+
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toEqual({
+      status: 'unverifiable',
+      reason: 'inventory transport failed'
     })
   })
 

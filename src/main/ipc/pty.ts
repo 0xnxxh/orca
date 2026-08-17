@@ -4445,6 +4445,15 @@ export function registerPtyHandlers(
     }
   }
 
+  const markSshInventoryUnverifiable = (connectionId: string, error: unknown): void => {
+    const reason = error instanceof Error ? error.message : String(error)
+    for (const [ptyId, ownerConnectionId] of ptyOwnership) {
+      if (ownerConnectionId === connectionId) {
+        runtime?.markPtyLivenessUnverifiable?.(ptyId, reason)
+      }
+    }
+  }
+
   // Why: route through getProviderForPty() so CLI commands work for remote PTYs too; localProvider would silently fail for them.
   runtime?.setPtyController({
     claimStablePaneCreate: (args) => {
@@ -5591,11 +5600,23 @@ export function registerPtyHandlers(
       }
       return killWithCurrentProvider()
     },
-    retireRejectedPty: (ptyId) => {
+    retireRejectedPty: (ptyId, stopConfirmed) => {
       rememberRetiredRejectedPty(ptyId)
+      if (!stopConfirmed) {
+        runtime?.markPtyLivenessUnverifiable?.(
+          ptyId,
+          'a follow-up stop was issued but its outcome could not be verified'
+        )
+        if (!ptyOwnership.has(ptyId)) {
+          return
+        }
+        runtime?.onPtyExit(ptyId, -1, ptyIncarnationById.get(ptyId))
+        rememberSyntheticKillExit(ptyId)
+        sendPtyExitToRenderer({ id: ptyId, code: -1 })
+        return
+      }
       // Why: a completed stop already cleared provider state, tombstoned the lease and told the
-      // renderer; repeating that double-fires the exit IPC. The runtime still needs code 0 so an
-      // SSH pane retires for good instead of staying preserved by the stop's negative exit.
+      // renderer; repeating that double-fires the exit IPC.
       if (!ptyOwnership.has(ptyId)) {
         runtime?.onPtyExit(ptyId, 0, ptyIncarnationById.get(ptyId))
         return
@@ -5717,9 +5738,11 @@ export function registerPtyHandlers(
       }
       const incarnationId = finishPtyShutdown(ptyId, connectionId, store)
       if (!providerExitObserved) {
-        runtime?.onPtyExit(ptyId, -1, incarnationId)
+        // The owning provider's fresh inventory observed absence, so this is a
+        // death certificate even when its exit event was missed.
+        runtime?.onPtyExit(ptyId, 0, incarnationId)
         rememberSyntheticKillExit(ptyId)
-        sendPtyExitToRenderer({ id: ptyId, code: -1 })
+        sendPtyExitToRenderer({ id: ptyId, code: 0 })
       }
       return true
     },
@@ -5776,11 +5799,23 @@ export function registerPtyHandlers(
         return localProvider.listProcesses()
       }
       if (connectionId !== undefined) {
-        return getProvider(connectionId).listProcesses()
+        try {
+          return await getProvider(connectionId).listProcesses()
+        } catch (error) {
+          markSshInventoryUnverifiable(connectionId, error)
+          throw error
+        }
       }
       const providerSessions = await Promise.all([
         localProvider.listProcesses(),
-        ...Array.from(sshProviders.values(), (provider) => provider.listProcesses())
+        ...Array.from(sshProviders, async ([sshConnectionId, provider]) => {
+          try {
+            return await provider.listProcesses()
+          } catch (error) {
+            markSshInventoryUnverifiable(sshConnectionId, error)
+            return []
+          }
+        })
       ])
       return providerSessions.flat()
     },

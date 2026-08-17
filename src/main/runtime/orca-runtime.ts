@@ -659,6 +659,7 @@ import {
 import { retireTerminalSurfaceFromPersistence } from './mobile-session-terminal-persistence-retirement'
 import {
   NO_OBSERVING_PROVIDER_REASON,
+  SSH_EXIT_UNCONFIRMED_REASON,
   SSH_PROVIDER_UNREGISTERED_REASON,
   type PtyLivenessVerdict
 } from '../../shared/pty-liveness-verdict'
@@ -1863,7 +1864,7 @@ type RuntimePtyController = {
    *  False on doubt (absent session, SSH-scoped id, non-daemon provider). */
   attach?(ptyId: string): Promise<boolean>
   kill(ptyId: string): boolean
-  retireRejectedPty?(ptyId: string): void
+  retireRejectedPty?(ptyId: string, stopConfirmed: boolean): void
   stopAndWait?(
     ptyId: string,
     opts?: { keepHistory?: boolean; deadlineMs?: number }
@@ -14719,6 +14720,9 @@ export class OrcaRuntimeService {
     const preservesAbnormalSshSurface =
       this.isSshOwnedPtyId(ptyId) && pty?.connectionId != null && exitCode < 0
     if (preservesAbnormalSshSurface) {
+      if (this.getPtyLivenessVerdict(ptyId)?.status !== 'unverifiable') {
+        this.markPtyLivenessUnverifiable(ptyId, SSH_EXIT_UNCONFIRMED_REASON)
+      }
       this.restoredOrchestrationAuthorityByPtyId.delete(ptyId)
     } else {
       this.retirePtyAgentLaunchAuthority(ptyId)
@@ -16686,17 +16690,17 @@ export class OrcaRuntimeService {
   async inspectTerminalProcessIncarnationLiveness(
     processIncarnation: string,
     serializedHostScope: string | null
-  ): Promise<'live' | 'dead' | 'unknown'> {
+  ): Promise<'live' | 'exited' | 'unverifiable'> {
     const hostScope = parseWorkerTerminalHostScope(serializedHostScope)
     if (!hostScope || !this.ptyController?.listProcesses) {
-      return 'unknown'
+      return 'unverifiable'
     }
     const listed = await withTimeoutResult(
       this.ptyController.listProcesses(hostScope.kind === 'ssh' ? hostScope.targetId : null),
       PTY_CONTROLLER_LIST_TIMEOUT_MS
     )
     if (!listed.ok) {
-      return 'unknown'
+      return 'unverifiable'
     }
     return classifyWorkerTerminalProcessIncarnation(processIncarnation, listed.value)
   }
@@ -29058,7 +29062,7 @@ export class OrcaRuntimeService {
         }
       }
       try {
-        this.ptyController.retireRejectedPty?.(result.id)
+        this.ptyController.retireRejectedPty?.(result.id, stopped)
       } catch {
         // Best-effort cleanup; preserve the original split authority error.
       }
@@ -31566,6 +31570,15 @@ export class OrcaRuntimeService {
         continue
       }
       if (!allLivePtyIds.has(pty.ptyId) && !this.leafExistsForPty(pty.ptyId)) {
+        const currentVerdict = this.ptyLivenessVerdictByPtyId.get(pty.ptyId)
+        if (
+          currentVerdict?.observedAt > livenessObservationAtStart &&
+          currentVerdict.verdict.status === 'unverifiable'
+        ) {
+          pty.connected = false
+          pty.disconnectedAt ??= Date.now()
+          continue
+        }
         const observed = this.ptyController.hasPty?.(pty.ptyId)
         if (observed === true) {
           // Why: an SSH spawn can become addressable before an overlapping relay list includes it.

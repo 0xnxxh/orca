@@ -13,6 +13,7 @@ export type PtyLivenessVerdict =
 
 export const SSH_PROVIDER_UNREGISTERED_REASON = 'its SSH provider is no longer registered'
 export const NO_OBSERVING_PROVIDER_REASON = 'no registered provider can observe its host'
+export const SSH_EXIT_UNCONFIRMED_REASON = 'the owning SSH host did not confirm the PTY exit'
 export const PTY_LIVE_NOTE = 'The PTY is live.'
 
 /** The one sentence every surface uses to admit a stop was not confirmed. */
