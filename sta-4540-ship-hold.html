@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>STA-4540 · Ship or hold</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --paper: #fffcf6;
+      --ink: #1c1915;
+      --muted: #6b645b;
+      --line: #d9d2c6;
+      --yes: #1f6b45;
+      --yes-bg: #e5f3ea;
+      --no: #9a3412;
+      --no-bg: #fde8df;
+      --hold: #8a5a12;
+      --hold-bg: #f8ecd4;
+      --ship: #14532d;
+      --ship-bg: #dcefe2;
+      --accent: #2c4a6e;
+      --accent-bg: #e7eef6;
+      --tab: #ece7dc;
+      --ok: #166534;
+      --bad: #9f1239;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font: 15px/1.45 "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 400px at 10% -10%, #efe6d4 0%, transparent 55%),
+        var(--bg);
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 28px 22px 64px; }
+    h1, h2, h3 { margin: 0; font-weight: 620; letter-spacing: -0.02em; }
+    p { margin: 0; }
+    .kicker {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+    }
+    .pill {
+      display: inline-block; padding: 3px 8px; border-radius: 999px;
+      font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 650;
+    }
+    .pill-ship { background: var(--ship-bg); color: var(--ship); }
+    .pill-mute { background: #ece7dc; color: var(--muted); }
+    .hero {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 22px 24px 20px;
+      margin-top: 12px;
+    }
+    .hero h1 { font-size: 28px; line-height: 1.2; max-width: 38ch; }
+    .lede { margin-top: 10px; color: var(--muted); max-width: 62ch; }
+    .pf {
+      display: grid; grid-template-columns: 72px 1fr; gap: 8px 12px;
+      margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);
+    }
+    .pf b { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding-top: 3px; }
+    .verdict {
+      margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+      background: var(--ship-bg); color: var(--ship); font-weight: 600;
+    }
+    section { margin-top: 28px; }
+    section h2 { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .card {
+      background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+    }
+    .card h3 { font-size: 14px; margin-bottom: 8px; }
+    .card ul { margin: 0; padding-left: 18px; }
+    .card li { margin: 6px 0; }
+    .does h3 { color: var(--yes); }
+    .does-not h3 { color: var(--no); }
+    .beats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+    .beat { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .beat-lab {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 8px 10px 6px; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted);
+    }
+    .win {
+      margin: 0 10px 10px; border: 1px solid #cfc7b8; border-radius: 8px; overflow: hidden; background: #f7f4ee;
+    }
+    .chrome { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #e8e2d4; border-bottom: 1px solid #d4cdb8; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #c5bba8; }
+    .host { font-size: 11px; color: #4b5563; background: #f3efe6; border: 1px solid #d4cdb8; border-radius: 4px; padding: 1px 6px; }
+    .tabs { display: flex; gap: 4px; padding: 6px 8px 0; background: #efe9db; }
+    .tab {
+      font-size: 11px; padding: 5px 8px 6px; border: 1px solid transparent;
+      border-bottom: none; border-radius: 6px 6px 0 0; color: var(--muted); background: transparent;
+    }
+    .tab.on { background: #f7f4ee; border-color: #d4cdb8; color: var(--ink); font-weight: 600; }
+    .body { padding: 10px 10px 12px; min-height: 118px; font-size: 12px; font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+    .agent { color: #3f3a33; }
+    .dim { color: #8a8276; }
+    .prompt { color: #166534; }
+    .cap { padding: 0 10px 10px; font-size: 12px; color: var(--muted); }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 10px 10px; }
+    .end { border-radius: 7px; border: 1px solid var(--line); overflow: hidden; }
+    .end .tag { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; font-weight: 700; padding: 3px 6px; }
+    .end.bad .tag { background: var(--no-bg); color: var(--no); }
+    .end.ok .tag { background: var(--yes-bg); color: var(--yes); }
+    .end .mini { padding: 6px 7px 8px; font: 11px/1.35 "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+    .check { display: grid; gap: 6px; }
+    .row {
+      display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+      padding: 8px 10px; border-radius: 8px; background: #f7f4ee; border: 1px solid transparent;
+    }
+    .row.wrong { background: var(--no-bg); border-color: #f0c4b0; }
+    .row.ask { background: var(--hold-bg); border-color: #ead4a4; }
+    .ans { font-size: 11px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
+    .ans.yes { color: var(--yes); }
+    .ans.no { color: var(--no); }
+    .ans.never { color: var(--hold); }
+    .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .earlier { font-size: 11px; color: var(--muted); }
+    .risk { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .decide { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 10px; }
+    .decide .card { min-height: 132px; }
+    .pick { outline: 2px solid var(--ship); }
+    .foot { margin-top: 28px; font-size: 11px; color: #8a8276; border-top: 1px solid var(--line); padding-top: 12px; }
+    .term { font-size: 13px; color: var(--muted); margin: -4px 0 10px; max-width: 72ch; }
+    @media (max-width: 860px) {
+      .beats, .cols, .risk, .decide, .pf { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="kicker">
+      <span class="pill pill-ship">Default · ship</span>
+      <span class="pill pill-mute">No UI change</span>
+      <span>STA-4540 · restart reconnect</span>
+    </div>
+
+    <header class="hero">
+      <h1>After restart, the same SSH tab can come back empty while the remote session is still running.</h1>
+      <p class="lede">Silent. Same tab title. No toast. They think the work died. It didn’t — Orca just reattached the wrong pane.</p>
+      <div class="pf">
+        <b>Problem</b>
+        <p>You leave <strong>Claude · auth-fix</strong> mid-edit on staging, restart Orca, reopen that same tab — body is a blank <code>$</code>.</p>
+        <b>Fix</b>
+        <p>On restart, wire that tab back to <em>staging’s</em> still-running session — not to the first other machine that had the same old pane slot.</p>
+      </div>
+      <div class="verdict">Ship before the next build that includes yesterday’s rewrite. Persistence only; the empty-tab failure is already in that rewrite.</div>
+    </header>
+
+    <section>
+      <h2>Does / does not</h2>
+      <div class="cols">
+        <article class="card does">
+          <h3>Does</h3>
+          <ul>
+            <li>Same SSH tab comes back with the command or agent you left running.</li>
+            <li>Two machines no longer steal each other’s reconnects.</li>
+            <li>A folder workspace keeps the exact path you set, including a trailing space.</li>
+          </ul>
+        </article>
+        <article class="card does-not">
+          <h3>Does not</h3>
+          <ul>
+            <li>Change any button, tab, toast, or reconnect UI.</li>
+            <li>Put a session back if this build already restarted once and emptied the tab.</li>
+            <li>Move, rename, or rescan folders on disk.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>One window</h2>
+      <p class="term">Orca keeps remote terminals alive across quit. Restart is supposed to reopen the same tab onto that still-running session — not start a new shell.</p>
+      <div class="beats">
+        <article class="beat">
+          <div class="beat-lab"><span>1 · Before</span><span>the session they meant to keep</span></div>
+          <div class="win">
+            <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="host">staging</span></div>
+            <div class="tabs">
+              <span class="tab on">Claude · auth-fix</span>
+              <span class="tab">zsh</span>
+            </div>
+            <div class="body">
+              <div class="dim">Claude</div>
+              <div class="agent">Editing src/auth.ts — adding the login redirect.</div>
+              <div class="agent">Checking the session cookie path next.</div>
+            </div>
+          </div>
+          <p class="cap">They are looking at this tab. Work is mid-flight. They quit Orca on purpose; staging should keep the session.</p>
+        </article>
+
+        <article class="beat">
+          <div class="beat-lab"><span>2 · Restart</span><span>old check says yes</span></div>
+          <div class="win">
+            <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="host">staging</span></div>
+            <div class="tabs">
+              <span class="tab on">Claude · auth-fix</span>
+              <span class="tab">zsh</span>
+            </div>
+            <div class="body">
+              <div class="dim">Reconnecting…</div>
+              <div class="check" style="margin-top:8px">
+                <div class="row"><span>Same tab name?</span><span class="ans yes">Yes</span></div>
+                <div class="row wrong"><span>Same old pane slot as a rewrite we just did?</span><span class="ans yes">Yes ← replacement</span></div>
+                <div class="row ask"><span>Same machine as that rewrite?</span><span class="ans never">Never asked</span></div>
+              </div>
+            </div>
+          </div>
+          <p class="cap">Same window, same title. Yesterday’s rewrite treats another machine’s new pane as “the” replacement. No toast.</p>
+        </article>
+
+        <article class="beat">
+          <div class="beat-lab"><span>3 · Ending</span><span>same tab, two bodies</span></div>
+          <div class="pair">
+            <div class="end bad">
+              <div class="tag">Wrong · now</div>
+              <div class="mini">
+                <div class="tab on" style="display:inline-block;margin:0 0 6px;background:#f7f4ee;border:1px solid #d4cdb8;">Claude · auth-fix</div>
+                <div class="prompt">$</div>
+                <div class="dim">empty shell</div>
+              </div>
+            </div>
+            <div class="end ok">
+              <div class="tag">Right · this change</div>
+              <div class="mini">
+                <div class="tab on" style="display:inline-block;margin:0 0 6px;background:#f7f4ee;border:1px solid #d4cdb8;">Claude · auth-fix</div>
+                <div>Editing src/auth.ts — adding the login redirect.</div>
+              </div>
+            </div>
+          </div>
+          <p class="cap">If this looked like a new tab, it would be the wrong bug. The title never changes.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Why the old check is the wrong question</h2>
+      <div class="card">
+        <p class="term" style="margin:0 0 10px">Same picture as above: staging’s <strong>Claude · auth-fix</strong> is being matched against a rewrite that may belong to another machine.</p>
+        <div class="check">
+          <div class="row">
+            <span>Tab still called Claude · auth-fix?<br><span class="earlier">Surface check — always true here</span></span>
+            <span class="ans yes">Yes</span>
+          </div>
+          <div class="row">
+            <span>Did yesterday’s change rewrite old pane slots on every machine?<br><span class="earlier">Earlier change — keep this</span></span>
+            <span class="ans yes">Yes</span>
+          </div>
+          <div class="row wrong">
+            <span>If the old pane slot matches a rewrite, is that the replacement?<br><span class="earlier">Earlier change — this is the wrong YES</span></span>
+            <span class="ans yes">Yes</span>
+          </div>
+          <div class="row ask">
+            <span>Is that rewrite from the same machine as this tab?<br><span class="earlier">This change — the question it never asked</span></span>
+            <span class="ans never">Never asked</span>
+          </div>
+        </div>
+        <p class="note">Yesterday also started trimming folder paths on save. This change puts the given path back, untrimmed. Not a second story — just stop rewriting what the user set.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Who pays</h2>
+      <div class="risk">
+        <article class="card">
+          <h3>Benefits</h3>
+          <p>Anyone with more than one SSH machine, or a leftover local copy of an SSH tab, who has <em>not</em> restarted on yesterday’s rewrite yet. Their next quit/reopen keeps the running session.</p>
+        </article>
+        <article class="card">
+          <h3>Pays</h3>
+          <p>If someone already restarted on that rewrite, this does not refill the empty tab. The still-running remote process stays orphaned. No UI risk; the leftover empty tab is a follow-up, not a reason to hold the stop-the-bleed.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Decision traps</h2>
+      <div class="card check">
+        <div class="row">
+          <span>This is diagnostics only.</span>
+          <span class="ans no">False</span>
+        </div>
+        <div class="row">
+          <span>Already-rewritten empty tabs will heal themselves.</span>
+          <span class="ans no">False</span>
+        </div>
+        <div class="row">
+          <span>Folder-path trim is the user-facing failure.</span>
+          <span class="ans no">False</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Call</h2>
+      <div class="decide">
+        <article class="card pick">
+          <h3>Ship · default</h3>
+          <p>Persistence-only correction of yesterday’s rewrite. Stops the silent empty-tab failure for the next restart. No UI. Land before that rewrite ships in a build people actually quit.</p>
+        </article>
+        <article class="card">
+          <h3>Hold</h3>
+          <p>Only if you need this same PR to also revive tabs that already restarted empty. That is extra work, not this diff.</p>
+        </article>
+        <article class="card">
+          <h3>Wrong tool</h3>
+          <p>Not a reconnect-UI or SSH-relay change. Restart already aims this tab; it is aimed at the wrong machine’s pane.</p>
+        </article>
+      </div>
+    </section>
+
+    <p class="foot">Local decision page. Not product UI. Yesterday = host-wide pane rewrite + merged replacement table + folder-path trim. This = per-machine replacement + persist the path as given.</p>
+  </div>
+</body>
+</html>
