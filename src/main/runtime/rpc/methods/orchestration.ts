@@ -639,9 +639,13 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         const dispatch = routing.dispatchId
           ? db.getDispatchContextById(routing.dispatchId)
           : undefined
-        const lifecycleMessage = msg.type === 'worker_done' || msg.type === 'heartbeat'
+        const dispatchMutationMessage =
+          msg.type === 'worker_done' ||
+          msg.type === 'heartbeat' ||
+          msg.type === 'escalation' ||
+          msg.type === 'decision_gate'
         if (
-          lifecycleMessage &&
+          dispatchMutationMessage &&
           dispatch &&
           (dispatch.capability_hash || dispatch.process_incarnation)
         ) {

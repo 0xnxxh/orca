@@ -250,6 +250,45 @@ describe('orchestration RPC methods', () => {
       expect(accepted.lifecycle.action).toBe('completed')
     })
 
+    it.each(['escalation', 'decision_gate'] as const)(
+      'fences a replacement process from a %s mutation',
+      async (type) => {
+        setup()
+        const task = db.createTask({ spec: `process-bound ${type}` })
+        const dispatch = db.createDispatchContext(
+          task.id,
+          'term_worker',
+          'tab_worker:leaf_worker',
+          undefined,
+          'runtime_test:term_worker:1'
+        )
+        vi.mocked(runtime.getTerminalPaneKey).mockImplementation((handle) =>
+          handle === 'term_worker' ? 'tab_worker:leaf_worker' : coordinatorPaneKey
+        )
+        vi.mocked(runtime.getTerminalProcessIncarnation).mockReturnValue(
+          'runtime_test:term_worker:2'
+        )
+
+        const rejected = (await call('orchestration.send', {
+          from: 'term_worker',
+          subject: `${type} after replacement`,
+          type,
+          payload: JSON.stringify({
+            taskId: task.id,
+            ...(type === 'decision_gate' ? { question: 'Proceed?' } : {})
+          })
+        })) as { lifecycle: { action: string; code: string } }
+
+        expect(rejected.lifecycle).toMatchObject({
+          action: 'rejected',
+          code: 'sender_not_assignee'
+        })
+        expect(db.getTask(task.id)?.status).toBe('dispatched')
+        expect(db.getDispatchContextById(dispatch.id)?.status).toBe('dispatched')
+        expect(db.listGates({ taskId: task.id })).toHaveLength(0)
+      }
+    )
+
     it('rejects an identity-less lifecycle send resolved through the coordinator handle', async () => {
       setup()
       const task = db.createTask({ spec: 'work' })
