@@ -15,6 +15,7 @@ import {
   getEnterpriseGitHubRepoSlugForRemote,
   isGitHubHostAuthenticated
 } from './github-enterprise-repository'
+import { getSshGitProviderGeneration } from '../providers/ssh-git-dispatch'
 
 export type GitHubApiRepository = GitHubOwnerRepo
 export type GitHubRepoExecOptions = ReturnType<typeof ghRepoExecOptions> & { host?: string }
@@ -57,7 +58,10 @@ function originRepoCacheKey(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): string {
-  return `${connectionId ?? 'local'}\0${localGitOptions.wslDistro ?? ''}\0${repoPath}\0${remoteName}`
+  const runtimeKey = connectionId
+    ? `${connectionId}:${getSshGitProviderGeneration(connectionId)}`
+    : 'local'
+  return `${runtimeKey}\0${localGitOptions.wslDistro ?? ''}\0${repoPath}\0${remoteName}`
 }
 
 /** @internal - exposed for tests only */
