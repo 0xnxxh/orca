@@ -52,6 +52,48 @@ describe('createWatcherEventRootPathRewrite', () => {
     expect(rewrite('C:\\real\\repo\\src\\a.ts')).toBe('C:/link/src\\a.ts')
   })
 
+  // Why: a fabricated path is worse than no fix — a consumer would act on the
+  // wrong file — so the prefix match is separator-aware in both directions.
+  it('never mistakes a sibling directory for the root', () => {
+    const rewrite = createWatcherEventRootPathRewrite('/a/link', '/b/real', 'darwin')
+    expect(rewrite('/b/real-backup/x.ts')).toBe('/b/real-backup/x.ts')
+    expect(
+      createWatcherEventRootPathRewrite('/a/repo', '/a/repo', 'darwin')('/a/repo-backup/x.ts')
+    ).toBe('/a/repo-backup/x.ts')
+  })
+
+  it('never mistakes a sibling UNC share directory for the root', () => {
+    const rewrite = createWatcherEventRootPathRewrite(
+      '\\\\srv\\share\\repo',
+      '\\\\srv\\share\\repo',
+      'win32'
+    )
+    expect(rewrite('\\\\srv\\share\\repo2\\x.ts')).toBe('\\\\srv\\share\\repo2\\x.ts')
+  })
+
+  it('rewrites the root itself and leaves a shorter path alone', () => {
+    const rewrite = createWatcherEventRootPathRewrite('/a/link', '/b/real', 'darwin')
+    expect(rewrite('/b/real')).toBe('/a/link')
+    expect(rewrite('/b')).toBe('/b')
+  })
+
+  it('restores the requested drive-letter casing', () => {
+    const rewrite = createWatcherEventRootPathRewrite('C:\\link', 'c:\\real', 'win32')
+    expect(rewrite('c:\\real\\x.ts')).toBe('C:\\link\\x.ts')
+  })
+
+  // Why: toLowerCase can change length for some scripts; folding per segment
+  // keeps a non-match a non-match instead of slicing the path mid-character.
+  it('does not fold unrelated scripts into a match', () => {
+    const rewrite = createWatcherEventRootPathRewrite('/a/DIYARBAKIR', '/a/DIYARBAKIR', 'darwin')
+    expect(rewrite('/a/d\u0131yarbak\u0131r/x.ts')).toBe('/a/d\u0131yarbak\u0131r/x.ts')
+  })
+
+  it('returns a root-only canonical path unrewritten rather than guessing', () => {
+    const rewrite = createWatcherEventRootPathRewrite('/a/link', '/', 'darwin')
+    expect(rewrite('/x.ts')).toBe('/x.ts')
+  })
+
   it('folds Unicode composition differences without slicing mid-character', () => {
     const composed = '/Users/dev/caf\u00e9'
     const decomposed = '/Users/dev/cafe\u0301'
