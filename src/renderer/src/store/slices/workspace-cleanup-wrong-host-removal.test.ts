@@ -71,6 +71,19 @@ import type {
   WorkspaceCleanupCandidate,
   WorkspaceCleanupScanResult
 } from '../../../../shared/workspace-cleanup'
+import { getWorkspaceCleanupCandidateIdentity } from '../../../../shared/workspace-cleanup-host-identity'
+import type { DetectedWorktree, Worktree } from '../../../../shared/worktree/types'
+
+function makeDetectedWorktree(
+  overrides: Partial<Worktree> & { id: string; repoId: string }
+): DetectedWorktree {
+  return {
+    ...makeWorktree(overrides),
+    ownership: 'orca-managed',
+    selectedCheckout: false,
+    visible: true
+  }
+}
 
 function makeHostCandidate(
   worktreeId: string,
@@ -289,6 +302,27 @@ describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
           })
         ]
       },
+      detectedWorktreesByRepo: {
+        repo1: {
+          repoId: 'repo1',
+          authoritative: true,
+          source: 'git',
+          worktrees: [
+            makeDetectedWorktree({
+              id: worktreeId,
+              repoId: 'repo1',
+              path: worktreePath,
+              hostId: HOST_A_HOST_ID
+            }),
+            makeDetectedWorktree({
+              id: worktreeId,
+              repoId: 'repo1',
+              path: worktreePath,
+              hostId: HOST_B_HOST_ID
+            })
+          ]
+        }
+      },
       tabsByWorktree: {
         [worktreeId]: [makeTab({ id: 'host-a-tab', worktreeId })]
       }
@@ -345,6 +379,8 @@ describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
     expect(fs.existsSync(hosts.hostBMarkerPath)).toBe(false)
     expect(fs.existsSync(hosts.hostAMarkerPath), 'host A must survive').toBe(true)
     expect(routedHostIds).toEqual([HOST_B_HOST_ID])
+    expect(store.getState().activeWorktreeId).toBe(worktreeId)
+    expect(store.getState().activeWorkspaceExecutionHostId).toBe(HOST_A_HOST_ID)
   })
 
   it('soundness control: confirming ACTIVE host A deletes host A and leaves host B intact', async () => {
@@ -383,6 +419,88 @@ describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
     expect(fs.existsSync(hosts.hostAMarkerPath)).toBe(false)
     expect(fs.existsSync(hosts.hostBMarkerPath), 'host B must survive').toBe(true)
     expect(routedHostIds).toEqual([HOST_A_HOST_ID])
+    expect(store.getState().activeWorktreeId).toBe(worktreeId)
+    expect(store.getState().activeWorkspaceExecutionHostId).toBe(HOST_B_HOST_ID)
+  })
+
+  it('tears down shared state when cleanup confirms both same-id host rows', async () => {
+    const worktreeId = 'repo1::/shared/workspace/path'
+    const worktreePath = '/shared/workspace/path'
+    const hosts = createHostDirectories(worktreeId)
+    const routedHostIds: string[] = []
+    installRemovalTransports(
+      { [HOST_A_HOST_ID]: hosts.hostARoot, [HOST_B_HOST_ID]: hosts.hostBRoot },
+      routedHostIds
+    )
+    const hostACandidate = makeHostCandidate(worktreeId, HOST_A_HOST_ID, worktreePath)
+    const hostBCandidate = makeHostCandidate(worktreeId, HOST_B_HOST_ID, worktreePath)
+    seedCollidingScan([hostACandidate, hostBCandidate])
+
+    const store = createTestStore()
+    seedStore(store, {
+      activeWorktreeId: worktreeId,
+      activeWorkspaceExecutionHostId: HOST_A_HOST_ID,
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo1',
+            path: worktreePath,
+            hostId: HOST_A_HOST_ID
+          }),
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo1',
+            path: worktreePath,
+            hostId: HOST_B_HOST_ID
+          })
+        ]
+      },
+      detectedWorktreesByRepo: {
+        repo1: {
+          repoId: 'repo1',
+          authoritative: true,
+          source: 'git',
+          worktrees: [
+            makeDetectedWorktree({
+              id: worktreeId,
+              repoId: 'repo1',
+              path: worktreePath,
+              hostId: HOST_A_HOST_ID
+            }),
+            makeDetectedWorktree({
+              id: worktreeId,
+              repoId: 'repo1',
+              path: worktreePath,
+              hostId: HOST_B_HOST_ID
+            })
+          ]
+        }
+      },
+      workspaceCleanupScan: {
+        scannedAt: NOW,
+        candidates: [hostACandidate, hostBCandidate],
+        errors: []
+      },
+      tabsByWorktree: { [worktreeId]: [makeTab({ id: 'shared-tab', worktreeId })] }
+    } as Partial<AppState>)
+
+    const removal = await store
+      .getState()
+      .removeWorkspaceCleanupCandidates([worktreeId, worktreeId], {
+        approvedCandidates: [hostACandidate, hostBCandidate]
+      })
+
+    expect(removal.failures).toEqual([])
+    expect(removal.removedIdentities).toEqual([
+      getWorkspaceCleanupCandidateIdentity(hostACandidate),
+      getWorkspaceCleanupCandidateIdentity(hostBCandidate)
+    ])
+    expect(new Set(routedHostIds)).toEqual(new Set([HOST_A_HOST_ID, HOST_B_HOST_ID]))
+    expect(fs.existsSync(hosts.hostAMarkerPath)).toBe(false)
+    expect(fs.existsSync(hosts.hostBMarkerPath)).toBe(false)
+    expect(store.getState().tabsByWorktree[worktreeId]).toBeUndefined()
+    expect(store.getState().activeWorktreeId).toBeNull()
   })
 
   it('keeps the confirmed host on the preserved-branch follow-up', async () => {

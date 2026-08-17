@@ -17,6 +17,7 @@ import {
   saveSessionCommitDrafts
 } from '@/lib/source-control-commit-draft-session'
 import { createStoreCascadesMockApi } from './store-cascades-test-harness'
+import { getWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 
 const mockUnregisterPtyDataHandlers = vi.hoisted(() => vi.fn<() => unknown[]>(() => []))
 const mockRestorePtyDataHandlersAfterFailedShutdown = vi.hoisted(() => vi.fn())
@@ -268,6 +269,29 @@ describe('removeWorktree cascade', () => {
       [first]: { isDeleting: true, error: null, canForceDelete: false },
       [second]: { isDeleting: true, error: null, canForceDelete: false }
     })
+  })
+
+  it('tracks and clears same-id deletion state independently by host', () => {
+    const store = createTestStore()
+    const local = { id: 'repo1::/path/shared', hostId: 'local' as const }
+    const remote = { id: local.id, hostId: 'ssh:box' as const }
+
+    store.getState().markWorktreesDeleting([local, remote])
+
+    expect(store.getState().deleteStateByWorktreeId).toMatchObject({
+      [getWorktreeHostIdentity(local)]: { isDeleting: true, executionHostId: 'local' },
+      [getWorktreeHostIdentity(remote)]: { isDeleting: true, executionHostId: 'ssh:box' }
+    })
+
+    store.getState().clearWorktreeDeleteState(local.id, local.hostId)
+
+    expect(store.getState().deleteStateByWorktreeId[getWorktreeHostIdentity(local)]).toBeUndefined()
+    expect(store.getState().deleteStateByWorktreeId[getWorktreeHostIdentity(remote)]).toMatchObject(
+      {
+        isDeleting: true,
+        executionHostId: 'ssh:box'
+      }
+    )
   })
 
   it('promotes a queued row to deleting when a real delete starts (phase-aware skip guard)', () => {

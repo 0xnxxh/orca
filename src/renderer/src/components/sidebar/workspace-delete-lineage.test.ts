@@ -181,4 +181,39 @@ describe('getWorkspaceDeleteLineage', () => {
       SSH_HOST
     ])
   })
+
+  it('uses the confirmed host inline lineage when the bare projection belongs to the other host', () => {
+    const localParent: Worktree = {
+      ...makeWorktree('parent', '/workspaces/parent'),
+      instanceId: 'local-parent',
+      hostId: LOCAL_EXECUTION_HOST_ID
+    }
+    const sshParent: Worktree = {
+      ...localParent,
+      instanceId: 'ssh-parent',
+      hostId: SSH_HOST
+    }
+    const localChild: Worktree = {
+      ...makeWorktree('child', '/workspaces/parent/child'),
+      instanceId: 'local-child',
+      hostId: LOCAL_EXECUTION_HOST_ID
+    }
+    const sshChildBase: Worktree = {
+      ...localChild,
+      instanceId: 'ssh-child',
+      hostId: SSH_HOST
+    }
+    const sshChild = {
+      ...sshChildBase,
+      lineage: makeLineage(sshChildBase, sshParent)
+    } as Worktree
+
+    const lineage = getWorkspaceDeleteLineage(
+      sshParent,
+      [localParent, sshParent, localChild, sshChild],
+      { [localChild.id]: makeLineage(localChild, localParent) }
+    )
+
+    expect(lineage.deleteAllTargets).toEqual([sshChild, sshParent])
+  })
 })

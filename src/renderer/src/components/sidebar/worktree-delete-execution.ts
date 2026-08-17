@@ -23,10 +23,14 @@ import { showPreservedBranchBatchToast } from './preserved-branch-batch-toast'
 import type { PreservedBranchCleanup } from '@/lib/preserved-branch-cleanup'
 import type { WorktreeDeleteWithToastOptions } from './worktree-delete-request'
 import { beginWorktreeSnapshotPruneBatch } from './worktree-snapshot-prune-batch'
+import { getDeleteStateForWorktreeHost } from './worktree-delete-state-host-match'
 
 // A failed delete usually means unresolved changes, so land on the diff panel.
-function viewWorktreeDiff(worktreeId: string): void {
-  activateAndRevealWorktree(worktreeId)
+function viewWorktreeDiff(
+  worktreeId: string,
+  executionHostId: WorktreeRemovalTarget['executionHostId']
+): void {
+  activateAndRevealWorktree(worktreeId, executionHostId ? { executionHostId } : {})
   const state = useAppStore.getState()
   state.setRightSidebarTab('source-control')
   state.setRightSidebarOpen(true)
@@ -37,6 +41,15 @@ function isStrictDescendantPath(parentPath: string, childPath: string): boolean 
     normalizeRuntimePathForComparison(parentPath) !==
       normalizeRuntimePathForComparison(childPath) && isPathInsideOrEqual(parentPath, childPath)
   )
+}
+
+function clearWorktreeDeleteTargetState(target: Pick<Worktree, 'id' | 'hostId'>): void {
+  const state = useAppStore.getState()
+  if (target.hostId) {
+    state.clearWorktreeDeleteState(target.id, target.hostId)
+  } else {
+    state.clearWorktreeDeleteState(target.id)
+  }
 }
 
 export async function runWorktreeDeletesInParallel(
@@ -56,7 +69,9 @@ export async function runWorktreeDeletesInParallel(
     ? prepareActiveWorktreeFocusAfterDelete(activeWorktreeIdBefore)
     : null
   // Mark all targets up front so the sidebar shows immediate progress.
-  useAppStore.getState().markWorktreesDeleting(uniqueTargets.map((target) => target.id))
+  useAppStore
+    .getState()
+    .markWorktreesDeleting(uniqueTargets.map((target) => (target.hostId ? target : target.id)))
   // Git worktree removal shares repo locks only within one execution host.
   const groups = new Map<string, (typeof uniqueTargets)[number][]>()
   for (const target of uniqueTargets) {
@@ -78,6 +93,30 @@ export async function runWorktreeDeletesInParallel(
   const pendingSnapshotPruneBatch =
     uniqueTargets.length > 1 ? beginWorktreeSnapshotPruneBatch() : null
   const snapshotPruneBatch = pendingSnapshotPruneBatch ? await pendingSnapshotPruneBatch : null
+  const deletionTailByWorktreeId = new Map<string, Promise<void>>()
+  const runInWorktreeDeleteTurn = async <T>(
+    worktreeId: string,
+    operation: () => Promise<T>
+  ): Promise<T> => {
+    const previous = deletionTailByWorktreeId.get(worktreeId)
+    let releaseTurn: () => void = () => {}
+    const turn = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
+    const tail = previous ? previous.then(() => turn) : turn
+    deletionTailByWorktreeId.set(worktreeId, tail)
+    if (previous) {
+      await previous
+    }
+    try {
+      return await operation()
+    } finally {
+      releaseTurn()
+      if (deletionTailByWorktreeId.get(worktreeId) === tail) {
+        deletionTailByWorktreeId.delete(worktreeId)
+      }
+    }
+  }
   let groupResults: WorktreeRemovalTarget[][]
   try {
     groupResults = await Promise.all(
@@ -85,44 +124,46 @@ export async function runWorktreeDeletesInParallel(
         const deletedInGroup: WorktreeRemovalTarget[] = []
         const failedInGroup: (typeof group)[number][] = []
         for (const target of group) {
-          // A queued target may be recreated while an earlier repo sibling is deleting.
-          // Why by host (STA-4343): the id-keyed map keeps ONE row per `repoId::path`,
-          // so on a two-host collision it can hand back the other host's row — whose
-          // instanceId never matches, silently dropping a delete the user confirmed.
-          const currentTarget = getWorktreeOnHostFromState(
-            useAppStore.getState(),
-            target.id,
-            target.hostId
-          )
-          if (!currentTarget || currentTarget.instanceId !== target.instanceId) {
-            useAppStore.getState().clearWorktreeDeleteState(target.id)
-            listChanged = true
-            continue
-          }
-          if (failedInGroup.some((failed) => isStrictDescendantPath(target.path, failed.path))) {
-            useAppStore.getState().clearWorktreeDeleteState(target.id)
-            continue
-          }
-          const deleted = await runWorktreeDeleteWithToast(
-            toWorktreeRemovalTarget(target),
-            target.displayName,
-            {
-              ...options,
-              focusSuccessorOnDelete: false,
-              suppressPreservedBranchToast: aggregatePreservedBranches,
-              ...(snapshotPruneBatch ? { snapshotPruneBatchId: snapshotPruneBatch.batchId } : {}),
-              onPreservedBranch: (branch) => {
-                preservedBranches.push(branch)
-                options.onPreservedBranch?.(branch)
-              }
+          await runInWorktreeDeleteTurn(target.id, async () => {
+            // A queued target may be recreated while an earlier repo sibling is deleting.
+            // Why by host (STA-4343): the id-keyed map keeps ONE row per `repoId::path`,
+            // so on a two-host collision it can hand back the other host's row — whose
+            // instanceId never matches, silently dropping a delete the user confirmed.
+            const currentTarget = getWorktreeOnHostFromState(
+              useAppStore.getState(),
+              target.id,
+              target.hostId
+            )
+            if (!currentTarget || currentTarget.instanceId !== target.instanceId) {
+              clearWorktreeDeleteTargetState(target)
+              listChanged = true
+              return
             }
-          )
-          if (deleted) {
-            deletedInGroup.push(toWorktreeRemovalTarget(target))
-          } else {
-            // A failed child makes deleting its ancestor unsafe because the child lives below it.
-            failedInGroup.push(target)
-          }
+            if (failedInGroup.some((failed) => isStrictDescendantPath(target.path, failed.path))) {
+              clearWorktreeDeleteTargetState(target)
+              return
+            }
+            const deleted = await runWorktreeDeleteWithToast(
+              toWorktreeRemovalTarget(target),
+              target.displayName,
+              {
+                ...options,
+                focusSuccessorOnDelete: false,
+                suppressPreservedBranchToast: aggregatePreservedBranches,
+                ...(snapshotPruneBatch ? { snapshotPruneBatchId: snapshotPruneBatch.batchId } : {}),
+                onPreservedBranch: (branch) => {
+                  preservedBranches.push(branch)
+                  options.onPreservedBranch?.(branch)
+                }
+              }
+            )
+            if (deleted) {
+              deletedInGroup.push(toWorktreeRemovalTarget(target))
+            } else {
+              // A failed child makes deleting its ancestor unsafe because the child lives below it.
+              failedInGroup.push(target)
+            }
+          })
         }
         return deletedInGroup
       })
@@ -212,11 +253,10 @@ export function runWorktreeDeleteWithToast(
         }
         return true
       }
-      const candidateState = useAppStore.getState().deleteStateByWorktreeId[worktreeId]
-      // A concurrent same-id delete on another host can overwrite this bare-keyed
-      // slot. Missing state hides recovery; mismatched state must never mint force.
-      const state =
-        candidateState?.executionHostId === target.executionHostId ? candidateState : undefined
+      const state = getDeleteStateForWorktreeHost(
+        { id: worktreeId, hostId: target.executionHostId ?? undefined },
+        useAppStore.getState().deleteStateByWorktreeId
+      )
       const canForceDelete = state?.canForceDelete ?? false
       const hasKnownChanges =
         (useAppStore.getState().gitStatusByWorktree[worktreeId]?.length ?? 0) > 0
@@ -226,7 +266,7 @@ export function runWorktreeDeleteWithToast(
         forceDeleteReason: state?.forceDeleteReason ?? null,
         lockReason: state?.lockReason ?? null,
         hasKnownChanges,
-        onViewChanges: () => viewWorktreeDiff(worktreeId),
+        onViewChanges: () => viewWorktreeDiff(worktreeId, target.executionHostId),
         onForceDelete: () => {
           // Recapture focus because the user may have navigated while the toast was open.
           const commitForceFocus = prepareActiveWorktreeFocusAfterDelete(worktreeId)
@@ -249,7 +289,7 @@ export function runWorktreeDeleteWithToast(
                         'auto.components.sidebar.delete.worktree.flow.7488ed8711',
                         'View'
                       ),
-                      onClick: () => viewWorktreeDiff(worktreeId)
+                      onClick: () => viewWorktreeDiff(worktreeId, target.executionHostId)
                     }
                   }
                 )
@@ -271,7 +311,7 @@ export function runWorktreeDeleteWithToast(
                       'auto.components.sidebar.delete.worktree.flow.7488ed8711',
                       'View'
                     ),
-                    onClick: () => viewWorktreeDiff(worktreeId)
+                    onClick: () => viewWorktreeDiff(worktreeId, target.executionHostId)
                   }
                 }
               )

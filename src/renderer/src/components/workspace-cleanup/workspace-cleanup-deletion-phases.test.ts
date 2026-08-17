@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { getWorkspaceCleanupCandidateIdentity } from '../../../../shared/workspace-cleanup-host-identity'
 import { makeCandidate } from './workspace-cleanup-presentation-fixtures'
 import { getWorkspaceCleanupDeletionPhaseByIdentity } from './workspace-cleanup-deletion-phases'
+import { composeWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 
 describe('workspace cleanup deletion phases', () => {
   it('marks only the qualified row during a same-id cleanup removal', () => {
@@ -24,7 +25,7 @@ describe('workspace cleanup deletion phases', () => {
     expect(localIdentity).not.toBe(remoteIdentity)
   })
 
-  it('applies a non-cleanup deletion to every ambiguous same-id row', () => {
+  it('applies a non-cleanup deletion only to its host-qualified row', () => {
     const local = makeCandidate({ executionHostId: 'local' })
     const remote = makeCandidate({
       worktreeId: local.worktreeId,
@@ -35,11 +36,10 @@ describe('workspace cleanup deletion phases', () => {
       getWorkspaceCleanupDeletionPhaseByIdentity(
         [local, remote],
         {},
-        { [local.worktreeId]: 'queued' }
+        { [composeWorktreeHostIdentity('local', local.worktreeId)]: 'queued' }
       )
     ).toEqual({
-      [getWorkspaceCleanupCandidateIdentity(local)]: 'queued',
-      [getWorkspaceCleanupCandidateIdentity(remote)]: 'queued'
+      [getWorkspaceCleanupCandidateIdentity(local)]: 'queued'
     })
   })
 })

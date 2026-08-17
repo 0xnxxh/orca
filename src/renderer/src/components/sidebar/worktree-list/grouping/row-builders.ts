@@ -4,8 +4,9 @@ import type { Worktree } from '../../../../../../shared/worktree/types'
 import { getWorktreeExecutionHostId } from '../../../../../../shared/execution-host'
 import type { ExecutionHostId } from '../../../../../../shared/execution-host'
 import { getWorktreeHostIdentity } from '../../../../../../shared/worktree/host-qualified-identity'
-import { getLineageRenderInfo } from '../../worktree-lineage-projection'
-import { PINNED_GROUP_KEY, PINNED_GROUP_META, getLineageGroupKey } from './group-keys'
+import { isValidResolvedWorktreeLineageEdge } from '../../../../../../shared/resolved-worktree-lineage'
+import { getProjectedWorktreeLineage } from '../../worktree-lineage-projection'
+import { PINNED_GROUP_KEY, PINNED_GROUP_META, getWorktreeLineageGroupKey } from './group-keys'
 import type {
   ImportedWorktreesCardCandidate,
   ImportedWorktreesCardRow,
@@ -157,7 +158,9 @@ function buildWorktreeRow(
     isLastLineageChild: options.isLastLineageChild,
     lineageChildCount: options.lineageChildCount,
     ...(options.hostContextLabel ? { hostContextLabel: options.hostContextLabel } : {}),
-    ...(options.lineageChildCount > 0 ? { lineageGroupKey: getLineageGroupKey(worktree.id) } : {}),
+    ...(options.lineageChildCount > 0
+      ? { lineageGroupKey: getWorktreeLineageGroupKey(worktree) }
+      : {}),
     ...(options.lineageChildCount > 0 ? { lineageCollapsed: options.lineageCollapsed } : {})
   }
 }
@@ -167,7 +170,7 @@ export function appendWorktreeRows(
   worktrees: Worktree[],
   repoMap: Map<string, Repo>,
   lineageById: Record<string, WorktreeLineage>,
-  worktreeMap: Map<string, Worktree>,
+  _worktreeMap: Map<string, Worktree>,
   options: {
     nestLineage: boolean
     collapsedGroups: Set<string>
@@ -208,21 +211,34 @@ export function appendWorktreeRows(
     return
   }
 
-  const visibleIds = new Set(worktrees.map((worktree) => worktree.id))
-  const childrenByParentId = new Map<string, Worktree[]>()
-  // Why (STA-4343): lineage itself is keyed by the bare id, so parent/child
-  // lookups stay id-based — but membership must be host-qualified or the second
-  // host's row for a colliding id is silently never emitted.
+  const visibleByIdentity = new Map(
+    worktrees.map((worktree) => [getWorktreeHostIdentity(worktree), worktree])
+  )
+  const childrenByParentIdentity = new Map<string, Worktree[]>()
   const childIdentities = new Set<string>()
   for (const worktree of worktrees) {
-    const lineage = getLineageRenderInfo(worktree, lineageById, worktreeMap, cyclicLineageIds)
-    if (lineage.state !== 'valid' || !visibleIds.has(lineage.parent.id)) {
+    const projectedLineage = getProjectedWorktreeLineage(worktree, lineageById)
+    const inlineLineage = (worktree as Worktree & { lineage?: WorktreeLineage | null }).lineage
+    const lineage =
+      projectedLineage?.worktreeInstanceId === worktree.instanceId
+        ? projectedLineage
+        : inlineLineage
+    if (!lineage || cyclicLineageIds.has(worktree.id)) {
       continue
     }
-    childIdentities.add(getWorktreeHostIdentity(worktree))
-    const children = childrenByParentId.get(lineage.parent.id) ?? []
+    const parentIdentity = getWorktreeHostIdentity({
+      id: lineage.parentWorktreeId,
+      hostId: worktree.hostId
+    })
+    const parent = visibleByIdentity.get(parentIdentity)
+    if (!parent || !isValidResolvedWorktreeLineageEdge(worktree, parent, lineage)) {
+      continue
+    }
+    const childIdentity = getWorktreeHostIdentity(worktree)
+    childIdentities.add(childIdentity)
+    const children = childrenByParentIdentity.get(parentIdentity) ?? []
     children.push(worktree)
-    childrenByParentId.set(lineage.parent.id, children)
+    childrenByParentIdentity.set(parentIdentity, children)
   }
 
   const emitted = new Set<string>()
@@ -235,8 +251,8 @@ export function appendWorktreeRows(
     if (emitted.has(getWorktreeHostIdentity(worktree))) {
       return
     }
-    const children = childrenByParentId.get(worktree.id) ?? []
-    const lineageGroupKey = getLineageGroupKey(worktree.id)
+    const children = childrenByParentIdentity.get(getWorktreeHostIdentity(worktree)) ?? []
+    const lineageGroupKey = getWorktreeLineageGroupKey(worktree)
     const lineageCollapsed = collapsedGroups.has(lineageGroupKey)
     emitted.add(getWorktreeHostIdentity(worktree))
     result.push(

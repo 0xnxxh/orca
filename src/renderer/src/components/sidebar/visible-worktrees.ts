@@ -5,11 +5,8 @@ import type { Worktree } from '../../../../shared/worktree/types'
 import { buildWorktreeComparator, sortWorktreesSmart } from './smart-sort'
 import { getWorktreeIdsWithLiveAgent, isInactiveWorkspace } from '@/lib/worktree-activity-state'
 import { useAppStore } from '@/store'
-import {
-  getAllWorktreesFromState,
-  getRepoMapFromState,
-  getWorktreeMapFromState
-} from '@/store/selectors'
+import type { AppState } from '@/store/types'
+import { getAllWorktreesFromState, getRepoMapFromState } from '@/store/selectors'
 import { DEFAULT_SHOW_SLEEPING_WORKSPACES } from '../../../../shared/constants'
 import {
   ALL_EXECUTION_HOSTS_SCOPE,
@@ -22,7 +19,10 @@ import {
   getCyclicProjectedWorktreeLineageIds,
   getLineageRenderInfo
 } from './worktree-lineage-projection'
-import { computeRenderedSidebarWorktreeOrder } from './rendered-sidebar-worktree-order'
+import {
+  computeRenderedSidebarWorktreeOrder,
+  computeRenderedSidebarWorktrees
+} from './rendered-sidebar-worktree-order'
 import { getWorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import {
   EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
@@ -356,6 +356,35 @@ function addVisibleLineageAncestors(
  * null means WorktreeList is unmounted.
  */
 let _publishedVisibleIds: string[] | null = null
+export type VisibleWorktreeShortcutTarget = {
+  id: string
+  executionHostId?: Worktree['hostId']
+}
+let _publishedVisibleShortcutTargets: VisibleWorktreeShortcutTarget[] | null = null
+
+function getVisibleWorkspaceHostIdSet(
+  state: Pick<AppState, 'workspaceHostScope' | 'visibleWorkspaceHostIds'>
+): ReadonlySet<ExecutionHostId> | null {
+  const hostIds =
+    state.visibleWorkspaceHostIds ??
+    (state.workspaceHostScope === ALL_EXECUTION_HOSTS_SCOPE ? null : [state.workspaceHostScope])
+  return hostIds ? new Set(hostIds) : null
+}
+
+function worktreeMatchesVisibleHost(
+  worktree: Worktree,
+  visibleHostIds: ReadonlySet<ExecutionHostId> | null,
+  repoMap: Map<string, Repo>,
+  defaultHostId: ExecutionHostId
+): boolean {
+  if (!visibleHostIds) {
+    return true
+  }
+  const repo = repoMap.get(worktree.repoId)
+  return repo
+    ? visibleHostIds.has(getWorktreeExecutionHostId(worktree, repo, defaultHostId))
+    : false
+}
 
 /**
  * Called by WorktreeList after computing visible worktrees so the Cmd+1–9
@@ -364,6 +393,12 @@ let _publishedVisibleIds: string[] | null = null
  */
 export function setVisibleWorktreeIds(ids: string[] | null): void {
   _publishedVisibleIds = ids
+}
+
+export function setVisibleWorktreeShortcutTargets(
+  targets: VisibleWorktreeShortcutTarget[] | null
+): void {
+  _publishedVisibleShortcutTargets = targets
 }
 
 /**
@@ -439,10 +474,40 @@ export function getVisibleWorktreeIds(): string[] {
     worktreeLineageById: state.worktreeLineageById
   })
 
-  const worktreeMap = getWorktreeMapFromState(state)
+  const visibleIdRank = new Map(visibleIds.map((id, index) => [id, index]))
+  const visibleHostIds = getVisibleWorkspaceHostIdSet(state)
+  const defaultHostId = getSettingsFocusedExecutionHostId(state.settings)
+  const visibleWorktrees = allWorktrees
+    .filter(
+      (worktree) =>
+        visibleIdRank.has(worktree.id) &&
+        worktreeMatchesVisibleHost(worktree, visibleHostIds, repoMap, defaultHostId)
+    )
+    .sort((a, b) => (visibleIdRank.get(a.id) ?? 0) - (visibleIdRank.get(b.id) ?? 0))
   // Why the row pipeline: grouping, pinning and main-worktree hoisting reorder cards, so a flat sort numbers the wrong workspace.
-  return computeRenderedSidebarWorktreeOrder(
-    state,
-    visibleIds.map((id) => worktreeMap.get(id)).filter((w): w is Worktree => w != null)
-  )
+  return computeRenderedSidebarWorktreeOrder(state, visibleWorktrees)
+}
+
+export function getVisibleWorktreeShortcutTargets(): VisibleWorktreeShortcutTarget[] {
+  if (_publishedVisibleShortcutTargets) {
+    return _publishedVisibleShortcutTargets
+  }
+  const state = useAppStore.getState()
+  const visibleIds = getVisibleWorktreeIds()
+  const visibleIdRank = new Map(visibleIds.map((id, index) => [id, index]))
+  const repoMap = getRepoMapFromState(state)
+  const visibleHostIds = getVisibleWorkspaceHostIdSet(state)
+  const defaultHostId = getSettingsFocusedExecutionHostId(state.settings)
+  const worktrees = getAllWorktreesFromState(state)
+    .filter(
+      (worktree) =>
+        !worktree.isArchived &&
+        visibleIdRank.has(worktree.id) &&
+        worktreeMatchesVisibleHost(worktree, visibleHostIds, repoMap, defaultHostId)
+    )
+    .sort((a, b) => (visibleIdRank.get(a.id) ?? 0) - (visibleIdRank.get(b.id) ?? 0))
+  return computeRenderedSidebarWorktrees(state, worktrees).map((worktree) => ({
+    id: worktree.id,
+    ...(worktree.hostId ? { executionHostId: worktree.hostId } : {})
+  }))
 }

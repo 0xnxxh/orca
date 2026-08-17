@@ -51,7 +51,12 @@ export type WorkspaceCleanupRemovalTargetResolution =
   | WorkspaceCleanupUnresolvedTarget
 
 export type WorkspaceCleanupPreflightResult =
-  | { ok: true; target: WorkspaceCleanupRemovalTarget; candidate: WorkspaceCleanupCandidate }
+  | {
+      ok: true
+      target: WorkspaceCleanupRemovalTarget
+      candidate: WorkspaceCleanupCandidate
+      sameIdSurvivingHostId?: ExecutionHostId
+    }
   | { ok: false; failure: WorkspaceCleanupFailure }
 
 type WorkspaceCleanupRemovalTargetState = Pick<
@@ -81,6 +86,13 @@ export function resolveWorkspaceCleanupRemovalTargets(
   state: WorkspaceCleanupRemovalTargetState,
   options: { approvedCandidates?: readonly WorkspaceCleanupCandidate[] } = {}
 ): WorkspaceCleanupRemovalTargetResolution[] {
+  const requestedCountByWorktreeId = new Map<string, number>()
+  for (const worktreeId of worktreeIds) {
+    requestedCountByWorktreeId.set(
+      worktreeId,
+      (requestedCountByWorktreeId.get(worktreeId) ?? 0) + 1
+    )
+  }
   const approvedByWorktreeId = new Map<string, WorkspaceCleanupCandidate[]>()
   for (const candidate of options.approvedCandidates ?? []) {
     const approved = approvedByWorktreeId.get(candidate.worktreeId) ?? []
@@ -88,17 +100,23 @@ export function resolveWorkspaceCleanupRemovalTargets(
     approvedByWorktreeId.set(candidate.worktreeId, approved)
   }
 
+  const approvedCursorByWorktreeId = new Map<string, number>()
   return worktreeIds.map((worktreeId) => {
     const approved = approvedByWorktreeId.get(worktreeId) ?? []
-    const displayName = approved[0]?.displayName ?? worktreeId
-    // Why: one id confirmed for two hosts in a single batch cannot say which
-    // row the user meant, and picking either one may delete the other's work.
+    const cursor = approvedCursorByWorktreeId.get(worktreeId) ?? 0
+    approvedCursorByWorktreeId.set(worktreeId, cursor + 1)
+    const requestedEveryApprovedRow = requestedCountByWorktreeId.get(worktreeId) === approved.length
+    const confirmedCandidate = approved.length > 1 ? approved[cursor] : approved[0]
+    const displayName = confirmedCandidate?.displayName ?? approved[0]?.displayName ?? worktreeId
+    // Why: one id with two confirmed hosts is ambiguous unless the caller also
+    // supplies two id occurrences, one for each explicitly approved row.
     //
     // Why the STRICT resolver: the display identity defaults a hostless row to
     // `local`, so a hostless row and a genuine local row for the same id share an
     // identity and this gate would not fire. Destructive code may not guess a
     // host — an unqualified row is its own bucket here.
     if (
+      !requestedEveryApprovedRow &&
       new Set(
         approved.map(
           (candidate) => resolveWorkspaceCleanupRemovalHostId(candidate) ?? UNQUALIFIED_HOST_BUCKET
@@ -107,7 +125,6 @@ export function resolveWorkspaceCleanupRemovalTargets(
     ) {
       return ambiguousHostFailure(worktreeId, displayName)
     }
-    const confirmedCandidate = approved[0]
     const confirmedHostId = confirmedCandidate
       ? resolveWorkspaceCleanupRemovalHostId(confirmedCandidate)
       : null
@@ -266,7 +283,20 @@ export function evaluateWorkspaceCleanupPreflight(
       )
     }
   }
-  return { ok: true, target, candidate }
+  const removedIdentity = getWorkspaceCleanupCandidateIdentity(candidate)
+  const sameIdSurvivingHostId = [...(identitiesByWorktreeId.get(target.worktreeId) ?? [])]
+    .filter((identity) => identity !== removedIdentity)
+    .map((identity) => candidatesByIdentity.get(identity))
+    .map((otherCandidate) =>
+      otherCandidate ? resolveWorkspaceCleanupRemovalHostId(otherCandidate) : null
+    )
+    .find((hostId) => hostId !== null)
+  return {
+    ok: true,
+    target,
+    candidate,
+    ...(sameIdSurvivingHostId ? { sameIdSurvivingHostId } : {})
+  }
 }
 
 // Why: dirty-files/unpushed-commits are concrete known work at risk; unknown-base

@@ -63,7 +63,11 @@ export function runWorktreeDelete(worktreeId: string, options: WorktreeDeleteOpt
     })
     return
   }
-  state.clearWorktreeDeleteState(worktreeId)
+  if (target.hostId) {
+    state.clearWorktreeDeleteState(worktreeId, target.hostId)
+  } else {
+    state.clearWorktreeDeleteState(worktreeId)
+  }
 
   // Why: a disconnected SSH host has no provider, so worktrees:remove throws; route to reconnect-and-delete or local-only forget.
   // Skip on paired web/mobile clients: SSH state is desktop-only, so empty sshTargetLabels misclassifies SSH repos as ghosts; their worktree.rm RPC still handles the delete.
@@ -132,7 +136,11 @@ export function runWorktreeBatchDelete(
   }
 
   for (const target of targets) {
-    state.clearWorktreeDeleteState(target.id)
+    if (target.hostId) {
+      state.clearWorktreeDeleteState(target.id, target.hostId)
+    } else {
+      state.clearWorktreeDeleteState(target.id)
+    }
   }
 
   // Why: bulk cleanup can destroy many directories at once, so batch/Space deletes keep an explicit confirmation step.

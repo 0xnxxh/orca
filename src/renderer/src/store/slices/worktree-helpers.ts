@@ -56,6 +56,8 @@ export type WorktreeDeleteState = {
   lockReason?: string | null
 }
 
+export type WorktreeDeleteStateTarget = Pick<Worktree, 'id' | 'hostId'>
+
 type RendererRemoveWorktreeResult = Omit<RemoveWorktreeResult, 'preservedBranch'> & {
   preservedBranch?: NonNullable<RemoveWorktreeResult['preservedBranch']> & {
     hostId?: ExecutionHostId
@@ -255,8 +257,10 @@ export type WorktreeSlice = {
     force?: boolean,
     options?: RemoveWorktreeOptions
   ) => Promise<({ ok: true } & RendererRemoveWorktreeResult) | { ok: false; error: string }>
-  markWorktreesDeleting: (worktreeIds: readonly string[]) => void
-  markWorktreesQueuedForDeletion: (worktreeIds: readonly string[]) => void
+  markWorktreesDeleting: (worktrees: readonly (string | WorktreeDeleteStateTarget)[]) => void
+  markWorktreesQueuedForDeletion: (
+    worktrees: readonly (string | WorktreeDeleteStateTarget)[]
+  ) => void
   forceDeletePreservedBranch: (
     worktreeId: string,
     branchName: string,
@@ -267,7 +271,7 @@ export type WorktreeSlice = {
       runtimeEnvironmentId?: string
     }
   ) => Promise<({ ok: true } & ForceDeleteWorktreeBranchResult) | { ok: false; error: string }>
-  clearWorktreeDeleteState: (worktreeId: string) => void
+  clearWorktreeDeleteState: (worktreeId: string, executionHostId?: ExecutionHostId) => void
   /** Never rejects — most callers fire-and-forget. Callers that own a surface
    *  the user is waiting on should read the result and say what went wrong. */
   updateWorktreeMeta: (

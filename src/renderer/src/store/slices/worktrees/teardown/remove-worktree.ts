@@ -22,6 +22,7 @@ import {
   beginHostQualifiedRemoval,
   completeSameIdHostScopedRemoval,
   findWorktreeOnConfirmedHost,
+  prepareHostScopedRemovalCompletion,
   refuseUnprovableRemoteHostRouting
 } from './host-qualified-worktree-removal'
 import {
@@ -30,6 +31,7 @@ import {
   isLockedWorktreeRemovalError
 } from '../../../../../../shared/worktree/removal'
 import { preservedBranchCleanupKey } from '../../../../../../shared/preserved-branch-cleanup'
+import { composeWorktreeHostIdentity } from '../../../../../../shared/worktree/host-qualified-identity'
 import { detachedHeadAutoDerivedDisplayNames } from '../metadata/detached-head-display-name'
 import { pruneHostedReviewLinkMutationGenerations } from '../metadata/hosted-review-link-mutation'
 import { rememberAuthoritativelyRemovedWorktrees } from '../listing/authoritative-worktree-removal-memory'
@@ -60,19 +62,33 @@ export function createRemoveWorktree(
       get,
       worktreeId,
       requiredExecutionHostId,
-      forgetLocalOnly
+      forgetLocalOnly,
+      options?.ignoreWorkspaceCleanupScanSurvivors === true
     )
     if (!start.ok) {
       return { ok: false, error: start.error }
     }
-    const { removalRoute, hostId, removalGenerationGuard, sameIdSurvivesOnAnotherHost } = start
+    const {
+      removalRoute,
+      hostId,
+      removalGenerationGuard,
+      sameIdSurvivesOnAnotherHost: catalogSameIdSurvivesOnAnotherHost,
+      sameIdSurvivingHostId: catalogSameIdSurvivingHostId
+    } = start
+    const sameIdSurvivingHostId =
+      catalogSameIdSurvivingHostId ?? options?.sameIdSurvivingHostId ?? null
+    const sameIdSurvivesOnAnotherHost =
+      catalogSameIdSurvivesOnAnotherHost || sameIdSurvivingHostId !== null
+    const deleteStateKey = requiredExecutionHostId
+      ? composeWorktreeHostIdentity(requiredExecutionHostId, worktreeId)
+      : worktreeId
     set((s) => ({
       deleteStateByWorktreeId: {
         ...s.deleteStateByWorktreeId,
-        [worktreeId]: {
+        [deleteStateKey]: {
           isDeleting: true,
           phase: 'deleting',
-          executionHostId: requiredExecutionHostId,
+          ...(requiredExecutionHostId ? { executionHostId: requiredExecutionHostId } : {}),
           error: null,
           canForceDelete: false,
           forceDeleteReason: null
@@ -181,17 +197,27 @@ export function createRemoveWorktree(
       //
       // The ephemeral VM is the exception — see completeSameIdHostScopedRemoval.
       if (sameIdSurvivesOnAnotherHost && requiredExecutionHostId) {
-        return completeSameIdHostScopedRemoval({
+        const sameIdStillSurvives = prepareHostScopedRemovalCompletion(
           set,
-          get,
           worktreeId,
           requiredExecutionHostId,
-          removalResult,
-          removalRoute,
-          target,
-          worktreeBeforeRemoval,
-          suppressPreservedBranchToast: options?.suppressPreservedBranchToast === true
-        })
+          sameIdSurvivingHostId,
+          options?.ignoreWorkspaceCleanupScanSurvivors === true
+        )
+        if (sameIdStillSurvives) {
+          return completeSameIdHostScopedRemoval({
+            set,
+            get,
+            worktreeId,
+            requiredExecutionHostId,
+            removalResult,
+            removalRoute,
+            target,
+            worktreeBeforeRemoval,
+            suppressPreservedBranchToast: options?.suppressPreservedBranchToast === true,
+            rowAlreadyDropped: true
+          })
+        }
       }
 
       // Why: invalidate stale probes once deletion is authoritative, so an old toast can't mutate a same-path replacement.
@@ -224,13 +250,15 @@ export function createRemoveWorktree(
         backendOwnsPtyTeardown: true
       })
       // Why: dispose the SSH relay AFTER terminal teardown so a still-mounted pane can't hit a gone relay and toast "SSH not active".
-      const runtimeCleanup = await cleanupEphemeralVmRuntimesForDeleted({
-        ...(hostId
+      const runtimeCleanup = await cleanupEphemeralVmRuntimesForDeleted(
+        requiredExecutionHostId
           ? {
-              hostScopedWorkspaces: [{ workspaceId: worktreeId, executionHostId: hostId }]
+              hostScopedWorkspaces: [
+                { workspaceId: worktreeId, executionHostId: requiredExecutionHostId }
+              ]
             }
-          : { workspaceIds: [worktreeId] })
-      })
+          : { workspaceIds: [worktreeId] }
+      )
       // Remove the orphaned project for the destroyed SSH target so it can't surface as a dead project in the composer.
       await purgeOrphanedRuntimeSshProjects(get, runtimeCleanup.destroyedSshTargetIds)
       const tabs = get().tabsByWorktree[worktreeId] ?? []
@@ -315,9 +343,9 @@ export function createRemoveWorktree(
       set((s) => ({
         deleteStateByWorktreeId: {
           ...s.deleteStateByWorktreeId,
-          [worktreeId]: {
+          [deleteStateKey]: {
             isDeleting: false,
-            executionHostId: requiredExecutionHostId,
+            ...(requiredExecutionHostId ? { executionHostId: requiredExecutionHostId } : {}),
             error,
             canForceDelete: forceDeleteReason !== null,
             forceDeleteReason,

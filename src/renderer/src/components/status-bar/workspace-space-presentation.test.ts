@@ -21,11 +21,13 @@ import {
 } from './workspace-space-presentation'
 import {
   getWorkspaceDecisionDetails,
-  getWorkspaceSpaceDeleteState
+  getWorkspaceSpaceDeleteState,
+  getWorkspaceSpaceGitStatusForScan
 } from './WorkspaceSpaceManagerPanel'
 import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
 import type { Repo } from '../../../../shared/repo-types'
 import type { Worktree } from '../../../../shared/worktree/types'
+import { composeWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 
 function row(overrides: Partial<WorkspaceSpaceWorktree>): WorkspaceSpaceWorktree {
   return {
@@ -53,6 +55,15 @@ function row(overrides: Partial<WorkspaceSpaceWorktree>): WorkspaceSpaceWorktree
     ...overrides
   }
 }
+
+describe('workspace space Git status scan ownership', () => {
+  it('fails closed instead of reusing a clean result from an older scan', () => {
+    const cleanStatus = new Map([['local|wt', []]])
+
+    expect(getWorkspaceSpaceGitStatusForScan(100, 100, cleanStatus)).toBe(cleanStatus)
+    expect(getWorkspaceSpaceGitStatusForScan(100, 200, cleanStatus).has('local|wt')).toBe(false)
+  })
+})
 
 function ready(
   overrides: Partial<NonNullable<Parameters<typeof isWorkspaceSpaceRowReadyToDelete>[1]>> = {}
@@ -187,12 +198,15 @@ describe('workspace space presentation helpers', () => {
       forceDeleteReason: 'dirty' as const,
       executionHostId: 'local' as const
     }
+    const states = {
+      [composeWorktreeHostIdentity('local', 'wt')]: failedOnLocal
+    }
 
     expect(
-      getWorkspaceSpaceDeleteState(row({ executionHostId: 'ssh:builder' }), failedOnLocal, true)
+      getWorkspaceSpaceDeleteState(row({ executionHostId: 'ssh:builder' }), states, true)
     ).toBeUndefined()
     expect(
-      getWorkspaceSpaceDeleteState(row({ executionHostId: 'local' }), failedOnLocal, true)
+      getWorkspaceSpaceDeleteState(row({ executionHostId: 'local' }), states, true)
     ).toBe(failedOnLocal)
   })
 

@@ -23,7 +23,8 @@ import {
 } from '../../../../shared/workspace-cleanup'
 import {
   getWorkspaceCleanupCandidateHostId,
-  getWorkspaceCleanupCandidateIdentity
+  getWorkspaceCleanupCandidateIdentity,
+  getWorkspaceCleanupHostIdentity
 } from '../../../../shared/workspace-cleanup-host-identity'
 import { mapWithConcurrency } from '../../../../shared/map-with-concurrency'
 import { hydrateWorkspaceCleanupScanFromCache } from './workspace-cleanup-cache-hydration'
@@ -398,6 +399,8 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
     const targetsToRemove: {
       target: WorkspaceCleanupRemovalTarget
       candidate: WorkspaceCleanupCandidate
+      sameIdSurvivingHostId?: ExecutionHostId
+      ignoreWorkspaceCleanupScanSurvivors?: boolean
     }[] = []
 
     for (const preflight of preflights) {
@@ -405,14 +408,40 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
         failures.push(preflight.failure)
         continue
       }
-      targetsToRemove.push({ target: preflight.target, candidate: preflight.candidate })
+      targetsToRemove.push({
+        target: preflight.target,
+        candidate: preflight.candidate,
+        ...(preflight.sameIdSurvivingHostId
+          ? { sameIdSurvivingHostId: preflight.sameIdSurvivingHostId }
+          : {})
+      })
+    }
+    const scheduledRemovalIdentities = new Set(
+      targetsToRemove.map(({ candidate }) => getWorkspaceCleanupCandidateIdentity(candidate))
+    )
+    for (const pendingRemoval of targetsToRemove) {
+      if (
+        pendingRemoval.sameIdSurvivingHostId &&
+        scheduledRemovalIdentities.has(
+          getWorkspaceCleanupHostIdentity(
+            pendingRemoval.sameIdSurvivingHostId,
+            pendingRemoval.candidate.worktreeId
+          )
+        )
+      ) {
+        delete pendingRemoval.sameIdSurvivingHostId
+        pendingRemoval.ignoreWorkspaceCleanupScanSurvivors = true
+      }
     }
 
     // Why: nested workspaces can belong to different repos; parent removal must
     // not race child cleanup hooks, PTY teardown, or metadata deletion.
-    for (const { target, candidate } of [...targetsToRemove].sort(
-      (a, b) => b.candidate.path.length - a.candidate.path.length
-    )) {
+    for (const {
+      target,
+      candidate,
+      sameIdSurvivingHostId,
+      ignoreWorkspaceCleanupScanSurvivors
+    } of [...targetsToRemove].sort((a, b) => b.candidate.path.length - a.candidate.path.length)) {
       const result = await get().removeWorktree(
         // The resolved target names the host whose row the user confirmed; the
         // removal is routed there instead of to the active workspace's host.
@@ -422,6 +451,10 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
         // preserved-branch warnings would stack one toast per removed row.
         {
           suppressPreservedBranchToast: true,
+          ...(sameIdSurvivingHostId ? { sameIdSurvivingHostId } : {}),
+          ...(ignoreWorkspaceCleanupScanSurvivors
+            ? { ignoreWorkspaceCleanupScanSurvivors: true }
+            : {}),
           ...(options?.snapshotPruneBatchId
             ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
             : {})

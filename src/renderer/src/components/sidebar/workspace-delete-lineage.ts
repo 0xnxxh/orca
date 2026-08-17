@@ -24,8 +24,17 @@ export function getWorkspaceDeleteLineage(
     }
     worktreeById.set(worktree.id, worktree)
   }
+  const lineageForSelectedRows: Record<string, WorktreeLineage> = {}
+  for (const worktree of worktreeById.values()) {
+    const projected = lineageById[worktree.id]
+    const inline = (worktree as Worktree & { lineage?: WorktreeLineage | null }).lineage
+    const lineage = projected?.worktreeInstanceId === worktree.instanceId ? projected : inline
+    if (lineage) {
+      lineageForSelectedRows[worktree.id] = lineage
+    }
+  }
   const childrenByParentId = getProjectedWorktreeLineageChildrenByParentId(
-    lineageById,
+    lineageForSelectedRows,
     worktreeById
   )
 

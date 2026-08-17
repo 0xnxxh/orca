@@ -4,8 +4,10 @@ import { useMountedRef } from '@/hooks/useMountedRef'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
 import {
   getWorkspaceCleanupCandidateIdentity,
-  getWorkspaceCleanupHostIdentity
+  getWorkspaceCleanupHostIdentity,
+  resolveWorkspaceCleanupRemovalHostId
 } from '../../../../shared/workspace-cleanup-host-identity'
+import { composeWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 import type { WorkspaceCleanupFailure } from '@/store/slices/workspace-cleanup'
 import {
   startWorkspaceCleanupBackgroundRemoval,
@@ -75,13 +77,17 @@ export function useWorkspaceCleanupRemoval({
   }, [])
 
   const clearQueuedDeleteState = useCallback(
-    (worktreeId: string) => {
-      const deleteState = useAppStore.getState().deleteStateByWorktreeId[worktreeId]
+    (worktreeId: string, executionHostId?: WorkspaceCleanupFailure['executionHostId']) => {
+      const deleteStateByWorktreeId = useAppStore.getState().deleteStateByWorktreeId
+      const key = executionHostId
+        ? composeWorktreeHostIdentity(executionHostId, worktreeId)
+        : worktreeId
+      const deleteState = deleteStateByWorktreeId[key]
       // Why: candidates that fail before removal starts would otherwise stay
       // marked "Queued for deletion" in the sidebar; rows already in the
       // 'deleting' phase or failed with an error keep their own state.
       if (deleteState?.isDeleting && deleteState.error === null && deleteState.phase === 'queued') {
-        clearWorktreeDeleteState(worktreeId)
+        clearWorktreeDeleteState(worktreeId, executionHostId)
       }
     },
     [clearWorktreeDeleteState]
@@ -144,16 +150,23 @@ export function useWorkspaceCleanupRemoval({
     const removalBatchId = removalBatchIdRef.current
     // Why: a hung late settlement retains these callbacks for the renderer's
     // lifetime; capture only ids so it cannot pin the candidate objects.
-    const removableWorktreeIds = removableCandidates.map((candidate) => candidate.worktreeId)
+    const removableDeleteStateTargets = removableCandidates.map((candidate) => {
+      const hostId = resolveWorkspaceCleanupRemovalHostId(candidate)
+      return hostId ? { id: candidate.worktreeId, hostId } : candidate.worktreeId
+    })
     const removableIdentities = removableCandidates.map(getWorkspaceCleanupCandidateIdentity)
     setRowFailures({})
     setDeletionPhaseByIdentity(
       Object.fromEntries(removableIdentities.map((identity) => [identity, 'queued' as const]))
     )
-    markWorktreesQueuedForDeletion(removableWorktreeIds)
+    markWorktreesQueuedForDeletion(removableDeleteStateTargets)
     const handleRemovalError = (): void => {
-      for (const worktreeId of removableWorktreeIds) {
-        clearWorktreeDeleteState(worktreeId)
+      for (const target of removableDeleteStateTargets) {
+        if (typeof target === 'string') {
+          clearWorktreeDeleteState(target)
+        } else {
+          clearWorktreeDeleteState(target.id, target.hostId)
+        }
       }
       if (mountedRef.current) {
         settle()
@@ -190,7 +203,7 @@ export function useWorkspaceCleanupRemoval({
           }
         },
         onRowFailed: (failure) => {
-          clearQueuedDeleteState(failure.worktreeId)
+          clearQueuedDeleteState(failure.worktreeId, failure.executionHostId)
           if (!mountedRef.current) {
             return
           }
@@ -206,7 +219,7 @@ export function useWorkspaceCleanupRemoval({
           for (const failure of result.failures) {
             nextFailures[getWorkspaceCleanupFailureIdentity(failure)] = failure.message
             // Why: defensively covers failures that never reached onRowFailed.
-            clearQueuedDeleteState(failure.worktreeId)
+            clearQueuedDeleteState(failure.worktreeId, failure.executionHostId)
           }
           if (mountedRef.current) {
             setRowFailures(nextFailures)
@@ -219,7 +232,7 @@ export function useWorkspaceCleanupRemoval({
           for (const failure of result.failures) {
             // Why: a late failure can come from a hung preflight whose row never
             // reached 'deleting'; clear its queued overlay like every other path.
-            clearQueuedDeleteState(failure.worktreeId)
+            clearQueuedDeleteState(failure.worktreeId, failure.executionHostId)
           }
           if (!mountedRef.current || removalBatchIdRef.current !== removalBatchId) {
             return

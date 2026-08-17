@@ -62,6 +62,7 @@ const WorktreeList = React.memo(function WorktreeList({
   const workspaceLineageByChildKey = useAppStore((s) => s.workspaceLineageByChildKey)
   const detectedWorktreesByRepo = useAppStore((s) => s.detectedWorktreesByRepo)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
+  const activeWorkspaceExecutionHostId = useAppStore((s) => s.activeWorkspaceExecutionHostId)
   const activeWorkspaceKey = useAppStore((s) => s.activeWorkspaceKey)
   const currentSidebarWorktreeId = useMemo(
     () => getActiveSidebarWorkspaceId(activeWorkspaceKey, activeWorktreeId),
@@ -221,9 +222,11 @@ const WorktreeList = React.memo(function WorktreeList({
   useSidebarRevealRequests({
     groupBy,
     renderedSidebarRowKeys: rowModel.renderedSidebarRowKeys,
-    renderedWorktreeIds: selection.renderedWorktreeIds,
+    renderedWorktreeIdentities: selection.renderedWorktreeIdentities,
     currentSidebarWorktreeId,
+    currentSidebarExecutionHostId: activeWorkspaceExecutionHostId,
     worktreeMap,
+    worktrees: allWorktrees,
     folderWorkspaces,
     hasFilters,
     clearFilters
@@ -267,6 +270,7 @@ const WorktreeList = React.memo(function WorktreeList({
         activeWorktreeId={
           activeView === 'tasks' || activeView === 'activity' ? null : currentSidebarWorktreeId
         }
+        activeWorkspaceExecutionHostId={activeWorkspaceExecutionHostId}
         currentWorktreeId={currentSidebarWorktreeId}
         groupBy={groupBy}
         pinnedDisplayPolicy={pinnedDisplayPolicy}

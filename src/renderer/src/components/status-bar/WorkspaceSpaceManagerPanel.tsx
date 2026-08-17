@@ -34,7 +34,10 @@ import { parseExecutionHostId, type ExecutionHostId } from '../../../../shared/e
 import type { Repo } from '../../../../shared/repo-types'
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
 import type { Worktree } from '../../../../shared/worktree/types'
-import type { WorktreeRemovalTarget } from '../../../../shared/worktree/removal'
+import type {
+  WorktreeForceDeleteReason,
+  WorktreeRemovalTarget
+} from '../../../../shared/worktree/removal'
 import { composeWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 import type {
   WorkspaceSpaceItem,
@@ -100,7 +103,6 @@ import {
   type WorkspaceSpaceSortKey
 } from './workspace-space-presentation'
 import { translate } from '@/i18n/i18n'
-import type { WorktreeForceDeleteReason } from '../../../../shared/worktree/removal'
 
 const TREEMAP_FILLS = [
   'color-mix(in srgb, var(--chart-2) 34%, var(--card))',
@@ -110,6 +112,17 @@ const TREEMAP_FILLS = [
   'color-mix(in srgb, var(--chart-1) 38%, var(--card))'
 ]
 const GIT_STATUS_REFRESH_CONCURRENCY = 6
+const EMPTY_GIT_STATUS_BY_WORKTREE_IDENTITY = new Map<string, GitStatusResult['entries']>()
+
+export function getWorkspaceSpaceGitStatusForScan(
+  cachedScanGeneration: number | null,
+  currentScanGeneration: number | null,
+  cachedStatus: Map<string, GitStatusResult['entries']>
+): Map<string, GitStatusResult['entries']> {
+  return cachedScanGeneration === currentScanGeneration
+    ? cachedStatus
+    : EMPTY_GIT_STATUS_BY_WORKTREE_IDENTITY
+}
 
 type WorkspaceSpaceDeleteState = {
   isDeleting: boolean
@@ -306,16 +319,24 @@ export function getWorkspaceDecisionDetails(
 }
 
 export function getWorkspaceSpaceDeleteState(
-  worktree: Pick<WorkspaceSpaceWorktree, 'executionHostId'>,
-  deleteState: WorkspaceSpaceDeleteState | undefined,
+  worktree: Pick<WorkspaceSpaceWorktree, 'worktreeId' | 'executionHostId'>,
+  deleteStateByWorktreeId: Readonly<Record<string, WorkspaceSpaceDeleteState | undefined>>,
   hasSameIdSibling: boolean
 ): WorkspaceSpaceDeleteState | undefined {
-  if (!hasSameIdSibling || !deleteState) {
-    return deleteState
+  const qualifiedState =
+    deleteStateByWorktreeId[
+      composeWorktreeHostIdentity(worktree.executionHostId, worktree.worktreeId)
+    ]
+  if (qualifiedState) {
+    return qualifiedState
   }
-  return deleteState.executionHostId !== undefined &&
-    deleteState.executionHostId === worktree.executionHostId
-    ? deleteState
+  const legacyState = deleteStateByWorktreeId[worktree.worktreeId]
+  if (!hasSameIdSibling || !legacyState) {
+    return legacyState
+  }
+  return legacyState.executionHostId !== undefined &&
+    legacyState.executionHostId === worktree.executionHostId
+    ? legacyState
     : undefined
 }
 
@@ -1321,7 +1342,15 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const [gitStatusByWorktreeIdentity, setGitStatusByWorktreeIdentity] = useState<
     Map<string, GitStatusResult['entries']>
   >(() => new Map())
+  const scanGeneration = analysis?.scannedAt ?? null
+  const gitStatusScanGenerationRef = useRef(scanGeneration)
+  const gitStatusByWorktreeIdentityRef = useRef(gitStatusByWorktreeIdentity)
   const inFlightGitStatusRefreshes = useRef<Set<string>>(new Set())
+  const currentGitStatusByWorktreeIdentity = getWorkspaceSpaceGitStatusForScan(
+    gitStatusScanGenerationRef.current,
+    scanGeneration,
+    gitStatusByWorktreeIdentity
+  )
 
   const refresh = useCallback((): void => {
     void refreshWorkspaceSpace().catch(() => {
@@ -1363,7 +1392,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           editorDrafts,
           browserTabsByWorktree,
           gitStatusByWorktree,
-          gitStatusByWorktreeIdentity,
+          gitStatusByWorktreeIdentity: currentGitStatusByWorktreeIdentity,
           remoteStatusesByWorktree,
           hostedReviewCache,
           issueCache,
@@ -1384,7 +1413,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     browserTabsByWorktree,
     editorDrafts,
     gitStatusByWorktree,
-    gitStatusByWorktreeIdentity,
+    currentGitStatusByWorktreeIdentity,
     hostedReviewCache,
     issueCache,
     linearIssueCache,
@@ -1404,7 +1433,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     (worktree: WorkspaceSpaceWorktree): WorkspaceSpaceDeleteState | undefined =>
       getWorkspaceSpaceDeleteState(
         worktree,
-        deleteStateByWorktreeId[worktree.worktreeId],
+        deleteStateByWorktreeId,
         (worktreeIdCounts.get(worktree.worktreeId) ?? 0) > 1
       ),
     [deleteStateByWorktreeId, worktreeIdCounts]
@@ -1412,14 +1441,18 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const refreshWorkspaceGitStatus = useCallback(
     (worktree: WorkspaceSpaceWorktree): Promise<void> => {
       const identity = getWorkspaceSpaceWorktreeIdentity(worktree)
+      const requestKey = `${String(scanGeneration)}:${identity}`
       const currentState = useAppStore.getState()
-      if (gitStatusByWorktreeIdentity.has(identity)) {
+      if (
+        gitStatusScanGenerationRef.current === scanGeneration &&
+        gitStatusByWorktreeIdentityRef.current.has(identity)
+      ) {
         return Promise.resolve()
       }
-      if (inFlightGitStatusRefreshes.current.has(identity)) {
+      if (inFlightGitStatusRefreshes.current.has(requestKey)) {
         return Promise.resolve()
       }
-      inFlightGitStatusRefreshes.current.add(identity)
+      inFlightGitStatusRefreshes.current.add(requestKey)
 
       setGitRefreshStateByWorktreeIdentity((current) => ({
         ...current,
@@ -1434,30 +1467,38 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
         ? { ...settings, activeRuntimeEnvironmentId: runtimeEnvironmentId }
         : { activeRuntimeEnvironmentId: runtimeEnvironmentId }
 
-      return (owner
-        ? getRuntimeGitStatus({
-            settings: ownerSettings,
-            worktreeId: worktree.worktreeId,
-            worktreePath: worktree.path,
-            connectionId: owner.connectionId
-          })
-        : Promise.reject(new Error('Workspace owner is no longer available'))
+      return (
+        owner
+          ? getRuntimeGitStatus({
+              settings: ownerSettings,
+              worktreeId: worktree.worktreeId,
+              worktreePath: worktree.path,
+              connectionId: owner.connectionId ?? undefined
+            })
+          : Promise.reject(new Error('Workspace owner is no longer available'))
       )
         .then((status) => {
+          if (gitStatusScanGenerationRef.current !== scanGeneration) {
+            return
+          }
           const validIdentities = new Set(sourceRows.map(getWorkspaceSpaceWorktreeIdentity))
-          setGitStatusByWorktreeIdentity((current) => {
-            const next = new Map(
-              [...current].filter(([currentIdentity]) => validIdentities.has(currentIdentity))
+          const nextGitStatusByWorktreeIdentity = new Map(
+            [...gitStatusByWorktreeIdentityRef.current].filter(([currentIdentity]) =>
+              validIdentities.has(currentIdentity)
             )
-            next.set(identity, status.entries)
-            return next
-          })
+          )
+          nextGitStatusByWorktreeIdentity.set(identity, status.entries)
+          gitStatusByWorktreeIdentityRef.current = nextGitStatusByWorktreeIdentity
+          setGitStatusByWorktreeIdentity(nextGitStatusByWorktreeIdentity)
           setGitRefreshStateByWorktreeIdentity((current) => ({
             ...current,
             [identity]: { isRefreshing: false, error: null }
           }))
         })
         .catch((error: unknown) => {
+          if (gitStatusScanGenerationRef.current !== scanGeneration) {
+            return
+          }
           setGitRefreshStateByWorktreeIdentity((current) => ({
             ...current,
             [identity]: {
@@ -1467,10 +1508,10 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           }))
         })
         .finally(() => {
-          inFlightGitStatusRefreshes.current.delete(identity)
+          inFlightGitStatusRefreshes.current.delete(requestKey)
         })
     },
-    [gitStatusByWorktreeIdentity, settings, sourceRows]
+    [scanGeneration, settings, sourceRows]
   )
   const isWorktreeUnavailableForDelete = useCallback(
     (worktree: WorkspaceSpaceWorktree): boolean => {
@@ -1515,6 +1556,17 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   if (treemapZoomWorktreeId !== nextTreemapZoomWorktreeId) {
     setTreemapZoomWorktreeId(nextTreemapZoomWorktreeId)
   }
+
+  useEffect(() => {
+    if (gitStatusScanGenerationRef.current === scanGeneration) {
+      return
+    }
+    gitStatusScanGenerationRef.current = scanGeneration
+    gitStatusByWorktreeIdentityRef.current = EMPTY_GIT_STATUS_BY_WORKTREE_IDENTITY
+    inFlightGitStatusRefreshes.current.clear()
+    setGitStatusByWorktreeIdentity(EMPTY_GIT_STATUS_BY_WORKTREE_IDENTITY)
+    setGitRefreshStateByWorktreeIdentity({})
+  }, [scanGeneration])
 
   useEffect(() => {
     const candidates = getWorkspaceSpaceGitStatusRefreshCandidates(sourceRows)
@@ -2188,9 +2240,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
                       })
                     }
                     gitRefreshState={
-                      gitRefreshStateByWorktreeIdentity[
-                        getWorkspaceSpaceWorktreeIdentity(worktree)
-                      ]
+                      gitRefreshStateByWorktreeIdentity[getWorkspaceSpaceWorktreeIdentity(worktree)]
                     }
                     deleteState={getDeleteStateForSpaceRow(worktree)}
                     onToggleSelected={() => toggleSelection(worktree)}
