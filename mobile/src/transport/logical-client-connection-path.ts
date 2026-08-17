@@ -17,8 +17,9 @@ export class LogicalClientConnectionPath {
     })
   }
 
-  clearMigrationAfterConnected(): void {
+  clearAfterConnected(): void {
     this.migration = null
+    this.recovery = null
   }
 
   setRecovery(path: MobileConnectionPath | null): void {

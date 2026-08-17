@@ -302,6 +302,17 @@ describe('stable logical RPC client', () => {
     expect(paths).toEqual(['relay', null])
   })
 
+  it('does not revive a stale recovery path after a connection later drops', () => {
+    const direct = new FakeSession('reconnecting')
+    const client = createStableLogicalRpcClient(direct, 'tailscale')
+
+    client.setRecoveryPath('relay')
+    direct.setState('connected')
+    direct.setState('reconnecting')
+
+    expect(client.getPendingPath()).toBeNull()
+  })
+
   it('drops the pending path when the previous session recovers mid-dial', async () => {
     const direct = new FakeSession('connected')
     const replacement = new FakeSession('connecting')

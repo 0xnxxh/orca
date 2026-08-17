@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { appMetricsMock } = vi.hoisted(() => ({
+  appMetricsMock: vi.fn((): unknown[] => [])
+}))
+
 vi.mock('electron', () => ({
   app: {
     getVersion: () => '1.2.3-test',
-    getAppMetrics: () => []
+    getAppMetrics: appMetricsMock
   }
 }))
 
@@ -244,6 +248,35 @@ describe('recordProcessGoneCrash', () => {
     ])
   })
 
+  it('derives the crashed-process-absent flag from the crashed process type', async () => {
+    // Binds event.processType through to the diagnostics bucket check: a live
+    // Utility survivor clears the flag for a Utility crash but not a renderer one.
+    appMetricsMock.mockReturnValue([
+      { pid: 77, type: 'Utility', memory: { workingSetSize: 1024 * 50 } }
+    ])
+
+    const rendererRecord = vi.fn().mockResolvedValue({ id: 'report-r' })
+    recordProcessGoneCrash({ record: rendererRecord } as never, event(), new ProcessGoneDedupe())
+    await vi.waitFor(() => expect(rendererRecord).toHaveBeenCalledOnce())
+    expect(rendererRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({ processMetricsCrashedProcessAbsent: true })
+      })
+    )
+
+    const utilityRecord = vi.fn().mockResolvedValue({ id: 'report-u' })
+    recordProcessGoneCrash(
+      { record: utilityRecord } as never,
+      event({ source: 'child', processType: 'Utility', details: { type: 'Utility' } }),
+      new ProcessGoneDedupe()
+    )
+    await vi.waitFor(() => expect(utilityRecord).toHaveBeenCalledOnce())
+    const utilityDetails = (utilityRecord.mock.calls[0][0] as { details: Record<string, unknown> })
+      .details
+    expect(utilityDetails.processMetricsUtilityCount).toBe(1)
+    expect(utilityDetails.processMetricsCrashedProcessAbsent).toBeUndefined()
+  })
+
   it('persists a report and flushes the process-gone trace before recovery', async () => {
     const record = vi.fn().mockResolvedValue({ id: 'report-1' })
 
@@ -391,6 +424,83 @@ describe('recordProcessGoneCrash', () => {
     recordProcessGoneCrash({ record, attachDetails } as never, event(), dedupe, noMinidump)
 
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
+  })
+
+  function withStubbedPlatform(platform: NodeJS.Platform, run: () => void): void {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+    try {
+      run()
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: original })
+    }
+  }
+
+  // Why child kills: the decode gate is source-agnostic, and a non-recoverable
+  // child persists synchronously on every branch of the crash-reporting stack
+  // (the renderer killed path defers behind a sibling-kill settle), so the
+  // platform stub is still in force when the gate reads process.platform.
+  const nonRecoverableChildKill = (overrides: Partial<ProcessGoneCrashEvent>): ProcessGoneCrashEvent =>
+    event({
+      source: 'child',
+      processType: 'Utility',
+      details: { serviceName: 'node.mojom.NodeService', type: 'Utility' },
+      ...overrides
+    })
+
+  it('names the decoded POSIX wait status on the span and keeps the stored code raw', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+
+    withStubbedPlatform('linux', () => {
+      recordProcessGoneCrash(
+        { record } as never,
+        nonRecoverableChildKill({ reason: 'killed', exitCode: 61696 }),
+        new ProcessGoneDedupe()
+      )
+    })
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalledOnce())
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ exitCode: 61696 }))
+    expect(sink.records).toEqual([
+      expect.objectContaining({
+        name: 'electron.process_gone',
+        attributes: expect.objectContaining({
+          'crash.exit_code': 61696,
+          'crash.exit_code_decoded': 'exit status 241'
+        })
+      })
+    ])
+  })
+
+  it('leaves Windows exit codes and launch-failed codes undecoded', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+
+    withStubbedPlatform('win32', () => {
+      recordProcessGoneCrash(
+        { record } as never,
+        nonRecoverableChildKill({ reason: 'killed', exitCode: 1 }),
+        new ProcessGoneDedupe()
+      )
+    })
+    withStubbedPlatform('linux', () => {
+      recordProcessGoneCrash(
+        { record } as never,
+        nonRecoverableChildKill({ reason: 'launch-failed', exitCode: 18 }),
+        new ProcessGoneDedupe()
+      )
+    })
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
+    expect(sink.records).toHaveLength(2)
+    for (const span of sink.records) {
+      expect(span).toEqual(
+        expect.objectContaining({
+          attributes: expect.not.objectContaining({
+            'crash.exit_code_decoded': expect.anything()
+          })
+        })
+      )
+    }
   })
 })
 

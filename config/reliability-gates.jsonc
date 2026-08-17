@@ -943,10 +943,10 @@
       "providers": ["lan", "tailscale", "cloud-relay"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["lan", "tailscale", "cloud-relay"],
-      "coverageNotes": "Deterministic TypeScript tests cover shared close-code policy, foreground retry timers, direct-winner cancellation, and concurrent LAN/Tailscale authentication. Physical iOS/Android radios, GFE, and production relay recovery remain live-test gaps.",
+      "coverageNotes": "Deterministic TypeScript tests cover shared close-code policy, foreground retry timers, direct-winner cancellation, credential-gated Relay presentation, and concurrent LAN/Tailscale authentication. Physical iOS/Android radios, GFE, and production relay recovery remain live-test gaps.",
       "motivatingLinks": ["https://github.com/stablyai/orca-cloud/pull/96"],
-      "invariant": "A foregrounded paired phone must recover from relay HOST_OFFLINE without a foreground or network-change signal, while direct recovery must select the first authenticated configured LAN or Tailscale endpoint without serial timeout delays. Backgrounding, direct success, or stop must cancel pending work, and losing probes must close without affecting the winner.",
-      "oracle": "Inject deterministic relay close codes, random bytes, fake timers, and independently controlled direct clients. Require HOST_OFFLINE to replace any faster transport timer with one 5-15 second retry, require no retry before the selected delay, race all unique non-relay endpoints, select the first authenticated path, close every loser exactly once, and retain no retry after direct connectivity wins.",
+      "invariant": "A foregrounded paired phone must recover from relay HOST_OFFLINE without a foreground or network-change signal, while direct recovery must select the first authenticated configured LAN or Tailscale endpoint without serial timeout delays. Relay recovery presentation starts only for a failed active Relay or a dial backed by an eligible credential, and remains pending through a genuine failed-dial cooldown. Backgrounding, direct success, or stop must cancel pending work, and losing probes must close without affecting the winner.",
+      "oracle": "Inject deterministic relay close codes, missing and expired credentials, delayed credential reads, random bytes, fake timers, and independently controlled direct clients. Require HOST_OFFLINE to replace any faster transport timer with one 5-15 second retry, require no retry before the selected delay, keep Relay presentation absent when no socket can open, clear it across lifecycle races, retain it through real dial cooldowns, race all unique non-relay endpoints, select the first authenticated path, close every loser exactly once, and retain no retry after direct connectivity wins.",
       "commands": [
         "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/mobile-direct-endpoint-probe.test.ts mobile/src/transport/mobile-relay-reconnect-controller.test.ts mobile/src/transport/mobile-endpoint-supervisor.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/shared/mobile-relay-close-codes.test.ts --reporter=dot"
@@ -975,7 +975,10 @@
         {
           "file": "mobile/src/transport/mobile-endpoint-supervisor.test.ts",
           "assertions": [
-            "a foregrounded supervisor retries HOST_OFFLINE without an external lifecycle signal"
+            "a foregrounded supervisor retries HOST_OFFLINE without an external lifecycle signal",
+            "a missing or expired credential never presents a Relay connection that cannot start",
+            "backgrounding during credential selection cannot publish a stale Relay recovery path",
+            "a genuine failed Relay dial remains pending through its retry cooldown"
           ]
         },
         {
@@ -985,21 +988,21 @@
       ],
       "evidenceRuns": [
         {
-          "date": "2026-07-25",
+          "date": "2026-08-16",
           "runner": "local",
           "platform": "macos",
           "command": "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/mobile-direct-endpoint-probe.test.ts mobile/src/transport/mobile-relay-reconnect-controller.test.ts mobile/src/transport/mobile-endpoint-supervisor.test.ts",
           "result": "passed",
-          "durationSeconds": 0.89,
-          "summary": "Three focused mobile transport files passed with 39 assertions."
+          "durationSeconds": 1.23,
+          "summary": "Three focused mobile transport files passed with 54 assertions."
         },
         {
-          "date": "2026-07-25",
+          "date": "2026-08-16",
           "runner": "local",
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/mobile-relay-close-codes.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 0.19,
+          "durationSeconds": 0.17,
           "summary": "The shared close-code contract passed with five assertions."
         }
       ],
@@ -1130,7 +1133,8 @@
           "file": "mobile/src/transport/stable-logical-rpc-client.test.ts",
           "assertions": [
             "a delivery-unknown mutation is not replayed onto a replacement Relay",
-            "Relay recovery path changes publish and remain pending between failed dials"
+            "Relay recovery path changes publish and remain pending between failed dials",
+            "a connected path clears recovery state before any later disconnect"
           ]
         },
         {
@@ -1148,8 +1152,8 @@
           "platform": "macos",
           "command": "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/client-context.test.ts mobile/src/transport/host-open-recovery.test.tsx mobile/src/transport/host-open-retry-scheduler.test.ts mobile/src/transport/rpc-session-liveness-watchdog.test.ts mobile/src/transport/rpc-session-liveness-integration.test.ts mobile/src/transport/mobile-relay-rpc-session.test.ts mobile/src/transport/mobile-relay-rpc-session-liveness.test.ts mobile/src/transport/mobile-endpoint-nudge-router.test.ts mobile/src/transport/mobile-relay-e2ee-link.test.ts mobile/src/transport/stable-logical-rpc-client.test.ts mobile/src/transport/connection-health.test.ts",
           "result": "passed",
-          "durationSeconds": 0.74,
-          "summary": "Eleven focused files passed 84 deterministic provider lifecycle, path presentation, direct/Relay liveness, traffic, and delivery-ambiguity tests."
+          "durationSeconds": 0.77,
+          "summary": "Eleven focused files passed 85 deterministic provider lifecycle, path presentation, direct/Relay liveness, traffic, and delivery-ambiguity tests."
         }
       ],
       "runtimeBudget": {

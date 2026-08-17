@@ -306,9 +306,7 @@ describe('ai vault resume command runtime', () => {
         }
       })
     ).toBe(
-      `command test -n "$fish_pid" && set --erase -g CODEX_HOME ORCA_CODEX_HOME; ` +
-        `command test -z "$fish_pid" && unset CODEX_HOME ORCA_CODEX_HOME; true; ` +
-        `cd '/home/alice/repo' && codex 'resume' 'session one'`
+      "unset CODEX_HOME; unset ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
     )
   })
 
@@ -600,9 +598,7 @@ describe('ai vault resume command runtime', () => {
     })
 
     expect(command).toBe(
-      `command test -n "$fish_pid" && set --erase -g CODEX_HOME ORCA_CODEX_HOME; ` +
-        `command test -z "$fish_pid" && unset CODEX_HOME ORCA_CODEX_HOME; true; ` +
-        `cd '/home/alice/repo' && codex 'resume' 'session one'`
+      "unset CODEX_HOME; unset ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
     )
     expect(command).not.toContain('/retired/shared-home')
   })
