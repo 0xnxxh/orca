@@ -2976,6 +2976,11 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           await runtime.handleMobileSubscribe(ptyId, clientId, undefined)
           if (closed || signal?.aborted) {
             // Why: a disconnect can win the awaited subscribe and resurrect mobile presence after cleanup already released it.
+            // Unguarded on purpose: this must still fire when our own cleanup already ran.
+            // Safe only because lease-only passes no viewport and both !viewport paths in
+            // handleMobileSubscribeInternal return with no await, so no rebind can land
+            // first. Adding an await there — or passing a viewport here — makes a
+            // superseded handler delete the replacement's (ptyId, clientId) presence.
             runtime.handleMobileUnsubscribe(ptyId, clientId)
             if (!closed) {
               registration.releaseIfCurrent()
@@ -3734,12 +3739,13 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         connectionId
       )
       // Why: older builds send a bare-handle subscriptionId, so also try the reconstructed `${terminal}:${clientId}` composite key.
+      // Why it overwrites rather than ORs: registrations always use the composite, so the
+      // bare id reports "already gone" and would otherwise mask a real ownership refusal.
       if (params.client && !params.subscriptionId.includes(':')) {
-        unsubscribed =
-          runtime.cleanupSubscriptionIfOwnedByConnection(
-            `${params.subscriptionId}:${params.client.id}`,
-            connectionId
-          ) || unsubscribed
+        unsubscribed = runtime.cleanupSubscriptionIfOwnedByConnection(
+          `${params.subscriptionId}:${params.client.id}`,
+          connectionId
+        )
       }
       return { unsubscribed }
     }

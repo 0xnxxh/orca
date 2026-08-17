@@ -136,6 +136,10 @@ export function createSubscriptionRegistryDouble(): SubscriptionRegistryDouble {
         cleanupSubscription(id)
         return true
       }
+      // Mirrors the production early-out: an unregistered id is already gone, not refused.
+      if (!cleanups.has(id)) {
+        return true
+      }
       if (connectionByEntry.get(id) !== connectionId) {
         return false
       }
