@@ -448,3 +448,71 @@ describe('a known_hosts path containing a space', () => {
     expect(resolved).toEqual(['/tmp/orca-absent-known-hosts'])
   })
 })
+
+/**
+ * Verbatim from a real Windows host — `C:\Windows\System32\OpenSSH\ssh.exe -G github.com`, OpenSSH
+ * for Windows. Captured rather than constructed, because the two things that bite here could not be
+ * inferred from the POSIX output: the `__PROGRAMDATA__` token arrives UNEXPANDED, and separators are
+ * MIXED within one path.
+ *
+ * Pinning it as a literal is what makes this testable off Windows at all. The parsing and the rejoin
+ * are pure string work, so the only thing a Windows runner would add is the platform's `path`
+ * arithmetic — which is why this covers the input shape and does not pretend to cover more.
+ */
+const WINDOWS_SSH_G_OUTPUT = [
+  'hostname github.com',
+  'port 22',
+  'hashknownhosts no',
+  'stricthostkeychecking ask',
+  'globalknownhostsfile __PROGRAMDATA__\\ssh/ssh_known_hosts __PROGRAMDATA__\\ssh/ssh_known_hosts2',
+  'userknownhostsfile C:\\Users\\neil/.ssh/known_hosts C:\\Users\\neil/.ssh/known_hosts2'
+].join('\n')
+
+describe('parsing real ssh -G output from Windows OpenSSH', () => {
+  it('expands the __PROGRAMDATA__ token rather than passing it through as a path', () => {
+    // Left literal it misses with ENOENT, and an absent file is indistinguishable from "no host is
+    // known there" — so a site-managed known_hosts is silently invisible, including one holding a
+    // rotated key that should have produced a mismatch rather than a first-contact accept.
+    const previous = process.env.ProgramData
+    process.env.ProgramData = 'C:\\ProgramData'
+    try {
+      const resolved = parseSshGOutput(WINDOWS_SSH_G_OUTPUT)
+      for (const path of resolved.globalKnownHostsFiles) {
+        expect(path).not.toContain('__PROGRAMDATA__')
+        expect(path).toContain('ProgramData')
+      }
+      expect(resolved.globalKnownHostsFiles).toHaveLength(2)
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ProgramData
+      } else {
+        process.env.ProgramData = previous
+      }
+    }
+  })
+
+  it('keeps a drive-letter path with mixed separators intact', () => {
+    // `C:\Users\neil/.ssh/known_hosts` is what it really prints. Node's fs accepts both separators
+    // on Windows, so the requirement is that nothing here rewrites or truncates it.
+    const resolved = parseSshGOutput(WINDOWS_SSH_G_OUTPUT)
+    expect(resolved.userKnownHostsFiles).toEqual([
+      'C:\\Users\\neil/.ssh/known_hosts',
+      'C:\\Users\\neil/.ssh/known_hosts2'
+    ])
+  })
+
+  it('splits a spaced Windows home into the fragments the rejoin has to put back', () => {
+    // The security-critical shape, now confirmed against the real format: a spaced home prints
+    // unquoted, so `C:\Users\John Doe/.ssh/known_hosts` arrives as two tokens. This pins what the
+    // parser hands the rejoin; rejoinSpaceSplitPaths is covered against real spaced files above.
+    const spaced = parseSshGOutput(
+      'userknownhostsfile C:\\Users\\John Doe/.ssh/known_hosts C:\\Users\\John Doe/.ssh/known_hosts2'
+    )
+    expect(spaced.userKnownHostsFiles).toEqual([
+      'C:\\Users\\John',
+      'Doe/.ssh/known_hosts',
+      'C:\\Users\\John',
+      'Doe/.ssh/known_hosts2'
+    ])
+  })
+})
