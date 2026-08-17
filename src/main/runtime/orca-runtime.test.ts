@@ -34887,6 +34887,44 @@ describe('OrcaRuntimeService', () => {
     expect(runtime.cleanupSubscriptionIfOwnedByConnection('terminal:missing', 'conn-a')).toBe(true)
   })
 
+  it('reports a refusal even when a sibling id was merely absent', async () => {
+    const runtime = createRuntime()
+    const bareCleanup = vi.fn()
+    const compositeCleanup = vi.fn()
+
+    // A clientless stream registers under the bare id; a client-scoped one under the composite.
+    runtime.registerSubscriptionCleanup('terminal-1', bareCleanup, 'conn-a')
+    runtime.registerSubscriptionCleanup('terminal-1:phone-1', compositeCleanup, 'conn-b')
+
+    // conn-a owns the bare id but not the composite: one genuine teardown, one refusal.
+    expect(runtime.cleanupSubscriptionIfOwnedByConnection('terminal-1', 'conn-a')).toBe(true)
+    expect(runtime.cleanupSubscriptionIfOwnedByConnection('terminal-1:phone-1', 'conn-a')).toBe(
+      false
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(bareCleanup).toHaveBeenCalledTimes(1)
+    expect(compositeCleanup).not.toHaveBeenCalled()
+  })
+
+  // Why: the lease-only branch's unguarded compensating handleMobileUnsubscribe is only
+  // safe while a viewport-less subscribe cannot yield to the macrotask queue. Pin it so
+  // adding an await to that path fails here instead of silently killing a live lease.
+  it('settles a viewport-less mobile subscribe without leaving the microtask queue', async () => {
+    const runtime = createRuntime()
+    let settled = false
+
+    void runtime.handleMobileSubscribe('pty-lease', 'phone-1', undefined).then(() => {
+      settled = true
+    })
+    // Drain microtasks only: any real await on this path leaves this unsettled.
+    for (let i = 0; i < 50; i += 1) {
+      await Promise.resolve()
+    }
+
+    expect(settled).toBe(true)
+  })
+
   it('tears down unconditionally for in-process callers that have no connection', async () => {
     const runtime = createRuntime()
     const cleanup = vi.fn()

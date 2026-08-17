@@ -3739,13 +3739,15 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         connectionId
       )
       // Why: older builds send a bare-handle subscriptionId, so also try the reconstructed `${terminal}:${clientId}` composite key.
-      // Why it overwrites rather than ORs: registrations always use the composite, so the
-      // bare id reports "already gone" and would otherwise mask a real ownership refusal.
+      // Why AND over the calls that ran: a clientless stream registers under the bare id
+      // and a client-scoped one under the composite, so either call can be the real
+      // teardown. Reporting false needs one genuine refusal, not merely a missing id.
       if (params.client && !params.subscriptionId.includes(':')) {
-        unsubscribed = runtime.cleanupSubscriptionIfOwnedByConnection(
-          `${params.subscriptionId}:${params.client.id}`,
-          connectionId
-        )
+        unsubscribed =
+          runtime.cleanupSubscriptionIfOwnedByConnection(
+            `${params.subscriptionId}:${params.client.id}`,
+            connectionId
+          ) && unsubscribed
       }
       return { unsubscribed }
     }
