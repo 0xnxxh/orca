@@ -261,6 +261,7 @@ export async function reattachSshPtySessionWithExitFence(
 export async function reattachSshPtySessionForSpawn(
   args: Parameters<typeof reattachSshPtySessionWithExitFence>[0] & {
     acceptLivePty: (relayPtyId: string) => void
+    acceptUnverifiablePty: (relayPtyId: string) => void
   }
 ): Promise<PtySpawnResult> {
   let result: SshPtyReattachResult | undefined
@@ -284,6 +285,7 @@ export async function reattachSshPtySessionForSpawn(
           throw error
         }
         // Why: losing contact during verification is unverifiable, not live or exited.
+        args.acceptUnverifiablePty(unresumable.id)
         throw new Error(
           `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${toRelaySshPtyId(args.connectionId, unresumable.id)}`,
           { cause: error }

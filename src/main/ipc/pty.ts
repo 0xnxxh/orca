@@ -7754,6 +7754,9 @@ export function registerPtyHandlers(
       return null
     }
     try {
+      if (provider.probePtyLiveness) {
+        return await provider.probePtyLiveness(args.id)
+      }
       return provider.hasPty(args.id)
     } catch {
       // Why: liveness is only allowed to close panes on an authoritative false.

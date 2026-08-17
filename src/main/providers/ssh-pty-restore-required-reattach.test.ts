@@ -71,6 +71,7 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     expect(message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
     expect(message).toContain(SSH_PTY_RESTORE_REQUIRED_ERROR)
     expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(true)
+    await expect(provider.probePtyLiveness('ssh:conn-1@@pty-old')).resolves.toBe(true)
   })
 
   it('reports unverifiable when the fresh delivery attach loses contact', async () => {
@@ -84,7 +85,8 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
 
     expect(message).toContain(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
     expect(message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
-    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(false)
+    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(true)
+    await expect(provider.probePtyLiveness('ssh:conn-1@@pty-old')).resolves.toBeNull()
     expect(mux.request.mock.calls.filter((call) => call[0] === 'pty.attach')).toHaveLength(2)
   })
 
@@ -99,6 +101,7 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
 
     expect(message).toContain(`${SSH_SESSION_EXPIRED_ERROR}: pty-old`)
     expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(false)
+    await expect(provider.probePtyLiveness('ssh:conn-1@@pty-old')).resolves.toBe(false)
     expect(mux.request.mock.calls.filter((call) => call[0] === 'pty.attach')).toHaveLength(2)
   })
 
