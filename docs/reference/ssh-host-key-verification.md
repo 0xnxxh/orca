@@ -51,13 +51,25 @@ concurrent writers, and a corruption blast radius well beyond us.
 
 Two consequences to own rather than discover:
 
-- **Revocation does not propagate.** `ssh-keygen -R host` clears `known_hosts` but not our store, so
-  our acceptance outlives the user's own remediation and is invisible to `ssh`. The "forget" action
-  (D5) is the only cure, so it must be discoverable, and mismatch messaging must name which source
-  disagreed.
+- **Revocation does not propagate into our store.** `ssh-keygen -R host` clears `known_hosts` but not
+  our record. That is survivable for the ordinary rotation, because a `known_hosts` MATCH is now
+  decided before our store's mismatch — running the remedy we print and reconnecting works, which it
+  did not when the store was consulted first. What it does not cure is a host we only ever knew
+  ourselves, never written to `known_hosts`: there is no `ssh-keygen -R` for that one, so the
+  rejection names the store file directly. The "forget" action (D5) replaces that with a button; its
+  helper is deliberately absent until then, since an exported API nothing can reach is unverified in
+  production. Mismatch messaging must keep naming which source disagreed.
 - **`ssh -G` on the HOME-divergent `-F` path suppresses `/etc/ssh/ssh_config`**
   (`ssh-g-config-resolution.ts:44-52`), hiding site-wide `StrictHostKeyChecking yes` and
   `GlobalKnownHostsFile`. On that path we must fail **strict**, never laxer than `ssh` would.
+
+  There is no `ssh`-only way out of this: `-F /dev/null` does NOT invert the exclusion, it reports
+  built-in defaults, so a probe built on it looks permissive on every machine. Verified against
+  OpenSSH 10.2p1. So the file is read directly, answering a deliberately weaker question — *could*
+  the site config be restricting host keys — where anything ambiguous (unreadable, an unresolvable
+  `Include`, the directive present at all) keeps the refusal. Only a site config that demonstrably
+  says nothing about host keys clears it, which is what stops the rule punishing every devcontainer,
+  `su` shell and Nix shell.
 
 ### D2. Ask `ssh -G`, do not reimplement config resolution
 

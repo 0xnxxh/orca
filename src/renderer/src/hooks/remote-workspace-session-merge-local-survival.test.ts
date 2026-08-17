@@ -197,6 +197,38 @@ describe('direct-SSH reconnect merge: local state the host has not seen', () => 
     expect(merged.activeWorkspaceKey).toBe(worktreeWorkspaceKey(WORKTREE))
   })
 
+  it('keeps repo and worktree describing the same workspace when the host names only a repo', () => {
+    // The pair used to split exactly here: the host naming no worktree is precisely when it can
+    // still name a repo, so activeRepoId followed the host while activeWorktreeId stayed local.
+    const current = sessionState({ tabsByWorktree: { [WORKTREE]: [terminalTab('agent')] } })
+    const remote = sessionState({
+      activeWorktreeId: null,
+      activeWorkspaceKey: null,
+      activeRepoId: 'some-other-repo',
+      tabsByWorktree: { [WORKTREE]: [terminalTab('agent')] }
+    })
+
+    const merged = merge(current, remote, { [WORKTREE]: [terminalTab('agent')] })
+
+    expect(merged.activeWorktreeId).toBe(WORKTREE)
+    expect(merged.activeRepoId, 'repo and worktree describe different workspaces').toBe('repo-1')
+    expect(merged.activeWorkspaceKey).toBe(worktreeWorkspaceKey(WORKTREE))
+  })
+
+  it('takes the host repo when it does name a worktree', () => {
+    const current = sessionState({ tabsByWorktree: { [WORKTREE]: [terminalTab('agent')] } })
+    const remote = sessionState({
+      activeWorktreeId: OTHER_WORKTREE,
+      activeRepoId: 'remote-repo',
+      tabsByWorktree: { [WORKTREE]: [terminalTab('agent')] }
+    })
+
+    const merged = merge(current, remote, { [WORKTREE]: [terminalTab('agent')] })
+
+    expect(merged.activeWorktreeId).toBe(OTHER_WORKTREE)
+    expect(merged.activeRepoId).toBe('remote-repo')
+  })
+
   it('still follows the host when it does name an active worktree', () => {
     // The preserve above must not freeze the pointer: a host that knows is still authoritative.
     const current = sessionState({ tabsByWorktree: { [WORKTREE]: [terminalTab('agent')] } })

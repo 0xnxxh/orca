@@ -78,17 +78,28 @@ import {
 } from './sftp-namespace-resolution'
 import type { FileUploadSession } from '../providers/types'
 import { isSshSessionLimitError } from './ssh-session-limit-error'
+import { withTimeout } from '../../shared/promise-timeout-fallback'
 import {
   createLinkedSshFileTransferSignal,
   raceSftpFileTransferWithAbort
 } from './ssh-file-transfer-abort'
 export type { SshConnectionCallbacks } from './ssh-connection-utils'
 
+type HostKeyTrustSources = {
+  /** Whether the system-wide ssh_config could be restricting host keys; doubt reads as true. */
+  siteMayRestrict: boolean
+  knownHostsEvidence: Awaited<ReturnType<typeof loadKnownHostsEvidence>>
+  trustedHostKeys: Awaited<ReturnType<typeof loadTrustedHostKeys>>
+}
+
 type SshRemoteFileOptions = {
   hostPlatform?: RemoteHostPlatform
   // Only uploadDirectory and writeFile honor this, and only on the non-Windows ssh2 branch.
   sftpNamespace?: SftpNamespacePathMapping
 }
+
+/** Bounds the trust-source reads that run before the handshake, which nothing else times out. */
+const HOST_KEY_SOURCE_READ_TIMEOUT_MS = 5_000
 
 // Upper bound on waiting for an aborted channel's open/close to settle before rejecting anyway.
 const ABORTED_CHANNEL_CLOSE_GRACE_MS = 5_000
@@ -154,6 +165,19 @@ export class SshConnection {
   private systemSshResolvedConfig: SshResolvedConfig | null = null
   /** Set by attemptConnect so doSsh2Connect can build a verifier without threading it through. */
   private hostKeyResolvedConfig: SshResolvedConfig | null = null
+  /**
+   * The trust sources for ONE connect attempt, keyed by its generation.
+   *
+   * doSsh2Connect runs up to five times per attemptConnect as the credential ladder advances, and
+   * each run re-read every known_hosts file, re-read the store, and on the -F path re-scanned the
+   * system config. The answer cannot change between rungs of the same attempt — nothing writes these
+   * while a handshake is in flight — so it is read once. Keyed by generation rather than cleared,
+   * because a superseded attempt must never hand its sources to the live one.
+   */
+  private hostKeyTrustSources: {
+    generation: number
+    sources: Promise<HostKeyTrustSources>
+  } | null = null
   private systemSshControlMasterDisabledForSession = false
   private systemSshGssapiOnlyForSession = false
   private useSystemSshTransport = false
@@ -1228,6 +1252,54 @@ export class SshConnection {
     config.sock = p.sock
   }
 
+  /** Reads known_hosts, our store and the site policy once per connect attempt. */
+  private loadHostKeyTrustSources(
+    connectGeneration: number,
+    hostKeyResolved: SshResolvedConfig | null,
+    sshGSuppressedSiteConfig: boolean
+  ): Promise<HostKeyTrustSources> {
+    if (this.hostKeyTrustSources?.generation === connectGeneration) {
+      return this.hostKeyTrustSources.sources
+    }
+    const sources = (async (): Promise<HostKeyTrustSources> => {
+      const [siteMayRestrict, knownHostsEvidence, trustedHostKeys] = await Promise.all([
+        // Doubt wins on timeout for the same reason it wins on an unreadable file.
+        sshGSuppressedSiteConfig
+          ? withTimeout(siteConfigMayRestrictHostKeys(), HOST_KEY_SOURCE_READ_TIMEOUT_MS, true)
+          : Promise.resolve(false),
+        // Why bounded: these reads sit AHEAD of client.connect, and readyTimeout only covers the
+        // handshake — nothing else wraps attemptConnect. A home directory on a stalled NFS or SMB
+        // mount makes readFile hang indefinitely, which left the connection wedged in `connecting`
+        // with no ladder entry and no recovery. The fallback is the one an unreadable file already
+        // produces: evidence withheld, so we connect as ssh does but record nothing, rather than the
+        // far worse "no hosts known" that would let a changed key through as first contact.
+        withTimeout(
+          loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved)),
+          HOST_KEY_SOURCE_READ_TIMEOUT_MS,
+          { entries: [], unreadableFileCount: 1 }
+        ),
+        // The catch sits INSIDE the timeout on purpose: withTimeout absorbs rejections into its
+        // fallback, so wrapping the other way round would silently swallow the warning below — the
+        // one signal that the store is unwired rather than merely slow.
+        withTimeout(
+          loadTrustedHostKeys().catch((err) => {
+            // Losing our own records is not a security regression: known_hosts is still consulted,
+            // so a changed key is still refused. A host trusted only by us degrades to first contact
+            // and is re-recorded, which reaches the same decision. Loud because it means the store
+            // is unwired.
+            console.warn('[ssh] host key store unavailable; falling back to known_hosts only:', err)
+            return []
+          }),
+          HOST_KEY_SOURCE_READ_TIMEOUT_MS,
+          []
+        )
+      ])
+      return { siteMayRestrict, knownHostsEvidence, trustedHostKeys }
+    })()
+    this.hostKeyTrustSources = { generation: connectGeneration, sources }
+    return sources
+  }
+
   private async doSsh2Connect(config: ConnectConfig, connectGeneration: number): Promise<void> {
     const hostKeyResolved = this.hostKeyResolvedConfig
     const { host: hostKeyLookupHost, isHostKeyAlias } = resolveKnownHostsLookupHost(
@@ -1249,18 +1321,14 @@ export class SshConnection {
     // setting one. ssh cannot answer that — `-F` excludes the system config as surely as the user's,
     // and `-F /dev/null` reports built-in defaults rather than inverting the exclusion — so the file
     // is read instead, conservatively: any doubt keeps the refusal.
-    const siteConfigSuppressed = sshGSuppressedSiteConfig && (await siteConfigMayRestrictHostKeys())
-    const knownHostsEvidence = await loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved))
+    const { siteMayRestrict, knownHostsEvidence, trustedHostKeys } =
+      await this.loadHostKeyTrustSources(
+        connectGeneration,
+        hostKeyResolved,
+        sshGSuppressedSiteConfig
+      )
+    const siteConfigSuppressed = siteMayRestrict
     const knownHostsEntries = knownHostsEvidence.entries
-    // Preloaded because ssh2's verifier decides synchronously; the same reason known_hosts is read
-    // here rather than inside the callback.
-    const trustedHostKeys = await loadTrustedHostKeys().catch((err) => {
-      // Losing our own records is not a security regression: known_hosts is still consulted, so a
-      // changed key is still refused. A host trusted only by us degrades to first contact and is
-      // re-recorded, which reaches the same decision. Loud because it means the store is unwired.
-      console.warn('[ssh] host key store unavailable; falling back to known_hosts only:', err)
-      return []
-    })
     // Null means ssh2's own list was unreadable, so there is nothing safe to reorder against and
     // ssh2 keeps proposing whatever it supports.
     const serverHostKeyOrder = DEFAULT_SERVER_HOST_KEY_ALGORITHMS

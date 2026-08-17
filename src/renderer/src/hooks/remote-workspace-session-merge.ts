@@ -133,24 +133,26 @@ export function mergeDirectSshRemoteWorkspaceSession(
     replaceWorktreeIds.has(current.activeWorktreeId) &&
     (tabsByWorktree[current.activeWorktreeId]?.length ?? 0) > 0
   const preservedActiveWorktreeId = localActiveWorkspaceSurvives ? current.activeWorktreeId : null
+  // The three active-* fields have to describe ONE workspace, so they are all derived from whichever
+  // worktree wins rather than each choosing a source. Taking the repo from the host while the
+  // worktree came from local state left the pair disagreeing — and precisely in the case the
+  // preservation exists for, since "the host named no worktree" is exactly when it can still name a
+  // repo.
+  const keepsLocalWorkspace =
+    !activeOutsideTarget && remote.activeWorktreeId == null && preservedActiveWorktreeId != null
   const activeWorktreeId = activeOutsideTarget
     ? current.activeWorktreeId
     : (remote.activeWorktreeId ?? preservedActiveWorktreeId)
   return {
     ...current,
-    activeRepoId: activeOutsideTarget
-      ? current.activeRepoId
-      : remote.activeWorktreeId
-        ? remote.activeRepoId
-        : (remote.activeRepoId ?? (preservedActiveWorktreeId ? current.activeRepoId : null)),
+    activeRepoId:
+      activeOutsideTarget || keepsLocalWorkspace ? current.activeRepoId : remote.activeRepoId,
     activeWorktreeId,
     activeWorkspaceKey: activeOutsideTarget
       ? current.activeWorkspaceKey
-      : remote.activeWorktreeId
-        ? worktreeWorkspaceKey(remote.activeWorktreeId)
-        : activeWorktreeId
-          ? worktreeWorkspaceKey(activeWorktreeId)
-          : null,
+      : activeWorktreeId
+        ? worktreeWorkspaceKey(activeWorktreeId)
+        : null,
     activeTabId: activeOutsideTarget ? current.activeTabId : remote.activeTabId,
     tabsByWorktree: {
       ...omitTargetWorktrees(current.tabsByWorktree),

@@ -309,36 +309,6 @@ export async function trustHostKey(
   return record
 }
 
-/**
- * Drop trust for an endpoint — the D5 recovery path, which is the only cure for a rotated key
- * because we never learn one from `UpdateHostKeys`. Omit `keyType` to forget every type.
- * Returns how many records were removed, so the settings surface can say whether it did anything.
- */
-export async function forgetHostKey(
-  target: { host: string; port: number; keyType?: string },
-  file?: string
-): Promise<number> {
-  const storeFile = requireStoreFile(file)
-  const host = normalizeHost(target.host)
-  return withSidecarSnapshotQueue(storeFile, async () => {
-    const records = await loadTrustedHostKeys(storeFile)
-    const kept = records.filter(
-      (record) =>
-        record.host !== host ||
-        record.port !== target.port ||
-        (target.keyType !== undefined && record.keyType !== target.keyType)
-    )
-    const removed = records.length - kept.length
-    if (removed > 0) {
-      await persist(storeFile, kept)
-      console.warn(
-        `[ssh] Forgot ${removed} stored host key(s) for ${host}:${target.port}${target.keyType ? ` (${target.keyType})` : ''}`
-      )
-    }
-    return removed
-  })
-}
-
 /** Temp file + fsync + rename, so a crash mid-write can never publish a half-written trust list. */
 async function persist(storeFile: string, hostKeys: TrustedHostKeyRecord[]): Promise<void> {
   await mkdir(dirname(storeFile), { recursive: true }).catch(() => {})

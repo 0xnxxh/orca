@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  forgetHostKey,
   getSshHostKeyStoreFile,
   isTrusted,
   loadTrustedHostKeys,
@@ -159,39 +158,6 @@ describe('ssh host key store', () => {
     await writeFile(storeFile, JSON.stringify(stored), 'utf-8')
 
     expect(await isTrusted(query(), storeFile)).toBe('unknown')
-  })
-
-  it('forgets one key type without disturbing the others', async () => {
-    await trustHostKey(query(), storeFile)
-    await trustHostKey(query({ keyType: 'ssh-rsa', key: RSA_A }), storeFile)
-    await trustHostKey(query({ host: 'other-host' }), storeFile)
-
-    const removed = await forgetHostKey(
-      { host: 'build-01', port: 22, keyType: 'ssh-ed25519' },
-      storeFile
-    )
-
-    expect(removed).toBe(1)
-    expect(await isTrusted(query(), storeFile)).toBe('unknown-type-known-host')
-    expect(await isTrusted(query({ keyType: 'ssh-rsa', key: RSA_A }), storeFile)).toBe('match')
-    expect(await isTrusted(query({ host: 'other-host' }), storeFile)).toBe('match')
-  })
-
-  it('forgets every key type for an endpoint when no type is given', async () => {
-    await trustHostKey(query(), storeFile)
-    await trustHostKey(query({ keyType: 'ssh-rsa', key: RSA_A }), storeFile)
-    await trustHostKey(query({ port: 2222 }), storeFile)
-
-    expect(await forgetHostKey({ host: 'build-01', port: 22 }, storeFile)).toBe(2)
-    expect(await isTrusted(query(), storeFile)).toBe('unknown')
-    expect(await isTrusted(query({ port: 2222 }), storeFile)).toBe('match')
-  })
-
-  it('reports nothing removed when there is no such record', async () => {
-    await trustHostKey(query(), storeFile)
-
-    expect(await forgetHostKey({ host: 'absent', port: 22 }, storeFile)).toBe(0)
-    expect(await isTrusted(query(), storeFile)).toBe('match')
   })
 
   it('never publishes a half-written store: a torn payload trusts nothing', async () => {
