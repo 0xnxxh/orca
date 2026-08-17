@@ -2,14 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { planImportWrites, type SourceCookieToWrite } from './browser-cookie-import-write'
 
 function cookie(domain: string, name: string, partition: SourceCookieToWrite['partition']) {
+  const host = domain.startsWith('.') ? domain.slice(1) : domain
   return {
+    url: `https://${host}/`,
     domain,
     name,
     value: `${name}-value`,
     path: '/',
     secure: true,
     httpOnly: false,
-    sameSite: 'no_restriction' as const,
+    sameSite: 'no_restriction',
+    expirationDate: undefined,
     partition
   } satisfies SourceCookieToWrite
 }

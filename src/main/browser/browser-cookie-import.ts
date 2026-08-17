@@ -102,7 +102,8 @@ import {
   writeImportedCookies,
   type ImportedCookieFields,
   type ImportWritePhase,
-  type SourceCookieToWrite
+  type SourceCookieToWrite,
+  planImportWrites
 } from './browser-cookie-import-write'
 import {
   createChromiumCookieSnapshot,
@@ -628,32 +629,50 @@ async function importValidatedCookies(
   diag(
     `importValidatedCookies: ${cookies.length} validated, ${invalidDomainSkipped} unsafe-domain skipped, ${integritySkipped} source-bound skipped, ${nonTransplantableSkipped} non-transplantable skipped of ${totalInput} total, partition="${targetPartition}"`
   )
+  // Why (STA-4300 I1): every cookie's fate is decided here, before the jar is opened. The plan is
+  // the single value the write set AND the removal scope both derive from, so they cannot drift
+  // apart the way they did in bf6dc6fcba.
+  const plan = planImportWrites(importableCookies)
+
+  // Why (§4.3c): a family we cannot name is one we cannot exclude from the removal scope, and
+  // clearing a family we cannot protect is the P0. Refuse before touching anything.
+  if (plan.hasUnrepresentableSkip) {
+    return {
+      ok: false,
+      reason:
+        'Could not import: a cookie with an unreadable site partition has no registrable domain, so its existing session cannot be protected.'
+    }
+  }
+
   // Why: an older remote client cannot surface this skip, so fail before opening the target jar.
-  if (
-    options.canReportPartitionSkippedCookies === false &&
-    importableCookies.some((cookie) => cookie.partition.status === 'unreadable')
-  ) {
+  if (options.canReportPartitionSkippedCookies === false && plan.skips.length > 0) {
     return {
       ok: false,
       reason:
         'This Orca client cannot report cookies skipped for an unreadable site partition. Update Orca on this device and try again.'
     }
   }
-  let skipped = totalInput - importableCookies.length
+  // Why: a family-suppressed sibling is a partition skip too, so partitionSkippedCookies is a
+  // BREAKDOWN of skippedCookies and is added into it exactly once — never a separate addend, or
+  // totalCookies === importedCookies + skippedCookies silently stops holding.
+  const partitionSkipped = plan.skips.length
+  let skipped = totalInput - importableCookies.length + partitionSkipped
   let phase: ImportWritePhase = emptyImportWritePhase()
   // Why (STA-4097/STA-4300): both the rollback and the import writes need CDP identities — only
   // they carry partitionKey. cookies.set drops it silently, on the success path as well.
-  const cookieClearStore = importableCookies.length > 0 ? target.openWriteStore() : null
+  const cookieClearStore = plan.writes.length > 0 ? target.openWriteStore() : null
 
   if (cookieClearStore) {
     let replaced: ReplacedImportedDomainCookies | null = null
     try {
       if (mode === 'replace-imported-domains') {
         try {
-          // Why: a skipped cookie must not erase the existing session it never replaces.
-          const replacementDomains = importableCookies
-            .filter((cookie) => cookie.partition.status !== 'unreadable')
-            .map((cookie) => cookie.domain)
+          // Why (STA-4300 I2 / §2b): the removal scope is the write set. Filtering per exact
+          // cookie is NOT enough — replaceCookiesForImportedDomains expands each imported domain
+          // into its descendant roots, so a readable apex cookie would drag a skipped subdomain's
+          // live session into the removal scope with nothing written back. plan.writes is already
+          // family-closed, and using the same array for both makes them impossible to diverge.
+          const replacementDomains = plan.writes.map((cookie) => cookie.domain)
           replaced = await replaceCookiesForImportedDomains(cookieClearStore, replacementDomains)
           diag(`  removed ${replaced.removed.length} existing cookies in imported domain scopes`)
         } catch (err) {
@@ -669,10 +688,13 @@ async function importValidatedCookies(
       const stripNonPrintable = (s: string): string => s.replace(/[^\x20-\x7E]/g, '')
       phase = await writeImportedCookies(
         cookieClearStore,
-        importableCookies.map((cookie) => ({ ...cookie, value: stripNonPrintable(cookie.value) })),
+        plan.writes.map((cookie) => ({ ...cookie, value: stripNonPrintable(cookie.value) })),
         { stopOnFailure: replaced !== null, log: diag }
       )
-      skipped += phase.writeRejected + phase.partitionSkipped
+      // Why: plan.skips holds every partition-driven skip — the unreadable rows AND the readable
+      // siblings suppressed by family closure. phase.partitionSkipped is 0 now that only planned
+      // writes reach the writer, so the count comes from the plan and is added exactly once.
+      skipped += phase.writeRejected
 
       if (phase.failure && replaced) {
         const rollbackFailures: unknown[] = []
@@ -706,7 +728,7 @@ async function importValidatedCookies(
   }
 
   diag(
-    `importValidatedCookies result: imported=${phase.importedCount} skipped=${skipped} partition-unreadable=${phase.partitionSkipped} domains=${phase.domains.size}`
+    `importValidatedCookies result: imported=${phase.importedCount} skipped=${skipped} partition-unreadable=${partitionSkipped} domains=${phase.domains.size}`
   )
 
   const summary: BrowserCookieImportSummary = {
@@ -714,7 +736,7 @@ async function importValidatedCookies(
     importedCookies: phase.importedCount,
     skippedCookies: skipped,
     ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
-    ...(phase.partitionSkipped > 0 ? { partitionSkippedCookies: phase.partitionSkipped } : {}),
+    ...(partitionSkipped > 0 ? { partitionSkippedCookies: partitionSkipped } : {}),
     domains: [...phase.domains].sort()
   }
 
