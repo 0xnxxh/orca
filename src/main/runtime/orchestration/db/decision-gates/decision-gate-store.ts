@@ -1,5 +1,4 @@
-import type { GateStatus, DecisionGateRow } from '../../types'
-import type { DispatchContextRow } from '../../types'
+import type { DecisionGateRow, DispatchContextRow, GateStatus } from '../../types'
 import { OrchestrationError } from '../../orchestration-error'
 import { LEGACY_RUN_ID } from '../contract-constants'
 import { generateId } from '../generated-id'
