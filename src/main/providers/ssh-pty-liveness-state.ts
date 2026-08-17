@@ -1,4 +1,5 @@
 export const MAX_SSH_PTY_EXIT_TOMBSTONES = 1000
+export const MAX_SSH_PTY_AMBIGUOUS_EXIT_STATES = 1000
 
 export type SshPtyLiveEvidence = { valid: boolean }
 export type SshPtyLiveEvidenceWindow = {
@@ -9,10 +10,14 @@ export type SshPtyLiveEvidenceWindow = {
 export class SshPtyLivenessState {
   readonly livePtyIds = new Set<string>()
   private readonly exitedPtyIds = new Set<string>()
+  private readonly ambiguousExitPtyIds = new Set<string>()
   private readonly pendingLiveEvidenceByPtyId = new Map<string, Set<SshPtyLiveEvidence>>()
   private readonly liveEvidenceWindows = new Set<SshPtyLiveEvidenceWindow>()
 
-  constructor(private readonly toAppPtyId: (id: string) => string) {}
+  constructor(
+    private readonly toAppPtyId: (id: string) => string,
+    private readonly onAmbiguousExitCapacityExceeded?: () => void
+  ) {}
 
   clear(): void {
     for (const evidence of this.pendingLiveEvidenceByPtyId.values()) {
@@ -28,6 +33,7 @@ export class SshPtyLivenessState {
     this.liveEvidenceWindows.clear()
     this.livePtyIds.clear()
     this.exitedPtyIds.clear()
+    this.ambiguousExitPtyIds.clear()
   }
 
   probe(id: string): boolean | null {
@@ -36,6 +42,7 @@ export class SshPtyLivenessState {
 
   acceptLive(id: string): void {
     const appPtyId = this.toAppPtyId(id)
+    this.ambiguousExitPtyIds.delete(appPtyId)
     this.exitedPtyIds.delete(appPtyId)
     this.livePtyIds.add(appPtyId)
   }
@@ -92,6 +99,7 @@ export class SshPtyLivenessState {
 
   acceptExited(id: string): void {
     const appPtyId = this.toAppPtyId(id)
+    this.ambiguousExitPtyIds.delete(appPtyId)
     this.invalidateLiveEvidence(appPtyId)
     this.livePtyIds.delete(appPtyId)
     this.exitedPtyIds.delete(appPtyId)
@@ -101,6 +109,16 @@ export class SshPtyLivenessState {
       if (oldest !== undefined) {
         this.exitedPtyIds.delete(oldest)
       }
+    }
+  }
+
+  acceptUnverifiableExit(id: string): void {
+    const appPtyId = this.toAppPtyId(id)
+    this.acceptUnverifiable(appPtyId)
+    this.ambiguousExitPtyIds.add(appPtyId)
+    if (this.ambiguousExitPtyIds.size > MAX_SSH_PTY_AMBIGUOUS_EXIT_STATES) {
+      this.ambiguousExitPtyIds.clear()
+      this.onAmbiguousExitCapacityExceeded?.()
     }
   }
 

@@ -1783,7 +1783,7 @@ export class SshRelaySession {
         return
       }
       if (!payload.incarnationId) {
-        ptyProvider.acceptUnverifiablePty(payload.id)
+        ptyProvider.acceptAmbiguousExitPty(payload.id)
         return
       }
       if (!isCurrentPtyExit(payload)) {
@@ -2234,6 +2234,10 @@ export class SshRelaySession {
   private async acceptPtyExit(payload: SshPtyExitPayload): Promise<void> {
     if (!isCurrentPtyExit(payload)) {
       return
+    }
+    const evidenceProvider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
+    if (evidenceProvider?.providerGeneration === payload.providerGeneration) {
+      evidenceProvider.acceptExitedPtyLiveness(payload.id)
     }
     await acceptSshPtyOutputExit({
       id: payload.id,

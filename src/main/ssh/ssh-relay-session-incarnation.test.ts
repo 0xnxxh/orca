@@ -72,12 +72,15 @@ vi.mock('../providers/ssh-pty-provider', () => ({
         }
       }
     )
-    acceptUnverifiablePty = vi.fn(() => {
+    acceptUnverifiablePty = vi.fn((_id: string) => {
       for (const evidence of this.pendingLiveEvidence) {
         evidence.valid = false
       }
       this.pendingLiveEvidence.clear()
     })
+    acceptAmbiguousExitPty = vi.fn((id: string) => this.acceptUnverifiablePty(id))
+    acceptExitedPtyLiveness = vi.fn()
+    acceptExitedPty = vi.fn()
     dispose = vi.fn()
 
     constructor(_connectionId: string, _mux: unknown, _env: unknown, providerGeneration: number) {
@@ -156,8 +159,10 @@ describe('SSH relay PTY incarnation exits', () => {
       ptyIncarnation: string
     }) => void
     const acceptExitedPty = vi.fn()
+    const acceptExitedPtyLiveness = vi.fn()
     vi.mocked(getSshPtyProvider).mockReturnValue({
       providerGeneration: 31,
+      acceptExitedPtyLiveness,
       acceptExitedPty
     } as never)
     vi.mocked(isCurrentPtyExit).mockReturnValueOnce(true).mockReturnValueOnce(false)
@@ -195,6 +200,46 @@ describe('SSH relay PTY incarnation exits', () => {
     )
     expect(acceptExitedPty).toHaveBeenCalledExactlyOnceWith('ssh:target-1@@pty-reused')
     expect(runtime.onPtyExit).not.toHaveBeenCalled()
+  })
+
+  it('records exact exited liveness before output-exit settlement', async () => {
+    let settleExit!: () => void
+    acceptOutputExitMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        settleExit = resolve
+      })
+    )
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
+      providerGeneration: number
+      onExit: ReturnType<typeof vi.fn>
+      acceptExitedPtyLiveness: ReturnType<typeof vi.fn>
+      acceptExitedPty: ReturnType<typeof vi.fn>
+    }
+    vi.mocked(getSshPtyProvider).mockReturnValue(provider as never)
+    const onExit = provider.onExit.mock.calls[0]?.[0] as (payload: {
+      id: string
+      code: number
+      incarnationId: string
+      providerGeneration: number
+      ptyIncarnation: string
+    }) => void
+    const id = 'ssh:target-1@@pty-current'
+
+    onExit({
+      id,
+      code: 0,
+      incarnationId: 'incarnation-current',
+      providerGeneration: provider.providerGeneration,
+      ptyIncarnation: 'incarnation-current'
+    })
+
+    expect(provider.acceptExitedPtyLiveness).toHaveBeenCalledExactlyOnceWith(id)
+    expect(provider.acceptExitedPty).not.toHaveBeenCalled()
+    settleExit()
+    await vi.waitFor(() => expect(provider.acceptExitedPty).toHaveBeenCalledExactlyOnceWith(id))
   })
 
   it('promotes liveness only after current output passes intake fencing', async () => {

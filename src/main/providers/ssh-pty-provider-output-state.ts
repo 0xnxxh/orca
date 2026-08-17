@@ -153,7 +153,7 @@ export class SshPtyProviderOutputState {
 
   private resolvePtyExitIncarnation(relayPtyId: string, incarnationId: unknown): string {
     if (typeof incarnationId === 'string' && incarnationId.length > 0) {
-      return this.resolvePtyIncarnation(relayPtyId, incarnationId)
+      return incarnationId
     }
     return (
       this.incarnationByRelayPtyId.get(relayPtyId) ??

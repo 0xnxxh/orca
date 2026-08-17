@@ -26,11 +26,7 @@ import { SshPtyLivenessState } from './ssh-pty-liveness-state'
 import type { SshPtyLiveEvidence } from './ssh-pty-liveness-state'
 import { listSshPtyProcessesWithLiveEvidence } from './ssh-pty-process-list-liveness'
 import { attachSshPtyWithLiveEvidence } from './ssh-pty-attach-liveness'
-
-// Why: sequential relay teardown calls share one absolute budget; convert to the mux-relative timeout only at dispatch.
-function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: number } | undefined {
-  return deadlineMs === undefined ? undefined : { timeoutMs: Math.max(1, deadlineMs - Date.now()) }
-}
+import { shutdownSshPty } from './ssh-pty-shutdown'
 
 /** Remote PTY provider that proxies IPtyProvider operations through the relay. */
 export class SshPtyProvider implements IPtyProvider {
@@ -55,7 +51,9 @@ export class SshPtyProvider implements IPtyProvider {
     this.mux = mux
     this.agentSessionCapabilities = new SshAgentSessionCapabilities(mux)
     this.getAppliedSize = createSshPtyAppliedSizeReader(mux, connectionId)
-    this.livenessState = new SshPtyLivenessState(this.toAppPtyId)
+    this.livenessState = new SshPtyLivenessState(this.toAppPtyId, () =>
+      this.closeOutputIntake('ambiguous-exit-state-cap')
+    )
 
     this.outputState = new SshPtyProviderOutputState(providerGeneration, {
       mux,
@@ -211,15 +209,7 @@ export class SshPtyProvider implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    await this.mux.request(
-      'pty.shutdown',
-      {
-        id: this.toRelayPtyId(id),
-        immediate: opts.immediate ?? false,
-        keepHistory: opts.keepHistory ?? false
-      },
-      relayTimeoutOptions(opts.deadlineMs)
-    )
+    await shutdownSshPty(this.mux, this.toRelayPtyId(id), opts)
     this.acceptExitedPty(id)
   }
 
@@ -312,9 +302,17 @@ export class SshPtyProvider implements IPtyProvider {
     this.livenessState.acceptUnverifiable(id)
   }
 
+  acceptAmbiguousExitPty(id: string): void {
+    this.livenessState.acceptUnverifiableExit(id)
+  }
+
+  acceptExitedPtyLiveness(id: string): void {
+    this.livenessState.acceptExited(id)
+  }
+
   acceptExitedPty(id: string): void {
     this.outputState.acceptExit(this.toRelayPtyId(id))
-    this.livenessState.acceptExited(id)
+    this.acceptExitedPtyLiveness(id)
   }
 
   async getDefaultShell(): Promise<string> {

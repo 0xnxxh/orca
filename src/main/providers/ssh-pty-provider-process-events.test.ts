@@ -158,7 +158,7 @@ describe('SshPtyProvider process listings and events', () => {
       id: scopedPty1,
       code: 0,
       providerGeneration: 1,
-      ptyIncarnation: 'legacy:1:1:pty-1',
+      ptyIncarnation: 'incarnation-1',
       incarnationId: 'incarnation-1'
     })
   })

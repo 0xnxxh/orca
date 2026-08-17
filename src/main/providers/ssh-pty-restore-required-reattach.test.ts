@@ -4,7 +4,10 @@ import {
   SSH_PTY_RESTORE_REQUIRED_ERROR,
   SSH_SESSION_EXPIRED_ERROR
 } from './ssh-pty-errors'
-import { MAX_SSH_PTY_EXIT_TOMBSTONES } from './ssh-pty-liveness-state'
+import {
+  MAX_SSH_PTY_AMBIGUOUS_EXIT_STATES,
+  MAX_SSH_PTY_EXIT_TOMBSTONES
+} from './ssh-pty-liveness-state'
 import { SshPtyProvider } from './ssh-pty-provider'
 
 // The relay answers `restoreRequired` from its DELIVERY layer only: `requireRestore`
@@ -152,6 +155,21 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(
       provider.probePtyLiveness(`ssh:conn-1@@pty-${MAX_SSH_PTY_EXIT_TOMBSTONES}`)
     ).resolves.toBe(false)
+  })
+
+  it('bounds ambiguous exit retention by resetting the output intake', () => {
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      for (let index = 0; index <= MAX_SSH_PTY_AMBIGUOUS_EXIT_STATES; index += 1) {
+        provider.acceptAmbiguousExitPty(`pty-${index}`)
+      }
+    } finally {
+      log.mockRestore()
+    }
+
+    expect(mux.dispose).toHaveBeenCalledExactlyOnceWith('connection_lost')
   })
 
   it('keeps reconnect liveness unverifiable until relay activation', async () => {
