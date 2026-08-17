@@ -249,8 +249,7 @@ export class RelayReconnectController {
     }
     const now = this.dependencies.now()
     const failureCount = this.failureCount.recordAfterConnection(this.activeRelayConnectedAt, now)
-    // Why: elapsed time inside a slow failed dial is not evidence of recovery;
-    // only an authenticated relay that survived the stability window resets the streak.
+    // Why: only a stable authenticated Relay resets the failure streak.
     this.activeRelayConnectedAt = null
     const delay =
       recovery?.kind === 'retry-after-host-offline'
