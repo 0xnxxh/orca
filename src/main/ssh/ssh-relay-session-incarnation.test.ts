@@ -89,8 +89,13 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
   unregisterSshGitProvider: vi.fn()
 }))
 
-const { registerSshPtyProvider, clearProviderPtyState, deletePtyOwnership, isCurrentPtyExit } =
-  await import('../ipc/pty')
+const {
+  registerSshPtyProvider,
+  getSshPtyProvider,
+  clearProviderPtyState,
+  deletePtyOwnership,
+  isCurrentPtyExit
+} = await import('../ipc/pty')
 
 describe('SSH relay PTY incarnation exits', () => {
   beforeEach(() => {
@@ -121,6 +126,11 @@ describe('SSH relay PTY incarnation exits', () => {
       providerGeneration: number
       ptyIncarnation: string
     }) => void
+    const acceptExitedPty = vi.fn()
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      providerGeneration: 31,
+      acceptExitedPty
+    } as never)
     vi.mocked(isCurrentPtyExit).mockReturnValueOnce(false)
 
     onExit({
@@ -135,6 +145,7 @@ describe('SSH relay PTY incarnation exits', () => {
     expect(deletePtyOwnership).not.toHaveBeenCalled()
     expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalled()
     expect(acceptOutputExitMock).not.toHaveBeenCalled()
+    expect(acceptExitedPty).not.toHaveBeenCalled()
     expect(runtime.onPtyExit).not.toHaveBeenCalled()
     expect(mockWindow.webContents.send).not.toHaveBeenCalledWith('pty:exit', expect.anything())
 
@@ -153,6 +164,7 @@ describe('SSH relay PTY incarnation exits', () => {
         ptyIncarnation: 'current-incarnation'
       })
     )
+    expect(acceptExitedPty).toHaveBeenCalledExactlyOnceWith('ssh:target-1@@pty-reused')
     expect(runtime.onPtyExit).not.toHaveBeenCalled()
   })
 })
