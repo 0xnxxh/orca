@@ -8,6 +8,7 @@ import {
   getOwnerRepoForRemote,
   ghRepoExecOptions,
   githubRepoContext,
+  type GitHubRemoteIdentityProbeOptions,
   type LocalGitExecOptions
 } from './gh-utils'
 import {
@@ -16,14 +17,16 @@ import {
   isGitHubHostAuthenticated
 } from './github-enterprise-repository'
 import { githubHostExecOptions } from './github-repository-host'
-import { isValidGitHubApiRepository } from './github-api-repository-validation'
+import {
+  isValidGitHubApiRepository,
+  type GitHubApiRepositoryResolution
+} from './github-api-repository-validation'
 
 export {
   githubHostExecOptions,
   githubRepositorySlugArg,
   githubRepositoryWebHost
 } from './github-repository-host'
-
 export type GitHubApiRepository = GitHubOwnerRepo
 export type GitHubRepoExecOptions = ReturnType<typeof ghRepoExecOptions> & { host?: string }
 export type GitHubRepoExecution = {
@@ -31,19 +34,7 @@ export type GitHubRepoExecution = {
   ghOptions: GitHubRepoExecOptions
 }
 
-type GitHubApiRepositoryProbeOptions = {
-  requireVerifiedSshProbe?: boolean
-}
-
-type GitHubApiRepositoryResolution =
-  | GitHubApiRepository
-  | null
-  | undefined
-  | (() => Promise<GitHubApiRepository | null>)
-
-// Why: the enterprise branch spawns an uncached `git remote get-url` (an SSH
-// round trip on connection-backed repos) — hot paths like per-file contents
-// and viewed-state toggles resolve per call, so cache like ownerRepoCache does.
+// Why: cache the uncached Enterprise remote probe used by hot paths.
 const ORIGIN_REPO_CACHE_TTL_MS = 30_000
 const ORIGIN_REPO_CACHE_MAX_ENTRIES = 512
 const originRepoCache = new Map<string, { value: GitHubApiRepository | null; expiresAt: number }>()
@@ -90,16 +81,18 @@ export async function getGitHubApiRepositoryForRemote(
   remoteName: string,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {},
-  probeOptions: GitHubApiRepositoryProbeOptions = {}
+  probeOptions: GitHubRemoteIdentityProbeOptions = {}
 ): Promise<GitHubApiRepository | null> {
   // Why: generic PR resolution prefers upstream, but this API represents the
   // caller-selected remote exactly (#7331).
+  const requireVerifiedSshProbe = probeOptions.requireVerifiedSshProbe === true
+  const verifiedIdentityArgs = requireVerifiedSshProbe ? ([probeOptions] as const) : []
   const ownerRepo = await getOwnerRepoForRemote(
     repoPath,
     remoteName,
     connectionId,
     localGitOptions,
-    probeOptions
+    ...verifiedIdentityArgs
   )
   if (ownerRepo) {
     return { ...ownerRepo, host: 'github.com' }
@@ -109,7 +102,7 @@ export async function getGitHubApiRepositoryForRemote(
     remoteName,
     connectionId,
     localGitOptions,
-    probeOptions.requireVerifiedSshProbe === true
+    requireVerifiedSshProbe
   )
   const now = Date.now()
   pruneOriginRepoCache(now)
@@ -124,20 +117,21 @@ export async function getGitHubApiRepositoryForRemote(
   const probe = (async () => {
     const enterpriseOptions =
       Object.keys(localGitOptions).length > 0 ? { localGitExecOptions: localGitOptions } : {}
+    const verifiedEnterpriseArgs = requireVerifiedSshProbe ? ([true] as const) : []
     const slug =
       remoteName === 'origin'
         ? await getEnterpriseGitHubRepoSlug(
             repoPath,
             connectionId,
             enterpriseOptions,
-            probeOptions.requireVerifiedSshProbe === true
+            ...verifiedEnterpriseArgs
           )
         : await getEnterpriseGitHubRepoSlugForRemote(
             repoPath,
             remoteName,
             connectionId,
             enterpriseOptions,
-            probeOptions.requireVerifiedSshProbe === true
+            ...verifiedEnterpriseArgs
           )
     // Why: undefined means the gh auth inventory could not be read. Caching it
     // as a negative would turn a transient spawn failure into a 30-second miss.
