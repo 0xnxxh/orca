@@ -1,7 +1,10 @@
 import { app, ipcMain } from 'electron'
 import { relaunchApp } from '../app-relaunch'
 import { destroySystemTray } from '../tray/system-tray'
-import { prepareOtherWindowsForRelaunch } from './relaunch-window-preparation'
+import {
+  broadcastRelaunchPrepareAbort,
+  prepareOtherWindowsForRelaunch
+} from './relaunch-window-preparation'
 
 export type AppRelaunchHandlerOptions = {
   onBeforeRelaunch?: () => void | Promise<void>
@@ -12,6 +15,9 @@ export function registerAppRelaunchHandlers(options: AppRelaunchHandlerOptions):
   // whole cleanup + exit sequence so concurrent invokes cannot race checkpoints
   // or register multiple replacement instances.
   let relaunchExitPromise: Promise<void> | null = null
+  // Why: survives re-arms so a retry after app.exit(0) threw cannot call
+  // app.relaunch() again and register two replacement instances.
+  let relaunchInstanceRegistered = false
   ipcMain.handle('app:relaunch', (event) => {
     relaunchExitPromise ??= (async () => {
       try {
@@ -30,12 +36,19 @@ export function registerAppRelaunchHandlers(options: AppRelaunchHandlerOptions):
         try {
           // Why: app.exit(0) skips before-quit, so destroy the Windows tray manually to avoid a stale icon.
           destroySystemTray()
-          relaunchApp('renderer-request')
+          if (!relaunchInstanceRegistered) {
+            relaunchApp('renderer-request')
+            relaunchInstanceRegistered = true
+          }
           app.exit(0)
         } catch (error) {
           // Why: the process is still alive; re-arm the singleflight so a retry
           // schedules a fresh exit pair instead of joining a settled no-op.
           relaunchExitPromise = null
+          // Why: prepared windows latched their restart bypass and froze their
+          // shutdown checkpoint; without this abort they would skip dirty-close
+          // prompts and persist the stale snapshot staged for this attempt.
+          broadcastRelaunchPrepareAbort()
           console.warn(
             '[app] Relaunch exit failed; retry re-armed:',
             error instanceof Error ? error.name : typeof error

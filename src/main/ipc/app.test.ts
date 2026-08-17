@@ -148,6 +148,7 @@ vi.mock('../pwsh', () => ({
 }))
 
 import { registerAppHandlers } from './app'
+import { registerRendererPreloadWindow } from '../window/renderer-preload-window-registry'
 
 describe('registerAppHandlers', () => {
   const originalPlatform = process.platform
@@ -282,6 +283,17 @@ describe('registerAppHandlers', () => {
   }
 
   function createFakeRelaunchWindow(id: number): FakeRelaunchWindow {
+    const win: FakeRelaunchWindow = {
+      isDestroyed: () => false,
+      webContents: { id, isDestroyed: () => false, send: vi.fn() }
+    }
+    // Why: preparation only handshakes windows registered as running the Orca preload.
+    registerRendererPreloadWindow(win.webContents as never)
+    return win
+  }
+
+  /** e.g. an offscreen browser-backend window: no Orca preload, can never answer. */
+  function createFakePreloadlessWindow(id: number): FakeRelaunchWindow {
     return {
       isDestroyed: () => false,
       webContents: { id, isDestroyed: () => false, send: vi.fn() }
@@ -411,6 +423,85 @@ describe('registerAppHandlers', () => {
     await vi.advanceTimersByTimeAsync(150)
 
     expect(relaunchAppMock).toHaveBeenCalledTimes(1)
+    expect(appExitMock).toHaveBeenCalledWith(0)
+  })
+
+  it('broadcasts the prepare abort to prepared windows when the exit pair throws', async () => {
+    const onBeforeRelaunch = vi.fn()
+    const invoker = createFakeRelaunchWindow(1)
+    const mainWindow = createFakeRelaunchWindow(2)
+    getAllWindowsMock.mockReturnValue([invoker, mainWindow])
+    registerAppHandlers({} as never, { onBeforeRelaunch })
+    destroySystemTrayMock.mockImplementationOnce(() => {
+      throw new Error('tray teardown failed')
+    })
+
+    const relaunchPromise = Promise.resolve(handlers.get('app:relaunch')?.({ sender: { id: 1 } }))
+    await vi.advanceTimersByTimeAsync(0)
+    const request = sentPrepareRequest(mainWindow)
+    replyToPrepare(2, request.requestId, true)
+    await relaunchPromise
+    await vi.advanceTimersByTimeAsync(150)
+    expect(appExitMock).not.toHaveBeenCalled()
+
+    // Why: the prepared window latched its restart bypass and froze its shutdown
+    // checkpoint; only this abort releases them — non-invokers have no self-heal.
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('app:relaunch-prepare-abort')
+    // Why: the invoker's relaunch invoke already resolved, so this abort is what
+    // releases it before its 5s settle grace.
+    expect(invoker.webContents.send).toHaveBeenCalledWith('app:relaunch-prepare-abort')
+
+    // A retry must run a fresh preparation round so the window re-stages state.
+    const retryPromise = Promise.resolve(handlers.get('app:relaunch')?.({ sender: { id: 1 } }))
+    await vi.advanceTimersByTimeAsync(0)
+    const prepareCalls = mainWindow.webContents.send.mock.calls.filter(
+      ([channel]) => channel === 'app:relaunch-prepare'
+    )
+    expect(prepareCalls).toHaveLength(2)
+    replyToPrepare(2, (prepareCalls[1][1] as { requestId: number }).requestId, true)
+    await retryPromise
+    await vi.advanceTimersByTimeAsync(150)
+    expect(appExitMock).toHaveBeenCalledWith(0)
+  })
+
+  it('never registers a second replacement instance when app.exit throws after relaunch', async () => {
+    registerAppHandlers({} as never, { onBeforeRelaunch: vi.fn() })
+    appExitMock.mockImplementationOnce(() => {
+      throw new Error('exit failed')
+    })
+
+    await Promise.resolve(handlers.get('app:relaunch')?.({ sender: { id: 1 } }))
+    await vi.advanceTimersByTimeAsync(150)
+    expect(relaunchAppMock).toHaveBeenCalledTimes(1)
+
+    await Promise.resolve(handlers.get('app:relaunch')?.({ sender: { id: 1 } }))
+    await vi.advanceTimersByTimeAsync(150)
+
+    // Why: a second app.relaunch() would register two replacement instances.
+    expect(relaunchAppMock).toHaveBeenCalledTimes(1)
+    expect(appExitMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('excludes preload-less windows from the handshake instead of stalling into the degrade', async () => {
+    const onBeforeRelaunch = vi.fn()
+    const invoker = createFakeRelaunchWindow(1)
+    const mainWindow = createFakeRelaunchWindow(2)
+    const offscreen = createFakePreloadlessWindow(99)
+    getAllWindowsMock.mockReturnValue([invoker, mainWindow, offscreen])
+    registerAppHandlers({} as never, { onBeforeRelaunch })
+
+    const relaunchPromise = Promise.resolve(handlers.get('app:relaunch')?.({ sender: { id: 1 } }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Why: a window with no Orca preload can never answer; asking it would stall
+    // every relaunch the full 5s and then exit through the unprepared degrade.
+    expect(offscreen.webContents.send).not.toHaveBeenCalled()
+
+    const request = sentPrepareRequest(mainWindow)
+    replyToPrepare(2, request.requestId, true)
+    await relaunchPromise
+    // Why: well under the 5s unresponsive timeout — the exit must not wait on it.
+    await vi.advanceTimersByTimeAsync(150)
     expect(appExitMock).toHaveBeenCalledWith(0)
   })
 

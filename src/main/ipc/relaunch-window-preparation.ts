@@ -5,6 +5,7 @@ import {
   APP_RELAUNCH_PREPARE_REPLY_CHANNEL,
   type AppRelaunchPrepareReply
 } from '../../shared/relaunch-preparation-ipc'
+import { isRendererPreloadWindow } from '../window/renderer-preload-window-registry'
 
 // Why: a hung renderer can never confirm a backup; a bounded wait keeps one
 // unresponsive window from pinning every future relaunch open.
@@ -25,15 +26,34 @@ type PrepareOutcome = 'prepared' | 'refused' | 'unresponsive'
  * renderer) degrades after the timeout to the unprepared pre-handshake
  * behavior for that window only, rather than blocking recovery forever.
  */
-export async function prepareOtherWindowsForRelaunch(
-  sender: WebContents | null | undefined
-): Promise<void> {
-  const targets = BrowserWindow.getAllWindows().filter(
+// Why isRendererPreloadWindow: preload-less windows (offscreen browser backend,
+// html-to-pdf, cookie-clear) can never answer the handshake; asking them would
+// stall every relaunch into the 5s unresponsive degrade and exit unprepared.
+function relaunchPreparationTargets(sender?: WebContents | null): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter(
     (win) =>
       !win.isDestroyed() &&
       !win.webContents.isDestroyed() &&
+      isRendererPreloadWindow(win.webContents) &&
       (!sender || win.webContents.id !== sender.id)
   )
+}
+
+/** Releases the restart latch + shutdown-checkpoint guard armed by an abandoned prepared round. */
+export function broadcastRelaunchPrepareAbort(sender?: WebContents | null): void {
+  for (const win of relaunchPreparationTargets(sender)) {
+    try {
+      win.webContents.send(APP_RELAUNCH_PREPARE_ABORT_CHANNEL)
+    } catch {
+      // Why: one torn-down window must not keep the abort from the rest.
+    }
+  }
+}
+
+export async function prepareOtherWindowsForRelaunch(
+  sender: WebContents | null | undefined
+): Promise<void> {
+  const targets = relaunchPreparationTargets(sender)
   if (targets.length === 0) {
     return
   }
@@ -64,14 +84,13 @@ export async function prepareOtherWindowsForRelaunch(
       )
     )
     if (outcomes.includes('refused')) {
-      // Why: windows that already prepared armed their restart latch; release it.
-      for (const win of targets) {
-        if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-          win.webContents.send(APP_RELAUNCH_PREPARE_ABORT_CHANNEL)
-        }
-      }
       throw new Error('A window refused its pre-relaunch checkpoint; keeping the app open.')
     }
+  } catch (error) {
+    // Why: windows that already prepared armed their restart latch; any throw
+    // out of this round (refusal or otherwise) abandons it, so release them.
+    broadcastRelaunchPrepareAbort(sender)
+    throw error
   } finally {
     ipcMain.removeListener(APP_RELAUNCH_PREPARE_REPLY_CHANNEL, onReply)
   }
