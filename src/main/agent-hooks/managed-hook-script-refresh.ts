@@ -82,7 +82,19 @@ export async function refreshManagedScriptIfPresent(
     if (!(await scriptStillExists(scriptPath))) {
       return false
     }
-    await rename(tmpPath, scriptPath)
+    try {
+      await rename(tmpPath, scriptPath)
+    } catch (error) {
+      // Why (#14221): on Windows any open read handle on the target — AV scanner, backup
+      // agent, search indexer, editor — fails the atomic replace with EPERM. The caller
+      // only logs, so the script stays frozen at whatever an older Orca generated and the
+      // agent keeps invoking it. An in-place write still succeeds against that handle, so
+      // prefer a non-atomic refresh over stranding a stale script indefinitely.
+      if (!isPermissionError(error) || process.platform !== 'win32') {
+        throw error
+      }
+      await writeScriptWithAclRetry(scriptPath, content)
+    }
     return true
   } finally {
     await rm(tmpPath, { force: true }).catch(() => undefined)
