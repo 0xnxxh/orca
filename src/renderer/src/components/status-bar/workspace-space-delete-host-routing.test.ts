@@ -16,7 +16,10 @@ import { describe, expect, it } from 'vitest'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type { WorkspaceSpaceWorktree } from '../../../../shared/workspace-space-types'
 import type { Worktree } from '../../../../shared/worktree/types'
-import { getSelectedDeletableWorkspaceRows } from './workspace-space-delete-selection'
+import {
+  getSelectedDeletableWorkspaceRows,
+  getWorkspaceSpaceWorktreeIdentity
+} from './workspace-space-delete-selection'
 import {
   resolveWorktreeBatchDeleteTargets,
   toWorktreeDeleteIdentities
@@ -99,19 +102,36 @@ describe('Space Manager delete routes to the row host', () => {
     expect(resolveWorktreeBatchDeleteTargets(identities, lookupOnHost)).not.toBeNull()
   })
 
-  it('keeps each selected row on its own host in a multi-select delete', () => {
+  it('selects only the confirmed host when two rows share an id', () => {
+    const local = spaceRow(LOCAL)
+    const ssh = spaceRow(SSH)
     const selected = getSelectedDeletableWorkspaceRows(
-      [spaceRow(LOCAL), spaceRow(SSH)],
-      new Set([SHARED_ID])
+      [local, ssh],
+      new Set([getWorkspaceSpaceWorktreeIdentity(ssh)])
     )
-    // Both rows share the id, so a selection keyed by id alone would collapse them.
-    expect(selected).toHaveLength(2)
+    expect(selected).toEqual([ssh])
 
     const targets = resolveWorktreeBatchDeleteTargets(
       identitiesForSpaceDelete(selected),
       lookupOnHost
     )
 
-    expect(targets?.map((row) => row.hostId)).toEqual([LOCAL, SSH])
+    expect(targets?.map((row) => row.hostId)).toEqual([SSH])
+  })
+
+  it('keeps both rows when both host-qualified identities are selected', () => {
+    const local = spaceRow(LOCAL)
+    const ssh = spaceRow(SSH)
+    const selected = getSelectedDeletableWorkspaceRows(
+      [local, ssh],
+      new Set([getWorkspaceSpaceWorktreeIdentity(local), getWorkspaceSpaceWorktreeIdentity(ssh)])
+    )
+
+    expect(selected).toEqual([local, ssh])
+    expect(
+      resolveWorktreeBatchDeleteTargets(identitiesForSpaceDelete(selected), lookupOnHost)?.map(
+        (row) => row.hostId
+      )
+    ).toEqual([LOCAL, SSH])
   })
 })

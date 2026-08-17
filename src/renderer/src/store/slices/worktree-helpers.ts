@@ -49,6 +49,7 @@ export { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 export type WorktreeDeleteState = {
   isDeleting: boolean
   phase?: 'deleting' | 'queued'
+  executionHostId?: ExecutionHostId | null
   error: string | null
   canForceDelete: boolean
   forceDeleteReason: WorktreeForceDeleteReason | null

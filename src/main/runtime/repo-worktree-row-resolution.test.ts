@@ -5,6 +5,7 @@ import type { WorktreeMeta } from '../../shared/worktree/meta-types'
 import type { GitWorktreeInfo, Worktree } from '../../shared/worktree/types'
 import type { Store } from '../persistence'
 import {
+  resolveRepoWorktreeRows,
   resolveScopedWorktreeIdRow,
   type RepoWorktreeRowDeps
 } from './repo-worktree-row-resolution'
@@ -169,7 +170,7 @@ describe('host-qualified scoped worktree resolution', () => {
     await expect(
       resolveScopedWorktreeIdRow(deps, worktreeId, 'ssh:builder')
     ).resolves.toMatchObject({ id: worktreeId, hostId: 'ssh:builder' })
-    expect(deps.listFolderWorkspaces).toHaveBeenCalledExactlyOnceWith(remote)
+    expect(deps.listFolderWorkspaces).toHaveBeenCalledExactlyOnceWith(remote, 2)
     expect(deps.scanRepo).not.toHaveBeenCalled()
   })
 
@@ -183,5 +184,19 @@ describe('host-qualified scoped worktree resolution', () => {
       resolveScopedWorktreeIdRow(deps, 'shared::/same/worktree', 'ssh:builder')
     ).resolves.toBeNull()
     expect(deps.scanRepo).not.toHaveBeenCalled()
+  })
+
+  it('reuses fleet owner counts without reloading repos per row', async () => {
+    const owners = Array.from({ length: 100 }, (_, index) =>
+      repo(`repo-${index}`, `/repos/${index}`, { executionHostId: 'local' })
+    )
+    const deps = createDeps(owners)
+    const getRepos = vi.spyOn(deps.store, 'getRepos')
+
+    await Promise.all(
+      owners.map((owner) => resolveRepoWorktreeRows(deps, owner, deps.metaById, new Map(), 1))
+    )
+
+    expect(getRepos).not.toHaveBeenCalled()
   })
 })

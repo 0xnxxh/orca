@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => {
   const state = {
     worktreeMap: new Map<string, unknown>(),
+    worktreeRows: [] as unknown[],
+    activeWorkspaceExecutionHostId: null as string | null,
     clearWorktreeDeleteState: vi.fn((worktreeId: string) => {
       delete state.deleteStateByWorktreeId[worktreeId]
     }),
@@ -31,13 +33,15 @@ vi.mock('@/store', () => ({
 }))
 
 vi.mock('@/store/selectors', () => ({
-  getAllWorktreesFromState: () => Array.from(mocks.state.worktreeMap.values()),
+  getAllWorktreesFromState: () => mocks.state.worktreeRows,
   getWorktreeMapFromState: () => mocks.state.worktreeMap,
   // Host-qualified lookup (STA-4343); this fixture keys one row per id, so the
   // host only has to agree when the row declares one.
   getWorktreeOnHostFromState: (_state: unknown, worktreeId: string, hostId?: string) => {
-    const row = mocks.state.worktreeMap.get(worktreeId) as { hostId?: string } | undefined
-    return row && (!hostId || row.hostId === hostId) ? row : undefined
+    const rows = mocks.state.worktreeRows.filter(
+      (row) => (row as { id?: string }).id === worktreeId
+    ) as { hostId?: string }[]
+    return hostId ? rows.find((row) => row.hostId === hostId) : rows[0]
   }
 }))
 
@@ -64,6 +68,7 @@ function runDeletesForCurrentWorktrees(
   targets: Parameters<typeof runWorktreeDeletesInParallel>[0],
   options?: Parameters<typeof runWorktreeDeletesInParallel>[1]
 ) {
+  mocks.state.worktreeRows = [...targets]
   mocks.state.worktreeMap = new Map(targets.map((target) => [target.id, target]))
   return runWorktreeDeletesInParallel(targets, options)
 }
@@ -85,6 +90,8 @@ describe('runWorktreeDeletesInParallel', () => {
     mocks.state.clearWorktreeDeleteState.mockClear()
     mocks.state.markWorktreesDeleting.mockClear()
     mocks.state.worktreeMap = new Map()
+    mocks.state.worktreeRows = []
+    mocks.state.activeWorkspaceExecutionHostId = null
     mocks.state.deleteStateByWorktreeId = {}
     vi.mocked(toast.error).mockClear()
     vi.mocked(toast.info).mockClear()
@@ -164,7 +171,10 @@ describe('runWorktreeDeletesInParallel', () => {
     await Promise.resolve()
     first.resolve({ ok: true })
 
-    await expect(deleted).resolves.toEqual(['wt-1', 'wt-2'])
+    await expect(deleted).resolves.toEqual([
+      { id: 'wt-1', executionHostId: null },
+      { id: 'wt-2', executionHostId: null }
+    ])
   })
 
   it('marks every same-repo target deleting before serialized deletes finish', async () => {
@@ -199,7 +209,10 @@ describe('runWorktreeDeletesInParallel', () => {
 
     childDelete.resolve({ ok: true })
 
-    await expect(deleted).resolves.toEqual(['parent', 'child'])
+    await expect(deleted).resolves.toEqual([
+      { id: 'parent', executionHostId: null },
+      { id: 'child', executionHostId: null }
+    ])
     expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
       2,
       { id: 'parent', executionHostId: null },
@@ -272,7 +285,9 @@ describe('runWorktreeDeletesInParallel', () => {
       .mockResolvedValueOnce({ ok: true })
       .mockResolvedValueOnce({ ok: false, error: 'selector_not_found' })
 
-    await expect(runDeletesForCurrentWorktrees([target, target])).resolves.toEqual(['wt-1'])
+    await expect(runDeletesForCurrentWorktrees([target, target])).resolves.toEqual([
+      { id: 'wt-1', executionHostId: null }
+    ])
 
     expect(mocks.state.markWorktreesDeleting).toHaveBeenCalledWith(['wt-1'])
     expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(1)
@@ -281,6 +296,46 @@ describe('runWorktreeDeletesInParallel', () => {
       false
     )
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('deletes both host-qualified targets when they share a worktree id', async () => {
+    const targets = [
+      {
+        id: 'shared',
+        instanceId: 'local-instance',
+        displayName: 'local',
+        repoId: 'repo-a',
+        path: '/workspaces/shared',
+        hostId: 'local' as const
+      },
+      {
+        id: 'shared',
+        instanceId: 'ssh-instance',
+        displayName: 'ssh',
+        repoId: 'repo-a',
+        path: '/workspaces/shared',
+        hostId: 'ssh:builder' as const
+      }
+    ]
+
+    await expect(runDeletesForCurrentWorktrees(targets)).resolves.toEqual([
+      { id: 'shared', executionHostId: 'local' },
+      { id: 'shared', executionHostId: 'ssh:builder' }
+    ])
+
+    expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(2)
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      1,
+      { id: 'shared', executionHostId: 'local' },
+      false,
+      { suppressPreservedBranchToast: true }
+    )
+    expect(mocks.state.removeWorktree).toHaveBeenNthCalledWith(
+      2,
+      { id: 'shared', executionHostId: 'ssh:builder' },
+      false,
+      { suppressPreservedBranchToast: true }
+    )
   })
 
   it('clears a pending ancestor when a nested descendant delete fails', async () => {
@@ -315,6 +370,40 @@ describe('runWorktreeDeletesInParallel', () => {
     expect(mocks.state.deleteStateByWorktreeId['parent']).toBeUndefined()
   })
 
+  it('does not let a failed child on one host block an ancestor on another host', async () => {
+    const hostAChild = {
+      id: 'child-a',
+      instanceId: 'child-a-instance',
+      displayName: 'child A',
+      repoId: 'repo-a',
+      path: '/workspaces/parent/child',
+      hostId: 'ssh:host-a' as const
+    }
+    const hostBParent = {
+      id: 'parent-b',
+      instanceId: 'parent-b-instance',
+      displayName: 'parent B',
+      repoId: 'repo-a',
+      path: '/workspaces/parent',
+      hostId: 'ssh:host-b' as const
+    }
+    mocks.state.removeWorktree.mockImplementation(
+      async ({ executionHostId }: { executionHostId: string | null }) =>
+        executionHostId === hostAChild.hostId ? { ok: false, error: 'changed files' } : { ok: true }
+    )
+
+    await expect(runDeletesForCurrentWorktrees([hostAChild, hostBParent])).resolves.toEqual([
+      { id: hostBParent.id, executionHostId: hostBParent.hostId }
+    ])
+
+    expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(2)
+    expect(mocks.state.removeWorktree).toHaveBeenCalledWith(
+      { id: hostBParent.id, executionHostId: hostBParent.hostId },
+      false,
+      { suppressPreservedBranchToast: true }
+    )
+  })
+
   it('replaces per-workspace branch warnings with one batch result', async () => {
     mocks.state.removeWorktree
       .mockResolvedValueOnce({
@@ -331,7 +420,10 @@ describe('runWorktreeDeletesInParallel', () => {
         { id: 'wt-1', displayName: 'one', repoId: 'repo-a', path: '/workspaces/one' },
         { id: 'wt-2', displayName: 'two', repoId: 'repo-b', path: '/workspaces/two' }
       ])
-    ).resolves.toEqual(['wt-1', 'wt-2'])
+    ).resolves.toEqual([
+      { id: 'wt-1', executionHostId: null },
+      { id: 'wt-2', executionHostId: null }
+    ])
 
     expect(showPreservedBranchBatchToast).toHaveBeenCalledOnce()
     expect(showPreservedBranchBatchToast).toHaveBeenCalledWith(2, [

@@ -72,6 +72,7 @@ export function createRemoveWorktree(
         [worktreeId]: {
           isDeleting: true,
           phase: 'deleting',
+          executionHostId: requiredExecutionHostId,
           error: null,
           canForceDelete: false,
           forceDeleteReason: null
@@ -224,7 +225,11 @@ export function createRemoveWorktree(
       })
       // Why: dispose the SSH relay AFTER terminal teardown so a still-mounted pane can't hit a gone relay and toast "SSH not active".
       const runtimeCleanup = await cleanupEphemeralVmRuntimesForDeleted({
-        workspaceIds: [worktreeId]
+        ...(hostId
+          ? {
+              hostScopedWorkspaces: [{ workspaceId: worktreeId, executionHostId: hostId }]
+            }
+          : { workspaceIds: [worktreeId] })
       })
       // Remove the orphaned project for the destroyed SSH target so it can't surface as a dead project in the composer.
       await purgeOrphanedRuntimeSshProjects(get, runtimeCleanup.destroyedSshTargetIds)
@@ -242,7 +247,9 @@ export function createRemoveWorktree(
       // Why: dispose parked terminal watchers only on explicit deletion; identity migration/remounts must keep buffered PTY state.
       disposeRemovedWorktreeParkedTerminalWatchers(worktreeId, terminalPtyIdsBeforeRemoval)
       applyRemoveWorktreeSuccessState(set, worktreeId, tabIds)
-      get().removeWorkspaceSpaceWorktrees?.([worktreeId])
+      get().removeWorkspaceSpaceWorktrees?.(
+        hostId ? [{ id: worktreeId, executionHostId: hostId }] : [worktreeId]
+      )
       // Why: PR/commit-message generation records are keyed by worktree; prune to the surviving set so they don't leak.
       const liveWorktreeKeys = new Set(
         get()
@@ -310,6 +317,7 @@ export function createRemoveWorktree(
           ...s.deleteStateByWorktreeId,
           [worktreeId]: {
             isDeleting: false,
+            executionHostId: requiredExecutionHostId,
             error,
             canForceDelete: forceDeleteReason !== null,
             forceDeleteReason,

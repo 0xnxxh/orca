@@ -82,6 +82,38 @@ describe('worktree remote runtime mutations', () => {
     expect(store.getState().worktreesByRepo.repo1).toEqual([])
   })
 
+  it('does not clean up a hidden same-id VM owned by another host', async () => {
+    const store = createTestStore()
+    const wt = makeWorktree({
+      id: 'repo1::/path/shared',
+      repoId: 'repo1',
+      path: '/path/shared',
+      hostId: 'ssh:runtime-ssh-a'
+    })
+    mockApi.ephemeralVm.listRuntimes.mockResolvedValue([
+      {
+        id: 'runtime-a',
+        workspaceId: wt.id,
+        sshTargetId: 'runtime-ssh-a',
+        cleanupStatus: 'not_started'
+      },
+      {
+        id: 'runtime-b',
+        workspaceId: wt.id,
+        sshTargetId: 'runtime-ssh-b',
+        cleanupStatus: 'not_started'
+      }
+    ] as never)
+    store.setState({ worktreesByRepo: { repo1: [wt] } } as Partial<AppState>)
+
+    await expect(
+      store.getState().removeWorktree({ id: wt.id, executionHostId: 'ssh:runtime-ssh-a' })
+    ).resolves.toEqual({ ok: true })
+
+    expect(mockApi.ephemeralVm.cleanup).toHaveBeenCalledTimes(1)
+    expect(mockApi.ephemeralVm.cleanup).toHaveBeenCalledWith({ runtimeId: 'runtime-a' })
+  })
+
   it('removes a HUB-owned SSH worktree through its exact HUB transport owner', async () => {
     const store = createTestStore()
     const wt = makeWorktree({

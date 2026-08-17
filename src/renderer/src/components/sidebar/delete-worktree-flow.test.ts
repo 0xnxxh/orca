@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
         canForceDelete?: boolean
         forceDeleteReason?: 'dirty' | null
         lockReason?: string | null
+        executionHostId?: ExecutionHostId | null
       }
     >
   }
@@ -85,6 +86,7 @@ import { showDeleteWorktreeFailureToast } from './delete-worktree-failure-toast'
 import {
   runWorktreeBatchDelete,
   runWorktreeDelete,
+  runWorktreeDeleteWithToast,
   runWorktreeDeletesInParallel
 } from './delete-worktree-flow'
 
@@ -249,7 +251,7 @@ describe('delete worktree flow', () => {
     ])
     finishFirst({ ok: true })
 
-    await expect(deletion).resolves.toEqual(['wt-1'])
+    await expect(deletion).resolves.toEqual([{ id: 'wt-1', executionHostId: null }])
     expect(mocks.state.removeWorktree).not.toHaveBeenCalledWith(
       { id: 'wt-2', executionHostId: null },
       false,
@@ -302,7 +304,7 @@ describe('delete worktree flow', () => {
       false
     )
     await vi.waitFor(() => {
-      expect(onDeleted).toHaveBeenCalledWith(['wt-1'])
+      expect(onDeleted).toHaveBeenCalledWith([{ id: 'wt-1', executionHostId: null }])
     })
   })
 
@@ -312,6 +314,7 @@ describe('delete worktree flow', () => {
       .mockImplementationOnce(async ({ id: worktreeId }: { id: string }) => {
         mocks.state.deleteStateByWorktreeId[worktreeId] = {
           isDeleting: false,
+          executionHostId: null,
           error: 'changed files',
           canForceDelete: true,
           forceDeleteReason: 'dirty'
@@ -339,7 +342,7 @@ describe('delete worktree flow', () => {
           allowUnverifiedPtyStop: true
         }
       )
-      expect(onDeleted).toHaveBeenCalledWith(['wt-1'])
+      expect(onDeleted).toHaveBeenCalledWith([{ id: 'wt-1', executionHostId: null }])
     })
   })
 
@@ -349,6 +352,7 @@ describe('delete worktree flow', () => {
       .mockImplementationOnce(async ({ id: worktreeId }: { id: string }) => {
         mocks.state.deleteStateByWorktreeId[worktreeId] = {
           isDeleting: false,
+          executionHostId: null,
           error: 'Worktree is locked by Git.',
           canForceDelete: false,
           forceDeleteReason: null,
@@ -369,6 +373,26 @@ describe('delete worktree flow', () => {
       lockReason: 'active agent session'
     })
     expect(mocks.state.removeWorktree).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not offer force from another host's racing delete state", async () => {
+    mocks.state.removeWorktree.mockReset().mockImplementationOnce(async ({ id: worktreeId }) => {
+      mocks.state.deleteStateByWorktreeId[worktreeId] = {
+        isDeleting: false,
+        executionHostId: 'ssh:builder',
+        error: 'changed files',
+        canForceDelete: true,
+        forceDeleteReason: 'dirty'
+      }
+      return { ok: false, error: 'Worktree is locked by Git.' }
+    })
+    await runWorktreeDeleteWithToast({ id: 'wt-1', executionHostId: 'local' }, 'one')
+
+    expect(vi.mocked(showDeleteWorktreeFailureToast).mock.calls[0]?.[0]).toMatchObject({
+      canForceDelete: false,
+      forceDeleteReason: null,
+      lockReason: null
+    })
   })
 
   it('keeps parent worktree deletes behind confirmation even when confirmation is skipped', () => {

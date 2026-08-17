@@ -2,10 +2,12 @@ import type { Worktree } from '../../../../shared/worktree/types'
 import type { PreservedBranchCleanup } from '@/lib/preserved-branch-cleanup'
 import { normalizeExecutionHostId } from '../../../../shared/execution-host'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
+import type { WorktreeRemovalTarget } from '../../../../shared/worktree/removal'
 
 export type WorktreeBatchDeleteOptions = {
   forceConfirm?: boolean
-  onDeleted?: (worktreeIds: string[]) => void
+  forceOnConfirm?: boolean
+  onDeleted?: (targets: WorktreeRemovalTarget[]) => void
 }
 
 /** `hostId` rides along because `id` alone repeats across hosts (STA-4343). */
@@ -20,7 +22,7 @@ export type WorktreeDeleteOptions = {
 
 export type WorktreeDeleteWithToastOptions = {
   force?: boolean
-  onForceDeleted?: (worktreeId: string) => void
+  onForceDeleted?: (target: WorktreeRemovalTarget) => void
   onPreservedBranch?: (branch: PreservedBranchCleanup) => void
   suppressPreservedBranchToast?: boolean
   snapshotPruneBatchId?: string

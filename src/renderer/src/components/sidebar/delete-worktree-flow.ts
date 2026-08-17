@@ -152,10 +152,10 @@ export function runWorktreeBatchDelete(
     (state.settings?.skipDeleteWorktreeConfirm ?? false)
   if (skipConfirm) {
     void runWorktreeDeletesInParallel(targets, {
-      onForceDeleted: (deletedId) => options.onDeleted?.([deletedId])
-    }).then((deletedIds) => {
-      if (deletedIds.length > 0) {
-        options.onDeleted?.(deletedIds)
+      onForceDeleted: (deletedTarget) => options.onDeleted?.([deletedTarget])
+    }).then((deletedTargets) => {
+      if (deletedTargets.length > 0) {
+        options.onDeleted?.(deletedTargets)
       }
     })
     return true
@@ -175,7 +175,8 @@ export function runWorktreeBatchDelete(
       ...(options.forceConfirm || singleTargetHasLineageChildren
         ? { allowSkipConfirm: false }
         : {}),
-      ...(options.onDeleted ? { onDeleted: options.onDeleted } : {})
+      ...(options.onDeleted ? { onDeleted: options.onDeleted } : {}),
+      ...(options.forceOnConfirm === false ? { forceOnConfirm: false } : {})
     })
     return true
   }
@@ -184,7 +185,8 @@ export function runWorktreeBatchDelete(
     worktreeIds: targets.map((target) => target.id),
     worktreeDeleteIdentities: toWorktreeDeleteIdentities(targets),
     allowSkipConfirm: false,
-    ...(options.onDeleted ? { onDeleted: options.onDeleted } : {})
+    ...(options.onDeleted ? { onDeleted: options.onDeleted } : {}),
+    ...(options.forceOnConfirm === false ? { forceOnConfirm: false } : {})
   })
   return true
 }

@@ -2333,12 +2333,12 @@ function getRuntimeFolderWorkspaceInstanceIdentity(repo: Repo, worktreeId: strin
 
 function listRuntimeFolderWorkspaces(
   store: Pick<RuntimeStore, 'getAllWorktreeMeta' | 'getRepos' | 'setWorktreeMeta'>,
-  repo: Repo
+  repo: Repo,
+  repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
 ): Worktree[] {
   const rootId = getRuntimeFolderWorkspaceRootId(repo)
   const allMeta = store.getAllWorktreeMeta()
   const expectedHostId = getRepoExecutionHostId(repo)
-  const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
   const ids = Object.keys(allMeta).filter(
     (worktreeId) =>
       isRuntimeFolderWorkspaceIdForRepo(repo, worktreeId) &&
@@ -30856,6 +30856,10 @@ export class OrcaRuntimeService {
     }
     const metaById = this.store.getAllWorktreeMeta() ?? {}
     const repos = this.store.getRepos()
+    const repoOwnerCounts = new Map<string, number>()
+    for (const repo of repos) {
+      repoOwnerCounts.set(repo.id, (repoOwnerCounts.get(repo.id) ?? 0) + 1)
+    }
     const projectRuntimeByRepoId = resolveLocalProjectRuntimesForRepos(this.requireStore(), repos)
     const platformByRepoId = new Map(
       repos.map((repo) => [
@@ -30866,7 +30870,14 @@ export class OrcaRuntimeService {
     const deps = this.repoWorktreeRowDeps()
     const perRepoWorktrees = await Promise.all(
       repos.map(
-        async (repo) => await resolveRepoWorktreeRows(deps, repo, metaById, projectRuntimeByRepoId)
+        async (repo) =>
+          await resolveRepoWorktreeRows(
+            deps,
+            repo,
+            metaById,
+            projectRuntimeByRepoId,
+            repoOwnerCounts.get(repo.id) ?? 1
+          )
       )
     )
     const lineageById = this.store?.getAllWorktreeLineage?.() ?? {}
@@ -30893,7 +30904,8 @@ export class OrcaRuntimeService {
       store,
       scanRepo: (repo, projectRuntimeByRepoId) =>
         this.listRepoWorktreesForResolution(repo, projectRuntimeByRepoId),
-      listFolderWorkspaces: (repo) => listRuntimeFolderWorkspaces(store, repo)
+      listFolderWorkspaces: (repo, repoOwnerCount) =>
+        listRuntimeFolderWorkspaces(store, repo, repoOwnerCount)
     }
   }
 

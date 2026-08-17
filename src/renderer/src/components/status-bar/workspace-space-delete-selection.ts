@@ -1,4 +1,5 @@
 import type { WorkspaceSpaceWorktree } from '../../../../shared/workspace-space-types'
+import { composeWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 
 /**
  * Which Space rows a delete action applies to.
@@ -10,35 +11,41 @@ import type { WorkspaceSpaceWorktree } from '../../../../shared/workspace-space-
  */
 
 /** The selected rows themselves — each keeps its own host (STA-4343). */
+export function getWorkspaceSpaceWorktreeIdentity(
+  row: Pick<WorkspaceSpaceWorktree, 'worktreeId' | 'executionHostId'>
+): string {
+  return composeWorktreeHostIdentity(row.executionHostId, row.worktreeId)
+}
+
 export function getSelectedDeletableWorkspaceRows(
   rows: readonly WorkspaceSpaceWorktree[],
-  selectedIds: ReadonlySet<string>,
-  isWorktreeDeleting: (worktreeId: string) => boolean = () => false
+  selectedIdentities: ReadonlySet<string>,
+  isWorktreeDeleting: (row: WorkspaceSpaceWorktree) => boolean = () => false
 ): WorkspaceSpaceWorktree[] {
   return rows.filter(
     (row) =>
       row.canDelete &&
       row.status === 'ok' &&
-      selectedIds.has(row.worktreeId) &&
-      !isWorktreeDeleting(row.worktreeId)
+      selectedIdentities.has(getWorkspaceSpaceWorktreeIdentity(row)) &&
+      !isWorktreeDeleting(row)
   )
 }
 
 export function getSelectedDeletableWorkspaceIds(
   rows: readonly WorkspaceSpaceWorktree[],
-  selectedIds: ReadonlySet<string>,
-  isWorktreeDeleting: (worktreeId: string) => boolean = () => false
+  selectedIdentities: ReadonlySet<string>,
+  isWorktreeDeleting: (row: WorkspaceSpaceWorktree) => boolean = () => false
 ): string[] {
-  return getSelectedDeletableWorkspaceRows(rows, selectedIds, isWorktreeDeleting).map(
+  return getSelectedDeletableWorkspaceRows(rows, selectedIdentities, isWorktreeDeleting).map(
     (row) => row.worktreeId
   )
 }
 
-export function getVisibleDeletableWorkspaceIds(
+export function getVisibleDeletableWorkspaceIdentities(
   rows: readonly WorkspaceSpaceWorktree[],
-  isWorktreeDeleting: (worktreeId: string) => boolean = () => false
+  isWorktreeDeleting: (row: WorkspaceSpaceWorktree) => boolean = () => false
 ): string[] {
   return rows
-    .filter((row) => row.canDelete && row.status === 'ok' && !isWorktreeDeleting(row.worktreeId))
-    .map((row) => row.worktreeId)
+    .filter((row) => row.canDelete && row.status === 'ok' && !isWorktreeDeleting(row))
+    .map(getWorkspaceSpaceWorktreeIdentity)
 }

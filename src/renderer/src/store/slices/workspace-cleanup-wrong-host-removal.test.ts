@@ -199,6 +199,8 @@ function seedCollidingScan(candidates: readonly WorkspaceCleanupCandidate[]): vo
 
 beforeEach(() => {
   resetAuthoritativelyRemovedWorktreeMemoryForTests()
+  mockApi.ephemeralVm.listRuntimes.mockResolvedValue([])
+  mockApi.ephemeralVm.cleanup.mockResolvedValue({})
 })
 
 afterEach(() => {
@@ -209,6 +211,51 @@ afterEach(() => {
 })
 
 describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
+  it('tears down only the confirmed host VM when another VM owns the same id', async () => {
+    const worktreeId = 'repo1::/shared/workspace/path'
+    const worktreePath = '/shared/workspace/path'
+    const hostA: ExecutionHostId = 'ssh:runtime-ssh-a'
+    const hostB: ExecutionHostId = 'ssh:runtime-ssh-b'
+    const hosts = createHostDirectories(worktreeId)
+    installRemovalTransports({ [hostA]: hosts.hostARoot, [hostB]: hosts.hostBRoot }, [])
+    mockApi.ephemeralVm.listRuntimes.mockResolvedValue([
+      {
+        id: 'runtime-a',
+        workspaceId: worktreeId,
+        sshTargetId: 'runtime-ssh-a',
+        cleanupStatus: 'not_started'
+      },
+      {
+        id: 'runtime-b',
+        workspaceId: worktreeId,
+        sshTargetId: 'runtime-ssh-b',
+        cleanupStatus: 'not_started'
+      }
+    ])
+    const hostBCandidate = makeHostCandidate(worktreeId, hostB, worktreePath, 'runtime-ssh-b')
+    seedCollidingScan([
+      makeHostCandidate(worktreeId, hostA, worktreePath, 'runtime-ssh-a'),
+      hostBCandidate
+    ])
+    const store = createTestStore()
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({ id: worktreeId, repoId: 'repo1', path: worktreePath, hostId: hostA }),
+          makeWorktree({ id: worktreeId, repoId: 'repo1', path: worktreePath, hostId: hostB })
+        ]
+      }
+    } as Partial<AppState>)
+
+    const removal = await store
+      .getState()
+      .removeWorkspaceCleanupCandidates([worktreeId], { approvedCandidates: [hostBCandidate] })
+
+    expect(removal.failures).toEqual([])
+    expect(mockApi.ephemeralVm.cleanup).toHaveBeenCalledTimes(1)
+    expect(mockApi.ephemeralVm.cleanup).toHaveBeenCalledWith({ runtimeId: 'runtime-b' })
+  })
+
   it('confirming host B row deletes host B and leaves ACTIVE host A intact', async () => {
     const worktreeId = 'repo1::/shared/workspace/path'
     const worktreePath = '/shared/workspace/path'

@@ -30,9 +30,12 @@ import type {
   MigrationUnsupportedPtyEntry
 } from '../../../../shared/agent-status-types'
 import type { GitStatusResult } from '../../../../shared/git-status-types'
+import { parseExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
 import type { Repo } from '../../../../shared/repo-types'
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
 import type { Worktree } from '../../../../shared/worktree/types'
+import type { WorktreeRemovalTarget } from '../../../../shared/worktree/removal'
+import { composeWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 import type {
   WorkspaceSpaceItem,
   WorkspaceSpaceWorktree
@@ -41,6 +44,7 @@ import { cn } from '@/lib/utils'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
 import { toast } from 'sonner'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
+import { getRuntimeGitStatus } from '@/runtime/runtime-git-client'
 import { useAppStore } from '../../store'
 import {
   getRepoMapFromState,
@@ -49,10 +53,11 @@ import {
 } from '../../store/selectors'
 import { getHostedReviewCacheKey } from '../../store/slices/hosted-review'
 import { issueCacheKey as getIssueCacheKey } from '../../store/slices/github'
-import { refreshGitStatusForWorktree } from '../right-sidebar/git-status-refresh'
+import { findRepoForHost } from '@/store/slices/repo-host-identity'
 import {
   getSelectedDeletableWorkspaceRows,
-  getVisibleDeletableWorkspaceIds
+  getVisibleDeletableWorkspaceIdentities,
+  getWorkspaceSpaceWorktreeIdentity
 } from './workspace-space-delete-selection'
 import { runWorktreeBatchDelete } from '../sidebar/delete-worktree-flow'
 import { toWorktreeDeleteIdentities } from '../sidebar/worktree-delete-request'
@@ -108,6 +113,7 @@ const GIT_STATUS_REFRESH_CONCURRENCY = 6
 
 type WorkspaceSpaceDeleteState = {
   isDeleting: boolean
+  executionHostId?: ExecutionHostId | null
   error: string | null
   canForceDelete: boolean
   forceDeleteReason: WorktreeForceDeleteReason | null
@@ -148,6 +154,7 @@ type WorkspaceDecisionInputs = {
   editorDrafts: Record<string, string>
   browserTabsByWorktree: Record<string, unknown[]>
   gitStatusByWorktree: Record<string, unknown[]>
+  gitStatusByWorktreeIdentity?: ReadonlyMap<string, readonly unknown[]>
   remoteStatusesByWorktree: Record<string, { hasUpstream: boolean; ahead: number; behind: number }>
   hostedReviewCache: Record<
     string,
@@ -160,6 +167,7 @@ type WorkspaceDecisionInputs = {
   >
   settings: Parameters<typeof getHostedReviewCacheKey>[2]
   activeWorktreeId: string | null
+  activeWorkspaceExecutionHostId: ExecutionHostId | null
   now: number
 }
 
@@ -207,7 +215,9 @@ export function getWorkspaceDecisionDetails(
   const dirtyEditorBufferCount = openFiles.filter(
     (file) => file.isDirty || inputs.editorDrafts[file.id] !== undefined
   ).length
-  const gitEntries = inputs.gitStatusByWorktree[worktree.worktreeId]
+  const gitEntries = inputs.gitStatusByWorktreeIdentity
+    ? inputs.gitStatusByWorktreeIdentity.get(getWorkspaceSpaceWorktreeIdentity(worktree))
+    : inputs.gitStatusByWorktree[worktree.worktreeId]
   const branch = workspaceRecord
     ? branchDisplayName(workspaceRecord.branch)
     : getWorkspaceSpaceBranchLabel(worktree)
@@ -265,7 +275,10 @@ export function getWorkspaceDecisionDetails(
     : null
 
   return {
-    isActive: inputs.activeWorktreeId === worktree.worktreeId,
+    isActive:
+      inputs.activeWorktreeId === worktree.worktreeId &&
+      (inputs.activeWorkspaceExecutionHostId === null ||
+        inputs.activeWorkspaceExecutionHostId === worktree.executionHostId),
     canOpenWorkspace: workspaceRecord !== undefined,
     terminalTabCount: tabs.length,
     liveTerminalCount: countLiveTerminals(tabs, inputs.ptyIdsByTabId),
@@ -290,6 +303,20 @@ export function getWorkspaceDecisionDetails(
     issueLabel,
     linearIssueLabel
   }
+}
+
+export function getWorkspaceSpaceDeleteState(
+  worktree: Pick<WorkspaceSpaceWorktree, 'executionHostId'>,
+  deleteState: WorkspaceSpaceDeleteState | undefined,
+  hasSameIdSibling: boolean
+): WorkspaceSpaceDeleteState | undefined {
+  if (!hasSameIdSibling || !deleteState) {
+    return deleteState
+  }
+  return deleteState.executionHostId !== undefined &&
+    deleteState.executionHostId === worktree.executionHostId
+    ? deleteState
+    : undefined
 }
 
 function getTreemapFill(rect: TreemapRect, selected: boolean): string {
@@ -796,7 +823,8 @@ function WorkspaceTreemap({
   onSelect: (worktreeId: string) => void
   onZoomChange: (worktreeId: string | null) => void
 }): React.JSX.Element {
-  const selectedWorktree = rows.find((row) => row.worktreeId === selectedWorktreeId) ?? null
+  const selectedWorktree =
+    rows.find((row) => getWorkspaceSpaceWorktreeIdentity(row) === selectedWorktreeId) ?? null
   const canZoomSelected =
     !!selectedWorktree &&
     selectedWorktree.status === 'ok' &&
@@ -816,7 +844,7 @@ function WorkspaceTreemap({
           : rows
               .filter((row) => row.status === 'ok' && row.sizeBytes > 0)
               .map((row) => ({
-                id: row.worktreeId,
+                id: getWorkspaceSpaceWorktreeIdentity(row),
                 label: row.displayName,
                 sizeBytes: row.sizeBytes
               }))
@@ -881,7 +909,7 @@ function WorkspaceTreemap({
           <Button
             variant="outline"
             size="xs"
-            onClick={() => onZoomChange(selectedWorktree.worktreeId)}
+            onClick={() => onZoomChange(getWorkspaceSpaceWorktreeIdentity(selectedWorktree))}
             className="gap-1.5 bg-background/90 px-2.5 backdrop-blur"
           >
             <ZoomIn className="size-3" />
@@ -1277,10 +1305,9 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const linearIssueCache = useAppStore((state) => state.linearIssueCache)
   const settings = useAppStore((state) => state.settings)
   const activeWorktreeId = useAppStore((state) => state.activeWorktreeId)
-  const setGitStatus = useAppStore((state) => state.setGitStatus)
-  const updateWorktreeGitIdentity = useAppStore((state) => state.updateWorktreeGitIdentity)
-  const setUpstreamStatus = useAppStore((state) => state.setUpstreamStatus)
-  const fetchUpstreamStatus = useAppStore((state) => state.fetchUpstreamStatus)
+  const activeWorkspaceExecutionHostId = useAppStore(
+    (state) => state.activeWorkspaceExecutionHostId
+  )
   const [query, setQuery] = useState('')
   const [onlyDeletable, setOnlyDeletable] = useState(false)
   const [sortKey, setSortKey] = useState<WorkspaceSpaceSortKey>('size')
@@ -1288,9 +1315,12 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [inspectedWorktreeId, setInspectedWorktreeId] = useState<string | null>(null)
   const [treemapZoomWorktreeId, setTreemapZoomWorktreeId] = useState<string | null>(null)
-  const [gitRefreshStateByWorktreeId, setGitRefreshStateByWorktreeId] = useState<
+  const [gitRefreshStateByWorktreeIdentity, setGitRefreshStateByWorktreeIdentity] = useState<
     Record<string, WorkspaceGitRefreshState>
   >({})
+  const [gitStatusByWorktreeIdentity, setGitStatusByWorktreeIdentity] = useState<
+    Map<string, GitStatusResult['entries']>
+  >(() => new Map())
   const inFlightGitStatusRefreshes = useRef<Set<string>>(new Set())
 
   const refresh = useCallback((): void => {
@@ -1304,7 +1334,14 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   }, [cancelWorkspaceSpaceScan])
 
   const sourceRows = useMemo(() => analysis?.worktrees ?? [], [analysis?.worktrees])
-  const decisionDetailsByWorktreeId = useMemo(() => {
+  const worktreeIdCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const row of sourceRows) {
+      counts.set(row.worktreeId, (counts.get(row.worktreeId) ?? 0) + 1)
+    }
+    return counts
+  }, [sourceRows])
+  const decisionDetailsByWorktreeIdentity = useMemo(() => {
     // Why: active-agent freshness is time-based. The epoch bumps when fresh
     // hook entries cross the stale boundary so delete readiness recomputes.
     void agentStatusEpoch
@@ -1312,7 +1349,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     const now = Date.now()
     for (const worktree of sourceRows) {
       details.set(
-        worktree.worktreeId,
+        getWorkspaceSpaceWorktreeIdentity(worktree),
         getWorkspaceDecisionDetails(worktree, {
           repoMap,
           worktreeMap,
@@ -1326,12 +1363,14 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           editorDrafts,
           browserTabsByWorktree,
           gitStatusByWorktree,
+          gitStatusByWorktreeIdentity,
           remoteStatusesByWorktree,
           hostedReviewCache,
           issueCache,
           linearIssueCache,
           settings,
           activeWorktreeId,
+          activeWorkspaceExecutionHostId,
           now
         })
       )
@@ -1339,11 +1378,13 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     return details
   }, [
     activeWorktreeId,
+    activeWorkspaceExecutionHostId,
     agentStatusEpoch,
     agentStatusByPaneKey,
     browserTabsByWorktree,
     editorDrafts,
     gitStatusByWorktree,
+    gitStatusByWorktreeIdentity,
     hostedReviewCache,
     issueCache,
     linearIssueCache,
@@ -1359,79 +1400,89 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     tabsByWorktree,
     worktreeMap
   ])
-  const isWorktreeDeleting = useCallback(
-    (worktreeId: string): boolean => deleteStateByWorktreeId[worktreeId]?.isDeleting ?? false,
-    [deleteStateByWorktreeId]
+  const getDeleteStateForSpaceRow = useCallback(
+    (worktree: WorkspaceSpaceWorktree): WorkspaceSpaceDeleteState | undefined =>
+      getWorkspaceSpaceDeleteState(
+        worktree,
+        deleteStateByWorktreeId[worktree.worktreeId],
+        (worktreeIdCounts.get(worktree.worktreeId) ?? 0) > 1
+      ),
+    [deleteStateByWorktreeId, worktreeIdCounts]
   )
   const refreshWorkspaceGitStatus = useCallback(
     (worktree: WorkspaceSpaceWorktree): Promise<void> => {
+      const identity = getWorkspaceSpaceWorktreeIdentity(worktree)
       const currentState = useAppStore.getState()
-      if (currentState.gitStatusByWorktree[worktree.worktreeId] !== undefined) {
+      if (gitStatusByWorktreeIdentity.has(identity)) {
         return Promise.resolve()
       }
-      if (inFlightGitStatusRefreshes.current.has(worktree.worktreeId)) {
+      if (inFlightGitStatusRefreshes.current.has(identity)) {
         return Promise.resolve()
       }
-      inFlightGitStatusRefreshes.current.add(worktree.worktreeId)
+      inFlightGitStatusRefreshes.current.add(identity)
 
-      setGitRefreshStateByWorktreeId((current) => ({
+      setGitRefreshStateByWorktreeIdentity((current) => ({
         ...current,
-        [worktree.worktreeId]: { isRefreshing: true, error: null }
+        [identity]: { isRefreshing: true, error: null }
       }))
-
-      return refreshGitStatusForWorktree({
-        settings,
-        worktreeId: worktree.worktreeId,
-        worktreePath: worktree.path,
-        connectionId:
-          currentState.repos.find((repo) => repo.id === worktree.repoId)?.connectionId ?? undefined,
-        deps: {
-          setGitStatus,
-          updateWorktreeGitIdentity,
-          setUpstreamStatus,
-          fetchUpstreamStatus
-        }
+      const owner = findRepoForHost(currentState.repos, worktree.repoId, {
+        hostId: worktree.executionHostId
       })
-        .then(() => {
-          if (useAppStore.getState().gitStatusByWorktree[worktree.worktreeId] === undefined) {
-            setGitStatus(worktree.worktreeId, {
-              conflictOperation: 'unknown',
-              entries: [],
-              ignoredPaths: []
-            } as GitStatusResult)
-          }
-          setGitRefreshStateByWorktreeId((current) => ({
+      const host = parseExecutionHostId(worktree.executionHostId)
+      const runtimeEnvironmentId = host?.kind === 'runtime' ? host.environmentId : null
+      const ownerSettings = settings
+        ? { ...settings, activeRuntimeEnvironmentId: runtimeEnvironmentId }
+        : { activeRuntimeEnvironmentId: runtimeEnvironmentId }
+
+      return (owner
+        ? getRuntimeGitStatus({
+            settings: ownerSettings,
+            worktreeId: worktree.worktreeId,
+            worktreePath: worktree.path,
+            connectionId: owner.connectionId
+          })
+        : Promise.reject(new Error('Workspace owner is no longer available'))
+      )
+        .then((status) => {
+          const validIdentities = new Set(sourceRows.map(getWorkspaceSpaceWorktreeIdentity))
+          setGitStatusByWorktreeIdentity((current) => {
+            const next = new Map(
+              [...current].filter(([currentIdentity]) => validIdentities.has(currentIdentity))
+            )
+            next.set(identity, status.entries)
+            return next
+          })
+          setGitRefreshStateByWorktreeIdentity((current) => ({
             ...current,
-            [worktree.worktreeId]: { isRefreshing: false, error: null }
+            [identity]: { isRefreshing: false, error: null }
           }))
         })
         .catch((error: unknown) => {
-          setGitRefreshStateByWorktreeId((current) => ({
+          setGitRefreshStateByWorktreeIdentity((current) => ({
             ...current,
-            [worktree.worktreeId]: {
+            [identity]: {
               isRefreshing: false,
               error: error instanceof Error ? error.message : String(error)
             }
           }))
         })
         .finally(() => {
-          inFlightGitStatusRefreshes.current.delete(worktree.worktreeId)
+          inFlightGitStatusRefreshes.current.delete(identity)
         })
     },
-    [fetchUpstreamStatus, setGitStatus, setUpstreamStatus, settings, updateWorktreeGitIdentity]
+    [gitStatusByWorktreeIdentity, settings, sourceRows]
   )
   const isWorktreeUnavailableForDelete = useCallback(
-    (worktreeId: string): boolean => {
-      if (isWorktreeDeleting(worktreeId)) {
+    (worktree: WorkspaceSpaceWorktree): boolean => {
+      if (getDeleteStateForSpaceRow(worktree)?.isDeleting) {
         return true
       }
-      const worktree = sourceRows.find((row) => row.worktreeId === worktreeId)
-      return (
-        !worktree ||
-        !isWorkspaceSpaceRowReadyToDelete(worktree, decisionDetailsByWorktreeId.get(worktreeId))
+      return !isWorkspaceSpaceRowReadyToDelete(
+        worktree,
+        decisionDetailsByWorktreeIdentity.get(getWorkspaceSpaceWorktreeIdentity(worktree))
       )
     },
-    [decisionDetailsByWorktreeId, isWorktreeDeleting, sourceRows]
+    [decisionDetailsByWorktreeIdentity, getDeleteStateForSpaceRow]
   )
 
   const rows = useMemo(
@@ -1492,32 +1543,37 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   }, [refreshWorkspaceGitStatus, sourceRows])
 
   const inspectedWorktree =
-    rows.find((row) => row.worktreeId === nextInspectedWorktreeId) ??
+    rows.find((row) => getWorkspaceSpaceWorktreeIdentity(row) === nextInspectedWorktreeId) ??
     rows.find((row) => row.status === 'ok') ??
     null
   const zoomedWorktree =
-    sourceRows.find((row) => row.worktreeId === nextTreemapZoomWorktreeId && row.status === 'ok') ??
-    null
+    sourceRows.find(
+      (row) =>
+        getWorkspaceSpaceWorktreeIdentity(row) === nextTreemapZoomWorktreeId && row.status === 'ok'
+    ) ?? null
   const maxSize = getLargestWorkspaceSpaceRowSize(rows)
   const selectedDeletableRows = useMemo(
     () => getSelectedDeletableWorkspaceRows(rows, nextSelectedIds, isWorktreeUnavailableForDelete),
     [isWorktreeUnavailableForDelete, nextSelectedIds, rows]
   )
-  const selectedDeletableIds = useMemo(
-    () => selectedDeletableRows.map((row) => row.worktreeId),
+  const selectedDeletableIdentities = useMemo(
+    () => selectedDeletableRows.map(getWorkspaceSpaceWorktreeIdentity),
     [selectedDeletableRows]
   )
-  const selectedDeletableIdSet = useMemo(
-    () => new Set(selectedDeletableIds),
-    [selectedDeletableIds]
+  const selectedDeletableIdentitySet = useMemo(
+    () => new Set(selectedDeletableIdentities),
+    [selectedDeletableIdentities]
   )
-  const visibleDeletableIds = useMemo(
-    () => getVisibleDeletableWorkspaceIds(rows, isWorktreeUnavailableForDelete),
+  const visibleDeletableIdentities = useMemo(
+    () => getVisibleDeletableWorkspaceIdentities(rows, isWorktreeUnavailableForDelete),
     [isWorktreeUnavailableForDelete, rows]
   )
   const allVisibleSelected =
-    visibleDeletableIds.length > 0 && visibleDeletableIds.every((id) => nextSelectedIds.has(id))
-  const someVisibleSelected = visibleDeletableIds.some((id) => nextSelectedIds.has(id))
+    visibleDeletableIdentities.length > 0 &&
+    visibleDeletableIdentities.every((identity) => nextSelectedIds.has(identity))
+  const someVisibleSelected = visibleDeletableIdentities.some((identity) =>
+    nextSelectedIds.has(identity)
+  )
   const visibleSelectionState = allVisibleSelected ? true : someVisibleSelected ? 'mixed' : false
   const isInitialScan = isScanning && !analysis
   const hasRows = sourceRows.length > 0
@@ -1526,9 +1582,9 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const selectedReclaimableBytes = useMemo(
     () =>
       rows
-        .filter((row) => selectedDeletableIdSet.has(row.worktreeId))
+        .filter((row) => selectedDeletableIdentitySet.has(getWorkspaceSpaceWorktreeIdentity(row)))
         .reduce((sum, row) => sum + row.reclaimableBytes, 0),
-    [rows, selectedDeletableIdSet]
+    [rows, selectedDeletableIdentitySet]
   )
 
   const toggleSort = (key: WorkspaceSpaceSortKey): void => {
@@ -1545,13 +1601,14 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     setSortDirection(key === 'name' || key === 'repo' ? 'asc' : 'desc')
   }
 
-  const toggleSelection = (worktreeId: string): void => {
+  const toggleSelection = (worktree: WorkspaceSpaceWorktree): void => {
+    const identity = getWorkspaceSpaceWorktreeIdentity(worktree)
     setSelectedIds((current) => {
       const next = new Set(current)
-      if (next.has(worktreeId)) {
-        next.delete(worktreeId)
+      if (next.has(identity)) {
+        next.delete(identity)
       } else {
-        next.add(worktreeId)
+        next.add(identity)
       }
       return next
     })
@@ -1561,12 +1618,12 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     setSelectedIds((current) => {
       const next = new Set(current)
       if (allVisibleSelected) {
-        for (const id of visibleDeletableIds) {
-          next.delete(id)
+        for (const identity of visibleDeletableIdentities) {
+          next.delete(identity)
         }
       } else {
-        for (const id of visibleDeletableIds) {
-          next.add(id)
+        for (const identity of visibleDeletableIdentities) {
+          next.add(identity)
         }
       }
       return next
@@ -1574,26 +1631,31 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   }
 
   const handleDeletedWorktrees = useCallback(
-    (deletedIds: readonly string[]): void => {
-      if (deletedIds.length === 0) {
+    (deletedTargets: readonly WorktreeRemovalTarget[]): void => {
+      if (deletedTargets.length === 0) {
         return
       }
-      removeWorkspaceSpaceWorktrees(deletedIds)
+      removeWorkspaceSpaceWorktrees(deletedTargets)
+      const deletedIdentities = new Set(
+        deletedTargets.map((target) =>
+          composeWorktreeHostIdentity(target.executionHostId ?? undefined, target.id)
+        )
+      )
       setInspectedWorktreeId((current) =>
-        current && deletedIds.includes(current) ? null : current
+        current && deletedIdentities.has(current) ? null : current
       )
       setTreemapZoomWorktreeId((current) =>
-        current && deletedIds.includes(current) ? null : current
+        current && deletedIdentities.has(current) ? null : current
       )
       setSelectedIds((current) => {
         const next = new Set(current)
-        for (const id of deletedIds) {
-          next.delete(id)
+        for (const identity of deletedIdentities) {
+          next.delete(identity)
         }
         return next
       })
       toast.success(
-        deletedIds.length === 1
+        deletedTargets.length === 1
           ? translate(
               'auto.components.status.bar.WorkspaceSpaceManagerPanel.9afc97f9a3',
               'Workspace deleted'
@@ -1607,8 +1669,8 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
             'auto.components.status.bar.WorkspaceSpaceManagerPanel.63efebe0e6',
             '{{value0}} {{value1}} removed from Space.',
             {
-              value0: deletedIds.length,
-              value1: deletedIds.length === 1 ? 'workspace' : 'workspaces'
+              value0: deletedTargets.length,
+              value1: deletedTargets.length === 1 ? 'workspace' : 'workspaces'
             }
           )
         }
@@ -1644,6 +1706,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
       }
       runWorktreeBatchDelete(identities, {
         forceConfirm: true,
+        forceOnConfirm: false,
         onDeleted: handleDeletedWorktrees
       })
     },
@@ -1677,7 +1740,12 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
             return
           }
           commitFocus()
-          handleDeletedWorktrees([worktree.worktreeId])
+          handleDeletedWorktrees([
+            {
+              id: worktree.worktreeId,
+              executionHostId: worktree.executionHostId ?? null
+            }
+          ])
         })
         .catch((error: unknown) => {
           toast.error(
@@ -1837,7 +1905,9 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
           <WorkspaceTreemap
             rows={sourceRows}
             isScanning={isInitialScan}
-            selectedWorktreeId={inspectedWorktree?.worktreeId ?? null}
+            selectedWorktreeId={
+              inspectedWorktree ? getWorkspaceSpaceWorktreeIdentity(inspectedWorktree) : null
+            }
             zoomedWorktree={zoomedWorktree}
             onSelect={setInspectedWorktreeId}
             onZoomChange={setTreemapZoomWorktreeId}
@@ -1850,7 +1920,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
         <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-background/95 px-3 py-2 shadow-xs backdrop-blur">
           <div className="min-w-0 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">
-              {selectedDeletableIds.length}{' '}
+              {selectedDeletableIdentities.length}{' '}
               {translate(
                 'auto.components.status.bar.WorkspaceSpaceManagerPanel.65402b7192',
                 'selected'
@@ -1870,7 +1940,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
               variant="ghost"
               size="sm"
               onClick={() => setSelectedIds(new Set<string>())}
-              disabled={selectedDeletableIds.length === 0}
+              disabled={selectedDeletableIdentities.length === 0}
               className="!px-3"
             >
               {translate(
@@ -1882,7 +1952,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
               variant="destructive"
               size="sm"
               onClick={deleteSelected}
-              disabled={selectedDeletableIds.length === 0}
+              disabled={selectedDeletableIdentities.length === 0}
               className="min-w-[9.5rem] gap-1.5 !px-3.5"
             >
               <Trash2 className="size-3.5" />
@@ -1970,7 +2040,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
             variant="outline"
             size="sm"
             onClick={toggleVisibleSelection}
-            disabled={visibleDeletableIds.length === 0}
+            disabled={visibleDeletableIdentities.length === 0}
             className="w-32 gap-1.5"
             aria-label={
               allVisibleSelected
@@ -2005,7 +2075,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
               <div className="flex items-center">
                 <CheckButton
                   checked={visibleSelectionState}
-                  disabled={visibleDeletableIds.length === 0}
+                  disabled={visibleDeletableIdentities.length === 0}
                   label={
                     allVisibleSelected
                       ? translate(
@@ -2080,13 +2150,19 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
               ) : (
                 rows.map((worktree) => (
                   <WorkspaceRow
-                    key={worktree.worktreeId}
+                    key={getWorkspaceSpaceWorktreeIdentity(worktree)}
                     worktree={worktree}
                     maxSize={maxSize}
-                    selected={nextSelectedIds.has(worktree.worktreeId)}
-                    inspected={inspectedWorktree?.worktreeId === worktree.worktreeId}
+                    selected={nextSelectedIds.has(getWorkspaceSpaceWorktreeIdentity(worktree))}
+                    inspected={
+                      inspectedWorktree !== null &&
+                      getWorkspaceSpaceWorktreeIdentity(inspectedWorktree) ===
+                        getWorkspaceSpaceWorktreeIdentity(worktree)
+                    }
                     decisionDetails={
-                      decisionDetailsByWorktreeId.get(worktree.worktreeId) ??
+                      decisionDetailsByWorktreeIdentity.get(
+                        getWorkspaceSpaceWorktreeIdentity(worktree)
+                      ) ??
                       getWorkspaceDecisionDetails(worktree, {
                         repoMap,
                         worktreeMap,
@@ -2100,20 +2176,32 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
                         editorDrafts,
                         browserTabsByWorktree,
                         gitStatusByWorktree,
+                        gitStatusByWorktreeIdentity,
                         remoteStatusesByWorktree,
                         hostedReviewCache,
                         issueCache,
                         linearIssueCache,
                         settings,
                         activeWorktreeId,
+                        activeWorkspaceExecutionHostId,
                         now: Date.now()
                       })
                     }
-                    gitRefreshState={gitRefreshStateByWorktreeId[worktree.worktreeId]}
-                    deleteState={deleteStateByWorktreeId[worktree.worktreeId]}
-                    onToggleSelected={() => toggleSelection(worktree.worktreeId)}
-                    onInspect={() => setInspectedWorktreeId(worktree.worktreeId)}
-                    onOpenWorkspace={() => activateAndRevealWorktree(worktree.worktreeId)}
+                    gitRefreshState={
+                      gitRefreshStateByWorktreeIdentity[
+                        getWorkspaceSpaceWorktreeIdentity(worktree)
+                      ]
+                    }
+                    deleteState={getDeleteStateForSpaceRow(worktree)}
+                    onToggleSelected={() => toggleSelection(worktree)}
+                    onInspect={() =>
+                      setInspectedWorktreeId(getWorkspaceSpaceWorktreeIdentity(worktree))
+                    }
+                    onOpenWorkspace={() =>
+                      activateAndRevealWorktree(worktree.worktreeId, {
+                        executionHostId: worktree.executionHostId
+                      })
+                    }
                     onDelete={() => deleteWorktrees([worktree])}
                     onForceDelete={() => forceDeleteWorktree(worktree)}
                   />

@@ -265,7 +265,7 @@ export async function completeSameIdHostScopedRemoval(args: {
     suppressPreservedBranchToast
   } = args
   const runtimeCleanup = await cleanupEphemeralVmRuntimesForDeleted({
-    workspaceIds: [worktreeId]
+    hostScopedWorkspaces: [{ workspaceId: worktreeId, executionHostId: requiredExecutionHostId }]
   })
   await purgeOrphanedRuntimeSshProjects(get, runtimeCleanup.destroyedSshTargetIds)
   dropConfirmedHostRow(set, worktreeId, requiredExecutionHostId)

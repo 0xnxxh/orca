@@ -44,16 +44,19 @@ export type RepoWorktreeRowDeps = {
     projectRuntimeByRepoId: ReadonlyMap<string, ProjectExecutionRuntimeResolution>
   ) => Promise<RuntimeWorktreeScanResult>
   /** Folder workspaces are stamped from runtime-owned identity helpers, so the caller supplies them. */
-  listFolderWorkspaces: (repo: Repo) => Worktree[]
+  listFolderWorkspaces: (repo: Repo, repoOwnerCount: number) => Worktree[]
 }
 
 /**
  * Persisted rows for a repo whose scan is unreachable or stalled, so a degraded host publishes what
  * it last knew instead of an empty catalog. `worktrees:list` does the same for disconnected SSH.
  */
-export function listStoredWorktreeRowsForRepo(store: Store, repo: Repo): GitWorktreeInfo[] {
+export function listStoredWorktreeRowsForRepo(
+  store: Store,
+  repo: Repo,
+  repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
+): GitWorktreeInfo[] {
   const expectedHostId = getRepoExecutionHostId(repo)
-  const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
   const byWorktreeId = new Map<string, GitWorktreeInfo>()
   for (const [worktreeId, meta] of Object.entries(store.getAllWorktreeMeta())) {
     const parsed = splitWorktreeId(worktreeId)
@@ -85,11 +88,12 @@ export async function resolveRepoWorktreeRows(
   deps: RepoWorktreeRowDeps,
   repo: Repo,
   metaById: Record<string, WorktreeMeta>,
-  projectRuntimeByRepoId: ReadonlyMap<string, ProjectExecutionRuntimeResolution>
+  projectRuntimeByRepoId: ReadonlyMap<string, ProjectExecutionRuntimeResolution>,
+  repoOwnerCount = deps.store.getRepos().filter((candidate) => candidate.id === repo.id).length
 ): Promise<RepoWorktreeRow[]> {
   const { store } = deps
   if (isFolderRepo(repo)) {
-    return deps.listFolderWorkspaces(repo).map((worktree) => ({
+    return deps.listFolderWorkspaces(repo, repoOwnerCount).map((worktree) => ({
       ...worktree,
       hostId: worktree.hostId ?? getRepoExecutionHostId(repo),
       parentWorktreeId: null,
@@ -116,13 +120,12 @@ export async function resolveRepoWorktreeRows(
       .catch(() => ({ ok: false, worktrees: [] }) satisfies RuntimeWorktreeScanResult),
     RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
     null
-  )) ?? { ok: false, worktrees: listStoredWorktreeRowsForRepo(store, repo) }
+  )) ?? { ok: false, worktrees: listStoredWorktreeRowsForRepo(store, repo, repoOwnerCount) }
   const gitWorktrees = scan.worktrees
   if (scan.ok) {
     pruneLineageForMissingRepoWorktrees(store, repo, gitWorktrees)
   }
   const expectedHostId = getRepoExecutionHostId(repo)
-  const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
   return gitWorktrees.map((gitWorktree) => {
     const worktreeId = `${repo.id}::${gitWorktree.path}`
     // Why: lineage validation needs a durable instance ID even when the runtime sees a workspace before renderer discovery-stamp.

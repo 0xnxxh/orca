@@ -162,7 +162,9 @@ describe('STA-4343 sidebar delete: the confirmed row decides the host', () => {
     seedCollidingSidebar(store, SSH_HOST)
 
     // force: the most destructive, least re-checked path.
-    const deletedIds = await runWorktreeDeletesInParallel([rowOnHost(SSH_HOST)], { force: true })
+    const deletedTargets = await runWorktreeDeletesInParallel([rowOnHost(SSH_HOST)], {
+      force: true
+    })
 
     expect(
       fs.existsSync(local.markerPath),
@@ -170,7 +172,7 @@ describe('STA-4343 sidebar delete: the confirmed row decides the host', () => {
     ).toBe(true)
     expect(fs.existsSync(ssh.markerPath), 'the confirmed SSH checkout must be gone').toBe(false)
     expect(routedHostIds).toEqual([SSH_HOST])
-    expect(deletedIds).toEqual([WORKTREE_ID])
+    expect(deletedTargets).toEqual([{ id: WORKTREE_ID, executionHostId: SSH_HOST }])
   })
 
   it('still deletes the local checkout for real when the local row is the one deleted', async () => {
