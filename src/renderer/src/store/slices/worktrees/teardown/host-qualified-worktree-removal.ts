@@ -77,7 +77,7 @@ export function beginHostQualifiedRemoval(
   const resolveRemovalRoute = (): WorktreeOperationRoute | null =>
     resolveHostQualifiedRemovalRoute(get, worktreeId, requiredExecutionHostId)
   const removalRoute = resolveRemovalRoute()
-  if (!forgetLocalOnly && !removalRoute) {
+  if (!removalRoute && (!forgetLocalOnly || !requiredExecutionHostId)) {
     return { ok: false, error: WORKTREE_REMOVAL_AMBIGUOUS_ERROR }
   }
   // Fail closed rather than delete on a host the caller never confirmed.

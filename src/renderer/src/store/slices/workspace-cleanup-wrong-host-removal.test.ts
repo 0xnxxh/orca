@@ -353,6 +353,62 @@ describe('STA-4343 wrong-host cleanup removal (git worktree identity)', () => {
     expect(store.getState().activeWorktreeId).toBe(worktreeId)
   })
 
+  it('preserves a same-id host row published while removal is in flight', async () => {
+    const worktreeId = 'repo1::/shared/workspace/path'
+    const worktreePath = '/shared/workspace/path'
+    const original = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo1',
+      path: worktreePath,
+      hostId: HOST_A_HOST_ID
+    })
+    const arriving = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo1',
+      path: worktreePath,
+      hostId: HOST_B_HOST_ID
+    })
+    const store = createTestStore()
+    seedStore(store, {
+      worktreesByRepo: { repo1: [original] },
+      detectedWorktreesByRepo: {
+        repo1: {
+          repoId: 'repo1',
+          authoritative: true,
+          source: 'git',
+          worktrees: [makeDetectedWorktree(original)]
+        }
+      },
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'arriving-host-tab', worktreeId })]
+      }
+    } as Partial<AppState>)
+    mockApi.worktrees.remove.mockImplementationOnce(async () => {
+      store.setState({
+        worktreesByRepo: { repo1: [original, arriving] },
+        detectedWorktreesByRepo: {
+          repo1: {
+            repoId: 'repo1',
+            authoritative: true,
+            source: 'git',
+            worktrees: [makeDetectedWorktree(original), makeDetectedWorktree(arriving)]
+          }
+        }
+      })
+      return { ok: true }
+    })
+
+    const result = await store
+      .getState()
+      .removeWorktree({ id: worktreeId, executionHostId: HOST_A_HOST_ID })
+
+    expect(result).toEqual({ ok: true })
+    expect(store.getState().worktreesByRepo.repo1).toEqual([arriving])
+    expect(store.getState().tabsByWorktree[worktreeId]).toEqual([
+      expect.objectContaining({ id: 'arriving-host-tab' })
+    ])
+  })
+
   it('soundness control: with host B ACTIVE, confirming host B still deletes only host B', async () => {
     const worktreeId = 'repo1::/shared/workspace/path'
     const worktreePath = '/shared/workspace/path'

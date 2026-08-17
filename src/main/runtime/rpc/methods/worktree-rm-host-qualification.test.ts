@@ -35,6 +35,22 @@ describe('worktree.rm host qualification', () => {
     expect(response).toMatchObject({ ok: true, result: { removed: true } })
   })
 
+  it.each([['bogus'], ['ssh:'], ['runtime:'], [''], [null], [42]])(
+    'fails closed when an explicit host id is malformed: %j',
+    async (hostId) => {
+      const runtime = makeRuntime()
+      const dispatcher = new RpcDispatcher({ runtime, methods: WORKTREE_METHODS })
+
+      const response = await dispatcher.dispatch(
+        makeRequest({ worktree: 'id:wt-1', hostId, force: true, runHooks: false })
+      )
+
+      expect(response).toMatchObject({ ok: false })
+      expect(runtime.showManagedWorktree).not.toHaveBeenCalled()
+      expect(runtime.removeManagedWorktree).not.toHaveBeenCalled()
+    }
+  )
+
   it('resolves an old-client removal through the ambiguity-aware worktree lookup', async () => {
     const runtime = makeRuntime()
     const dispatcher = new RpcDispatcher({ runtime, methods: WORKTREE_METHODS })

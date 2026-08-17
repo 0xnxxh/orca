@@ -109,7 +109,6 @@ const WorktreeList = React.memo(function WorktreeList({
     sortBy,
     sortedIds,
     repoMap,
-    worktreeMap,
     worktreeLineageById,
     settings,
     agentSendTargetWorktreeId

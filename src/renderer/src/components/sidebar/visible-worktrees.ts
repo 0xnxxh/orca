@@ -30,6 +30,7 @@ import {
   isWorkspaceFromOtherDevice
 } from './workspace-creator-visibility'
 import { isDefaultBranchWorkspace } from './default-branch-workspace'
+import { getWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 
 /**
  * Whether the "Hide sleeping" sweep must keep this row (#8873).
@@ -173,42 +174,34 @@ export function computeClearFilterActions(state: SidebarFilterState): ClearFilte
  * new filter added in one but not the other would silently break the mapping
  * between badge numbers and the Cmd+N shortcut target.
  */
-export function computeVisibleWorktreeIds(
+type VisibleWorktreeOptions = {
+  filterRepoIds: readonly string[]
+  showSleepingWorkspaces: boolean
+  tabsByWorktree: Record<string, Pick<TerminalTab, 'id'>[]> | null
+  ptyIdsByTabId: Record<string, string[]> | null
+  browserTabsByWorktree?: Record<string, { id: string }[]> | null
+  worktreeIdsWithLiveAgent: ReadonlySet<string>
+  hideDefaultBranchWorkspace: boolean
+  hideAutomationGeneratedWorkspaces: boolean
+  hideCliCreatedWorkspaces: boolean
+  hideDetachedHeadWorkspaces: boolean
+  hideWorkspacesFromOtherDevices: boolean
+  pairedDeviceIdsByEnvironment: ReadonlyMap<string, string>
+  alwaysShowDefaultBranchWorkspace?: boolean
+  repoMap: Map<string, Repo>
+  workspaceHostScope: ExecutionHostScope
+  visibleWorkspaceHostIds?: readonly ExecutionHostId[] | null
+  defaultHostId: ExecutionHostId
+  worktreeLineageById: Record<string, WorktreeLineage>
+  injectLineageAncestors?: boolean
+  forcedVisibleWorktreeIds?: readonly string[]
+}
+
+export function computeVisibleWorktrees(
   worktreesByRepo: Record<string, Worktree[]>,
   sortedIds: string[],
-  opts: {
-    filterRepoIds: readonly string[]
-    showSleepingWorkspaces: boolean
-    tabsByWorktree: Record<string, Pick<TerminalTab, 'id'>[]> | null
-    ptyIdsByTabId: Record<string, string[]> | null
-    browserTabsByWorktree?: Record<string, { id: string }[]> | null
-    // Why required: every filter caller must preserve running agents through
-    // temporary PTY gaps instead of silently reverting #7197.
-    worktreeIdsWithLiveAgent: ReadonlySet<string>
-    // Why required: every caller (WorktreeList, getVisibleWorktreeIds
-    // fallback, tests) reads the flag from the UI store. Making the field
-    // required prevents a future caller from silently dropping the filter by
-    // forgetting to pass it.
-    hideDefaultBranchWorkspace: boolean
-    hideAutomationGeneratedWorkspaces: boolean
-    hideCliCreatedWorkspaces: boolean
-    hideDetachedHeadWorkspaces: boolean
-    hideWorkspacesFromOtherDevices: boolean
-    pairedDeviceIdsByEnvironment: ReadonlyMap<string, string>
-    // Why optional here, against the "why required" rule above: omitting it
-    // must fail *open*. A caller that forgets the flag then shows an extra row
-    // instead of silently re-hiding the project's entry point, which is the
-    // exact regression #8873 reports.
-    alwaysShowDefaultBranchWorkspace?: boolean
-    repoMap: Map<string, Repo>
-    workspaceHostScope: ExecutionHostScope
-    visibleWorkspaceHostIds?: readonly ExecutionHostId[] | null
-    defaultHostId: ExecutionHostId
-    worktreeLineageById: Record<string, WorktreeLineage>
-    injectLineageAncestors?: boolean
-    forcedVisibleWorktreeIds?: readonly string[]
-  }
-): string[] {
+  opts: VisibleWorktreeOptions
+): Worktree[] {
   let all: Worktree[] = getAllWorktreesFromState({ worktreesByRepo })
 
   // Filter archived
@@ -297,48 +290,52 @@ export function computeVisibleWorktreeIds(
     return ai - bi
   })
 
-  const visibleIds = all.map((w) => w.id)
   return opts.injectLineageAncestors === false
-    ? visibleIds
-    : addVisibleLineageAncestors(visibleIds, lineageAncestorById, opts.worktreeLineageById)
+    ? all
+    : addVisibleLineageAncestors(all, lineageAncestorById, opts.worktreeLineageById)
 }
 
 function addVisibleLineageAncestors(
-  ids: string[],
+  worktrees: Worktree[],
   worktreeById: Map<string, Worktree>,
   lineageById: Record<string, WorktreeLineage>
-): string[] {
-  const result: string[] = []
+): Worktree[] {
+  const result: Worktree[] = []
   const included = new Set<string>()
   const visiting = new Set<string>()
   const cyclicLineageIds = getCyclicProjectedWorktreeLineageIds(lineageById, worktreeById)
 
-  const addWithAncestors = (id: string): void => {
-    if (included.has(id) || visiting.has(id)) {
+  const addWithAncestors = (worktree: Worktree): void => {
+    const identity = getWorktreeHostIdentity(worktree)
+    if (included.has(identity) || visiting.has(identity)) {
       return
     }
-    const worktree = worktreeById.get(id)
-    if (!worktree) {
-      return
-    }
-    visiting.add(id)
+    visiting.add(identity)
     const lineage = getLineageRenderInfo(worktree, lineageById, worktreeById, cyclicLineageIds)
     if (lineage.state === 'valid') {
       // Why: sidebar lineage is structural. If a filtered child is visible,
       // its valid parent must be rendered too so the hierarchy remains legible.
-      addWithAncestors(lineage.parent.id)
+      addWithAncestors(lineage.parent)
     }
-    visiting.delete(id)
-    if (!included.has(id)) {
-      included.add(id)
-      result.push(id)
+    visiting.delete(identity)
+    if (!included.has(identity)) {
+      included.add(identity)
+      result.push(worktree)
     }
   }
 
-  for (const id of ids) {
-    addWithAncestors(id)
+  for (const worktree of worktrees) {
+    addWithAncestors(worktree)
   }
   return result
+}
+
+export function computeVisibleWorktreeIds(
+  worktreesByRepo: Record<string, Worktree[]>,
+  sortedIds: string[],
+  opts: VisibleWorktreeOptions
+): string[] {
+  return computeVisibleWorktrees(worktreesByRepo, sortedIds, opts).map((worktree) => worktree.id)
 }
 
 /**

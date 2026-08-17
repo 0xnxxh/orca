@@ -25,6 +25,7 @@ import {
   prepareHostScopedRemovalCompletion,
   refuseUnprovableRemoteHostRouting
 } from './host-qualified-worktree-removal'
+import { resolveSameIdSurvivingHostId } from './host-qualified-worktree-row-removal'
 import {
   classifyWorktreeForceDeleteReason,
   getLockedWorktreeRemovalReason,
@@ -72,13 +73,10 @@ export function createRemoveWorktree(
       removalRoute,
       hostId,
       removalGenerationGuard,
-      sameIdSurvivesOnAnotherHost: catalogSameIdSurvivesOnAnotherHost,
       sameIdSurvivingHostId: catalogSameIdSurvivingHostId
     } = start
     const sameIdSurvivingHostId =
       catalogSameIdSurvivingHostId ?? options?.sameIdSurvivingHostId ?? null
-    const sameIdSurvivesOnAnotherHost =
-      catalogSameIdSurvivesOnAnotherHost || sameIdSurvivingHostId !== null
     const deleteStateKey = requiredExecutionHostId
       ? composeWorktreeHostIdentity(requiredExecutionHostId, worktreeId)
       : worktreeId
@@ -196,27 +194,37 @@ export function createRemoveWorktree(
       // only the confirmed host's row instead of tearing all of it down.
       //
       // The ephemeral VM is the exception — see completeSameIdHostScopedRemoval.
-      if (sameIdSurvivesOnAnotherHost && requiredExecutionHostId) {
-        const sameIdStillSurvives = prepareHostScopedRemovalCompletion(
-          set,
+      if (requiredExecutionHostId) {
+        const currentSameIdSurvivingHostId = resolveSameIdSurvivingHostId(
+          get(),
           worktreeId,
           requiredExecutionHostId,
-          sameIdSurvivingHostId,
           options?.ignoreWorkspaceCleanupScanSurvivors === true
         )
-        if (sameIdStillSurvives) {
-          return completeSameIdHostScopedRemoval({
+        const confirmedSurvivingHostId =
+          currentSameIdSurvivingHostId ?? sameIdSurvivingHostId
+        if (confirmedSurvivingHostId) {
+          const sameIdStillSurvives = prepareHostScopedRemovalCompletion(
             set,
-            get,
             worktreeId,
             requiredExecutionHostId,
-            removalResult,
-            removalRoute,
-            target,
-            worktreeBeforeRemoval,
-            suppressPreservedBranchToast: options?.suppressPreservedBranchToast === true,
-            rowAlreadyDropped: true
-          })
+            confirmedSurvivingHostId,
+            options?.ignoreWorkspaceCleanupScanSurvivors === true
+          )
+          if (sameIdStillSurvives) {
+            return completeSameIdHostScopedRemoval({
+              set,
+              get,
+              worktreeId,
+              requiredExecutionHostId,
+              removalResult,
+              removalRoute,
+              target,
+              worktreeBeforeRemoval,
+              suppressPreservedBranchToast: options?.suppressPreservedBranchToast === true,
+              rowAlreadyDropped: true
+            })
+          }
         }
       }
 

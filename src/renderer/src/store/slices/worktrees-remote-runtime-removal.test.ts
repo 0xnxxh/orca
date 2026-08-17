@@ -420,6 +420,37 @@ describe('worktree remote runtime mutations', () => {
     expect(store.getState().worktreesByRepo['repo-shared']).toEqual([original, rival])
   })
 
+  it('refuses an unqualified forget-local when same-id rows exist on two hosts', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo-shared::/path/stale'
+    const local = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo-shared',
+      hostId: 'local'
+    })
+    const remote = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo-shared',
+      hostId: 'runtime:env-1'
+    })
+    store.setState({
+      worktreesByRepo: { 'repo-shared': [local, remote] }
+    } as Partial<AppState>)
+
+    const result = await store
+      .getState()
+      .removeWorktree({ id: worktreeId, executionHostId: null }, false, {
+        mode: 'forget-local'
+      })
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Workspace identity is ambiguous across hosts. Refresh projects and try again.'
+    })
+    expect(mockApi.worktrees.forgetLocal).not.toHaveBeenCalled()
+    expect(store.getState().worktreesByRepo['repo-shared']).toEqual([local, remote])
+  })
+
   it('does not forget a mirrored row when diagnostics merely mention a missing code', async () => {
     const store = createTestStore()
     const wt = makeWorktree({

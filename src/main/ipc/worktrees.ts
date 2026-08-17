@@ -3148,7 +3148,13 @@ export function registerWorktreeHandlers(
       args: Pick<RemoveWorktreeArgs, 'worktreeId' | 'hostId' | 'snapshotPruneBatchId'>
     ): Promise<RemoveWorktreeResult> => {
       const { repoId } = parseWorktreeId(args.worktreeId)
-      const repo = getRepoForWorktreeRemoval(store, repoId, args.hostId)
+      const repoOwner = resolveWorktreeRemovalRepoOwner(store, repoId, args.hostId)
+      if (!args.hostId && repoOwner.kind === 'ambiguous') {
+        throw new Error(
+          `Workspace identity is ambiguous across hosts: ${args.worktreeId}. Retry with an explicit host.`
+        )
+      }
+      const repo = repoOwner.kind === 'resolved' ? repoOwner.repo : undefined
       // Repo-first (unlike owner resolution below) so this key matches worktrees:remove's; meta only covers ownerless forgets.
       const inFlightKey = getWorktreeRemovalInFlightKey(
         args.worktreeId,
