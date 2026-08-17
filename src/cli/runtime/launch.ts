@@ -87,7 +87,10 @@ export function serveOrcaApp(
 ): Promise<number> {
   const executable = resolveForegroundOrcaExecutable()
   const childArgs = [...getExecutableAppArgs()]
-  if (process.env.ORCA_APPIMAGE_NO_SANDBOX === '1') {
+  // Why: set by the main-process CLI redirect when the operator passed
+  // --no-sandbox to the packaged binary; the serve child is the Electron process
+  // that actually needs it.
+  if (process.env.ORCA_SERVE_NO_SANDBOX === '1') {
     childArgs.push('--no-sandbox')
   }
   childArgs.push('--serve')
@@ -121,7 +124,7 @@ export function serveOrcaApp(
       ? getServeUpdateHandoffPath(getDefaultUserDataPath())
       : null
   const childEnv = stripElectronRunAsNode(process.env)
-  delete childEnv.ORCA_APPIMAGE_NO_SANDBOX
+  delete childEnv.ORCA_SERVE_NO_SANDBOX
   if (handoffPath) {
     childEnv[SERVE_UPDATE_HANDOFF_PATH_ENV] = handoffPath
   }

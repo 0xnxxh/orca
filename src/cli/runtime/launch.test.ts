@@ -93,7 +93,7 @@ describe('serveOrcaApp', () => {
     vi.restoreAllMocks()
     delete process.env.ORCA_APP_EXECUTABLE
     delete process.env.ORCA_APP_EXECUTABLE_NEEDS_APP_ROOT
-    delete process.env.ORCA_APPIMAGE_NO_SANDBOX
+    delete process.env.ORCA_SERVE_NO_SANDBOX
     delete process.env.ORCA_USER_DATA_PATH
     return Promise.all(
       temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true }))
@@ -392,7 +392,7 @@ describe('serveOrcaApp', () => {
   })
 
   it('preserves an AppImage no-sandbox launch for the server child', async () => {
-    process.env.ORCA_APPIMAGE_NO_SANDBOX = '1'
+    process.env.ORCA_SERVE_NO_SANDBOX = '1'
     const child = {
       kill: vi.fn(),
       once: vi.fn(
@@ -414,7 +414,7 @@ describe('serveOrcaApp', () => {
       expect.any(Object)
     )
     const spawnOptions = spawnMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv }
-    expect(spawnOptions.env).not.toHaveProperty('ORCA_APPIMAGE_NO_SANDBOX')
+    expect(spawnOptions.env).not.toHaveProperty('ORCA_SERVE_NO_SANDBOX')
   })
 
   it('passes the app root before serve flags for dev Electron executables', async () => {
