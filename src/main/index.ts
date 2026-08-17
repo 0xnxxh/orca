@@ -112,6 +112,7 @@ import {
   resolveUpdateInstallMode
 } from './updater'
 import { configureRemoteServerUpdater } from './runtime/remote-server-updater'
+import type { GpuFallbackStatus } from '../shared/gpu-fallback-status'
 import type { UpdateCheckOptions } from '../shared/update-status-types'
 import { recordUpdaterLifecycle } from './updater-lifecycle-diagnostics'
 import {
@@ -139,12 +140,22 @@ import { enableRendererHeapHeadroom } from './startup/renderer-heap-headroom'
 import { argvRequestsServeMode, normalizeServeModeArgv } from './startup/serve-mode-argv'
 import { ensureVirtualDisplayForHeadlessServe } from './startup/ensure-virtual-display'
 import {
+  clearGpuFallbackMarker,
+  clearSupersededGpuFallbackMarker,
   readActiveGpuFallbackMarker,
   writeGpuFallbackMarker,
   type GpuFallbackEnvironment,
   type WindowsGpuFallbackEnvironment
 } from './startup/gpu-fallback-marker'
-import { applyGpuFallbackCommandLineSwitches } from './startup/gpu-fallback-switches'
+import {
+  GPU_CRASH_STARTUP_WINDOW_MS,
+  clearGpuCrashHistory,
+  forgetGpuCrashLaunch,
+  recordGpuCrashInHistory,
+  sweepOrphanedGpuCrashHistoryWrites
+} from './startup/gpu-crash-history'
+import { engageGpuFallbackForLaunch } from './startup/gpu-fallback-launch-engagement'
+import { resolveGpuCrashHistoryReset } from './startup/gpu-fallback-launch-decision'
 import {
   DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
   DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
@@ -412,10 +423,21 @@ const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
   threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
 })
 let gpuFallbackActiveThisLaunch = false
+// Why: identifies *this* engagement, so a dismissed notice reappears when a later one starts.
+let gpuFallbackEngagedAt: number | null = null
+// Why: the user answered the in-session prompt with "no"; nothing this launch records may
+// let the silent cross-launch path override that on the next boot.
+let gpuFallbackDeclinedThisLaunch = false
 let gpuFeatureStatus: Electron.GPUFeatureStatus | null = null
+let gpuCrashHistoryResetTimer: NodeJS.Timeout | null = null
+// Why: this launch contributed startup evidence, so a painted window may exonerate the launch
+// itself but not the earlier ones. Scoped to the startup window that governs recording and
+// counting — a GPU death 20 minutes in is the in-session tracker's business, not this counter's.
+let gpuCrashedDuringStartupThisLaunch = false
 let localPtyStartupReady: Promise<void> = Promise.resolve()
 let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
+const GPU_CRASH_HISTORY_RESET_DELAY_MS = 60_000
 
 function handleCodexHomePtySpawned(args: {
   id: string
@@ -909,6 +931,21 @@ ipcMain.handle('ui:consumePendingOpenSettings', (event) =>
 
 ipcMain.handle('ui:consumePendingSkillShare', () => {
   return skillShareDeepLinks.consume()
+})
+
+ipcMain.handle(
+  'app:getGpuFallbackStatus',
+  (): GpuFallbackStatus => ({
+    active: gpuFallbackActiveThisLaunch,
+    engagedAt: gpuFallbackEngagedAt,
+    enabledForNextLaunch: isGpuFallbackEnabledForNextLaunch()
+  })
+)
+
+// Why: without an exit a user whose driver was fixed stays in software rendering until the
+// next release, and without an entry a user with a known-bad driver cannot pin the workaround.
+ipcMain.handle('app:setGpuFallbackEnabled', (_event, enabled: boolean) => {
+  setGpuFallbackEnabled(enabled === true)
 })
 
 ipcMain.handle(
@@ -1419,6 +1456,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
   window.once('ready-to-show', () => {
     logStartupMilestone('ready-to-show')
     setImmediate(createSystemTrayDeferred)
+    armGpuCrashHistoryReset()
   })
   window.once('show', () => {
     logStartupMilestone('window-shown')
@@ -1706,24 +1744,184 @@ function getWindowsGpuFallbackEnvironment(): WindowsGpuFallbackEnvironment | nul
   return { ...environment, platform: 'win32' }
 }
 
-// Why: read the GPU-fallback marker before app.whenReady() so app.disableHardwareAcceleration() takes effect. Windows desktop only.
+// Why: decide GPU fallback before app.whenReady() so app.disableHardwareAcceleration() takes effect. Windows desktop only.
 function maybeApplyGpuFallbackForThisLaunch(): void {
   if (isServeMode || process.platform !== 'win32') {
     return
   }
-  const marker = readActiveGpuFallbackMarker(app.getPath('userData'), getGpuFallbackEnvironment())
-  if (!marker) {
+  const decision = engageGpuFallbackForLaunch({
+    userDataPath: getCanonicalUserDataPath(),
+    environment: getGpuFallbackEnvironment(),
+    nowEpochMs: Date.now(),
+    hooks: {
+      disableHardwareAcceleration: () => app.disableHardwareAcceleration(),
+      commandLine: app.commandLine,
+      recordBreadcrumb: recordCrashBreadcrumb
+    }
+  })
+  gpuFallbackActiveThisLaunch = decision.engage
+  gpuFallbackEngagedAt = decision.engagedAt
+}
+
+/** Promotes in-session crash evidence to the sticky decision. False if it could not be written. */
+function persistGpuFallbackMarker(crashesInWindow: number, engagedAt: number): boolean {
+  const environment = getWindowsGpuFallbackEnvironment()
+  if (!environment) {
+    return false
+  }
+  const userDataPath = getCanonicalUserDataPath()
+  try {
+    writeGpuFallbackMarker(userDataPath, { engagedAt, crashesInWindow }, environment)
+  } catch (error) {
+    console.warn('[gpu-fallback] failed to persist marker:', error)
+    return false
+  }
+  // Why: the evidence has been consumed by the decision; keeping it would re-arm
+  // the same conclusion after the user asks for hardware acceleration back.
+  clearGpuCrashHistory(userDataPath)
+  return true
+}
+
+// Why: crash-at-startup kills this process before the in-session tracker can reach its threshold, so the evidence has to outlive the launch.
+function recordGpuCrashLaunchEvidence(msSinceLaunch: number): void {
+  const environment = getWindowsGpuFallbackEnvironment()
+  if (!environment || gpuFallbackDeclinedThisLaunch) {
     return
   }
-  app.disableHardwareAcceleration()
-  const appliedSwitches = applyGpuFallbackCommandLineSwitches(app.commandLine, process.platform)
-  gpuFallbackActiveThisLaunch = true
-  // Why: with no GPU child left, child-process-gone can't report a GPU fault, so
-  // name the applied switches in the trail any later crash report carries.
-  recordCrashBreadcrumb('gpu_fallback_applied', {
-    crashesInWindow: marker.crashesInWindow,
-    switches: appliedSwitches.join(',')
+  try {
+    recordGpuCrashInHistory(
+      getCanonicalUserDataPath(),
+      {
+        atEpochMs: Date.now(),
+        msSinceLaunch,
+        launchId: getMainProcessLifecycleIdentity().mainProcessLaunchId
+      },
+      environment
+    )
+  } catch (error) {
+    console.warn('[gpu-fallback] failed to persist crash history:', error)
+  }
+}
+
+/**
+ * Surviving a minute past the painted window is the proof; what it proves is
+ * resolved when the timer fires, not when it is armed, so a GPU death in between
+ * narrows the reset instead of vetoing it. The field separation is unambiguous:
+ * failing launches die inside a second, healthy ones ran for minutes.
+ */
+function armGpuCrashHistoryReset(): void {
+  if (gpuCrashHistoryResetTimer || isServeMode || process.platform !== 'win32') {
+    return
+  }
+  sweepOrphanedGpuCrashHistoryWrites(getCanonicalUserDataPath())
+  if (gpuFallbackActiveThisLaunch) {
+    return
+  }
+  gpuCrashHistoryResetTimer = setTimeout(() => {
+    gpuCrashHistoryResetTimer = null
+    applyGpuCrashHistoryReset()
+  }, GPU_CRASH_HISTORY_RESET_DELAY_MS)
+  gpuCrashHistoryResetTimer.unref?.()
+}
+
+function applyGpuCrashHistoryReset(): void {
+  const action = resolveGpuCrashHistoryReset({
+    gpuCrashedDuringStartup: gpuCrashedDuringStartupThisLaunch,
+    gpuFallbackActive: gpuFallbackActiveThisLaunch
   })
+  if (action === 'none') {
+    return
+  }
+  const userDataPath = getCanonicalUserDataPath()
+  const environment = getWindowsGpuFallbackEnvironment()
+  try {
+    if (action === 'forget-this-launch') {
+      forgetGpuCrashLaunch(userDataPath, getMainProcessLifecycleIdentity().mainProcessLaunchId)
+      return
+    }
+    clearGpuCrashHistory(userDataPath)
+    // Why: a build that boots has no use for the previous build's lowered threshold.
+    if (environment) {
+      clearSupersededGpuFallbackMarker(userDataPath, environment)
+    }
+  } catch (error) {
+    console.warn('[gpu-fallback] failed to reset crash history:', error)
+  }
+}
+
+function cancelGpuCrashHistoryReset(): void {
+  if (!gpuCrashHistoryResetTimer) {
+    return
+  }
+  clearTimeout(gpuCrashHistoryResetTimer)
+  gpuCrashHistoryResetTimer = null
+}
+
+/**
+ * The prompt said "leaves graphics settings unchanged" and the user took it, so the
+ * silent cross-launch path must not impose on the next boot what was just refused.
+ *
+ * How much that covers depends on what raised the prompt. Over startup crashes the
+ * user refused the cross-launch conclusion itself, so all of the evidence is spent.
+ * A purely mid-session burst is never recorded as startup evidence and was never
+ * what the user was asked about — earlier launches that died before any window
+ * existed are not on trial there.
+ */
+function discardGpuCrashEvidenceAfterDecline(): void {
+  gpuFallbackDeclinedThisLaunch = true
+  const userDataPath = getCanonicalUserDataPath()
+  try {
+    if (gpuCrashedDuringStartupThisLaunch) {
+      clearGpuCrashHistory(userDataPath)
+      return
+    }
+    forgetGpuCrashLaunch(userDataPath, getMainProcessLifecycleIdentity().mainProcessLaunchId)
+  } catch (error) {
+    console.warn('[gpu-fallback] failed to discard crash evidence:', error)
+  }
+}
+
+/** Drops both durable artifacts so the next launch retries hardware acceleration. */
+function clearGpuFallbackState(): void {
+  cancelGpuCrashHistoryReset()
+  const userDataPath = getCanonicalUserDataPath()
+  clearGpuFallbackMarker(userDataPath)
+  clearGpuCrashHistory(userDataPath)
+  recordCrashBreadcrumb('gpu_fallback_cleared')
+}
+
+function isGpuFallbackEnabledForNextLaunch(): boolean {
+  const environment = getWindowsGpuFallbackEnvironment()
+  return environment
+    ? readActiveGpuFallbackMarker(getCanonicalUserDataPath(), environment) !== null
+    : false
+}
+
+/**
+ * Settings' on/off for Safe Graphics Mode; the caller relaunches to apply it.
+ *
+ * A user-sourced marker survives app and Electron updates, unlike the automatic
+ * one — a user who knows their driver is broken should not have to re-earn the
+ * workaround with crashing launches after every release.
+ */
+function setGpuFallbackEnabled(enabled: boolean): void {
+  const environment = getWindowsGpuFallbackEnvironment()
+  if (!environment) {
+    return
+  }
+  if (!enabled) {
+    clearGpuFallbackState()
+    return
+  }
+  cancelGpuCrashHistoryReset()
+  const userDataPath = getCanonicalUserDataPath()
+  writeGpuFallbackMarker(
+    userDataPath,
+    { engagedAt: Date.now(), crashesInWindow: 0, source: 'user' },
+    environment
+  )
+  clearGpuCrashHistory(userDataPath)
+  recordCrashBreadcrumb('gpu_fallback_pinned')
 }
 
 // Why: a burst of GPU child crashes means HW acceleration is unusable — persist a build-scoped marker and offer software rendering.
@@ -1732,7 +1930,12 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
   if (gpuFallbackActiveThisLaunch || isQuitting || isServeMode) {
     return
   }
-  const result = gpuCrashFallbackTracker.recordGpuCrash(performance.now())
+  const msSinceLaunch = performance.now()
+  // Why: persist evidence first — this process can be FATALed milliseconds from
+  // now, and the threshold check below never survives a crash-at-startup launch.
+  gpuCrashedDuringStartupThisLaunch ||= msSinceLaunch <= GPU_CRASH_STARTUP_WINDOW_MS
+  recordGpuCrashLaunchEvidence(msSinceLaunch)
+  const result = gpuCrashFallbackTracker.recordGpuCrash(msSinceLaunch)
   if (!result.shouldEngageFallback) {
     return
   }
@@ -1759,24 +1962,11 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
     return
   }
   if (restartDecision !== 'restart') {
+    discardGpuCrashEvidenceAfterDecline()
     recordDurableCrashBreadcrumb('gpu_fallback_restart_deferred', fallbackData)
     return
   }
-  const environment = getWindowsGpuFallbackEnvironment()
-  if (!environment) {
-    return
-  }
-  try {
-    writeGpuFallbackMarker(
-      app.getPath('userData'),
-      {
-        engagedAt,
-        crashesInWindow: result.crashesInWindow
-      },
-      environment
-    )
-  } catch (error) {
-    console.warn('[gpu-fallback] failed to persist marker:', error)
+  if (!persistGpuFallbackMarker(result.crashesInWindow, engagedAt)) {
     return
   }
   isQuitting = true

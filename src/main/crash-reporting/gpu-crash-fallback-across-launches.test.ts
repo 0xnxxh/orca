@@ -1,0 +1,441 @@
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
+  DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
+  GpuCrashFallbackTracker
+} from './gpu-crash-fallback-decision'
+import {
+  promptForGpuFallbackRestart,
+  type GpuFallbackRestartDecision
+} from './gpu-fallback-restart-prompt'
+import {
+  GPU_CRASH_STARTUP_WINDOW_MS,
+  clearGpuCrashHistory,
+  forgetGpuCrashLaunch,
+  readActiveGpuCrashHistory,
+  recordGpuCrashInHistory,
+  type GpuCrashHistoryEntry
+} from '../startup/gpu-crash-history'
+import { resolveGpuCrashHistoryReset } from '../startup/gpu-fallback-launch-decision'
+import { engageGpuFallbackForLaunch } from '../startup/gpu-fallback-launch-engagement'
+import {
+  GPU_FALLBACK_MARKER_FILE,
+  clearGpuFallbackMarker,
+  clearSupersededGpuFallbackMarker,
+  writeGpuFallbackMarker,
+  type WindowsGpuFallbackEnvironment
+} from '../startup/gpu-fallback-marker'
+
+vi.mock('./gpu-fallback-restart-prompt', () => ({ promptForGpuFallbackRestart: vi.fn() }))
+
+/**
+ * Regression for the 2026-08-16 Windows crash cluster (reports 1cf806c8,
+ * 64e9f2a7, 8ae2b56f, af537a89, b566e1e0, e3e21dc6 — all 1.4.184 / Electron
+ * 43.1.0 / Windows 10.0.26200).
+ *
+ * Field shape: the GPU child dies with STATUS_BREAKPOINT (-2147483645) ~580ms
+ * after main_process_lifecycle_started and the launch is over. Across the six
+ * diagnostics bundles every reconstructed launch recorded exactly ONE GPU crash
+ * — never two, never three — so `GpuCrashFallbackTracker`, which needs
+ * `threshold` crashes inside one process lifetime, could never fire and
+ * gpu-fallback.json was structurally unwritable.
+ *
+ * The fix persists the evidence, so the rescue is driven across launches.
+ */
+
+const WINDOWS_ENVIRONMENT: WindowsGpuFallbackEnvironment = {
+  appVersion: '1.4.184',
+  electronVersion: '43.1.0',
+  platform: 'win32'
+}
+
+// Offset of the GPU `process_gone_suppressed` breadcrumb from
+// `main_process_lifecycle_started` in report 1cf806c8 (bundle fH9VHOQk).
+const INCIDENT_GPU_CRASH_MS = 581
+const MINUTE_MS = 60_000
+const WEEK_MS = 7 * 24 * 60 * MINUTE_MS
+
+type LaunchOutcome = {
+  /** Did startup boot without hardware acceleration? */
+  softwareRendering: boolean
+  /** Crashes the in-process tracker held when this launch died. */
+  crashesInWindow: number
+  breadcrumbs: { name: string; data?: Record<string, unknown> }[]
+  disableHardwareAccelerationCalls: number
+}
+
+/**
+ * One full app launch, wired exactly like index.ts:
+ * maybeApplyGpuFallbackForThisLaunch() -> fresh tracker -> handleGpuChildCrash()
+ * -> ready-to-show arms the reset, which resolves what it may drop when it fires.
+ * Everything the tracker held is gone when this returns.
+ */
+function runLaunch(
+  userDataPath: string,
+  {
+    launchId,
+    nowEpochMs,
+    crashAtMsSinceLaunch,
+    inSessionCrashes = 1,
+    inSessionPromptDecision = 'restart',
+    survivesAMinutePastReadyToShow = false
+  }: {
+    launchId: string
+    nowEpochMs: number
+    crashAtMsSinceLaunch: number | null
+    /** GPU deaths inside this one process; the in-session tracker only fires at 3. */
+    inSessionCrashes?: number
+    /** Answer to the in-session modal, once the tracker reaches its threshold. */
+    inSessionPromptDecision?: GpuFallbackRestartDecision
+    /** Chromium respawns a dead GPU child, so even a crashing launch can paint and live on. */
+    survivesAMinutePastReadyToShow?: boolean
+  }
+): LaunchOutcome {
+  const breadcrumbs: LaunchOutcome['breadcrumbs'] = []
+  let disableHardwareAccelerationCalls = 0
+  const decision = engageGpuFallbackForLaunch({
+    userDataPath,
+    environment: WINDOWS_ENVIRONMENT,
+    nowEpochMs,
+    hooks: {
+      disableHardwareAcceleration: () => {
+        disableHardwareAccelerationCalls += 1
+      },
+      commandLine: { appendSwitch: () => {} },
+      recordBreadcrumb: (name, data) => breadcrumbs.push({ name, data })
+    }
+  })
+  const tracker = new GpuCrashFallbackTracker({
+    windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
+    threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
+  })
+  // Why: software rendering leaves no GPU child, so it cannot die.
+  const gpuCrashed = !decision.engage && crashAtMsSinceLaunch !== null
+  let gpuCrashedDuringStartup = false
+  let crashesInWindow = 0
+  if (gpuCrashed && crashAtMsSinceLaunch !== null) {
+    for (let crash = 0; crash < inSessionCrashes; crash += 1) {
+      const entry: GpuCrashHistoryEntry = {
+        atEpochMs: nowEpochMs + crashAtMsSinceLaunch + crash,
+        msSinceLaunch: crashAtMsSinceLaunch + crash,
+        launchId
+      }
+      gpuCrashedDuringStartup ||= entry.msSinceLaunch <= GPU_CRASH_STARTUP_WINDOW_MS
+      recordGpuCrashInHistory(userDataPath, entry, WINDOWS_ENVIRONMENT)
+      const result = tracker.recordGpuCrash(crashAtMsSinceLaunch + crash)
+      crashesInWindow = result.crashesInWindow
+      if (result.shouldEngageFallback && inSessionPromptDecision !== 'restart') {
+        // index.ts: a decline over startup crashes refuses the cross-launch conclusion itself;
+        // over a mid-session burst it answers for this launch only.
+        if (gpuCrashedDuringStartup) {
+          clearGpuCrashHistory(userDataPath)
+        } else {
+          forgetGpuCrashLaunch(userDataPath, launchId)
+        }
+        break
+      }
+    }
+  }
+  // index.ts arms this on ready-to-show and resolves it 60s later.
+  if (survivesAMinutePastReadyToShow) {
+    const action = resolveGpuCrashHistoryReset({
+      gpuCrashedDuringStartup,
+      gpuFallbackActive: decision.engage
+    })
+    if (action === 'forget-this-launch') {
+      forgetGpuCrashLaunch(userDataPath, launchId)
+    } else if (action === 'clear-all') {
+      clearGpuCrashHistory(userDataPath)
+      clearSupersededGpuFallbackMarker(userDataPath, WINDOWS_ENVIRONMENT)
+    }
+  }
+  return {
+    softwareRendering: decision.engage,
+    crashesInWindow,
+    breadcrumbs,
+    disableHardwareAccelerationCalls
+  }
+}
+
+function runCrashingLaunch(userDataPath: string, index: number, startedAt: number): LaunchOutcome {
+  return runLaunch(userDataPath, {
+    launchId: `launch-${index}`,
+    nowEpochMs: startedAt,
+    crashAtMsSinceLaunch: INCIDENT_GPU_CRASH_MS
+  })
+}
+
+describe('GPU crash fallback across app launches', () => {
+  let userDataPath: string
+  const startedAt = 1_760_000_000_000
+
+  beforeEach(() => {
+    userDataPath = mkdtempSync(join(tmpdir(), 'orca-gpu-fallback-'))
+  })
+
+  afterEach(() => {
+    rmSync(userDataPath, { recursive: true, force: true })
+  })
+
+  // Why: the pinned [1,1,1,1,1,1] distribution from the six bundles IS the defect —
+  // the in-session tracker is fed once per process and forgets. Any fix that still
+  // needs a launch to reach two crashes is wrong for this failure mode.
+  it('reproduces the field data: the in-session tracker tops out at one crash per launch', () => {
+    const perLaunchCounts = Array.from({ length: 6 }, () => {
+      const tracker = new GpuCrashFallbackTracker({
+        windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
+        threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
+      })
+      return tracker.recordGpuCrash(INCIDENT_GPU_CRASH_MS).crashesInWindow
+    })
+
+    expect(perLaunchCounts).toEqual([1, 1, 1, 1, 1, 1])
+    expect(perLaunchCounts.some((count) => count >= DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD)).toBe(
+      false
+    )
+  })
+
+  it('engages software rendering on the launch after the third crash-at-startup', () => {
+    const outcomes = Array.from({ length: 4 }, (_, index) =>
+      runCrashingLaunch(userDataPath, index, startedAt + index * 10_000)
+    )
+
+    expect(outcomes.map((outcome) => outcome.softwareRendering)).toEqual([
+      false,
+      false,
+      false,
+      true
+    ])
+  })
+
+  it('engages with no window: no restart prompt, marker written, breadcrumb emitted', () => {
+    for (let index = 0; index < 3; index += 1) {
+      runCrashingLaunch(userDataPath, index, startedAt + index * 10_000)
+    }
+    const rescue = runCrashingLaunch(userDataPath, 3, startedAt + 30_000)
+
+    expect(rescue.disableHardwareAccelerationCalls).toBe(1)
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(true)
+    expect(rescue.breadcrumbs).toEqual([
+      {
+        name: 'gpu_fallback_applied',
+        data: {
+          source: 'crash-history',
+          crashesInWindow: 3,
+          switches: 'disable-gpu,disable-software-rasterizer,in-process-gpu'
+        }
+      }
+    ])
+    // Why: this path runs before whenReady — there is no window to park a modal on.
+    expect(promptForGpuFallbackRestart).not.toHaveBeenCalled()
+  })
+
+  it('stays in software rendering on later launches without re-deriving the decision', () => {
+    for (let index = 0; index < 4; index += 1) {
+      runCrashingLaunch(userDataPath, index, startedAt + index * 10_000)
+    }
+    const later = runCrashingLaunch(userDataPath, 4, startedAt + 40_000)
+
+    expect(later.softwareRendering).toBe(true)
+    expect(later.breadcrumbs[0]?.data?.source).toBe('marker')
+  })
+
+  // Why: a launch that reached the window and survived a minute proves the driver works today.
+  it('resets after a successful launch: 2 crashes, 1 success, 2 crashes must not engage', () => {
+    runCrashingLaunch(userDataPath, 0, startedAt)
+    runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
+    runLaunch(userDataPath, {
+      launchId: 'healthy',
+      nowEpochMs: startedAt + 20_000,
+      crashAtMsSinceLaunch: null,
+      survivesAMinutePastReadyToShow: true
+    })
+    const outcomes = [
+      runCrashingLaunch(userDataPath, 2, startedAt + 5 * MINUTE_MS),
+      runCrashingLaunch(userDataPath, 3, startedAt + 6 * MINUTE_MS)
+    ]
+
+    expect(outcomes.map((outcome) => outcome.softwareRendering)).toEqual([false, false])
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+  })
+
+  // Why: the modal promises "Keep Running leaves graphics settings unchanged", so the silent
+  // cross-launch path must not impose on the next boot exactly what was just refused.
+  it('does not override an explicit decline of the in-session prompt', () => {
+    runCrashingLaunch(userDataPath, 0, startedAt)
+    runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
+    const declined = runLaunch(userDataPath, {
+      launchId: 'declined',
+      nowEpochMs: startedAt + 20_000,
+      crashAtMsSinceLaunch: INCIDENT_GPU_CRASH_MS,
+      inSessionCrashes: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
+      inSessionPromptDecision: 'continue'
+    })
+    const next = runCrashingLaunch(userDataPath, 3, startedAt + 30_000)
+
+    expect(declined.crashesInWindow).toBe(DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD)
+    expect(next.softwareRendering).toBe(false)
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+  })
+
+  // Why: without a wall-clock horizon, ordinary background churn would eventually
+  // fall a perfectly healthy machine back to software rendering.
+  it('never accumulates: one crash a week for ten weeks must not engage', () => {
+    for (let week = 0; week < 10; week += 1) {
+      const outcome = runCrashingLaunch(userDataPath, week, startedAt + week * WEEK_MS)
+      expect(outcome.softwareRendering).toBe(false)
+    }
+
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+  })
+
+  // Why: a GPU-child-only death does not kill the renderer — Chromium respawns the child and
+  // the window paints, so a launch that lived on is not evidence that Orca cannot boot. It
+  // still may not erase the launches that died before any window existed.
+  it('exonerates a launch that crashed the GPU and then painted, and only that launch', () => {
+    runCrashingLaunch(userDataPath, 0, startedAt)
+    runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
+    const painted = runLaunch(userDataPath, {
+      launchId: 'crashed-then-painted',
+      nowEpochMs: startedAt + 20_000,
+      crashAtMsSinceLaunch: INCIDENT_GPU_CRASH_MS,
+      survivesAMinutePastReadyToShow: true
+    })
+    expect(
+      readActiveGpuCrashHistory(userDataPath, WINDOWS_ENVIRONMENT).map((crash) => crash.launchId)
+    ).toEqual(['launch-0', 'launch-1'])
+
+    // The painted launch no longer counts, so the rescue waits for a third launch that died.
+    const third = runCrashingLaunch(userDataPath, 3, startedAt + 30_000)
+    const rescue = runCrashingLaunch(userDataPath, 4, startedAt + 40_000)
+
+    expect([painted.softwareRendering, third.softwareRendering]).toEqual([false, false])
+    expect(rescue.softwareRendering).toBe(true)
+  })
+
+  // Why: a machine where Orca works fine but the GPU child blips once at startup must never be
+  // downgraded — three restarts inside ten minutes (an update, a Restart button, a manual one)
+  // is an ordinary morning.
+  it('never engages for launches that blipped at startup and then ran on', () => {
+    const outcomes = Array.from({ length: 4 }, (_, index) =>
+      runLaunch(userDataPath, {
+        launchId: `blip-${index}`,
+        nowEpochMs: startedAt + index * MINUTE_MS,
+        crashAtMsSinceLaunch: INCIDENT_GPU_CRASH_MS,
+        survivesAMinutePastReadyToShow: true
+      })
+    )
+
+    expect(outcomes.map((outcome) => outcome.softwareRendering)).toEqual([
+      false,
+      false,
+      false,
+      false
+    ])
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+  })
+
+  // Why: the modal fires on any three GPU deaths inside 30s, including a purely mid-session
+  // burst that was never recorded as startup evidence. Declining answers for this launch only.
+  it('keeps earlier startup evidence when a mid-session burst is declined', () => {
+    runCrashingLaunch(userDataPath, 0, startedAt)
+    runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
+    runLaunch(userDataPath, {
+      launchId: 'mid-session-burst',
+      nowEpochMs: startedAt + 20_000,
+      crashAtMsSinceLaunch: 20 * MINUTE_MS,
+      inSessionCrashes: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
+      inSessionPromptDecision: 'continue'
+    })
+
+    expect(
+      readActiveGpuCrashHistory(userDataPath, WINDOWS_ENVIRONMENT).map((crash) => crash.launchId)
+    ).toEqual(['launch-0', 'launch-1'])
+  })
+
+  // Why: version-scoped evidence dies with the update, so the full threshold would cost this
+  // machine three unbootable launches after every release.
+  it('re-engages after one crashing launch when the previous build had fallen back', () => {
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: startedAt - WEEK_MS, crashesInWindow: 3 },
+      { ...WINDOWS_ENVIRONMENT, appVersion: '1.4.183' }
+    )
+
+    const fresh = runCrashingLaunch(userDataPath, 0, startedAt)
+    const rescue = runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
+
+    expect(fresh.softwareRendering).toBe(false)
+    expect(rescue.softwareRendering).toBe(true)
+    expect(rescue.breadcrumbs[0]?.data?.source).toBe('crash-history-after-update')
+  })
+
+  // Why: the previous build's head start is spent the moment this build proves it boots.
+  it('drops the previous build record once a launch boots cleanly', () => {
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: startedAt - WEEK_MS, crashesInWindow: 3 },
+      { ...WINDOWS_ENVIRONMENT, appVersion: '1.4.183' }
+    )
+    runLaunch(userDataPath, {
+      launchId: 'healthy-after-update',
+      nowEpochMs: startedAt,
+      crashAtMsSinceLaunch: null,
+      survivesAMinutePastReadyToShow: true
+    })
+
+    const next = runCrashingLaunch(userDataPath, 1, startedAt + MINUTE_MS)
+
+    expect(next.softwareRendering).toBe(false)
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+  })
+
+  // Why: a single noisy launch must not evict the other launches that make up the threshold.
+  it('survives a launch that emits a GPU crash loop', () => {
+    runCrashingLaunch(userDataPath, 0, startedAt)
+    for (let crash = 0; crash < 20; crash += 1) {
+      recordGpuCrashInHistory(
+        userDataPath,
+        { atEpochMs: startedAt + 10_000 + crash, msSinceLaunch: 600 + crash, launchId: 'noisy' },
+        WINDOWS_ENVIRONMENT
+      )
+    }
+    runCrashingLaunch(userDataPath, 2, startedAt + 20_000)
+    const rescue = runCrashingLaunch(userDataPath, 3, startedAt + 30_000)
+
+    expect(rescue.softwareRendering).toBe(true)
+  })
+
+  // Why: a crash 20 minutes in is the in-session tracker's job (#10707), not evidence Orca cannot boot.
+  it('ignores mid-session GPU crashes as cross-launch evidence', () => {
+    for (let index = 0; index < 4; index += 1) {
+      runLaunch(userDataPath, {
+        launchId: `session-${index}`,
+        nowEpochMs: startedAt + index * MINUTE_MS,
+        crashAtMsSinceLaunch: 20 * MINUTE_MS
+      })
+    }
+
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+  })
+
+  it('exits software rendering once the marker and evidence are cleared', () => {
+    for (let index = 0; index < 4; index += 1) {
+      runCrashingLaunch(userDataPath, index, startedAt + index * 10_000)
+    }
+    clearGpuFallbackMarker(userDataPath)
+    clearGpuCrashHistory(userDataPath)
+
+    const retry = runLaunch(userDataPath, {
+      launchId: 'retry',
+      nowEpochMs: startedAt + 60_000,
+      crashAtMsSinceLaunch: null
+    })
+
+    expect(retry.softwareRendering).toBe(false)
+    expect(retry.disableHardwareAccelerationCalls).toBe(0)
+  })
+})

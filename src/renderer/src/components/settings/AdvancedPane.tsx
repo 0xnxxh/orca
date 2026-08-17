@@ -2,10 +2,13 @@ import { useRef, useState } from 'react'
 import { Info, Loader2, RotateCw } from 'lucide-react'
 import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import { useMountedRef } from '@/hooks/useMountedRef'
+import { getRendererAppPlatform } from '@/lib/renderer-app-platform'
+import { isWebClientLocation } from '@/lib/web-client-location'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { AdvancedNetworkSettingsSection } from './AdvancedNetworkSettingsSection'
+import { SafeGraphicsModeSetting } from './SafeGraphicsModeSetting'
 import { SearchableSetting } from './SearchableSetting'
 import { SettingsSubsectionHeader, SettingsSwitch } from './SettingsFormControls'
 import { getAdvancedPaneSearchEntries, getAdvancedSearchEntry } from './advanced-search'
@@ -135,6 +138,11 @@ export function AdvancedPane({ settings, updateSettings }: AdvancedPaneProps): R
             </div>
           ) : null}
         </SearchableSetting>
+
+        {/* Why: the fallback is win32 desktop-only, so elsewhere this row would promise recovery behavior that never happens. */}
+        {getRendererAppPlatform() === 'win32' && !isWebClientLocation() ? (
+          <SafeGraphicsModeSetting />
+        ) : null}
       </section>
 
       <section className="space-y-3">

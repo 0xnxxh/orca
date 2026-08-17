@@ -4,7 +4,7 @@ import { createLocalizedCatalog } from '@/i18n/localized-catalog'
 import { translate } from '@/i18n/i18n'
 import { translateSearchKeyword } from './settings-search-keywords'
 
-export const getAdvancedPaneSearchEntries = createLocalizedCatalog((): SettingsSearchEntry[] => [
+const getAdvancedPaneCoreSearchEntries = createLocalizedCatalog((): SettingsSearchEntry[] => [
   ...getAdvancedNetworkSearchEntries(),
   {
     title: translate(
@@ -44,8 +44,50 @@ export const getAdvancedPaneSearchEntries = createLocalizedCatalog((): SettingsS
   }
 ])
 
+const getSafeGraphicsModeSearchEntries = createLocalizedCatalog((): SettingsSearchEntry[] => [
+  {
+    title: translate('auto.components.settings.advanced.search.safeGraphics', 'Safe Graphics Mode'),
+    description: translate(
+      'auto.components.settings.advanced.search.safeGraphicsDescription',
+      'Turn software rendering on, or undo the fallback Orca applies after repeated GPU crashes.'
+    ),
+    keywords: [
+      ...translateSearchKeyword('auto.components.settings.advanced.search.e04e9db503', 'advanced'),
+      ...translateSearchKeyword('auto.components.settings.advanced.search.gpu', 'gpu'),
+      ...translateSearchKeyword('auto.components.settings.advanced.search.graphics', 'graphics'),
+      ...translateSearchKeyword(
+        'auto.components.settings.advanced.search.hardwareAcceleration',
+        'hardware acceleration'
+      ),
+      ...translateSearchKeyword(
+        'auto.components.settings.advanced.search.softwareRendering',
+        'software rendering'
+      ),
+      ...translateSearchKeyword('auto.components.settings.advanced.search.driver', 'driver'),
+      ...translateSearchKeyword('auto.components.settings.advanced.search.crash', 'crash'),
+      ...translateSearchKeyword('auto.components.settings.advanced.search.safeMode', 'safe mode')
+    ]
+  }
+])
+
+/**
+ * Why the platform gate: Safe Graphics Mode only ever engages on the Windows
+ * desktop app, and the search index must mirror the visible controls — a macOS
+ * user searching "gpu" must not land on a row that can never do anything.
+ */
+export function getAdvancedPaneSearchEntries(platform: {
+  isWindows: boolean
+}): SettingsSearchEntry[] {
+  return [
+    ...getAdvancedPaneCoreSearchEntries(),
+    ...(platform.isWindows ? getSafeGraphicsModeSearchEntries() : [])
+  ]
+}
+
 function findEntry(title: string): SettingsSearchEntry {
-  const entry = getAdvancedPaneSearchEntries().find((e) => e.title === title)
+  const entry = [...getAdvancedPaneCoreSearchEntries(), ...getSafeGraphicsModeSearchEntries()].find(
+    (e) => e.title === title
+  )
   if (!entry) {
     throw new Error(`Missing advanced-pane search entry: "${title}"`)
   }
@@ -56,6 +98,9 @@ export function getAdvancedSearchEntry() {
   return {
     http1Compatibility: findEntry(
       translate('auto.components.settings.advanced.search.11eea3da72', 'HTTP/1.1 Compatibility')
+    ),
+    safeGraphicsMode: findEntry(
+      translate('auto.components.settings.advanced.search.safeGraphics', 'Safe Graphics Mode')
     )
   } as const
 }

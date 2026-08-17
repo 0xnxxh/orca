@@ -49,6 +49,79 @@ describe('startup ordering', () => {
     )
   })
 
+  // Why: app.disableHardwareAcceleration() is a no-op once whenReady resolves, and the marker/history
+  // paths must agree on one userData path — app.setName() changes how a late getPath('userData') resolves.
+  it('decides GPU fallback before whenReady and setName, off one canonical userData path', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const applyIndex = source.indexOf('  maybeApplyGpuFallbackForThisLaunch()')
+    const whenReadyIndex = source.indexOf('void app.whenReady().then(')
+    const setNameIndex = source.indexOf('app.setName(devInstanceIdentity.appName)')
+    const applyStart = source.indexOf('function maybeApplyGpuFallbackForThisLaunch()')
+    const applyEnd = source.indexOf('function persistGpuFallbackMarker(', applyStart)
+    const apply = source.slice(applyStart, applyEnd)
+
+    expect(applyIndex).toBeGreaterThanOrEqual(0)
+    expect(whenReadyIndex).toBeGreaterThan(applyIndex)
+    expect(setNameIndex).toBeGreaterThan(applyIndex)
+    expect(applyStart).toBeGreaterThanOrEqual(0)
+    expect(applyEnd).toBeGreaterThan(applyStart)
+    expect(apply).toContain('engageGpuFallbackForLaunch({')
+    expect(apply).toContain('userDataPath: getCanonicalUserDataPath()')
+    // Why: a modal here would block a process that has no window yet.
+    expect(apply).not.toContain('promptForGpuFallbackRestart')
+
+    // Why: the marker used to be read pre-setName and written post-setName, which resolve
+    // to different directories on a case-sensitive filesystem.
+    const persistStart = source.indexOf('function persistGpuFallbackMarker(')
+    const persistEnd = source.indexOf('function recordGpuCrashLaunchEvidence(', persistStart)
+    const persist = source.slice(persistStart, persistEnd)
+
+    expect(persistStart).toBeGreaterThanOrEqual(0)
+    expect(persistEnd).toBeGreaterThan(persistStart)
+    expect(persist).toContain('const userDataPath = getCanonicalUserDataPath()')
+    expect(persist).not.toContain("app.getPath('userData')")
+  })
+
+  // Why: the crash-at-startup shape kills the process ~600ms in, so evidence written after the
+  // threshold check or after a prompt never survives the launch that produced it.
+  it('persists GPU crash evidence before the in-session threshold check', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const handlerStart = source.indexOf('async function handleGpuChildCrash(')
+    const handlerEnd = source.indexOf('function recordProcessGoneCrash(', handlerStart)
+    const handler = source.slice(handlerStart, handlerEnd)
+    const evidenceIndex = handler.indexOf('recordGpuCrashLaunchEvidence(msSinceLaunch)')
+    const trackerIndex = handler.indexOf('gpuCrashFallbackTracker.recordGpuCrash(')
+    const promptIndex = handler.indexOf('promptForGpuFallbackRestart(')
+
+    expect(handlerStart).toBeGreaterThanOrEqual(0)
+    expect(handlerEnd).toBeGreaterThan(handlerStart)
+    expect(evidenceIndex).toBeGreaterThanOrEqual(0)
+    expect(trackerIndex).toBeGreaterThan(evidenceIndex)
+    expect(promptIndex).toBeGreaterThan(evidenceIndex)
+    // Why: a GPU death precedes ready-to-show, so the flag has to be set before anything can
+    // throw — and scoped to the startup window that governs recording and counting.
+    expect(
+      handler.indexOf(
+        'gpuCrashedDuringStartupThisLaunch ||= msSinceLaunch <= GPU_CRASH_STARTUP_WINDOW_MS'
+      )
+    ).toBeLessThan(evidenceIndex)
+    expect(source).toContain("window.once('ready-to-show'")
+    expect(source).toContain('armGpuCrashHistoryReset()')
+
+    const armStart = source.indexOf('function armGpuCrashHistoryReset()')
+    const armEnd = source.indexOf('function cancelGpuCrashHistoryReset()', armStart)
+    const arm = source.slice(armStart, armEnd)
+
+    expect(armStart).toBeGreaterThanOrEqual(0)
+    expect(armEnd).toBeGreaterThan(armStart)
+    // Why: what the survival proves is resolved when the timer fires, not when it is armed —
+    // a GPU death in between narrows the reset to this launch instead of vetoing it.
+    expect(arm).toContain('applyGpuCrashHistoryReset()')
+    expect(arm).toContain('resolveGpuCrashHistoryReset({')
+    expect(arm).toContain('gpuCrashedDuringStartup: gpuCrashedDuringStartupThisLaunch')
+    expect(arm).toContain('gpuFallbackActive: gpuFallbackActiveThisLaunch')
+  })
+
   it('requires daemon authority before restored-subagent liveness runs', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const sweepStart = source.indexOf('function reapRestoredSubagentsWithoutLiveAgent()')

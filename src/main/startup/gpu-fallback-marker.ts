@@ -21,6 +21,9 @@ export type GpuFallbackEnvironment = {
 
 export type WindowsGpuFallbackEnvironment = GpuFallbackEnvironment & { platform: 'win32' }
 
+/** `user` = asked for in Settings, so it outlives app and Electron updates; `automatic` = derived from crashes. */
+export type GpuFallbackMarkerSource = 'automatic' | 'user'
+
 export type GpuFallbackMarker = {
   schemeVersion: number
   engagedAt: number
@@ -28,6 +31,14 @@ export type GpuFallbackMarker = {
   appVersion: string
   electronVersion: string
   platform: 'win32'
+  source: GpuFallbackMarkerSource
+}
+
+export type GpuFallbackMarkerState = {
+  /** The engagement in force for this build. */
+  active: GpuFallbackMarker | null
+  /** An engagement left by a different build: this build gets one fresh hardware attempt first. */
+  supersededBuild: GpuFallbackMarker | null
 }
 
 function markerPath(userDataPath: string): string {
@@ -59,7 +70,9 @@ export function readGpuFallbackMarker(userDataPath: string): GpuFallbackMarker |
       crashesInWindow: parsed.crashesInWindow,
       appVersion: parsed.appVersion,
       electronVersion: parsed.electronVersion,
-      platform: parsed.platform
+      platform: parsed.platform,
+      // Why: markers written before the Settings pin existed carry no source; they were all automatic.
+      source: parsed.source === 'user' ? 'user' : 'automatic'
     }
   } catch {
     // missing or corrupt means no fallback requested
@@ -69,7 +82,7 @@ export function readGpuFallbackMarker(userDataPath: string): GpuFallbackMarker |
 
 export function writeGpuFallbackMarker(
   userDataPath: string,
-  info: { engagedAt: number; crashesInWindow: number },
+  info: { engagedAt: number; crashesInWindow: number; source?: GpuFallbackMarkerSource },
   environment: WindowsGpuFallbackEnvironment
 ): void {
   const marker: GpuFallbackMarker = {
@@ -78,7 +91,8 @@ export function writeGpuFallbackMarker(
     crashesInWindow: info.crashesInWindow,
     appVersion: environment.appVersion,
     electronVersion: environment.electronVersion,
-    platform: 'win32'
+    platform: 'win32',
+    source: info.source ?? 'automatic'
   }
   writeFileSync(markerPath(userDataPath), JSON.stringify(marker))
 }
@@ -91,27 +105,49 @@ export function clearGpuFallbackMarker(userDataPath: string): void {
   }
 }
 
-export function readActiveGpuFallbackMarker(
+export function readGpuFallbackMarkerState(
   userDataPath: string,
   environment: GpuFallbackEnvironment
-): GpuFallbackMarker | null {
+): GpuFallbackMarkerState {
   const marker = readGpuFallbackMarker(userDataPath)
   if (!marker) {
     if (existsSync(markerPath(userDataPath))) {
       clearGpuFallbackMarker(userDataPath)
     }
-    return null
+    return { active: null, supersededBuild: null }
+  }
+  if (environment.platform !== 'win32' || marker.platform !== environment.platform) {
+    clearGpuFallbackMarker(userDataPath)
+    return { active: null, supersededBuild: null }
   }
   if (
-    environment.platform !== 'win32' ||
-    marker.platform !== environment.platform ||
     marker.appVersion !== environment.appVersion ||
     marker.electronVersion !== environment.electronVersion
   ) {
-    // Why: the marker is sticky only for the build that observed the driver
-    // crash burst; updates get one fresh hardware attempt automatically.
-    clearGpuFallbackMarker(userDataPath)
-    return null
+    // Why: an automatic marker is sticky only for the build that observed the crash
+    // burst, so updates get one fresh hardware attempt — but the record is kept, or a
+    // machine that cannot boot would pay the full threshold again after every release.
+    // A pin is the user's standing choice and an update is not consent to undo it.
+    return marker.source === 'user'
+      ? { active: marker, supersededBuild: null }
+      : { active: null, supersededBuild: marker }
   }
-  return marker
+  return { active: marker, supersededBuild: null }
+}
+
+export function readActiveGpuFallbackMarker(
+  userDataPath: string,
+  environment: GpuFallbackEnvironment
+): GpuFallbackMarker | null {
+  return readGpuFallbackMarkerState(userDataPath, environment).active
+}
+
+/** Drops the previous build's record once this build proved it boots; never touches an active marker. */
+export function clearSupersededGpuFallbackMarker(
+  userDataPath: string,
+  environment: GpuFallbackEnvironment
+): void {
+  if (readGpuFallbackMarkerState(userDataPath, environment).supersededBuild) {
+    clearGpuFallbackMarker(userDataPath)
+  }
 }
