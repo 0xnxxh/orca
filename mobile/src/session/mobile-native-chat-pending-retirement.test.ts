@@ -252,6 +252,14 @@ describe('retireLandedMobileNativeChatPending', () => {
     expect(retireLandedMobileNativeChatPending(messages, pending, NO_IMAGE_ECHOES)).toEqual([])
   })
 
+  // The drafts effect early-outs on `next === current`; a fresh array on the
+  // no-op path would re-enter it on every transcript frame.
+  it('returns the input array itself when nothing retires', () => {
+    const messages = [assistantTurn('m1', 'ready', 1000)]
+    const pending = [pendingSend('p1', 'one', 'm1'), pendingSend('p2', 'two', 'm1')]
+    expect(retireLandedMobileNativeChatPending(messages, pending, NO_IMAGE_ECHOES)).toBe(pending)
+  })
+
   it('keeps sends whose glue candidate predates them', () => {
     const messages = [userTurn('m1', 'fix the bug', 1000), assistantTurn('m2', 'fixed', 1100)]
     const pending = [pendingSend('p1', 'fix the', 'm2'), pendingSend('p2', 'bug', 'm2')]
