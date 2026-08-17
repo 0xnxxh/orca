@@ -108,7 +108,6 @@ import {
   hasUnrecognizedOrcaYamlKeys
 } from '../hooks'
 import { createIssueCommandRunnerScript, resolveSetupRunnerShell } from '../worktree-runner-script'
-import { describeWorktreeCreateFailure } from './worktree-create-error-context'
 import { getSetupRunnerEnvVars } from '../setup-hook-env-vars'
 import { getEffectiveHooksFromConfig } from '../effective-hook-config'
 import { readIssueCommand, writeIssueCommand } from '../issue-command-file'
@@ -2278,11 +2277,7 @@ export function registerWorktreeHandlers(
             error_class: classifyWorkspaceCreateError(error),
             ...getCohortAtEmit()
           })
-          // Why here: the routing decision was just made above, so this is the only place that can
-          // say which implementation ran. A raw ENOENT from an lstat reached a user naming neither
-          // the route nor the repo shape, which cost a full investigation and still did not identify
-          // it. Additive only — the original error stays the cause.
-          throw describeWorktreeCreateFailure(error, repo)
+          throw error
         }
         finishAutomationWorkspaceProvenanceRequest(args.automationProvenanceRequest)
 
@@ -2345,11 +2340,7 @@ export function registerWorktreeHandlers(
             error_class: classifyWorkspaceCreateError(error),
             ...getCohortAtEmit()
           })
-          // Why here: the routing decision was just made above, so this is the only place that can
-          // say which implementation ran. A raw ENOENT from an lstat reached a user naming neither
-          // the route nor the repo shape, which cost a full investigation and still did not identify
-          // it. Additive only — the original error stays the cause.
-          throw describeWorktreeCreateFailure(error, repo)
+          throw error
         }
         finishAutomationWorkspaceProvenanceRequest(args.automationProvenanceRequest)
         track('workspace_created', {
