@@ -26,6 +26,27 @@ function readSqliteFlag(raw: unknown): boolean | null {
   return null
 }
 
+function normalizeTopLevelSite(raw: string): string | null {
+  try {
+    const site = new URL(raw)
+    if (
+      (site.protocol !== 'http:' && site.protocol !== 'https:') ||
+      !site.hostname ||
+      site.username ||
+      site.password ||
+      site.port ||
+      site.pathname !== '/' ||
+      site.search ||
+      site.hash
+    ) {
+      return null
+    }
+    return site.origin
+  } catch {
+    return null
+  }
+}
+
 /**
  * Reads a Chromium cookie row's partition identity.
  *
@@ -45,11 +66,15 @@ export function readChromiumRowPartition(
   }
 
   const rawSite = sourceRow[CHROMIUM_PARTITION_SITE_COLUMN]
-  if (rawSite === null || rawSite === undefined || rawSite === '') {
+  if (rawSite === '') {
     return UNPARTITIONED
   }
   if (typeof rawSite !== 'string') {
     return { status: 'unreadable', reason: 'partition site column was not text' }
+  }
+  const topLevelSite = normalizeTopLevelSite(rawSite)
+  if (!topLevelSite) {
+    return { status: 'unreadable', reason: 'partition site column was not a valid schemeful site' }
   }
 
   if (!sourceColumns.has(CHROMIUM_CROSS_SITE_ANCESTOR_COLUMN)) {
@@ -63,7 +88,7 @@ export function readChromiumRowPartition(
     return { status: 'unreadable', reason: 'cross-site-ancestor column was not an integer flag' }
   }
 
-  return { status: 'partitioned', partitionKey: { topLevelSite: rawSite, hasCrossSiteAncestor } }
+  return { status: 'partitioned', partitionKey: { topLevelSite, hasCrossSiteAncestor } }
 }
 
 const FIREFOX_PARTITIONED_ATTRIBUTE_COLUMN = 'isPartitionedAttributeSet'
@@ -114,6 +139,13 @@ export function readJsonCookiePartition(raw: unknown): SourcePartitionRead {
   if (typeof topLevelSite !== 'string' || topLevelSite.length === 0) {
     return { status: 'unreadable', reason: 'partitionKey.topLevelSite was missing or not text' }
   }
+  const normalizedTopLevelSite = normalizeTopLevelSite(topLevelSite)
+  if (!normalizedTopLevelSite) {
+    return {
+      status: 'unreadable',
+      reason: 'partitionKey.topLevelSite was not a valid schemeful site'
+    }
+  }
   if (typeof hasCrossSiteAncestor !== 'boolean') {
     return {
       status: 'unreadable',
@@ -121,5 +153,8 @@ export function readJsonCookiePartition(raw: unknown): SourcePartitionRead {
     }
   }
 
-  return { status: 'partitioned', partitionKey: { topLevelSite, hasCrossSiteAncestor } }
+  return {
+    status: 'partitioned',
+    partitionKey: { topLevelSite: normalizedTopLevelSite, hasCrossSiteAncestor }
+  }
 }

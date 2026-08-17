@@ -92,6 +92,18 @@ describe('readChromiumRowPartition', () => {
       ).status
     ).toBe('unreadable')
   })
+
+  it.each([null, 'not-a-site', 'ftp://top.example', 'https://top.example/path'])(
+    'refuses an invalid partition site (%s)',
+    (topFrameSiteKey) => {
+      expect(
+        readChromiumRowPartition(
+          { top_frame_site_key: topFrameSiteKey, has_cross_site_ancestor: 1n },
+          MODERN_COLUMNS
+        ).status
+      ).toBe('unreadable')
+    }
+  )
 })
 
 describe('readJsonCookiePartition', () => {
@@ -136,6 +148,15 @@ describe('readJsonCookiePartition', () => {
       'unreadable'
     )
   })
+
+  it.each(['not-a-site', 'ftp://top.example', 'https://top.example/path'])(
+    'refuses an invalid JSON partition site (%s)',
+    (topLevelSite) => {
+      expect(readJsonCookiePartition({ topLevelSite, hasCrossSiteAncestor: true }).status).toBe(
+        'unreadable'
+      )
+    }
+  )
 })
 
 describe('readFirefoxRowPartition', () => {

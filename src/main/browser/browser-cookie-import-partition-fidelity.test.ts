@@ -356,6 +356,69 @@ describe('native Chromium import partition fidelity', () => {
     expect(setPendingCookieImportMock).not.toHaveBeenCalled()
   })
 
+  it('preserves a populated family when the partition site is malformed', async () => {
+    const sourceCookiesPath = join(tmpDir, 'Chrome', 'Default', 'Network', 'Cookies')
+    createChromiumCookieTestDatabase(sourceCookiesPath, [
+      {
+        domain: '.preserved.example',
+        name: 'invalid-partition',
+        value: 'source-value',
+        topFrameSiteKey: 'https://top.example/not-a-site',
+        hasCrossSiteAncestor: 1
+      },
+      { domain: '.plain.example', name: 'plain', value: 'plain-ok' }
+    ]).close()
+    createChromiumCookieTestDatabase(
+      join(tmpDir, 'userData', 'Partitions', 'test', 'Network', 'Cookies'),
+      []
+    ).close()
+    const targetJar = [
+      {
+        name: 'live-session',
+        value: 'must-survive',
+        domain: '.preserved.example',
+        path: '/',
+        secure: true,
+        httpOnly: true,
+        sameSite: 'lax'
+      }
+    ]
+    const clearData = vi.fn(async () => targetJar.splice(0))
+    const remove = vi.fn(async (_url: string, name: string) => {
+      const index = targetJar.findIndex((cookie) => cookie.name === name)
+      if (index !== -1) {
+        targetJar.splice(index, 1)
+      }
+    })
+    sessionFromPartitionMock.mockReturnValue({
+      cookies: {
+        get: vi.fn(async () => targetJar),
+        set: unreachableCookieSet,
+        remove,
+        flushStore: vi.fn().mockResolvedValue(undefined)
+      },
+      clearData,
+      setUserAgent: vi.fn(),
+      getStoragePath: () => join(tmpDir, 'userData', 'Partitions', 'test')
+    })
+
+    const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
+
+    expect(result.ok).toBe(true)
+    expect(clearData).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalledWith(expect.any(String), 'live-session')
+    expect(targetJar).toEqual([expect.objectContaining({ name: 'live-session' })])
+    expect(cookieWriteMock).toHaveBeenCalledTimes(1)
+    expect(cookieWriteMock).toHaveBeenCalledWith(expect.objectContaining({ name: 'plain' }))
+    expect(result.ok && result.summary).toMatchObject({
+      totalCookies: 2,
+      importedCookies: 1,
+      skippedCookies: 1,
+      partitionSkippedCookies: 1
+    })
+    expect(setPendingCookieImportMock).not.toHaveBeenCalled()
+  })
+
   // Why: without this, "disable staging on a skip" could be implemented as "disable staging
   // always" and no test would notice — a real regression to the restart path wearing the disguise
   // of a safety fix.
