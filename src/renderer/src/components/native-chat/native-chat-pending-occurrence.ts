@@ -110,7 +110,13 @@ export type NativeChatUserTextRow = { text: string; imageCount: number }
 
 function nativeChatUserTextRow(message: NativeChatMessage): NativeChatUserTextRow | null {
   const text = nativeChatUserMessageMatchText(message)
-  return text ? { text, imageCount: nativeChatUserMessageImageEvidenceCount(message) } : null
+  // Why: image-ref blocks only, NOT `nativeChatUserMessageImageEvidenceCount` —
+  // that counts literal `[Image #n]` text as evidence, which is right for content
+  // keys but would let a row showing no photo retire a send that carried one,
+  // erasing the user's preview before it lands. Under-counting only costs a
+  // duplicate bubble; over-counting loses the photo.
+  const imageCount = message.blocks.filter(isImageRefBlock).length
+  return text ? { text, imageCount } : null
 }
 
 /** User rows that already have a later non-user turn (ready to prune echoes). */

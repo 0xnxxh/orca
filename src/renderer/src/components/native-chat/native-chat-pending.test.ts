@@ -308,6 +308,18 @@ describe('glued rapid sends', () => {
     )
   })
 
+  // Why: the row's budget counts image blocks, never `[Image #n]` text. Marker
+  // text is image *evidence* for content keys, but a row showing no photo must
+  // not retire a send that carried one — that erases the preview before it lands.
+  it('does not let literal marker text inflate a text-only row image budget', () => {
+    const pending = [
+      { ...gluePending('p1', 'a'), imagePaths: ['/tmp/photo.png'] },
+      gluePending('p2', 'b [Image #1]')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('a b [Image #1]'))).toEqual(pending)
+  })
+
   it('retires three prompts collapsed into one row with mixed boundaries', () => {
     const pending = [
       gluePending('p1', 'first'),
