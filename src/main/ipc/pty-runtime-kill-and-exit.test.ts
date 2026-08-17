@@ -120,7 +120,11 @@ describe('registerPtyHandlers', () => {
     expect(sshAList).toHaveBeenCalledOnce()
     expect(sshBList).not.toHaveBeenCalled()
 
-    await expect(controller.listProcesses()).rejects.toThrow('ssh-b unavailable')
+    await expect(controller.listProcesses()).resolves.toEqual([
+      { id: 'local-pty', title: 'Local', cwd: '/local' },
+      { id: 'ssh-a-pty' }
+    ])
+    expect(sshBList).toHaveBeenCalledOnce()
   })
   it('returns unavailable runtime confirmation for unsupported or missing providers', async () => {
     registerSshPtyProvider('ssh-1', {} as never)
