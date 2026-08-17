@@ -43,6 +43,7 @@ export function subscribeSshPtyNotifications(args: {
   recordExit: (relayPtyId: string, incarnationId: unknown, publish?: () => void) => boolean | void
   providerGeneration: number
   resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
+  resolvePtyExitIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
   peekPtyIncarnation: (relayPtyId: string) => string | undefined
 }): SshPtyNotificationSubscription {
   const toDataPayload = (
@@ -162,7 +163,7 @@ export function subscribeSshPtyNotifications(args: {
     if (method === 'pty.exit') {
       const publish = (): void => {
         const id = args.toAppPtyId(relayPtyId)
-        const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
+        const ptyIncarnation = args.resolvePtyExitIncarnation(relayPtyId, params.incarnationId)
         for (const listener of args.exitListeners) {
           listener({
             id,

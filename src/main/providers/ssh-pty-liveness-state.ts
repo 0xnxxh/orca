@@ -24,7 +24,6 @@ export class SshPtyLivenessState {
   acceptUnverifiable(id: string): void {
     const appPtyId = this.toAppPtyId(id)
     this.livePtyIds.delete(appPtyId)
-    this.exitedPtyIds.delete(appPtyId)
   }
 
   acceptExited(id: string): void {

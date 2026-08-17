@@ -1854,7 +1854,10 @@ export class SshRelaySession {
       ...(source ? { source } : {})
     }).then((receipt) => {
       const provider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
-      if (provider?.providerGeneration === payload.providerGeneration) {
+      if (
+        provider?.providerGeneration === payload.providerGeneration &&
+        !this.pendingPtyReattaches.has(payload.id)
+      ) {
         provider.acceptLivePty(payload.id)
       }
       return receipt
@@ -2523,6 +2526,7 @@ export class SshRelaySession {
         await this.acceptPtyExit(exitAfterActivation.exit)
         return
       }
+      ptyProvider.acceptLivePty?.(appPtyId)
       attachedLeaseIds.add(ptyId)
       recoveryActivationLease?.commit()
       recoveryActivationLease = undefined

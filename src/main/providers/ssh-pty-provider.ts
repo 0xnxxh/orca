@@ -191,7 +191,6 @@ export class SshPtyProvider implements IPtyProvider {
       rememberPtyIncarnation: (ptyId, incarnationId) =>
         this.outputState.acceptPtyIncarnation(ptyId, incarnationId)
     })
-    this.acceptLivePty(id)
     return result
   }
 

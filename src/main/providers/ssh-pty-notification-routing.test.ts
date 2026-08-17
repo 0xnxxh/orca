@@ -29,6 +29,7 @@ function createSubscription() {
     recordExit,
     providerGeneration: 7,
     resolvePtyIncarnation,
+    resolvePtyExitIncarnation: resolvePtyIncarnation,
     peekPtyIncarnation: () => undefined
   })
 

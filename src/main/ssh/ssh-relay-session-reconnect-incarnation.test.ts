@@ -9,23 +9,26 @@ type MockMuxInstance = {
   requestHandlers: Map<string, (params: Record<string, unknown>) => Promise<unknown>>
 }
 
-const { acceptOutputExitMock, muxRequestMock, openConsumerSessionMock, muxInstancesRaw } =
-  vi.hoisted(() => ({
-    acceptOutputExitMock: vi.fn().mockResolvedValue(undefined),
-    muxRequestMock: vi.fn(),
-    openConsumerSessionMock: vi.fn(
-      async (
-        _mux: unknown,
-        options: { clientInstanceId: string; outputFlowControl?: unknown }
-      ) => ({
-        clientInstanceId: options.clientInstanceId,
-        clientGeneration: 1,
-        ownerGeneration: 1,
-        ownerLease: 'test-owner-lease'
-      })
-    ),
-    muxInstancesRaw: [] as unknown[]
-  }))
+const {
+  acceptOutputDataMock,
+  acceptOutputExitMock,
+  muxRequestMock,
+  openConsumerSessionMock,
+  muxInstancesRaw
+} = vi.hoisted(() => ({
+  acceptOutputDataMock: vi.fn().mockResolvedValue(undefined),
+  acceptOutputExitMock: vi.fn().mockResolvedValue(undefined),
+  muxRequestMock: vi.fn(),
+  openConsumerSessionMock: vi.fn(
+    async (_mux: unknown, options: { clientInstanceId: string; outputFlowControl?: unknown }) => ({
+      clientInstanceId: options.clientInstanceId,
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'test-owner-lease'
+    })
+  ),
+  muxInstancesRaw: [] as unknown[]
+}))
 const muxInstances = muxInstancesRaw as MockMuxInstance[]
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
@@ -33,7 +36,7 @@ vi.mock('./ssh-pty-consumer-session', () => ({
   openSshPtyConsumerSession: openConsumerSessionMock
 }))
 vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
-  acceptSshPtyOutputData: vi.fn().mockResolvedValue(undefined),
+  acceptSshPtyOutputData: acceptOutputDataMock,
   acceptSshPtyOutputExit: acceptOutputExitMock,
   allocateSshPtyProviderGeneration: vi.fn(() => 17),
   beginSshPtyOutputGenerationMigration: vi.fn(() => ({
@@ -89,6 +92,7 @@ vi.mock('../providers/ssh-pty-provider', () => ({
     onExit = vi.fn().mockReturnValue(() => {})
     attach = vi.fn().mockResolvedValue(undefined)
     attachForReconnect = vi.fn().mockResolvedValue({})
+    acceptLivePty = vi.fn()
     acceptUnverifiablePty = vi.fn()
     acceptExitedPty = vi.fn()
     dispose = vi.fn()
@@ -166,6 +170,28 @@ function emitExitDuringAttach(payload: {
       providerGeneration: 17,
       ptyIncarnation: payload.incarnationId ?? `legacy:${payload.id}`,
       ...payload
+    })
+  )
+}
+
+function emitDataDuringAttach(payload: { id: string; data: string; incarnationId: string }): void {
+  const registeredProvider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
+    onData: ReturnType<typeof vi.fn>
+  }
+  const dataHandler = registeredProvider.onData.mock.calls[0]?.[0] as
+    | ((data: {
+        id: string
+        data: string
+        providerGeneration: number
+        ptyIncarnation: string
+      }) => void)
+    | undefined
+  queueMicrotask(() =>
+    dataHandler?.({
+      id: payload.id,
+      data: payload.data,
+      providerGeneration: 17,
+      ptyIncarnation: payload.incarnationId
     })
   )
 }
@@ -446,8 +472,10 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
   it('restores and persists exact incarnation proof from reconnect attach', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const incarnationId = 'incarnation-reconnect'
+    const acceptLivePty = vi.fn()
     vi.mocked(getSshPtyProvider).mockReturnValue({
       attachForReconnect: vi.fn().mockResolvedValue({ incarnationId }),
+      acceptLivePty,
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
     vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
@@ -471,6 +499,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       incarnationId
     })
     expect(runtime.onPtySpawned).not.toHaveBeenCalled()
+    expect(acceptLivePty).toHaveBeenCalledExactlyOnceWith(APP_PTY_ID)
     expect(mockStore.persistPtyBinding).toHaveBeenCalledWith({
       worktreeId: 'worktree-1',
       tabId: 'tab-1',
@@ -481,6 +510,35 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     expect(vi.mocked(mockStore.persistPtyBinding).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(mockStore.markSshRemotePtyLeasesAttachedAsync).mock.invocationCallOrder[0]!
     )
+  })
+
+  it('promotes reconnect liveness only after pending output clears its exit fence', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const incarnationId = 'incarnation-reconnect'
+    const acceptLivePty = vi.fn()
+    let liveCallsDuringAttach = -1
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      providerGeneration: 17,
+      attachForReconnect: vi.fn().mockImplementation(async () => {
+        emitDataDuringAttach({ id: APP_PTY_ID, data: 'during-attach', incarnationId })
+        await Promise.resolve()
+        await Promise.resolve()
+        liveCallsDuringAttach = acceptLivePty.mock.calls.length
+        return { incarnationId }
+      }),
+      acceptLivePty,
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
+      typeof mockStore.getSshRemotePtyLeases
+    >)
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+
+    await session.establish(mockConn)
+
+    expect(acceptOutputDataMock).toHaveBeenCalledOnce()
+    expect(liveCallsDuringAttach).toBe(0)
+    expect(acceptLivePty).toHaveBeenCalledExactlyOnceWith(APP_PTY_ID)
   })
 
   it('does not restore a PTY whose matching exit shares the attach reply batch', async () => {

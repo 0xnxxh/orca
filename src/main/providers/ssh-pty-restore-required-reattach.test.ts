@@ -116,6 +116,32 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(provider.probePtyLiveness(id)).resolves.toBe(false)
   })
 
+  it('keeps exact exited evidence after a later ambiguous exit', async () => {
+    const id = 'ssh:conn-1@@pty-exited'
+    const provider = new SshPtyProvider('conn-1', createMockMux() as never)
+    provider.acceptExitedPty(id)
+
+    provider.acceptUnverifiablePty(id)
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBe(false)
+  })
+
+  it('does not retain a synthetic incarnation from a legacy exit', () => {
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    const exitIncarnations: string[] = []
+    const dataIncarnations: string[] = []
+    provider.onExit((payload) => exitIncarnations.push(payload.ptyIncarnation))
+    provider.onData((payload) => dataIncarnations.push(payload.ptyIncarnation))
+
+    notificationHandler(mux)('pty.exit', { id: 'pty-legacy', code: 0 })
+    notificationHandler(mux)('pty.data', { id: 'pty-legacy', data: 'still-live' })
+
+    expect(exitIncarnations).toHaveLength(1)
+    expect(dataIncarnations).toHaveLength(1)
+    expect(dataIncarnations[0]).not.toBe(exitIncarnations[0])
+  })
+
   it('bounds exited PTY evidence and evicts to unverifiable', async () => {
     const provider = new SshPtyProvider('conn-1', createMockMux() as never)
     for (let index = 0; index <= MAX_SSH_PTY_EXIT_TOMBSTONES; index += 1) {
@@ -126,6 +152,19 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(
       provider.probePtyLiveness(`ssh:conn-1@@pty-${MAX_SSH_PTY_EXIT_TOMBSTONES}`)
     ).resolves.toBe(false)
+  })
+
+  it('keeps reconnect liveness unverifiable until relay activation', async () => {
+    const id = 'ssh:conn-1@@pty-reconnecting'
+    const mux = createMockMux()
+    mux.request.mockResolvedValue({ incarnationId: 'incarnation-reconnect' })
+    const provider = new SshPtyProvider('conn-1', mux as never)
+
+    await provider.attachForReconnect(id)
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBeNull()
+    provider.acceptLivePty(id)
+    await expect(provider.probePtyLiveness(id)).resolves.toBe(true)
   })
 
   it('re-attaches over the live PTY instead of reporting exited', async () => {

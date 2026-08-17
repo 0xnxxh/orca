@@ -44,6 +44,8 @@ export class SshPtyProviderOutputState {
       providerGeneration,
       resolvePtyIncarnation: (relayPtyId, incarnationId) =>
         this.resolvePtyIncarnation(relayPtyId, incarnationId),
+      resolvePtyExitIncarnation: (relayPtyId, incarnationId) =>
+        this.resolvePtyExitIncarnation(relayPtyId, incarnationId),
       peekPtyIncarnation: (relayPtyId) => this.incarnationByRelayPtyId.get(relayPtyId),
       recordExit: args.recordExit
     })
@@ -147,6 +149,16 @@ export class SshPtyProviderOutputState {
       this.incarnationByRelayPtyId.set(relayPtyId, resolved)
     }
     return resolved
+  }
+
+  private resolvePtyExitIncarnation(relayPtyId: string, incarnationId: unknown): string {
+    if (typeof incarnationId === 'string' && incarnationId.length > 0) {
+      return this.resolvePtyIncarnation(relayPtyId, incarnationId)
+    }
+    return (
+      this.incarnationByRelayPtyId.get(relayPtyId) ??
+      `legacy:${this.providerGeneration}:${this.legacyIncarnationSerial++}:${relayPtyId}`
+    )
   }
 
   private resumePausedDeliveries(): void {

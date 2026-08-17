@@ -23,6 +23,7 @@ it('routes malformed and unadmitted source frames only to rejection diagnostics'
     recordExit: vi.fn(),
     providerGeneration: 7,
     resolvePtyIncarnation: (id) => `incarnation:${id}`,
+    resolvePtyExitIncarnation: (id) => `incarnation:${id}`,
     peekPtyIncarnation: () => undefined
   })
   const handler = mux.onNotification.mock.calls[0]?.[0] as (
@@ -103,6 +104,7 @@ it('never resolves an incarnation for a rejected frame', async () => {
     recordExit: vi.fn(),
     providerGeneration: 7,
     resolvePtyIncarnation,
+    resolvePtyExitIncarnation: resolvePtyIncarnation,
     peekPtyIncarnation: () => undefined
   })
   const handler = mux.onNotification.mock.calls[0]?.[0] as (
@@ -140,6 +142,7 @@ it('coalesces repeated exact rejections into one fresh-activation recovery', asy
     recordExit: vi.fn(),
     providerGeneration: 7,
     resolvePtyIncarnation: (id) => `incarnation:${id}`,
+    resolvePtyExitIncarnation: (id) => `incarnation:${id}`,
     peekPtyIncarnation: () => 'incarnation-1'
   })
   subscription
