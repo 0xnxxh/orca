@@ -24,10 +24,13 @@ import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pendin
  * the host while the send time comes from the phone. Counting it as history puts
  * the ordinal one past anything the transcript can supply.
  *
- * Which is why a CAPTIONED image echo is left alone entirely: it binds its
- * preview by an ordinal counted over the whole transcript, so its tail and its
- * ordinal have to describe the same read. Supplying one without the other leaves
- * it matching nothing, forever. Everything else matches relative to its tail.
+ * And only a TEXT-bearing send is given one. The glue matcher is the sole
+ * consumer that a supplied tail helps; every other one is harmed by it. An image
+ * echo reconciles by counting turns AFTER its tail, so a tail taken from a read
+ * that already carries its echo excludes that echo and the bubble can never
+ * retire — image entries have no other retirement path. A captioned one is worse
+ * still: it binds by an ordinal counted over the whole transcript, so a tail
+ * without a matching recount leaves it claiming nothing at all.
  */
 export function rebaseMobileNativeChatPendingBaselines(
   messages: readonly NativeChatMessage[],
@@ -41,9 +44,9 @@ export function rebaseMobileNativeChatPendingBaselines(
     if (item.baselineResolved) {
       return item
     }
-    const bindsByAbsoluteOrdinal =
-      Boolean(item.images?.length) && normalizeReconcileText(item.text) !== ''
-    return item.baselineTailMessageId !== null || bindsByAbsoluteOrdinal
+    const reconcilesAgainstItsOwnTail =
+      Boolean(item.images?.length) || normalizeReconcileText(item.text) === ''
+    return item.baselineTailMessageId !== null || reconcilesAgainstItsOwnTail
       ? { ...item, baselineResolved: true }
       : { ...item, baselineResolved: true, baselineTailMessageId }
   })

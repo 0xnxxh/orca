@@ -141,15 +141,24 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
     expect(rebased[0]?.baselineResolved).toBe(true)
   })
 
-  // A null tail counts from the top of the transcript, so an image turn already
-  // in this read would claim the send and take the user's fresh photo with it.
-  it('pins a caption-less image echo that captured no tail at all', () => {
+  // A supplied tail would sit at or after this send's own echo, and an image
+  // echo counts turns AFTER its tail — so it would exclude the very row it is
+  // waiting for, and image entries have no other retirement path.
+  it('never supplies a tail to a caption-less image echo either', () => {
     const rebased = rebaseMobileNativeChatPendingBaselines(history, [
       { ...unresolved('p1', ''), images: ['file:///a.png'] },
       { ...unresolved('p2', '', 2), images: ['file:///b.png'] }
     ])
-    expect(rebased.map((item) => item.baselineTailMessageId)).toEqual(['m2', 'm2'])
+    expect(rebased.map((item) => item.baselineTailMessageId)).toEqual([null, null])
     expect(rebased.map((item) => item.expectedOccurrence)).toEqual([1, 2])
     expect(rebased.every((item) => item.baselineResolved)).toBe(true)
+  })
+
+  // Same rule for a text-empty entry with no images: it reconciles by counting
+  // image-source turns after its tail, so a supplied tail strands it too.
+  it('never supplies a tail to a text-empty entry', () => {
+    const rebased = rebaseMobileNativeChatPendingBaselines(history, [unresolved('p1', '   ')])
+    expect(rebased[0]?.baselineTailMessageId).toBe(null)
+    expect(rebased[0]?.baselineResolved).toBe(true)
   })
 })

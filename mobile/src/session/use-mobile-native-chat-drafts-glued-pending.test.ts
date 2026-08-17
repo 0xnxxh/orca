@@ -292,6 +292,24 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
     // A send held here would sit as a live segment at the head of its run, so
     // the cursor could never reach a later pair — the stuck bubble would take
     // the whole feature down with it for the rest of the session.
+    // An image entry retires ONLY by binding its preview, so a supplied tail
+    // that excluded its own echo would leave the bubble — and the photo — stuck
+    // for the life of the session.
+    it('retires a photo whose image echo arrives with the read', async () => {
+      await mount([], true)
+      act(() => {
+        const origin = state?.captureSendOrigin('')
+        if (origin) {
+          state?.acceptSend(origin, '', ['file:///new.png'])
+        }
+      })
+
+      const withEcho = [assistantTurn('m1', 'ready', 1000), imageTurn('m2', '/tmp/new.png', 5000)]
+      await update(withEcho)
+      expect(state?.pending).toEqual([])
+      expect(state?.imagePreviewsByMessageId).toEqual({ m2: ['file:///new.png'] })
+    })
+
     it('leaves a later pair able to glue after the late read resolved the first send', async () => {
       await mount([], true)
       act(() => send('run the tests'))
@@ -323,23 +341,6 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
       await update(olderIdentical)
       expect(pendingTexts()).toEqual(['fix the', 'bug'])
       expect(renderedPendingTexts(olderIdentical, state)).toEqual(['fix the', 'bug'])
-    })
-
-    // The preview pass runs before the rebase, so an entry with no boundary
-    // would bind the user's fresh photo to whatever image turn the read carries.
-    it('does not bind a photo sent before the read to an image turn already in it', async () => {
-      await mount([], false, false)
-      act(() => {
-        const origin = state?.captureSendOrigin('')
-        if (origin) {
-          state?.acceptSend(origin, '', ['file:///new.png'])
-        }
-      })
-
-      const olderImage = [imageTurn('m1', '/old/photo.png', 1000)]
-      await update(olderImage)
-      expect(state?.imagePreviewsByMessageId).toEqual({})
-      expect(state?.pending.map((item) => item.images)).toEqual([['file:///new.png']])
     })
 
     it('still retires them once their own glued row lands', async () => {
