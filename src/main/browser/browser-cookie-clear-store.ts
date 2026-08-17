@@ -7,6 +7,7 @@ import type {
   CookieClearStore,
   CookieImportWriteStore
 } from './browser-cookie-import-clear'
+import { restoreEveryCookieIdentity } from './browser-cookie-identity-restore'
 
 type CdpCookiePartitionKey = {
   topLevelSite?: string
@@ -68,9 +69,12 @@ function partitionKeyFromCdp(
   if (!topLevelSite) {
     return undefined
   }
+  if (typeof partitionKey.hasCrossSiteAncestor !== 'boolean') {
+    throw new Error('Could not snapshot cookie identity for an atomic clear')
+  }
   return {
     topLevelSite,
-    hasCrossSiteAncestor: partitionKey.hasCrossSiteAncestor === true
+    hasCrossSiteAncestor: partitionKey.hasCrossSiteAncestor
   }
 }
 
@@ -263,15 +267,6 @@ async function writeIdentityWithCdp(
   }
 }
 
-async function restoreClearIdentitiesWithCdp(
-  cookieDebugger: CookieClearDebugger,
-  identities: readonly CookieClearIdentity[]
-): Promise<void> {
-  for (const identity of identities) {
-    await writeIdentityWithCdp(cookieDebugger, identity, 'restore')
-  }
-}
-
 export function openCookieClearStore(
   targetSession: Session
 ): CookieClearStore & CookieImportWriteStore & { dispose: () => void } {
@@ -310,8 +305,12 @@ export function openCookieClearStore(
     remove: (url, name) => targetSession.cookies.remove(url, name),
     snapshotClearIdentities: async (cookies) =>
       snapshotClearIdentitiesFromCdp((await attach()).debugger, cookies),
-    restoreClearIdentities: async (identities) =>
-      restoreClearIdentitiesWithCdp((await attach()).debugger, identities),
+    restoreClearIdentities: async (identities) => {
+      const cookieDebugger = (await attach()).debugger
+      await restoreEveryCookieIdentity(identities, (identity) =>
+        writeIdentityWithCdp(cookieDebugger, identity, 'restore')
+      )
+    },
     writeCookieIdentity: async (identity) =>
       writeIdentityWithCdp((await attach()).debugger, identity, 'import'),
     dispose: () => {

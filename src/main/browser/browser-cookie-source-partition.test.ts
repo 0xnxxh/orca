@@ -75,6 +75,15 @@ describe('readChromiumRowPartition', () => {
     ).toBe('unreadable')
   })
 
+  it.each([2n, -1n, 2, -1, 0.5])('refuses an out-of-range ancestor flag (%s)', (flag) => {
+    expect(
+      readChromiumRowPartition(
+        { top_frame_site_key: 'https://top.example', has_cross_site_ancestor: flag },
+        MODERN_COLUMNS
+      ).status
+    ).toBe('unreadable')
+  })
+
   it('refuses a partition site column that is not text', () => {
     expect(
       readChromiumRowPartition(

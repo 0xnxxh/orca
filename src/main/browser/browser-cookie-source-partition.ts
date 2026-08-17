@@ -18,10 +18,10 @@ function readSqliteFlag(raw: unknown): boolean | null {
     return raw
   }
   if (typeof raw === 'bigint') {
-    return raw !== 0n
+    return raw === 0n ? false : raw === 1n ? true : null
   }
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    return raw !== 0
+  if (typeof raw === 'number') {
+    return raw === 0 ? false : raw === 1 ? true : null
   }
   return null
 }

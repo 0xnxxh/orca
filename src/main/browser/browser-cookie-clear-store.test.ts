@@ -55,6 +55,23 @@ describe('cookie clear CDP identities', () => {
     ).toThrow(/Could not snapshot cookie identity/)
   })
 
+  it('fails closed when a partitioned CDP identity omits its ancestor bit', () => {
+    expect(() =>
+      cookieClearIdentitiesFromCdp(
+        [{ cookie: chipsCookie, url: 'https://app.acme-chips.test/' }],
+        [
+          {
+            name: 'chips-auth',
+            value: 'keep-me',
+            domain: 'app.acme-chips.test',
+            path: '/',
+            partitionKey: { topLevelSite: 'https://top.example' }
+          }
+        ]
+      )
+    ).toThrow(/Could not snapshot cookie identity/)
+  })
+
   it('keeps host-only and domain cookies with the same coordinates distinct', () => {
     const cookies: Cookie[] = [
       { ...chipsCookie, domain: 'example.com', hostOnly: true, name: 'twin', value: 'host' },
