@@ -783,7 +783,14 @@
             "toast": {
               "restartFallbackUnavailableNone": "None of the {{value0}} cookies could be loaded, and the restart fallback was unavailable. The previous cookies for this profile were replaced. Try the import again.",
               "restartFallbackUnavailablePartial": "Imported {{value0}} of {{value1}} cookies. The rest could not be loaded, and the restart fallback was unavailable. Try the import again.",
-              "googleCookiesSkipped": "Google cookies were not imported. Open a browser in Orca on {{value0}} with this profile, then sign into Google."
+              "googleCookiesSkipped": "Google cookies were not imported. Open a browser in Orca on {{value0}} with this profile, then sign into Google.",
+              "undecryptableAppBound": "Orca cannot decrypt {{value0}} of this browser's cookies because they use app-bound encryption. You can import cookies from a file using “From File…”.",
+              "undecryptableAppBoundMixed": "Orca cannot decrypt {{value0}} of this browser's cookies because they use app-bound encryption; {{value1}} more could not be decrypted for another reason. You can import cookies from a file using “From File…”.",
+              "undecryptableKeyring": "{{value0}} cookies could not be decrypted because the system keyring was unavailable. Unlock your login keyring (or install a Secret Service provider such as gnome-keyring) and import again.",
+              "undecryptableKeyringMixed": "{{value0}} cookies could not be decrypted because the system keyring was unavailable; {{value1}} more could not be decrypted for another reason. Unlock your login keyring (or install a Secret Service provider such as gnome-keyring) and import again.",
+              "undecryptableUnknown": "{{value0}} cookies could not be decrypted and were skipped. Close the source browser completely and try the import again.",
+              "unrecognizedWarning": "The cookie import finished with a warning this version of Orca does not recognize. Update Orca to see the details, then check this profile before relying on its cookies.",
+              "undecryptableUnrecognizedReason": "{{value0}} cookies could not be decrypted and were skipped for a reason this version of Orca does not recognize. Update Orca to see the details, then try the import again."
             }
           }
         }
@@ -1035,7 +1042,7 @@
         "e52bed9264": "No checks reported yet",
         "90020cc1f3": "This pull request has no reported checks yet.",
         "ecffebc251": "No checks found",
-        "5dddefdf58": "Open in GitHub",
+        "checkOpenInBrowser": "Open in browser",
         "744197c84d": "No inline output is available for this check.",
         "08d072664d": "Jobs",
         "96d8f36798": "Annotations",
@@ -1183,7 +1190,15 @@
         "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
         "e15a8b77ef": "No inline details are available for this check.",
         "e45324fbed": "Failed to load check details.",
-        "dcb3c546fe": "Retry"
+        "dcb3c546fe": "Retry",
+        "85a2b66f54": "Open files on GitHub",
+        "86d84a17ca": "Add a review comment",
+        "d9fa90b625": "Failed to load diff.",
+        "4aecf121e7": "Close",
+        "8812225174": "Reopen",
+        "09d67a0f9b": "Failed to close pull request",
+        "88809e79db": "Failed to reopen pull request",
+        "00f55cc17b": "Repository access is unavailable for this pull request."
       },
       "GitLabItemDialog": {
         "65e784c1f1": "Reopen",
@@ -1491,6 +1506,9 @@
         "connectTimedOut": "Connection timed out. It may still be connecting in the background.",
         "connectingHost": "Connecting…",
         "connectHost": "Connect",
+        "setLocation": "Set project location",
+        "setLocationOnHost": "Set project location on {{host}}",
+        "setLocationTooltip": "Choose a folder or clone this project onto {{host}}.",
         "addHost": "Add host",
         "addHostHint": "Register another machine or Orca server",
         "addSshHost": "Add SSH host",
@@ -1578,7 +1596,6 @@
         "c57873d721": "Pull request merged",
         "a63b3c159c": "This will update the pull request on GitHub.",
         "eec3706a6a": "{{value0}} PR #{{value1}}?",
-        "b8c6cbb8c4": "Failed to {{value0}} PR",
         "710e47aa06": "Pull request reopened",
         "7aa3b5f706": "Pull request closed",
         "3d77438c92": "This will reopen the pull request on GitHub.",
@@ -1676,7 +1693,13 @@
         "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
         "6b1d5ee3e4": "No inline details are available for this check.",
         "e04c027d98": "Failed to load check details.",
-        "5df7c41d2a": "Retry"
+        "5df7c41d2a": "Retry",
+        "77482513f8": "Close",
+        "2f5195c6a0": "Reopen",
+        "4b8ae7303f": "Failed to load diff.",
+        "closePullRequestFailed": "Failed to close pull request",
+        "reopenPullRequestFailed": "Failed to reopen pull request",
+        "diffLoadTimedOut": "Timed out loading this diff."
       },
       "QuickOpen": {
         "1dbd3f59ff": "Move",
@@ -12943,6 +12966,15 @@
       },
       "new": {
         "workspace": {
+          "SetProjectLocationDialog": {
+            "title": "Set project location",
+            "description": "Choose where {{project}} lives on {{host}}.",
+            "browseFolder": "Browse folder",
+            "browseFolderHelp": "Use an existing checkout or folder on this host.",
+            "cloneFromUrl": "Clone from URL",
+            "cloneFromUrlHelp": "Clone this repository onto {{host}}.",
+            "saveLocation": "Set location"
+          },
           "SmartWorkspaceNameField": {
             "2a0d535f69": "Create new branch",
             "a44229ce4d": "as workspace name",
@@ -14872,6 +14904,15 @@
                 "5bf47a3c91": "May improve Google sign-in, but can reduce compatibility with bot-protected sites."
               }
             }
+          }
+        },
+        "webauthn": {
+          "account": {
+            "fallback": "Passkey",
+            "title": "Choose a passkey",
+            "description": "Choose the account to use with this security key.",
+            "site": "Site",
+            "cancel": "Cancel"
           }
         }
       },

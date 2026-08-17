@@ -17,6 +17,7 @@ import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bund
 import { MobileEndpointNudgeRouter } from './mobile-endpoint-nudge-router'
 import { MobileRelayDirectGraceTimer } from './mobile-relay-direct-grace-timer'
 import { MobileRelaySessionEstablisher } from './mobile-relay-session-establisher'
+import * as recoveryPresentation from './mobile-relay-recovery-presentation'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 import type { ForegroundNudgeReason, HostProfile } from './types'
 
@@ -146,7 +147,6 @@ export class MobileEndpointSupervisor {
     }
     this.unsubscribeState = this.logical.onStateChange((state) => {
       if (state === 'connected') {
-        this.logical.setRecoveryPath(null)
         this.directGrace.clear()
         if (this.logical.getActivePath() !== 'relay') {
           void this.rotateCredentialIfNeeded(this.relayReconnect.resetForDirectConnection())
@@ -155,16 +155,13 @@ export class MobileEndpointSupervisor {
       } else {
         // Why: the direct client enters reconnecting after its first failed
         // dial and may never publish disconnected while its retry loop lives.
-        if (this.relayReconnect.needsRecovery(state)) {
-          this.logical.setRecoveryPath('relay')
-        }
+        recoveryPresentation.onActiveFailure(this.logical, this.relayReconnect, state, this.bundle)
         this.relayReconnect.handleStateFailure(this.logical, state)
       }
     })
     if (this.relayReconnect.needsRecovery(this.logical.getState())) {
       // Why: the first direct dial can fail while encrypted relay credentials
       // are still loading, before the supervisor subscribes to state changes.
-      this.logical.setRecoveryPath('relay')
       await this.recoverRelay()
     } else {
       this.directProbe.schedule()
@@ -176,9 +173,6 @@ export class MobileEndpointSupervisor {
     const wasForeground = this.foreground
     this.foreground = foreground
     if (foreground) {
-      if (this.relayReconnect.needsRecovery(this.logical.getState())) {
-        this.logical.setRecoveryPath('relay')
-      }
       this.relayReconnect.handleForeground(this.logical, wasForeground)
       this.directProbe.schedule(0)
       this.directGrace.arm()
@@ -193,13 +187,12 @@ export class MobileEndpointSupervisor {
     }
   }
 
-  nudge(reason: ForegroundNudgeReason): void {
-    this.nudgeRouter.nudge(reason)
-  }
+  nudge = (reason: ForegroundNudgeReason): void => this.nudgeRouter.nudge(reason)
 
   stop(): void {
     this.stopped = true
     this.unsubscribeState?.()
+    this.unsubscribeState = null
     this.directProbe.clear()
     this.relayReconnect.clear()
     this.leaseRotation.clear()
@@ -244,7 +237,6 @@ export class MobileEndpointSupervisor {
       return
     }
     this.operationInFlight = true
-    let lastError: Error | null = null
     let retryAfterOperation = false
     try {
       const selection = await selectDialableRelayCredentials({
@@ -255,6 +247,7 @@ export class MobileEndpointSupervisor {
       })
       this.bundle = selection.bundle
       if (selection.credentials.length === 0) {
+        this.logical.setRecoveryPath(null)
         // Why: "expired" vs "missing" separates a sleep-past-expiry phone
         // (needs re-pair or LAN) from a Keychain failure in field reports.
         this.logRelay(
@@ -270,6 +263,12 @@ export class MobileEndpointSupervisor {
         }
         return
       }
+      const recoveryNeeded =
+        forceReplacement || this.relayReconnect.needsRecovery(this.logical.getState())
+      if (this.stopped || !this.foreground || !recoveryNeeded) {
+        return
+      }
+      this.logical.setRecoveryPath('relay')
       const dialed = await this.sessionEstablisher.dialEligible(selection.credentials)
       if (dialed.outcome === 'established') {
         // Why: a fresh socket satisfies any replacement intent queued mid-dial.
@@ -278,15 +277,16 @@ export class MobileEndpointSupervisor {
         return
       }
       if (dialed.outcome === 'aborted') {
+        this.logical.setRecoveryPath(null)
         // Why: direct won the race or the supervisor went inactive — not a
         // failure; booking backoff would delay the next genuine recovery.
         return
       }
-      lastError = dialed.error
       // Why: cleanup may happen while a relay dial is awaiting the network;
       // record its outcome without recreating a foreground retry timer.
       const scheduleRetry = (!forceReplacement || ownsRecovery) && this.foreground && !this.stopped
-      this.relayReconnect.registerFailure(lastError, scheduleRetry)
+      this.relayReconnect.registerFailure(dialed.error, scheduleRetry)
+      recoveryPresentation.clearIfCredentialBlocked(this.logical, this.relayReconnect)
       if (ownsRecovery) {
         suspendRelayIfStillConnected(this.relayReconnect, this.logical)
       }
