@@ -26,7 +26,7 @@ vi.mock('./github-api-repository', async (importOriginal) =>
   )
 )
 
-import { getPRForBranch } from './client'
+import { getPRForBranch, getPRForBranchOutcome } from './client'
 import { resetPRForBranchMocks } from './client-test-harness'
 
 const { ghExecFileAsyncMock, getOwnerRepoMock, gitExecFileAsyncMock, getSshGitProviderMock } =
@@ -121,11 +121,10 @@ describe('getPRForBranch SSH execution boundary', () => {
     mockMergedBranchPRLookup()
     gitExecFileAsyncMock.mockResolvedValue({ stdout: `${MERGED_HEAD_OID}\n`, stderr: '' })
 
-    const pr = await getPRForBranch('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
+    const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
 
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
-    // Unknown HEAD keeps the merged implicit match hidden rather than attributing it from a local answer.
-    expect(pr).toBeNull()
+    expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
   })
 
   it('rev-parses HEAD through the SSH provider when it is registered', async () => {
@@ -169,12 +168,35 @@ describe('getPRForBranch SSH execution boundary', () => {
       stderr: ''
     })
 
-    const pr = await getPRForBranch('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
+    const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
 
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
-    // The failed probe yields no upstream, so the upstream-named PR is never claimed for this branch.
-    expect(pr).toBeNull()
+    expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports an upstream error when the SSH HEAD probe loses its provider mid-flight', async () => {
+    getSshGitProviderMock.mockReturnValue({
+      exec: vi.fn().mockRejectedValue(new Error('SSH transport closed'))
+    })
+    mockMergedBranchPRLookup()
+
+    const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
+
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+    expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
+  })
+
+  it('reports an upstream error when the SSH upstream probe loses its provider mid-flight', async () => {
+    getSshGitProviderMock.mockReturnValue({
+      exec: vi.fn().mockRejectedValue(new Error('SSH transport closed'))
+    })
+    mockUpstreamOnlyPRLookup()
+
+    const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
+
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+    expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
   })
 
   it('reads tracked upstreams through the SSH provider when it is registered', async () => {

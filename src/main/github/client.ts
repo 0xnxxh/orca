@@ -73,7 +73,10 @@ import {
   isCommitPartOfMergedPR,
   type MergedPRCommitMembership
 } from './merged-pr-commit-membership'
-import { getSshGitProvider } from '../providers/ssh-git-dispatch'
+import {
+  getSshGitProvider,
+  SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE
+} from '../providers/ssh-git-dispatch'
 import {
   hasHostedReviewLocalGitOptions,
   getHostedReviewLocalGitOptions,
@@ -2317,16 +2320,17 @@ async function getCurrentHeadOid(
 ): Promise<string | null> {
   const provider = connectionId ? getSshGitProvider(connectionId) : null
   if (connectionId && !provider) {
-    // Why: repoPath is remote — a dropped SSH provider must answer "unknown", never run client git against a same-named local path.
-    return null
+    throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+  }
+  if (provider) {
+    const result = await provider.exec(['rev-parse', 'HEAD'], repoPath)
+    return result.stdout.trim() || null
   }
   try {
-    const result = provider
-      ? await provider.exec(['rev-parse', 'HEAD'], repoPath)
-      : await gitExecFileAsync(['rev-parse', 'HEAD'], {
-          cwd: repoPath,
-          ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
-        })
+    const result = await gitExecFileAsync(['rev-parse', 'HEAD'], {
+      cwd: repoPath,
+      ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
+    })
     return result.stdout.trim() || null
   } catch {
     return null
@@ -2820,16 +2824,20 @@ async function probeTrackedUpstreamBranches(
   const args = ['for-each-ref', '--format=%(refname)%00%(upstream)', 'refs/heads']
   const provider = connectionId ? getSshGitProvider(connectionId) : null
   if (connectionId && !provider) {
-    // Why: repoPath is remote — a dropped SSH provider must fail the probe, never enumerate a same-named local repo's refs.
-    return { probeFailed: true, upstreamsByBranchName: new Map() }
+    throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+  }
+  if (provider) {
+    const result = await provider.exec(args, repoPath)
+    return {
+      probeFailed: false,
+      upstreamsByBranchName: parseTrackedUpstreamBranches(result.stdout)
+    }
   }
   try {
-    const result = provider
-      ? await provider.exec(args, repoPath)
-      : await gitExecFileAsync(args, {
-          cwd: repoPath,
-          ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
-        })
+    const result = await gitExecFileAsync(args, {
+      cwd: repoPath,
+      ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
+    })
     return {
       probeFailed: false,
       upstreamsByBranchName: parseTrackedUpstreamBranches(result.stdout)

@@ -131,10 +131,16 @@ export function gitRunnerModuleMock(mocks: GitHubClientMocks): GitRunnerModuleMo
   }
 }
 
-export type SshGitDispatchModuleMock = { getSshGitProvider: Mock }
+export type SshGitDispatchModuleMock = {
+  getSshGitProvider: Mock
+  SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE: string
+}
 
 export function sshGitDispatchModuleMock(mocks: GitHubClientMocks): SshGitDispatchModuleMock {
-  return { getSshGitProvider: mocks.getSshGitProviderMock }
+  return {
+    getSshGitProvider: mocks.getSshGitProviderMock,
+    SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE: 'Remote connection dropped.'
+  }
 }
 
 export type LocalGitConfigSignatureModuleMock = { readLocalGitConfigSignature: Mock }
