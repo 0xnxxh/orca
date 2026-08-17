@@ -34,6 +34,11 @@ ORCA status --json
 ORCA computer capabilities --json
 ```
 
+`capabilities` reports the capabilities declared by the provider by default. It does not
+touch the target app or reflect current permission grants; use `ORCA computer permissions
+--json` to inspect permissions and a real `ORCA computer get-app-state --app <app> --json`
+call to check the target app.
+
 ## Core Loop
 
 ```text
@@ -105,7 +110,13 @@ printf '%s' "$TEXT" | ORCA computer set-value --app <app> --element-index <index
 
 ## Screenshots
 
-`get-app-state` returns tree+screenshot. Use the tree for indexes/actions and the screenshot for visual confirmation; failed capture usually means hidden, minimized, off-screen, or permission-blocked.
+There is no `computer screenshot` subcommand, and none is needed: `get-app-state` and every
+action command capture a screenshot by default unless `--no-screenshot` is passed. `--json`
+is required to get a screenshot file on disk; its path is reported at
+`result.screenshot.path`. Pretty mode reports only the screenshot format and size, then
+keeps no image.
+
+Use the tree for indexes/actions and the screenshot for visual confirmation; failed capture usually means hidden, minimized, off-screen, or permission-blocked.
 
 Coordinates passed to `click`, `scroll`, and `drag` are window-local action coordinates. If the screenshot reports `scale` other than `1`, convert visual screenshot pixels before acting:
 
@@ -119,6 +130,11 @@ Prefer element indexes or element frames from the tree when available. Use raw s
 On Linux and Windows, screenshots may come from the visible desktop region for the target window bounds. If visual pixels matter, use `--restore-window` so another window does not cover the target region; if you cannot take focus, trust the tree over potentially occluded pixels.
 
 ## App Notes
+
+Custom-drawn UI: an app that paints its own widgets, as is common with non-native toolkits,
+may publish nothing to the macOS accessibility tree at any depth. A shallow tree is not
+proof that the screen is empty; fall back to the screenshot. This is an inherent macOS
+accessibility limitation, not an Orca bug.
 
 Browsers: for Edge, Chrome, Safari, and similar browser windows, set the address/search field directly, then press Return. Do not assume raw typing went to the address bar. Use `--restore-window` when the browser is not already frontmost. Large tab strips may show only the active tab plus an "inactive browser tabs omitted" marker; treat that as intentional noise reduction and operate on the current page/address bar unless the user asked to manage tabs.
 
