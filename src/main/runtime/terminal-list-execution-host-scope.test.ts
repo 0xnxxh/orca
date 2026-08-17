@@ -70,6 +70,16 @@ function makeSshFolderWorkspace() {
   }
 }
 
+function makeRuntimeFolderWorkspace() {
+  return {
+    ...makeSshFolderWorkspace(),
+    id: 'folder-runtime',
+    name: 'Runtime folder',
+    connectionId: null,
+    executionHostId: 'runtime:env-9' as const
+  }
+}
+
 type GraphLeaf = { worktreeId: string; leafId: string; ptyId: string }
 
 function makeRuntime(leaves: GraphLeaf[], store = makeStore()): OrcaRuntimeService {
@@ -287,6 +297,23 @@ describe('listTerminals scope declaration', () => {
 
     expect(result.hostScope?.hostIds).toEqual([])
     expect(result.hostScope?.omittedHostIds).toEqual(['local', 'ssh:box-2'])
+  })
+
+  it('does not claim local coverage for a paired-runtime folder workspace', async () => {
+    const baseStore = makeStore()
+    const folderWorkspace = makeRuntimeFolderWorkspace()
+    const runtime = makeRuntime([], {
+      ...baseStore,
+      getRepos: vi.fn(() => [REPOS[0]!]),
+      getRepo: vi.fn((id: string) => (id === REPOS[0]!.id ? REPOS[0] : undefined)),
+      getWorkspaceSessionHostIds: vi.fn(() => ['local']),
+      getFolderWorkspaces: vi.fn(() => [folderWorkspace])
+    })
+
+    const result = await runtime.listTerminals(`id:${folderWorkspaceKey(folderWorkspace.id)}`)
+
+    expect(result.hostScope?.hostIds).toEqual([])
+    expect(result.hostScope?.omittedHostIds).toEqual(['local', 'runtime:env-9'])
   })
 
   it('keeps a disconnected SSH host omitted when only local inventory answered', async () => {

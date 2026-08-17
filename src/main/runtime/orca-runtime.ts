@@ -16716,9 +16716,13 @@ export class OrcaRuntimeService {
       queriedHostIds,
       targetWorktreeId !== FLOATING_TERMINAL_WORKTREE_ID
     )
+    let resolvedTargetHostId: ExecutionHostId | null = null
     for (const worktree of worktrees) {
       if (worktree.hostId) {
         knownHostIds.add(worktree.hostId)
+        if (worktree.id === targetWorktreeId) {
+          resolvedTargetHostId = worktree.hostId
+        }
       }
     }
     for (const terminal of terminals) {
@@ -16727,7 +16731,7 @@ export class OrcaRuntimeService {
       }
     }
     const scopedHostId = targetWorktreeId
-      ? this.tryGetWorkspaceSessionHostIdForWorktree(targetWorktreeId)
+      ? (resolvedTargetHostId ?? this.tryGetWorkspaceSessionHostIdForWorktree(targetWorktreeId))
       : null
     const candidates = targetWorktreeId ? (scopedHostId ? [scopedHostId] : []) : knownHostIds
     // Paired runtimes own a separate control plane. Mirrored rows are evidence
