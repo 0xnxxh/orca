@@ -703,6 +703,27 @@ export class SshConnection {
   }
 
   // Why: callers claim the generation so their catch can tell their own failure from a superseded one.
+  /**
+   * A credential prompt, unless this attempt has already been superseded.
+   *
+   * Gated here rather than at each ladder rung because every rung ends in this one call, and the
+   * rungs below the first are exactly where the generation check was missing: a superseded attempt
+   * is denied by the verifier WITHOUT a recorded decision (deliberate — a dead attempt must not
+   * clobber the live one's outcome), so `isHostKeyVerificationError` reads false and the fallback
+   * runs on. The user then gets a passphrase dialog for a connection nobody is waiting on, possibly
+   * racing the live attempt's own. Returning undefined drops each rung through to its throw.
+   */
+  private async requestCredential(
+    kind: 'passphrase' | 'password',
+    detail: string,
+    connectGeneration: number
+  ): Promise<string | null | undefined> {
+    if (this.disposed || connectGeneration !== this.connectGeneration) {
+      return undefined
+    }
+    return this.callbacks.onCredentialRequest?.(this.target.id, kind, detail)
+  }
+
   private async attemptConnect(connectGeneration = ++this.connectGeneration): Promise<void> {
     this.setState('connecting')
     this.proxyProcess?.kill()
@@ -855,11 +876,7 @@ export class SshConnection {
                 this.target.identityFile ||
                 resolved?.identityFile?.[0] ||
                 '(unknown)'
-              const val = await this.callbacks.onCredentialRequest?.(
-                this.target.id,
-                'passphrase',
-                detail
-              )
+              const val = await this.requestCredential('passphrase', detail, connectGeneration)
               if (val) {
                 this.cachedPassphrase = val
                 keyConfig.passphrase = val
@@ -909,7 +926,7 @@ export class SshConnection {
           this.target.identityFile ||
           resolved?.identityFile?.[0] ||
           '(unknown)'
-        const val = await this.callbacks.onCredentialRequest(this.target.id, 'passphrase', detail)
+        const val = await this.requestCredential('passphrase', detail, connectGeneration)
         if (val) {
           this.cachedPassphrase = val
           credentialRetryConfig.passphrase = val
@@ -920,10 +937,10 @@ export class SshConnection {
       }
       // Why: an agent socket failure can still be recovered by password auth, but the retry must use the no-agent config selected above.
       if (isAgentFallbackError(authError) && !this.cachedPassword) {
-        const val = await this.callbacks.onCredentialRequest(
-          this.target.id,
+        const val = await this.requestCredential(
           'password',
-          config.host || this.target.label
+          config.host || this.target.label,
+          connectGeneration
         )
         if (val) {
           this.cachedPassword = val
@@ -1274,7 +1291,7 @@ export class SshConnection {
         // produces: evidence withheld, so we connect as ssh does but record nothing, rather than the
         // far worse "no hosts known" that would let a changed key through as first contact.
         withTimeout(
-          loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved)),
+          resolveKnownHostsFiles(hostKeyResolved).then(loadKnownHostsEvidence),
           HOST_KEY_SOURCE_READ_TIMEOUT_MS,
           { entries: [], unreadableFileCount: 1 }
         ),

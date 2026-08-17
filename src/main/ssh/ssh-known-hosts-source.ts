@@ -5,8 +5,7 @@
  * their hosts through `ssh` and `git`. We only read; writing to a file shared with every other SSH
  * tool on the machine is out of scope. See docs/reference/ssh-host-key-verification.md (D1, D2).
  */
-import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { SshResolvedConfig } from './ssh-g-config-resolution'
@@ -21,7 +20,14 @@ export function defaultKnownHostsFiles(): string[] {
   return [join(home, '.ssh', 'known_hosts'), join(home, '.ssh', 'known_hosts2')]
 }
 
-export function resolveKnownHostsFiles(resolved: SshResolvedConfig | null): string[] {
+/**
+ * Async because the rejoin below stats the very paths that can hang. Its one caller is already
+ * inside a bounded async read, and a synchronous stat there blocked the whole main process on a
+ * stalled NFS/SMB mount — worse than the wedged connection the bound was added to prevent.
+ */
+export async function resolveKnownHostsFiles(
+  resolved: SshResolvedConfig | null
+): Promise<string[]> {
   const reported = resolved
     ? [...resolved.userKnownHostsFiles, ...resolved.globalKnownHostsFiles]
     : []
@@ -30,7 +36,9 @@ export function resolveKnownHostsFiles(resolved: SshResolvedConfig | null): stri
   if (reported.length === 0) {
     return defaultKnownHostsFiles()
   }
-  return [...new Set(rejoinSpaceSplitPaths(reported.filter((path) => path !== EXPLICIT_NONE)))]
+  return [
+    ...new Set(await rejoinSpaceSplitPaths(reported.filter((path) => path !== EXPLICIT_NONE)))
+  ]
 }
 
 /**
@@ -49,7 +57,7 @@ export function resolveKnownHostsFiles(resolved: SshResolvedConfig | null): stri
  * a spaced path sitting alongside ordinary ones, which a whole-list check could not — it would see
  * the ordinary path exist and leave the spaced one in fragments.
  */
-function rejoinSpaceSplitPaths(paths: readonly string[]): string[] {
+async function rejoinSpaceSplitPaths(paths: readonly string[]): Promise<string[]> {
   if (paths.length < 2) {
     return [...paths]
   }
@@ -62,7 +70,7 @@ function rejoinSpaceSplitPaths(paths: readonly string[]): string[] {
     let consumed = 0
     for (let end = paths.length; end > index; end -= 1) {
       const candidate = paths.slice(index, end).join(' ')
-      if (existsSync(candidate)) {
+      if (await exists(candidate)) {
         rejoined.push(candidate)
         consumed = end - index
         break
@@ -75,6 +83,13 @@ function rejoinSpaceSplitPaths(paths: readonly string[]): string[] {
     index += consumed
   }
   return rejoined
+}
+
+async function exists(path: string): Promise<boolean> {
+  return access(path).then(
+    () => true,
+    () => false
+  )
 }
 
 /**

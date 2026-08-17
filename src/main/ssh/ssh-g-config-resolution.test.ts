@@ -135,6 +135,39 @@ describe('siteConfigMayRestrictHostKeys', () => {
     await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(false)
   })
 
+  it('finds a directive behind a RELATIVE Include nested two deep', async () => {
+    // OpenSSH resolves a relative Include against a FIXED base (SSHDIR), not the including file's
+    // own directory — verified against 10.2p1, where a nested `Include sibling` picked up the
+    // sibling of the TOP config. Passing dirname(file) agreed at depth 1 and diverged below it, so
+    // this directive was silently missed and the scanner answered "no site policy".
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Include nested/inner\n', 'utf-8')
+    await mkdir(join(dir, 'nested'), { recursive: true })
+    await writeFile(join(dir, 'nested', 'inner'), 'Include sibling\n', 'utf-8')
+    await writeFile(join(dir, 'sibling'), 'StrictHostKeyChecking yes\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('stays strict for a glob it cannot expand', async () => {
+    // `?` and `[…]` are globs OpenSSH honours (10.2p1 applies `Include /tmp/b/?.conf`), but only
+    // `*` is expanded here. Treated as a literal path they resolve to nothing, and "nothing there"
+    // is indistinguishable from "no policy" — so an unexpanded glob has to count as doubt.
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, `Include ${join(dir, '?.conf')}\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('stays strict for an Include path it would have to expand tokens in', async () => {
+    // `~` and `%d`-style tokens expand before OpenSSH uses the path. Joining them verbatim produced
+    // a path that cannot exist, which is the same fail-open as the glob above.
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Include ~/.ssh/site.conf\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
   it('ignores a commented-out directive', async () => {
     // A commented directive is not a policy. Reading it as one would reinstate the lockout for
     // anyone whose distro ships the line commented, which is the common shape.

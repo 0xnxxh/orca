@@ -1,7 +1,22 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import type * as NodeFsPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Why a module mock and not chmod: an unreadable file has to be EACCES/EMFILE-shaped for every
+// runner, and chmod 000 is simply readable when the suite runs as root. Why not vi.spyOn: node's
+// ESM namespace is not configurable, so spying on readFile throws.
+const { readFailure } = vi.hoisted(() => ({ readFailure: { error: null as Error | null } }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFsPromises>()
+  return {
+    ...actual,
+    readFile: (...args: Parameters<typeof actual.readFile>) =>
+      readFailure.error ? Promise.reject(readFailure.error) : actual.readFile(...args)
+  }
+})
+
+const { mkdtemp, readdir, readFile, rm, stat, writeFile } = await import('node:fs/promises')
 import {
   getSshHostKeyStoreFile,
   isTrusted,
@@ -42,6 +57,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  readFailure.error = null
   vi.restoreAllMocks()
   await rm(directory, { recursive: true, force: true })
 })
@@ -303,5 +319,35 @@ describe('a host key store written by a newer version', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('a host key store that exists but cannot be read', () => {
+  it('does not let the next accepted key wipe every other host on file', async () => {
+    // The shape that made this a data-loss bug rather than a lost prompt: one transient read failure
+    // reported "nothing trusted", and the very next first-contact accept rewrote the file with ONLY
+    // that record. Every other host then re-TOFUs, and one whose key genuinely changed in between is
+    // accepted as first contact instead of refused — the exact outcome host key pinning prevents.
+    await trustHostKey(query({ host: 'build-01' }), storeFile)
+    await trustHostKey(query({ host: 'build-02', key: ED25519_B }), storeFile)
+    const before = await readFile(storeFile, 'utf-8')
+
+    readFailure.error = Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' })
+    await trustHostKey(query({ host: 'build-03', key: RSA_A, keyType: 'ssh-rsa' }), storeFile)
+    readFailure.error = null
+
+    expect(await readFile(storeFile, 'utf-8'), 'an unreadable store was overwritten').toBe(before)
+    const kept = await loadTrustedHostKeys(storeFile)
+    expect(kept.map((record) => record.host).sort()).toEqual(['build-01', 'build-02'])
+  })
+
+  it('still answers "nothing trusted" on the read path, so nothing fails open', async () => {
+    // The two paths differ on purpose: a verifier that cannot read the store must fall back to a
+    // first-contact prompt, never to trusting the key. Only the WRITE has to hold back.
+    await trustHostKey(query(), storeFile)
+    readFailure.error = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+
+    expect(await loadTrustedHostKeys(storeFile)).toEqual([])
+    expect(await isTrusted(query(), storeFile)).toBe('unknown')
   })
 })

@@ -68,6 +68,8 @@ const SITE_SSH_CONFIG_FILES =
 
 const STRICT_HOST_KEY_DIRECTIVE = /^\s*stricthostkeychecking\b/i
 const INCLUDE_DIRECTIVE = /^\s*include\s+(.+?)\s*$/i
+/** Glob syntax OpenSSH honours that expandSiteInclude does not expand; `*` is handled separately. */
+const OTHER_GLOB_METACHARACTER = /[?[\]]/
 
 /**
  * Whether the system-wide ssh_config could be setting StrictHostKeyChecking.
@@ -81,12 +83,22 @@ const INCLUDE_DIRECTIVE = /^\s*include\s+(.+?)\s*$/i
  * policy". Anything ambiguous — unreadable, an Include we cannot resolve, the directive present at
  * all — answers true and the caller stays fail-closed. Only a site config that demonstrably says
  * nothing about host keys clears it, which is the common case this exists to stop punishing.
+ *
+ * "Ambiguous" has to include every path we do not fully model, and the failures here were all the
+ * same shape: a path we resolved WRONG still resolved to something, and a nonexistent Include reads
+ * as "nothing there" — which is indistinguishable from "no policy". So an Include we would have to
+ * expand tokens or unsupported globs in returns doubt rather than a literal path, and relative
+ * Includes resolve the way OpenSSH resolves them rather than the way that merely looks right.
  */
 export async function siteConfigMayRestrictHostKeys(
   files: readonly string[] = SITE_SSH_CONFIG_FILES
 ): Promise<boolean> {
   const seen = new Set<string>()
   const pending = [...files]
+  // OpenSSH resolves a relative Include against a FIXED directory — SSHDIR for the system config —
+  // not against the including file's own directory. Those agree at depth 1 and diverge below it, so
+  // passing dirname(file) silently missed a directive one level down. Verified against 10.2p1.
+  const siteConfigDir = dirname(files[0] ?? SITE_SSH_CONFIG_FILES[0])
   // Bounded so an Include cycle cannot spin; OpenSSH allows nesting, we only need "any mention".
   for (let visited = 0; pending.length > 0 && visited < 32; visited += 1) {
     const file = pending.shift()
@@ -110,7 +122,7 @@ export async function siteConfigMayRestrictHostKeys(
       }
       const include = INCLUDE_DIRECTIVE.exec(line)
       if (include) {
-        const expanded = await expandSiteInclude(include[1], dirname(file))
+        const expanded = await expandSiteInclude(include[1], siteConfigDir)
         if (expanded === null) {
           return true
         }
@@ -127,7 +139,20 @@ async function expandSiteInclude(pattern: string, baseDir: string): Promise<stri
   const resolved: string[] = []
   for (const raw of pattern.split(/\s+/).filter(Boolean)) {
     const token = raw.replace(/^"(.*)"$/, '$1')
+    // `~` and OpenSSH's `%d`/`%u`-style tokens both expand before the path is used. Resolving them
+    // is not worth it for a question this coarse, but treating them as ordinary characters is what
+    // made this fail OPEN: the join produced a path that does not exist, and a nonexistent Include
+    // reads as "nothing there" — indistinguishable from a site that says nothing about host keys.
+    if (token.startsWith('~') || token.includes('%')) {
+      return null
+    }
     const absolute = isAbsolute(token) ? token : join(baseDir, token)
+    // `?` and `[…]` are globs to OpenSSH too, and it does honour them (verified against 10.2p1).
+    // Only `*` is expanded below, so any other metacharacter is doubt rather than a literal — taking
+    // it literally is the same fail-open as `~`: the path does not exist, so it reads as "nothing".
+    if (OTHER_GLOB_METACHARACTER.test(absolute)) {
+      return null
+    }
     const star = absolute.indexOf('*')
     if (star === -1) {
       resolved.push(absolute)

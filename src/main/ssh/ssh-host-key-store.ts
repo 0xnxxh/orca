@@ -56,19 +56,6 @@ export function initSshHostKeyStoreFile(dataFile: string): void {
   configuredStoreFile = getSshHostKeyStoreFile(dataFile)
 }
 
-/** True when the file on disk was written by a newer Orca than this one understands. */
-async function storeIsFromNewerVersion(storeFile: string): Promise<boolean> {
-  try {
-    const parsed = JSON.parse(
-      await readFile(storeFile, 'utf-8')
-    ) as Partial<HostKeyStoreFile> | null
-    return typeof parsed?.version === 'number' && parsed.version > STORE_VERSION
-  } catch {
-    // Missing or unparseable is not "newer"; the load path already degrades those to empty.
-    return false
-  }
-}
-
 /** The bound store path, for messages that must name the artefact a user has to remove. */
 export function boundSshHostKeyStoreFile(): string | null {
   return configuredStoreFile
@@ -145,47 +132,54 @@ function validateRecord(candidate: unknown): TrustedHostKeyRecord | undefined {
 }
 
 /**
- * Every trusted record, or an empty list when the file is missing or unreadable.
- *
- * Never throws and never fails open: a corrupt file degrades to "nothing trusted", which costs a
- * first-contact prompt, where the opposite mistake would accept anything.
+ * What one read of the store found. `withheld` is the distinction the read path does not care about
+ * and the WRITE path cannot do without: the file exists and holds records we could not see, so a
+ * rewrite would delete keys rather than supersede them. Same doctrine ssh-known-hosts-source.ts
+ * applies to `known_hosts` — a file that exists and refuses to open is evidence withheld, not absent.
  */
-export async function loadTrustedHostKeys(file?: string): Promise<TrustedHostKeyRecord[]> {
-  const storeFile = requireStoreFile(file)
+type StoreSnapshot =
+  | { status: 'ok'; records: TrustedHostKeyRecord[] }
+  | { status: 'absent' }
+  | { status: 'withheld'; reason: string }
+
+async function readStore(storeFile: string): Promise<StoreSnapshot> {
   let contents: string
   try {
     contents = await readFile(storeFile, 'utf-8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn(`[ssh] Could not read the host key store at ${storeFile}:`, error)
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { status: 'absent' }
     }
-    return []
+    console.warn(`[ssh] Could not read the host key store at ${storeFile}:`, error)
+    return { status: 'withheld', reason: 'it could not be read' }
   }
 
   let parsed: unknown
   try {
     parsed = JSON.parse(contents)
   } catch {
+    // Deliberately NOT withheld: unparseable records are unrecoverable by any version, so there is
+    // nothing left for a rewrite to destroy and refusing to write would wedge the store permanently.
     console.warn(`[ssh] Host key store at ${storeFile} is not valid JSON; treating it as empty`)
-    return []
+    return { status: 'ok', records: [] }
   }
 
-  // Why the version is finally consulted: it was written and never read, so a store from a future
-  // Orca would have every record dropped by validateRecord and then be REWRITTEN as v1 — silently
-  // discarding whatever that version knew. Refusing to read it keeps the file intact for the version
-  // that owns it; trustHostKey refuses to write over it for the same reason.
+  // Why the version is consulted: it was written and never read, so a store from a future Orca would
+  // have every record dropped by validateRecord and then be REWRITTEN as v1 — silently discarding
+  // whatever that version knew. Refusing both to trust and to overwrite keeps the file intact for the
+  // version that owns it.
   const onDiskVersion = (parsed as Partial<HostKeyStoreFile> | null)?.version
   if (typeof onDiskVersion === 'number' && onDiskVersion > STORE_VERSION) {
     console.warn(
       `[ssh] Host key store at ${storeFile} is version ${onDiskVersion}, newer than ${STORE_VERSION}; leaving it alone and trusting nothing from it`
     )
-    return []
+    return { status: 'withheld', reason: `it is version ${onDiskVersion}` }
   }
 
   const hostKeys = (parsed as Partial<HostKeyStoreFile> | null)?.hostKeys
   if (!Array.isArray(hostKeys)) {
     console.warn(`[ssh] Host key store at ${storeFile} has no host key list; treating it as empty`)
-    return []
+    return { status: 'ok', records: [] }
   }
 
   const records: TrustedHostKeyRecord[] = []
@@ -203,7 +197,19 @@ export async function loadTrustedHostKeys(file?: string): Promise<TrustedHostKey
       `[ssh] Ignored ${dropped} unusable record(s) in the host key store at ${storeFile}`
     )
   }
-  return records
+  return { status: 'ok', records }
+}
+
+/**
+ * Every trusted record, or an empty list when the file is missing or unreadable.
+ *
+ * Never throws and never fails open: a corrupt file degrades to "nothing trusted", which costs a
+ * first-contact prompt, where the opposite mistake would accept anything. Callers that go on to
+ * WRITE must not use this — see readStore, whose `withheld` case this one deliberately flattens.
+ */
+export async function loadTrustedHostKeys(file?: string): Promise<TrustedHostKeyRecord[]> {
+  const snapshot = await readStore(requireStoreFile(file))
+  return snapshot.status === 'ok' ? snapshot.records : []
 }
 
 /**
@@ -289,23 +295,32 @@ export async function trustHostKey(
   // Serialized: startup restore connects to every previously-active target in parallel, so two
   // first-contact accepts can otherwise read the same snapshot and one overwrites the other.
   await withSidecarSnapshotQueue(storeFile, async () => {
-    // Inside the queue so the check and the write cannot be separated by another writer.
-    if (await storeIsFromNewerVersion(storeFile)) {
-      // Not an error the caller should fail on: the key verified, we simply decline to downgrade the
-      // file. The next connect re-derives the same decision from known_hosts.
+    // Inside the queue so the read and the write cannot be separated by another writer.
+    const snapshot = await readStore(storeFile)
+    if (snapshot.status === 'withheld') {
+      // Not an error the caller should fail on: the key verified, we simply decline to write a file
+      // whose current contents we cannot see. Writing would replace every other host's pinned key
+      // with this one record, so the next connect to those hosts would re-TOFU — and one whose key
+      // had genuinely changed would be accepted as first contact instead of refused. The next
+      // connect re-derives this decision from known_hosts.
+      console.warn(
+        `[ssh] Not recording the host key for ${record.host}:${record.port}: the store at ${storeFile} was left alone because ${snapshot.reason}`
+      )
       return
     }
-    const kept = (await loadTrustedHostKeys(storeFile)).filter(
+    const kept = (snapshot.status === 'ok' ? snapshot.records : []).filter(
       (existing) =>
         existing.host !== record.host ||
         existing.port !== record.port ||
         existing.keyType !== record.keyType
     )
     await persist(storeFile, [...kept, record])
+    // Inside the branch that actually wrote: the withheld path logged its own reason, and claiming
+    // "Trusted" for a record that never reached disk makes the next connect's re-prompt unreadable.
+    console.warn(
+      `[ssh] Trusted host key for ${record.host}:${record.port} (${record.keyType} ${record.fingerprint})`
+    )
   })
-  console.warn(
-    `[ssh] Trusted host key for ${record.host}:${record.port} (${record.keyType} ${record.fingerprint})`
-  )
   return record
 }
 

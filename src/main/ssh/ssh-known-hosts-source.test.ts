@@ -75,7 +75,7 @@ afterEach(async () => {
 })
 
 describe('resolveKnownHostsFiles', () => {
-  it('splits the space-separated list ssh -G prints on one line', () => {
+  it('splits the space-separated list ssh -G prints on one line', async () => {
     const resolved = parseSshGOutput(
       [
         'hostname prod.internal',
@@ -89,7 +89,7 @@ describe('resolveKnownHostsFiles', () => {
       '/a/known_hosts2',
       '/b/known_hosts'
     ])
-    expect(resolveKnownHostsFiles(resolved)).toEqual([
+    expect(await resolveKnownHostsFiles(resolved)).toEqual([
       '/a/known_hosts',
       '/a/known_hosts2',
       '/b/known_hosts',
@@ -98,46 +98,46 @@ describe('resolveKnownHostsFiles', () => {
     ])
   })
 
-  it('expands ~ in a reported path', () => {
+  it('expands ~ in a reported path', async () => {
     pretendHomeIs(join('/pretend', 'home'))
 
     const resolved = parseSshGOutput('userknownhostsfile ~/.ssh/known_hosts ~/other_hosts')
 
-    expect(resolveKnownHostsFiles(resolved)).toEqual([
+    expect(await resolveKnownHostsFiles(resolved)).toEqual([
       join('/pretend', 'home', '.ssh', 'known_hosts'),
       join('/pretend', 'home', 'other_hosts')
     ])
   })
 
-  it('keeps a double-quoted path containing spaces whole', () => {
+  it('keeps a double-quoted path containing spaces whole', async () => {
     const resolved = parseSshGOutput(
       'userknownhostsfile "/Users/dev/my hosts/known_hosts" /plain/known_hosts'
     )
 
-    expect(resolveKnownHostsFiles(resolved)).toEqual([
+    expect(await resolveKnownHostsFiles(resolved)).toEqual([
       '/Users/dev/my hosts/known_hosts',
       '/plain/known_hosts'
     ])
   })
 
-  it('falls back to the default files when ssh -G reported nothing', () => {
+  it('falls back to the default files when ssh -G reported nothing', async () => {
     pretendHomeIs(join('/pretend', 'home'))
 
     // Why not an empty list: no ssh, a non-zero exit or a timeout must not turn a host the user
     // already verified into first contact.
-    expect(resolveKnownHostsFiles(null)).toEqual([
+    expect(await resolveKnownHostsFiles(null)).toEqual([
       join('/pretend', 'home', '.ssh', 'known_hosts'),
       join('/pretend', 'home', '.ssh', 'known_hosts2')
     ])
-    expect(defaultKnownHostsFiles()).toEqual(resolveKnownHostsFiles(null))
+    expect(defaultKnownHostsFiles()).toEqual(await resolveKnownHostsFiles(null))
   })
 
-  it('drops an explicit none without falling back to the defaults', () => {
+  it('drops an explicit none without falling back to the defaults', async () => {
     const resolved = parseSshGOutput(
       ['userknownhostsfile none', 'globalknownhostsfile /etc/ssh/ssh_known_hosts'].join('\n')
     )
 
-    expect(resolveKnownHostsFiles(resolved)).toEqual(['/etc/ssh/ssh_known_hosts'])
+    expect(await resolveKnownHostsFiles(resolved)).toEqual(['/etc/ssh/ssh_known_hosts'])
   })
 })
 
@@ -162,7 +162,7 @@ describe('parsing real ssh -G output', () => {
 
   // Every file list arrives space-separated on ONE line, not repeated per line. Reading it as a
   // single path would silently consult nothing for anyone with more than one file configured.
-  it('splits both known_hosts lists on one line each', () => {
+  it('splits both known_hosts lists on one line each', async () => {
     expect(resolved.userKnownHostsFiles).toEqual([
       '/Users/nwparker/.ssh/kh_one',
       '/Users/nwparker/.ssh/kh_two'
@@ -174,18 +174,18 @@ describe('parsing real ssh -G output', () => {
   })
 
   // Drives the whole strict branch; a miss defaults it to 'ask' and quietly loses the user's policy.
-  it('reads StrictHostKeyChecking, including accept-new', () => {
+  it('reads StrictHostKeyChecking, including accept-new', async () => {
     expect(resolved.strictHostKeyChecking).toBe('accept-new')
   })
 
   // The one name that outranks the dialed host. A bastion tunnelled through localhost:port depends
   // on it, and it is the only field allowed to override what we key the lookup on.
-  it('reads HostKeyAlias and prefers it for the lookup', () => {
+  it('reads HostKeyAlias and prefers it for the lookup', async () => {
     expect(resolved.hostKeyAlias).toBe('alias-host')
     expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1').host).toBe('alias-host')
   })
 
-  it('reads the non-default port', () => {
+  it('reads the non-default port', async () => {
     expect(resolved.port).toBe(2222)
   })
 
@@ -193,11 +193,11 @@ describe('parsing real ssh -G output', () => {
   // `myalias` authenticates, one keyed `[myalias]:2225` gives "No ED25519 host key is known for
   // myalias". Since the first pass now decides as soon as it finds any entry, a leftover bracketed
   // line would BLOCK the bare lookup ssh actually performs.
-  it('reports that the lookup came from an alias, so the port is not appended', () => {
+  it('reports that the lookup came from an alias, so the port is not appended', async () => {
     expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1').isHostKeyAlias).toBe(true)
   })
 
-  it('reports no alias when the dialed host is used', () => {
+  it('reports no alias when the dialed host is used', async () => {
     expect(resolveKnownHostsLookupHost(null, '127.0.0.1').isHostKeyAlias).toBe(false)
   })
 })
@@ -343,7 +343,7 @@ describe('loadKnownHostsEvidence', () => {
 })
 
 describe('resolveKnownHostsLookupHost', () => {
-  it('prefers HostKeyAlias over the resolved hostname', () => {
+  it('prefers HostKeyAlias over the resolved hostname', async () => {
     // A bastion tunnelled through localhost:2200 would otherwise mismatch on every target.
     const resolved = resolvedConfig({ hostname: '127.0.0.1', hostKeyAlias: 'bastion' })
 
@@ -358,19 +358,19 @@ describe('resolveKnownHostsLookupHost', () => {
   //
   // The dialed host is correct in both cases: buildConnectConfig has already applied HostName
   // resolution, so a config alias dials the real host too.
-  it('uses the dialed host, because a resolved hostname can just echo the label', () => {
+  it('uses the dialed host, because a resolved hostname can just echo the label', async () => {
     const resolved = resolvedConfig({ hostname: 'my-orca-label' })
 
     expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5').host).toBe('10.0.0.5')
   })
 
-  it('still prefers an explicit HostKeyAlias over the dialed host', () => {
+  it('still prefers an explicit HostKeyAlias over the dialed host', async () => {
     const resolved = resolvedConfig({ hostname: 'my-orca-label', hostKeyAlias: 'bastion' })
 
     expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5').host).toBe('bastion')
   })
 
-  it('falls back to the dialed host when nothing was resolved', () => {
+  it('falls back to the dialed host when nothing was resolved', async () => {
     expect(resolveKnownHostsLookupHost(null, 'direct.example').host).toBe('direct.example')
     expect(
       resolveKnownHostsLookupHost(resolvedConfig({ hostname: '' }), 'direct.example').host
@@ -402,7 +402,7 @@ describe('a known_hosts path containing a space', () => {
     await writeFile(spaced, '', 'utf-8')
 
     // Exactly what parseKnownHostsFileList hands over for this value.
-    const resolved = resolveKnownHostsFiles({
+    const resolved = await resolveKnownHostsFiles({
       userKnownHostsFiles: spaced.split(' '),
       globalKnownHostsFiles: []
     } as never)
@@ -418,7 +418,7 @@ describe('a known_hosts path containing a space', () => {
     await writeFile(spaced, '', 'utf-8')
     await writeFile(ordinary, '', 'utf-8')
 
-    const resolved = resolveKnownHostsFiles({
+    const resolved = await resolveKnownHostsFiles({
       userKnownHostsFiles: [...spaced.split(' '), ordinary],
       globalKnownHostsFiles: []
     } as never)
@@ -431,7 +431,7 @@ describe('a known_hosts path containing a space', () => {
     const real = join(dir, 'first')
     await writeFile(real, '', 'utf-8')
 
-    const resolved = resolveKnownHostsFiles({
+    const resolved = await resolveKnownHostsFiles({
       userKnownHostsFiles: [real, '/tmp/orca-does-not-exist-known-hosts'],
       globalKnownHostsFiles: []
     } as never)
@@ -440,7 +440,7 @@ describe('a known_hosts path containing a space', () => {
   })
 
   it('leaves a single unresolvable path alone rather than inventing one', async () => {
-    const resolved = resolveKnownHostsFiles({
+    const resolved = await resolveKnownHostsFiles({
       userKnownHostsFiles: ['/tmp/orca-absent-known-hosts'],
       globalKnownHostsFiles: []
     } as never)
