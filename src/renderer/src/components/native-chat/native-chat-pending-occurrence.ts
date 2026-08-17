@@ -1,4 +1,5 @@
 import {
+  countImagePromptMarkers,
   nativeChatUserMessageImageEvidenceCount,
   nativeChatUserMessageMatchText,
   nativeChatUserTextMatchText,
@@ -103,20 +104,38 @@ export function advancedNativeChatUserContentCounts(
   return advanced
 }
 
+/** One identity a row can be matched on: the text, and how many image-carrying
+ *  sends that reading of the row can account for. */
+export type NativeChatUserTextIdentity = { text: string; imageCount: number }
+
 /** A transcript user row as the glue matcher sees it. `imageCount` is the budget
  *  that lets the row own image-carrying pendings — a folded image turn must stay
  *  glueable, but a text-only row must never consume a send that carried a photo. */
-export type NativeChatUserTextRow = { text: string; imageCount: number }
+export type NativeChatUserTextRow = NativeChatUserTextIdentity & {
+  /** Fallback reading for hosts that echo an image send as bare `[Image #n]` text
+   *  with no `[Image: source: …]` turn. There the markers are the only evidence
+   *  the photo landed, so they vouch for that many sends. Tried only after the
+   *  literal reading fails, so a marker the user actually typed still matches
+   *  verbatim first (STA-4363). */
+  markerEcho?: NativeChatUserTextIdentity
+}
 
 function nativeChatUserTextRow(message: NativeChatMessage): NativeChatUserTextRow | null {
   const text = nativeChatUserMessageMatchText(message)
+  if (!text) {
+    return null
+  }
   // Why: image-ref blocks only, NOT `nativeChatUserMessageImageEvidenceCount` —
   // that counts literal `[Image #n]` text as evidence, which is right for content
   // keys but would let a row showing no photo retire a send that carried one,
   // erasing the user's preview before it lands. Under-counting only costs a
   // duplicate bubble; over-counting loses the photo.
   const imageCount = message.blocks.filter(isImageRefBlock).length
-  return text ? { text, imageCount } : null
+  const markerCount = imageCount === 0 ? countImagePromptMarkers(message) : 0
+  const strippedText = markerCount > 0 ? normalizedNativeChatUserMessageText(message) : null
+  return strippedText
+    ? { text, imageCount, markerEcho: { text: strippedText, imageCount: markerCount } }
+    : { text, imageCount }
 }
 
 /** User rows that already have a later non-user turn (ready to prune echoes). */
@@ -212,29 +231,31 @@ export function selectPendingIndicesRepresentedByUserTexts(
     imageCount: entry.imagePaths?.filter(Boolean).length ?? 0
   }))
   for (const row of userRows) {
-    // Why: a photo-less row skips image sends entirely rather than letting one sit
-    // in the prefix and block the match — glue needs a LEADING run, so an
-    // unrelated image pending ahead of the queue would strand every echo behind it.
-    const open = remaining.filter(
-      (entry) =>
-        !represented.has(entry.index) &&
-        entry.text.length > 0 &&
-        (entry.imageCount === 0 || row.imageCount > 0)
-    )
-    const gluedCount = countLeadingPendingTextsGluedToUserText(
-      open.map((entry) => entry.text),
-      row.text
-    )
-    // Why: gluedCount === 1 is an exact match — leave it to occurrence counting.
-    if (gluedCount < 2) {
-      continue
+    // Why: every unretired send stays a candidate, in send order. Dropping any of
+    // them here would let glue match a NON-CONTIGUOUS subsequence: with sends
+    // "fix", "the"+photo, "bug", a row reading "fix bug" would retire "fix" and
+    // "bug" even though a third send landed between them. The row can only be the
+    // glue of a contiguous run, so the budget below rejects unaffordable groups
+    // rather than skipping past them.
+    const open = remaining.filter((entry) => !represented.has(entry.index) && entry.text.length > 0)
+    const openTexts = open.map((entry) => entry.text)
+    let gluedCount = 0
+    for (const identity of row.markerEcho ? [row, row.markerEcho] : [row]) {
+      const count = countLeadingPendingTextsGluedToUserText(openTexts, identity.text)
+      // Why: gluedCount === 1 is an exact match — leave it to occurrence counting.
+      if (count < 2) {
+        continue
+      }
+      // Why: a folded image turn must stay glueable, but a row can only own as many
+      // image-carrying sends as it actually shows evidence for.
+      const gluedImages = open.slice(0, count).reduce((total, entry) => total + entry.imageCount, 0)
+      if (gluedImages > identity.imageCount) {
+        continue
+      }
+      gluedCount = count
+      break
     }
-    // Why: a folded image turn must stay glueable, but a row can only own as many
-    // image-carrying sends as it actually shows evidence for.
-    const gluedImages = open
-      .slice(0, gluedCount)
-      .reduce((count, entry) => count + entry.imageCount, 0)
-    if (gluedImages > row.imageCount) {
+    if (gluedCount < 2) {
       continue
     }
     for (let i = 0; i < gluedCount; i += 1) {

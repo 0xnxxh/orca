@@ -320,17 +320,59 @@ describe('glued rapid sends', () => {
     expect(prunePendingSends(pending, advancedGlueTranscript('a b [Image #1]'))).toEqual(pending)
   })
 
-  // Why: glue matches a LEADING run of pendings. Letting an unrelated image send
-  // sit in that prefix stranded every text echo queued behind it, because a
-  // photo-less row can never consume the image send that blocks the way.
-  it('retires a glued text pair queued behind an unrelated image send', () => {
+  // Why: some hosts echo an image send as bare `[Image #n]` text with no
+  // `[Image: source: …]` turn, so the markers are the only evidence the photo
+  // landed. Reading such a row literally left both echoes — one a duplicate
+  // photo — on screen forever.
+  it('retires a glued pair against a marker-only host echo row', () => {
+    const pending = [
+      { ...gluePending('p1', 'look'), imagePaths: ['/tmp/a.png'] },
+      gluePending('p2', 'here')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('[Image #1] look here'))).toEqual([])
+  })
+
+  it('retires a glued pair when the host echo puts the marker last', () => {
+    const pending = [
+      { ...gluePending('p1', 'look'), imagePaths: ['/tmp/a.png'] },
+      gluePending('p2', 'here')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('look here [Image #1]'))).toEqual([])
+  })
+
+  // Why: the literal reading is tried FIRST, so a marker the user actually typed
+  // still matches verbatim and never falls through to the marker-echo reading.
+  it('matches a user-typed marker literally rather than as an image echo', () => {
+    const pending = [gluePending('p1', 'what is [Image #1]'), gluePending('p2', 'about')]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('what is [Image #1] about'))).toEqual(
+      []
+    )
+  })
+
+  // Why: glue is a CONTIGUOUS leading run. Skipping a send the row cannot afford
+  // would match a non-contiguous subsequence and retire echoes the row never
+  // represented — the bubble vanishes though its send is still in flight.
+  it('does not glue across an image send that landed between two text sends', () => {
+    const pending = [
+      gluePending('p0', 'fix'),
+      { ...gluePending('p1', 'the'), imagePaths: ['/tmp/p.png'] },
+      gluePending('p2', 'bug')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('fix bug'))).toEqual(pending)
+  })
+
+  it('does not let a row glue past a leading image send it cannot afford', () => {
     const pending = [
       { ...gluePending('p0', 'photo caption'), imagePaths: ['/tmp/p.png'] },
       gluePending('p1', 'a'),
       gluePending('p2', 'b')
     ]
 
-    expect(prunePendingSends(pending, advancedGlueTranscript('a b'))).toEqual([pending[0]])
+    expect(prunePendingSends(pending, advancedGlueTranscript('a b'))).toEqual(pending)
   })
 
   it('retires three prompts collapsed into one row with mixed boundaries', () => {
