@@ -128,10 +128,10 @@ export function readFirefoxRowPartition(
  * guessing it silently misfiles the cookie.
  */
 export function readJsonCookiePartition(raw: unknown): SourcePartitionRead {
-  if (raw === undefined || raw === null || raw === '') {
+  if (raw === undefined) {
     return UNPARTITIONED
   }
-  if (typeof raw !== 'object' || Array.isArray(raw)) {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { status: 'unreadable', reason: 'partitionKey was not an object with both fields' }
   }
 

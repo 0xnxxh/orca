@@ -111,7 +111,10 @@ describe('readJsonCookiePartition', () => {
   // unpartitioned or whole exports would be rejected.
   it('reads an absent partitionKey as unpartitioned', () => {
     expect(readJsonCookiePartition(undefined)).toEqual({ status: 'unpartitioned' })
-    expect(readJsonCookiePartition(null)).toEqual({ status: 'unpartitioned' })
+  })
+
+  it.each([null, ''])('refuses a present but empty partitionKey (%s)', (partitionKey) => {
+    expect(readJsonCookiePartition(partitionKey).status).toBe('unreadable')
   })
 
   it('reads a complete partitionKey object', () => {

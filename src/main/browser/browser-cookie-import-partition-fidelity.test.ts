@@ -110,6 +110,8 @@ describe('validated import partition fidelity', () => {
     cookieWriteMock = writeCookieIdentityMock
     cookieWriteMock.mockReset()
     cookieWriteMock.mockResolvedValue(undefined)
+    setPendingCookieImportMock.mockClear()
+    clearPendingCookieImportMock.mockClear()
     sessionFromPartitionMock.mockReset()
     sessionFromPartitionMock.mockReturnValue({
       cookies: {
@@ -217,6 +219,95 @@ describe('validated import partition fidelity', () => {
     expect(result.ok && result.summary.partitionSkippedCookies).toBe(1)
     expect(cookieWriteMock).not.toHaveBeenCalled()
     expect(remove).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['null', null],
+    ['empty string', '']
+  ])('preserves a populated family for a present %s partitionKey', async (_label, partitionKey) => {
+    const targetJar = [
+      {
+        name: 'apex-session',
+        value: 'apex-live',
+        domain: '.preserved.example',
+        path: '/',
+        secure: true,
+        sameSite: 'lax'
+      },
+      {
+        name: 'sub-session',
+        value: 'sub-live',
+        domain: 'sub.preserved.example',
+        path: '/',
+        secure: true,
+        sameSite: 'lax'
+      },
+      {
+        name: 'stale-plain',
+        value: 'replace-me',
+        domain: '.plain.example',
+        path: '/',
+        secure: true,
+        sameSite: 'lax'
+      }
+    ]
+    const remove = vi.fn(async (_url: string, name: string) => {
+      const index = targetJar.findIndex((cookie) => cookie.name === name)
+      if (index !== -1) {
+        targetJar.splice(index, 1)
+      }
+    })
+    sessionFromPartitionMock.mockReturnValue({
+      cookies: {
+        get: vi.fn(async () => targetJar),
+        remove,
+        set: unreachableCookieSet
+      }
+    })
+    const filePath = writeCookieFile([
+      {
+        domain: '.preserved.example',
+        name: 'malformed-partition',
+        value: 'do-not-write',
+        secure: true,
+        partitionKey
+      },
+      {
+        domain: 'deep.sub.preserved.example',
+        name: 'readable-sibling',
+        value: 'do-not-write-either',
+        secure: true
+      },
+      { domain: '.plain.example', name: 'plain', value: 'write-me', secure: true }
+    ])
+
+    const result = await importCookiesFromFile(filePath, 'persist:test')
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(targetJar).toEqual([
+      expect.objectContaining({ name: 'apex-session', value: 'apex-live' }),
+      expect.objectContaining({ name: 'sub-session', value: 'sub-live' })
+    ])
+    expect(remove.mock.calls.map(([, name]) => name)).toEqual(['stale-plain'])
+    expect(cookieWriteMock).toHaveBeenCalledTimes(1)
+    expect(cookieWriteMock).toHaveBeenCalledWith(expect.objectContaining({ name: 'plain' }))
+    expect(cookieWriteMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'readable-sibling' })
+    )
+    expect(result.summary).toMatchObject({
+      totalCookies: 3,
+      importedCookies: 1,
+      skippedCookies: 2,
+      partitionSkippedCookies: 2,
+      domains: ['plain.example']
+    })
+    expect(result.summary.totalCookies).toBe(
+      result.summary.importedCookies + result.summary.skippedCookies
+    )
+    expect(setPendingCookieImportMock).not.toHaveBeenCalled()
   })
 })
 
