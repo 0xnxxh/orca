@@ -132,12 +132,14 @@ export function gitRunnerModuleMock(mocks: GitHubClientMocks): GitRunnerModuleMo
 }
 
 export type SshGitDispatchModuleMock = {
+  getSshGitProviderGeneration: Mock
   getSshGitProvider: Mock
   SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE: string
 }
 
 export function sshGitDispatchModuleMock(mocks: GitHubClientMocks): SshGitDispatchModuleMock {
   return {
+    getSshGitProviderGeneration: vi.fn(() => 0),
     getSshGitProvider: mocks.getSshGitProviderMock,
     SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE: 'Remote connection dropped.'
   }
