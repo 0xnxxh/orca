@@ -14893,6 +14893,15 @@
               }
             }
           }
+        },
+        "webauthn": {
+          "account": {
+            "fallback": "Passkey",
+            "title": "Choose a passkey",
+            "description": "Choose the account to use with this security key.",
+            "site": "Site",
+            "cancel": "Cancel"
+          }
         }
       },
       "automations": {
