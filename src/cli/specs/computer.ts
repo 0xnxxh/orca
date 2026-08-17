@@ -13,7 +13,7 @@ const COMPUTER_ACTION_FLAGS = [
 export const COMPUTER_COMMAND_SPECS: CommandSpec[] = [
   {
     path: ['computer', 'capabilities'],
-    summary: 'Show computer-use provider capabilities',
+    summary: 'Show declared provider capabilities',
     usage: 'orca computer capabilities [--json]',
     allowedFlags: [...GLOBAL_FLAGS]
   },
