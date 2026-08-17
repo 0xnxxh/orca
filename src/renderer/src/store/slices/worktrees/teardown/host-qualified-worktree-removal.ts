@@ -23,6 +23,7 @@ import {
   WORKTREE_REMOVAL_HOST_CHANGED_ERROR
 } from '../listing/worktree-slice-constants'
 import { requestVirtualizedScrollAnchorRecord } from '@/hooks/requestVirtualizedScrollAnchorRecord'
+import { translate } from '@/i18n/i18n'
 import { cleanupEphemeralVmRuntimesForDeleted } from '@/lib/ephemeral-vm-runtime-cleanup'
 import { purgeOrphanedRuntimeSshProjects } from './orphaned-runtime-ssh-project-purge'
 import { showPreservedBranchToast } from '@/components/sidebar/preserved-branch-toast'
@@ -106,6 +107,38 @@ export function beginHostQualifiedRemoval(
       requiredExecutionHostId
     )
   }
+}
+
+/**
+ * The refusal to report when a colliding id would be routed over a transport
+ * whose host we cannot prove honours `hostId`, or null when it is safe.
+ *
+ * Local main always honours it — it ships with this renderer. A paired remote
+ * server may not: hosts older than the host-qualified `worktree.rm` silently
+ * `.strip()` the field and route by their own preference, which on a colliding
+ * id deletes the wrong workspace. #14731 refused EVERY collision; narrowing that
+ * to the one transport that can still be an older build keeps this no worse than
+ * main while failing CLOSED rather than deleting on an unproven host.
+ *
+ * TODO(STA-4343): replace with a `worktree.rm` host-qualification capability (see
+ * WORKTREE_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY for the established pattern) so
+ * a new remote host can route the collision instead of sharing the old refusal.
+ */
+export function refuseUnprovableRemoteHostRouting(
+  get: WorktreeSliceGet,
+  worktreeId: string,
+  targetKind: string
+): string | null {
+  if (targetKind === 'local') {
+    return null
+  }
+  if (getWorktreeOperationOwnerHostIds(get(), worktreeId).length <= 1) {
+    return null
+  }
+  return translate(
+    'auto.store.slices.workspace.cleanup.hostCollision',
+    'Error: this workspace exists on multiple hosts at the same path'
+  )
 }
 
 /** The row on the confirmed host only — a same-id row elsewhere must not stand in for it. */

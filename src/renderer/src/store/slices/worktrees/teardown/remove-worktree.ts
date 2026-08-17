@@ -6,8 +6,7 @@ import { parseExecutionHostId } from '../../../../../../shared/execution-host'
 import { ensureHooksConfirmed } from '@/lib/ensure-hooks-confirmed'
 import { cleanupEphemeralVmRuntimesForDeleted } from '@/lib/ephemeral-vm-runtime-cleanup'
 import { disposeRemovedWorktreeParkedTerminalWatchers } from '../../../../components/terminal-pane/terminal-parked-watcher-registry'
-import { callRuntimeRpc, getActiveRuntimeTarget } from '../../../../runtime/runtime-rpc-client'
-import { toRuntimeWorktreeSelector } from '../../../../runtime/runtime-worktree-selector'
+import { getActiveRuntimeTarget } from '../../../../runtime/runtime-rpc-client'
 import { requestVirtualizedScrollAnchorRecord } from '@/hooks/requestVirtualizedScrollAnchorRecord'
 import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
 import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
@@ -22,7 +21,8 @@ import {
 import {
   beginHostQualifiedRemoval,
   completeSameIdHostScopedRemoval,
-  findWorktreeOnConfirmedHost
+  findWorktreeOnConfirmedHost,
+  refuseUnprovableRemoteHostRouting
 } from './host-qualified-worktree-removal'
 import {
   classifyWorktreeForceDeleteReason,
@@ -41,6 +41,7 @@ import {
 } from '../listing/runtime-worktree-rpc-errors'
 import { applyRemoveWorktreeSuccessState } from './remove-worktree-store-cleanup'
 import { recordRemovedWorktreeSnapshotPrune } from './removed-worktree-snapshot-prune'
+import { dispatchWorktreeRemoval } from './dispatch-worktree-removal'
 
 export function createRemoveWorktree(
   set: WorktreeSliceSet,
@@ -109,42 +110,25 @@ export function createRemoveWorktree(
             ? { ...get().settings, activeRuntimeEnvironmentId: null }
             : { activeRuntimeEnvironmentId: null }
       )
+      const unprovableRemoteRouting = forgetLocalOnly
+        ? null
+        : refuseUnprovableRemoteHostRouting(get, worktreeId, target.kind)
+      if (unprovableRemoteRouting) {
+        throw new Error(unprovableRemoteRouting)
+      }
       let removalResult: RemoveWorktreeResult
       let snapshotPruneHandledByLocalMain = forgetLocalOnly || target.kind === 'local'
       try {
-        removalResult = await (forgetLocalOnly
-          ? window.api.worktrees.forgetLocal({
-              worktreeId,
-              hostId,
-              ...(options?.snapshotPruneBatchId
-                ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
-                : {})
-            })
-          : target.kind === 'local'
-            ? (removalGenerationGuard?.assertCurrent(),
-              window.api.worktrees.remove({
-                worktreeId,
-                hostId,
-                force,
-                allowUnverifiedPtyStop: options?.allowUnverifiedPtyStop === true,
-                skipArchive,
-                ...(options?.snapshotPruneBatchId
-                  ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
-                  : {})
-              }))
-            : (removalGenerationGuard?.assertCurrent(),
-              callRuntimeRpc<RemoveWorktreeResult>(
-                target,
-                'worktree.rm',
-                {
-                  worktree: toRuntimeWorktreeSelector(worktreeId),
-                  ...(hostId ? { hostId } : {}),
-                  force,
-                  allowUnverifiedPtyStop: options?.allowUnverifiedPtyStop === true,
-                  runHooks: !skipArchive
-                },
-                { timeoutMs: 60_000 }
-              )))
+        removalResult = await dispatchWorktreeRemoval({
+          worktreeId,
+          hostId,
+          force,
+          skipArchive,
+          forgetLocalOnly,
+          target,
+          options,
+          assertCurrent: () => removalGenerationGuard?.assertCurrent()
+        })
       } catch (error) {
         if (
           !forgetLocalOnly &&
