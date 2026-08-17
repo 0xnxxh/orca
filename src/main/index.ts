@@ -1361,7 +1361,9 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
         details.reason,
         details.exitCode ?? null,
         {
-          processType: 'renderer'
+          processType: 'renderer',
+          rendererKind: 'main-window',
+          webContentsId
         },
         webContentsId
       )
@@ -1800,7 +1802,8 @@ function recordProcessGoneCrash(
     reason,
     exitCode,
     expectedTeardown: getExpectedTeardownScope(webContentsId),
-    details
+    details,
+    ...(webContentsId !== undefined ? { webContentsId } : {})
   })
 }
 
@@ -2892,6 +2895,22 @@ void app.whenReady().then(async () => {
   // Why: process-gone metrics only see survivors; retain a recent whole-app
   // snapshot for comparison in crash reports.
   startPreGoneProcessMetricsSampling()
+  // Why: only the main window's render-process-gone was wired to the recorder,
+  // so embedded-browser guest renderer deaths left zero trace (#15052).
+  browserManager.setGuestRendererGoneReporter((details, guestWebContentsId, guestKind) => {
+    recordProcessGoneCrash(
+      'renderer',
+      'renderer',
+      details.reason,
+      details.exitCode ?? null,
+      {
+        processType: 'renderer',
+        rendererKind: guestKind,
+        webContentsId: guestWebContentsId
+      },
+      guestWebContentsId
+    )
+  })
   app.on('child-process-gone', (_event, details) => {
     recordProcessGoneCrash('child', details.type, details.reason, details.exitCode ?? null, {
       name: details.name,

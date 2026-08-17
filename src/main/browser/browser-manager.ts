@@ -149,6 +149,12 @@ type PopupOwnerContext = {
   browserTabId: string
   rootGuestWebContentsId: number
 }
+export type BrowserGuestRendererGoneKind = 'browser-guest' | 'browser-popup'
+export type BrowserGuestRendererGoneReporter = (
+  details: Electron.RenderProcessGoneDetails,
+  guestWebContentsId: number,
+  guestKind: BrowserGuestRendererGoneKind
+) => void
 type PendingMainFrameNavigation = {
   currentUrl: string
   supersededUrls: string[]
@@ -246,6 +252,7 @@ export class BrowserManager {
   // Why: did-start-navigation hides the overlay optimistically; stash the cleared error so did-fail-load(-3) can restore an aborted nav.
   private readonly clearedLoadErrorsByGuestId = new Map<number, BrowserLoadError>()
   private browserGuestStateChangedListener: ((worktreeId: string) => void) | null = null
+  private guestRendererGoneReporter: BrowserGuestRendererGoneReporter | null = null
   private certificateTrustController: BrowserCertificateTrustController | null = null
   private shouldForwardDictationShortcut: (() => boolean) | null = null
   private readonly pendingLoadFailuresByGuestId = new Map<
@@ -260,6 +267,11 @@ export class BrowserManager {
 
   setDictationShortcutForwardingPredicate(predicate: (() => boolean) | null): void {
     this.shouldForwardDictationShortcut = predicate
+  }
+
+  /** Injected so guest renderer deaths reach the crash recorder without coupling BrowserManager to the report store (#15052). */
+  setGuestRendererGoneReporter(reporter: BrowserGuestRendererGoneReporter | null): void {
+    this.guestRendererGoneReporter = reporter
   }
 
   setBrowserGuestStateChangedListener(listener: ((worktreeId: string) => void) | null): void {
@@ -898,6 +910,19 @@ export class BrowserManager {
       this.certificateTrustController?.onMainFrameNavigationCommitted(guest.id, url)
     }
 
+    const renderProcessGoneHandler = (
+      _event: Electron.Event,
+      details: Electron.RenderProcessGoneDetails
+    ): void => {
+      // Why: every other guest render-process-gone listener is cleanup-only, so
+      // without this forward a guest renderer death leaves zero trace (#15052).
+      this.guestRendererGoneReporter?.(
+        details,
+        guest.id,
+        inheritedOwnerContext ? 'browser-popup' : 'browser-guest'
+      )
+    }
+    guest.on('render-process-gone', renderProcessGoneHandler)
     guest.on('will-navigate', navigationGuard)
     guest.on('will-redirect', willRedirectHandler)
     guest.on('did-start-navigation', didStartNavigationHandler)
@@ -932,6 +957,7 @@ export class BrowserManager {
         // guest may already be destroyed
       }
       if (!guest.isDestroyed()) {
+        guest.off('render-process-gone', renderProcessGoneHandler)
         guest.off('will-navigate', navigationGuard)
         guest.off('will-redirect', willRedirectHandler)
         guest.off('did-start-navigation', didStartNavigationHandler)

@@ -80,12 +80,15 @@ export function getProcessGoneDedupeKey(
   source: 'renderer' | 'child',
   processType: string,
   reason: string,
-  exitCode: number | null
+  exitCode: number | null,
+  webContentsId?: number | null
 ): string {
   // Why: one renderer death can surface as crashed/oom/launch-failed in a
-  // burst. Coalesce that prompt noise while keeping child identities precise.
+  // burst. Coalesce that prompt noise per renderer — concurrent deaths of
+  // distinct renderers (main window + browser guests, #15052) must each
+  // report — while keeping child identities precise.
   if (source === 'renderer') {
-    return `${source}:${processType}`
+    return `${source}:${processType}:wc:${webContentsId ?? 'unknown'}`
   }
   return `${source}:${processType}:${reason}:${exitCode ?? 'null'}`
 }

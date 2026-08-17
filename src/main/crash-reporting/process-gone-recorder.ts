@@ -41,6 +41,8 @@ export type ProcessGoneCrashEvent = {
   exitCode: number | null
   expectedTeardown: ExpectedTeardownScope
   details: Record<string, unknown>
+  /** Identifies which renderer died so concurrent deaths dedupe apart (#15052). */
+  webContentsId?: number
 }
 
 type CrashReportRecorderStore = Pick<CrashReportStore, 'record' | 'attachDetails'>
@@ -196,9 +198,25 @@ export function recordProcessGoneCrash(
     return
   }
 
-  const key = getProcessGoneDedupeKey(event.source, event.processType, event.reason, event.exitCode)
+  const key = getProcessGoneDedupeKey(
+    event.source,
+    event.processType,
+    event.reason,
+    event.exitCode,
+    event.webContentsId ?? null
+  )
   const claim = dedupe.tryClaim(key)
   if (!claim) {
+    // Why: a deduped drop was a bare return with no trace, indistinguishable
+    // from a wiring gap. Coalesce per dedupe key so one death's multi-reason
+    // burst costs one breadcrumb instead of flooding the 30-entry ring.
+    const dedupedData = processGoneBreadcrumbData(event)
+    recordCoalescedDurableCrashBreadcrumb({
+      name: 'process_gone_deduped',
+      data: dedupedData,
+      coalesceKey: key,
+      minIntervalMs: SUPPRESSED_PROCESS_GONE_COALESCE_MS
+    })
     return
   }
   const mainProcessLifecycle = getMainProcessLifecycleIdentity()
@@ -215,6 +233,9 @@ export function recordProcessGoneCrash(
       'crash.source': event.source,
       'crash.process_type': event.processType,
       'crash.reason': event.reason,
+      ...(event.webContentsId !== undefined
+        ? { 'crash.web_contents_id': event.webContentsId }
+        : {}),
       ...(event.exitCode !== null ? { 'crash.exit_code': event.exitCode } : {}),
       ...decodedExitCodeAttribute(event),
       'app.version': app.getVersion(),
