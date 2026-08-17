@@ -296,6 +296,28 @@ describe('Task/Dispatch lifecycle guards', () => {
     expect(database.getDispatchContextById(abandoned.dispatchId)?.status).toBe('failed')
   })
 
+  it('restores a live sibling after stopping an uncertain worker start', () => {
+    const database = createDatabase()
+    const task = database.createTask({ spec: 'uncertain legacy worker split' })
+    const live = startWorker(database, task.id, 'uncertain_live')
+    sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+    const uncertain = database.createStartingWorkerDispatch({ taskId: task.id, startOptions: {} })
+    database.markWorkerStartUnknown(uncertain.dispatch.id, 'agent_readiness', 'outcome unknown')
+    expect(database.getTask(task.id)?.status).toBe('blocked')
+
+    expect(database.beginWorkerStop(uncertain.dispatch.id).disposition).toBe('stopping')
+    expect(database.settleWorkerStop(uncertain.dispatch.id).state).toBe('stopped')
+    expect(database.getTask(task.id)?.status).toBe('dispatched')
+    expect(
+      database.settleWorkerReport({
+        taskId: task.id,
+        dispatchId: live.dispatchId,
+        outcome: 'succeeded',
+        result: 'live sibling completed'
+      })
+    ).toEqual({ action: 'settled', outcome: 'succeeded', duplicate: false })
+  })
+
   it('rejects gate creation while a supervised worker remains active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'worker gate guard' })

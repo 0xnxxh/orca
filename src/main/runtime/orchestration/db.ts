@@ -6418,7 +6418,7 @@ export class OrchestrationDb {
            WHERE id = ?`
         )
         .run(dispatchId)
-      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
+      this.reconcileTaskAfterDispatchInterruption(dispatch.task_id, dispatchId)
       this.closeQuestionsForDispatch(dispatchId)
       this.db.exec('COMMIT')
       return {
@@ -6454,7 +6454,7 @@ export class OrchestrationDb {
            WHERE id = ? AND status IN ('pending', 'dispatched')`
         )
         .run(dispatchId)
-      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
+      this.reconcileTaskAfterDispatchInterruption(dispatch.task_id, dispatchId)
       this.db.exec('COMMIT')
       return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
     } catch (error) {
@@ -6500,7 +6500,7 @@ export class OrchestrationDb {
            WHERE id = ? AND status IN ('pending', 'dispatched')`
         )
         .run(dispatchId)
-      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
+      this.reconcileTaskAfterDispatchInterruption(dispatch.task_id, dispatchId)
       this.db.exec('COMMIT')
       return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
     } catch (error) {
@@ -6598,7 +6598,7 @@ export class OrchestrationDb {
            WHERE id = ?`
         )
         .run(dispatchId)
-      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
+      this.reconcileTaskAfterDispatchInterruption(dispatch.task_id, dispatchId)
       this.closeQuestionsForDispatch(dispatchId)
       this.db.exec('COMMIT')
       return {
@@ -7330,16 +7330,17 @@ export class OrchestrationDb {
       .get(taskId) as DispatchContextRow | undefined
   }
 
-  private blockTaskWithoutActiveSibling(taskId: string, dispatchId: string): void {
+  private reconcileTaskAfterDispatchInterruption(taskId: string, dispatchId: string): void {
     this.db
       .prepare(
-        `UPDATE tasks SET status = 'blocked'
-         WHERE id = ? AND NOT EXISTS (
+        `UPDATE tasks
+         SET status = CASE WHEN EXISTS (
            SELECT 1 FROM dispatch_contexts
            WHERE task_id = tasks.id AND id != ? AND status IN ('pending', 'dispatched')
-         )`
+         ) THEN 'dispatched' ELSE 'blocked' END
+         WHERE id = ? AND status IN ('dispatched', 'blocked')`
       )
-      .run(taskId, dispatchId)
+      .run(dispatchId, taskId)
   }
 
   getDispatchContextById(dispatchId: string): DispatchContextRow | undefined {
