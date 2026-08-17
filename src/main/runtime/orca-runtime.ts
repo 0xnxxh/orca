@@ -31580,7 +31580,8 @@ export class OrcaRuntimeService {
       if (!allLivePtyIds.has(pty.ptyId) && !this.leafExistsForPty(pty.ptyId)) {
         const currentVerdict = this.ptyLivenessVerdictByPtyId.get(pty.ptyId)
         if (
-          currentVerdict?.observedAt > livenessObservationAtStart &&
+          currentVerdict &&
+          currentVerdict.observedAt > livenessObservationAtStart &&
           currentVerdict.verdict.status === 'unverifiable'
         ) {
           pty.connected = false
