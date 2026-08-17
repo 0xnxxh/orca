@@ -79,7 +79,7 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     const id = 'ssh:conn-1@@pty-reconnecting'
     const mux = createMockMux()
     mux.request.mockResolvedValueOnce([])
-    const provider = new SshPtyProvider('conn-1', mux as never, undefined, 1, [id])
+    const provider = new SshPtyProvider('conn-1', mux as never)
 
     await provider.listProcesses()
 

@@ -1009,21 +1009,11 @@ export class SshRelaySession {
     this.wireUpRemoteOrcaCli(mux, connectionIncarnation)
 
     const providerGeneration = allocateSshPtyProviderGeneration()
-    const initialUnverifiablePtyIds = new Set(
-      [
-        ...getPtyIdsForConnection(this.targetId),
-        ...this.store
-          .getSshRemotePtyLeases(this.targetId)
-          .filter((lease) => lease.state !== 'terminated' && lease.state !== 'expired')
-          .map((lease) => lease.ptyId)
-      ].map((ptyId) => toAppSshPtyId(this.targetId, ptyId))
-    )
     const ptyProvider = new SshPtyProvider(
       this.targetId,
       mux,
       this.remoteCliBridgeEnv ?? undefined,
-      providerGeneration,
-      initialUnverifiablePtyIds
+      providerGeneration
     )
     const consumerOwnerState = this.activePtyConsumerOwner()
     if (consumerOwnerState) {
@@ -1788,6 +1778,9 @@ export class SshRelaySession {
         return
       }
       if (!isCurrentPtyExit(payload)) {
+        if (!payload.incarnationId) {
+          ptyProvider.acceptUnverifiablePty(payload.id)
+        }
         return
       }
       void this.acceptPtyExit(payload).catch(() => {})

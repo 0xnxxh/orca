@@ -84,7 +84,6 @@ vi.mock('../providers/ssh-pty-provider', () => ({
   isSshPtyNotFoundError: (error: unknown) => String(error).includes('not found'),
   isSshPtyIdentityMismatchError: (error: unknown) => String(error).includes('identity mismatch'),
   SshPtyProvider: class MockSshPtyProvider {
-    readonly initialUnverifiablePtyIds: Set<string>
     onData = vi.fn().mockReturnValue(() => {})
     onReplay = vi.fn().mockReturnValue(() => {})
     onExit = vi.fn().mockReturnValue(() => {})
@@ -93,16 +92,6 @@ vi.mock('../providers/ssh-pty-provider', () => ({
     acceptUnverifiablePty = vi.fn()
     acceptExitedPty = vi.fn()
     dispose = vi.fn()
-
-    constructor(
-      _connectionId: string,
-      _mux: unknown,
-      _remoteCliBridgeEnv: unknown,
-      _providerGeneration: number,
-      initialUnverifiablePtyIds: Iterable<string> = []
-    ) {
-      this.initialUnverifiablePtyIds = new Set(initialUnverifiablePtyIds)
-    }
   }
 }))
 vi.mock('../providers/ssh-filesystem-provider', () => ({
@@ -210,14 +199,12 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     try {
       await session.establish(mockConn)
       const provider = vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1] as unknown as {
-        initialUnverifiablePtyIds: Set<string>
         acceptUnverifiablePty: ReturnType<typeof vi.fn>
         acceptExitedPty: ReturnType<typeof vi.fn>
       }
       const appPtyId = 'ssh:target-1@@pty-unverifiable'
 
       expect(session.getState()).toBe('ready')
-      expect(provider.initialUnverifiablePtyIds).toContain(appPtyId)
       expect(provider.acceptUnverifiablePty).toHaveBeenCalledWith(appPtyId)
       expect(provider.acceptExitedPty).not.toHaveBeenCalled()
       expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(

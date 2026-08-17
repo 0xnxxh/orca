@@ -56,6 +56,7 @@ vi.mock('../providers/ssh-pty-provider', () => ({
     onExit = vi.fn().mockReturnValue(() => {})
     attach = vi.fn().mockResolvedValue(undefined)
     attachForReconnect = vi.fn().mockResolvedValue({})
+    acceptUnverifiablePty = vi.fn()
     dispose = vi.fn()
   }
 }))
@@ -120,6 +121,7 @@ describe('SSH relay PTY incarnation exits', () => {
     await session.establish(mockConn)
     const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
       onExit: ReturnType<typeof vi.fn>
+      acceptUnverifiablePty: ReturnType<typeof vi.fn>
     }
     const onExit = provider.onExit.mock.calls[0]?.[0] as (payload: {
       id: string
@@ -208,5 +210,34 @@ describe('SSH relay PTY incarnation exits', () => {
     await vi.waitFor(() =>
       expect(acceptLivePty).toHaveBeenCalledExactlyOnceWith('ssh:target-1@@pty-reused')
     )
+  })
+
+  it('marks a legacy exit unverifiable after current incarnation ownership is known', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
+      onExit: ReturnType<typeof vi.fn>
+      acceptUnverifiablePty: ReturnType<typeof vi.fn>
+    }
+    const onExit = provider.onExit.mock.calls[0]?.[0] as (payload: {
+      id: string
+      code: number
+      providerGeneration: number
+      ptyIncarnation: string
+    }) => void
+    vi.mocked(isCurrentPtyExit).mockReturnValueOnce(false)
+
+    onExit({
+      id: 'ssh:target-1@@pty-current',
+      code: 0,
+      providerGeneration: 31,
+      ptyIncarnation: 'incarnation-current'
+    })
+
+    expect(provider.acceptUnverifiablePty).toHaveBeenCalledExactlyOnceWith(
+      'ssh:target-1@@pty-current'
+    )
+    expect(acceptOutputExitMock).not.toHaveBeenCalled()
   })
 })

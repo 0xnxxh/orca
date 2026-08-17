@@ -47,14 +47,13 @@ export class SshPtyProvider implements IPtyProvider {
     connectionId: string,
     mux: SshChannelMultiplexer,
     private readonly remoteCliBridgeEnv?: RemoteCliBridgeEnv,
-    readonly providerGeneration = 1,
-    initialUnverifiablePtyIds: Iterable<string> = []
+    readonly providerGeneration = 1
   ) {
     this.connectionId = connectionId
     this.mux = mux
     this.agentSessionCapabilities = new SshAgentSessionCapabilities(mux)
     this.getAppliedSize = createSshPtyAppliedSizeReader(mux, connectionId)
-    this.livenessState = new SshPtyLivenessState(this.toAppPtyId, initialUnverifiablePtyIds)
+    this.livenessState = new SshPtyLivenessState(this.toAppPtyId)
 
     this.outputState = new SshPtyProviderOutputState(providerGeneration, {
       mux,
