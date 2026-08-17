@@ -27,6 +27,7 @@ import type { SshPtyLiveEvidence } from './ssh-pty-liveness-state'
 import { listSshPtyProcessesWithLiveEvidence } from './ssh-pty-process-list-liveness'
 import { attachSshPtyWithLiveEvidence } from './ssh-pty-attach-liveness'
 import { shutdownSshPty } from './ssh-pty-shutdown'
+import { requestSshPtyDefaultShell, requestSshPtyProfiles } from './ssh-pty-shell-metadata'
 
 /** Remote PTY provider that proxies IPtyProvider operations through the relay. */
 export class SshPtyProvider implements IPtyProvider {
@@ -134,6 +135,10 @@ export class SshPtyProvider implements IPtyProvider {
       acceptAmbiguousExitPty: (id) => this.acceptAmbiguousExitPty(id),
       toAppPtyId: this.toAppPtyId
     })
+  }
+
+  async deleteWorktreeHistory(worktreeId: string): Promise<void> {
+    await this.mux.request('pty.deleteWorktreeHistory', { worktreeId })
   }
 
   async supportsAgentSessionClaims(options: { signal?: AbortSignal } = {}): Promise<boolean> {
@@ -316,15 +321,9 @@ export class SshPtyProvider implements IPtyProvider {
     this.acceptExitedPtyLiveness(id)
   }
 
-  async getDefaultShell(): Promise<string> {
-    const result = await this.mux.request('pty.getDefaultShell')
-    return result as string
-  }
+  getDefaultShell = (): Promise<string> => requestSshPtyDefaultShell(this.mux)
 
-  async getProfiles(): Promise<{ name: string; path: string }[]> {
-    const result = await this.mux.request('pty.getProfiles')
-    return result as { name: string; path: string }[]
-  }
+  getProfiles = (): Promise<{ name: string; path: string }[]> => requestSshPtyProfiles(this.mux)
 
   onData = (callback: SshPtyDataCallback): (() => void) => this.outputState.onData(callback)
   onRejectedData = (callback: SshPtyDataCallback): (() => void) =>
