@@ -37,6 +37,8 @@ export type HostKeyVerifierDeps = {
   /** Already unioned across every known_hosts file. */
   entries: readonly KnownHostsEntry[]
   isTrusted: TrustedHostKeyLookup
+  /** Passed straight through so a changed-key rejection can name the file to edit. */
+  hostKeyStoreFile?: string
   rememberHostKey: (record: {
     host: string
     port: number
@@ -55,27 +57,6 @@ export type HostKeyVerifierDeps = {
 }
 
 /**
- * Last-resort copy of ssh2 1.17's list, used only if the real one cannot be read.
- *
- * Deliberately not the primary source. ssh2's list is built at load time and `ssh-ed25519` is
- * prepended only when a RUNTIME PROBE succeeds — it signs and verifies with a fixed Ed25519 key. On
- * a build where that probe fails, ssh-ed25519 is absent from ssh2's SUPPORTED list too, and
- * `generateAlgorithmList` THROWS `Unsupported algorithm: ssh-ed25519` from inside `client.connect`.
- * That throw matches no retry classifier, so it is a permanent failure — and it would fire ONLY for
- * hosts we already know, since those are the only ones we set `algorithms` for. Working on new
- * hosts and failing on trusted ones is about the worst shape a bug can have.
- */
-export const FALLBACK_SERVER_HOST_KEY_ALGORITHMS = [
-  'ssh-ed25519',
-  'ecdsa-sha2-nistp256',
-  'ecdsa-sha2-nistp384',
-  'ecdsa-sha2-nistp521',
-  'rsa-sha2-512',
-  'rsa-sha2-256',
-  'ssh-rsa'
-]
-
-/**
  * ssh2's own default host-key proposal order, which we reorder rather than replace.
  *
  * Read from ssh2 rather than copied, so we cannot propose an algorithm this ssh2 build does not
@@ -85,7 +66,17 @@ export const FALLBACK_SERVER_HOST_KEY_ALGORITHMS = [
  */
 export const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = readSsh2DefaultServerHostKeyAlgorithms()
 
-function readSsh2DefaultServerHostKeyAlgorithms(): string[] {
+/**
+ * Null rather than a copied list when ssh2's own cannot be read.
+ *
+ * A hardcoded fallback cannot be safe here. ssh2 prepends `ssh-ed25519` only when a RUNTIME PROBE
+ * succeeds, and on a build where that probe fails the name is absent from ssh2's SUPPORTED list too,
+ * so proposing it makes `generateAlgorithmList` THROW `Unsupported algorithm: ssh-ed25519` inside
+ * client.connect. That throw matches no retry classifier, and it would fire only for hosts we
+ * already know — working on new hosts and failing on trusted ones. Not reading the list is a reason
+ * to leave ssh2's defaults alone, not to guess at them.
+ */
+function readSsh2DefaultServerHostKeyAlgorithms(): string[] | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- ssh2 exports this only here
     const constants = require('ssh2/lib/protocol/constants.js') as {
@@ -95,13 +86,16 @@ function readSsh2DefaultServerHostKeyAlgorithms(): string[] {
     if (Array.isArray(list) && list.length > 0 && list.every((a) => typeof a === 'string')) {
       return [...(list as string[])]
     }
-    console.warn('[ssh] ssh2 default host key list has an unexpected shape; using the copy')
+    console.warn('[ssh] ssh2 default host key list has an unexpected shape; leaving its defaults')
   } catch (error) {
-    // A future ssh2 could move the file. Falling back keeps connections working; the cost is only
-    // that the proposal order may drift, which a test reports.
-    console.warn('[ssh] could not read ssh2 default host key algorithms; using the copy:', error)
+    // A future ssh2 could move the file. Leaving its defaults keeps connections working; the only
+    // cost is that a known host is no longer type-scoped, which is the pre-existing behaviour.
+    console.warn(
+      '[ssh] could not read ssh2 default host key algorithms; leaving its defaults:',
+      error
+    )
   }
-  return [...FALLBACK_SERVER_HOST_KEY_ALGORITHMS]
+  return null
 }
 
 export function hostKeyFingerprintOf(key: Buffer): string {
@@ -233,7 +227,8 @@ export function createHostKeyVerifier(
         siteConfigSuppressed: deps.siteConfigSuppressed,
         knownHostsUnreadable: deps.knownHostsUnreadable,
         displayHost: deps.displayHost,
-        port: deps.port
+        port: deps.port,
+        hostKeyStoreFile: deps.hostKeyStoreFile
       })
 
       deps.onDecision?.({ ...decision, fingerprint, keyType })

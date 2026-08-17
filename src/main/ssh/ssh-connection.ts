@@ -43,9 +43,14 @@ import {
   DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
   orderServerHostKeyAlgorithms
 } from './ssh-host-key-verifier'
-import { HostKeyVerificationError, isHostKeyVerificationError } from './ssh-host-key-decision'
-import { sshGArgsForHost } from './ssh-g-config-resolution'
 import {
+  HostKeyVerificationError,
+  isHostKeyVerificationError,
+  strictestHostKeyChecking
+} from './ssh-host-key-decision'
+import { resolveSiteStrictHostKeyChecking, sshGArgsForHost } from './ssh-g-config-resolution'
+import {
+  boundSshHostKeyStoreFile,
   loadTrustedHostKeys,
   matchTrustedHostKeys,
   storedKeyTypesForEndpoint,
@@ -745,6 +750,19 @@ export class SshConnection {
         throw err
       }
 
+      // Why generation and not the error: a superseded attempt's host key denial is deliberately
+      // NOT recorded — the verifier withholds it so a dead attempt cannot clobber the live one's
+      // outcome — so nothing about the error identifies it, and ssh2's generic handshake failure
+      // reads as an ordinary fault. Everything below either offers a credential or probes another
+      // transport, and doing that for a connection nobody is waiting on can put a passphrase prompt
+      // in front of a host we just refused. Checking the generation catches it whatever the error
+      // turned out to be, and leaves what connect() rejects with unchanged.
+      if (this.disposed || connectGeneration !== this.connectGeneration) {
+        this.proxyProcess?.kill()
+        this.proxyProcess = null
+        throw err
+      }
+
       // Why first: everything below this line either offers a credential or retries on another
       // transport. We have just decided this host may not be the one it claims to be, so prompting
       // would collect the user's passphrase or password on its behalf, and the system-ssh probe
@@ -1228,9 +1246,17 @@ export class SshConnection {
     // by whether it happens to have a ~/.ssh/config — incoherently, since the same broken machine
     // WITHOUT one was fully permissive. The flag is a claim about a config file we could not read,
     // and when ssh never ran there is no such claim to make.
-    const siteConfigSuppressed =
+    const sshGSuppressedSiteConfig =
       hostKeyResolved !== null &&
       sshGArgsForHost(this.target.configHost || this.target.label).includes('-F')
+    // Being blind to the site policy is only a reason to refuse if we cannot go and read it. Ask ssh
+    // for the system config on its own; a value means we are no longer blind, and only a probe that
+    // fails leaves the strict rule standing. Costs one `ssh -G` on the rare path that already needed
+    // -F, and nothing on the common one.
+    const siteStrictHostKeyChecking = sshGSuppressedSiteConfig
+      ? await resolveSiteStrictHostKeyChecking(this.target.configHost || this.target.label)
+      : null
+    const siteConfigSuppressed = sshGSuppressedSiteConfig && siteStrictHostKeyChecking === null
     const knownHostsEvidence = await loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved))
     const knownHostsEntries = knownHostsEvidence.entries
     // Preloaded because ssh2's verifier decides synchronously; the same reason known_hosts is read
@@ -1242,14 +1268,18 @@ export class SshConnection {
       console.warn('[ssh] host key store unavailable; falling back to known_hosts only:', err)
       return []
     })
-    const serverHostKeyOrder = orderServerHostKeyAlgorithms(
-      knownHostsEntries,
-      hostKeyLookupHost,
-      config.port ?? 22,
-      DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
-      storedKeyTypesForEndpoint(trustedHostKeys, hostKeyLookupHost, config.port ?? 22),
-      isHostKeyAlias
-    )
+    // Null means ssh2's own list was unreadable, so there is nothing safe to reorder against and
+    // ssh2 keeps proposing whatever it supports.
+    const serverHostKeyOrder = DEFAULT_SERVER_HOST_KEY_ALGORITHMS
+      ? orderServerHostKeyAlgorithms(
+          knownHostsEntries,
+          hostKeyLookupHost,
+          config.port ?? 22,
+          DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
+          storedKeyTypesForEndpoint(trustedHostKeys, hostKeyLookupHost, config.port ?? 22),
+          isHostKeyAlias
+        )
+      : undefined
     return new Promise<void>((resolve, reject) => {
       const client = new SshClient()
       let settled = false
@@ -1267,7 +1297,17 @@ export class SshConnection {
         // The name we looked up, not the label: the mismatch message prints `ssh-keygen -R <host>`
         // and a label removes nothing from known_hosts.
         displayHost: hostKeyLookupHost,
-        strictHostKeyChecking: hostKeyResolved?.strictHostKeyChecking ?? 'ask',
+        // Why the stricter of the two rather than the user's: on the -F path the resolved value was
+        // produced without /etc/ssh/ssh_config, so it cannot represent a site policy at all. ssh -G
+        // also cannot tell "the user set ask" apart from "nothing set it, so ask is the default",
+        // which is what a faithful first-value-wins merge would need. Taking the stricter can only
+        // over-restrict against a user who deliberately relaxed a host the site locks down — and
+        // that case refused outright until now.
+        hostKeyStoreFile: boundSshHostKeyStoreFile() ?? undefined,
+        strictHostKeyChecking: strictestHostKeyChecking(
+          hostKeyResolved?.strictHostKeyChecking,
+          siteStrictHostKeyChecking
+        ),
         isHostKeyAlias,
         isEphemeralRuntimeTarget: this.target.owner?.type === 'on-demand-runtime',
         siteConfigSuppressed,
@@ -1297,9 +1337,12 @@ export class SshConnection {
         onDecision: (decision) => {
           // Empty when the blob was not a readable host key: there is nothing to identify, and the
           // relay uses this fingerprint to isolate install locks, so blanking it would be worse
-          // than leaving the previous one.
+          // than leaving the previous one. A REJECTED key is excluded for the same reason read the
+          // other way: we refused to talk to that host, so adopting its fingerprint would scope the
+          // relay's locks to a host we never accepted.
           if (
             decision.fingerprint &&
+            decision.action !== 'reject' &&
             !this.disposed &&
             connectGeneration === this.connectGeneration
           ) {

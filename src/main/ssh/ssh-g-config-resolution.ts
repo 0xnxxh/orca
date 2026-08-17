@@ -59,6 +59,50 @@ export function sshGArgsForHost(host: string): string[] {
   return ['-G', '--', host]
 }
 
+/**
+ * The site-wide StrictHostKeyChecking, read on its own.
+ *
+ * Only needed on the `-F` path, where OpenSSH ignores /etc/ssh/ssh_config entirely and the resolved
+ * config above therefore cannot see a site policy. Pointing `-F` at the null device inverts that: no
+ * per-user file participates, so what comes back is the system config plus built-in defaults.
+ *
+ * Without this the caller had to treat "we could not read the site policy" as "refuse every unknown
+ * host", which locks out anyone whose HOME diverges from their passwd home — devcontainers, `su`,
+ * Nix shells, some corporate launchers — with no override. Reading it turns a blind rule into data.
+ *
+ * Returns null when ssh cannot answer, and the caller stays blind-and-strict for that case.
+ */
+export function resolveSiteStrictHostKeyChecking(host: string): Promise<string | null> {
+  // Windows ssh accepts NUL for the same purpose; both are "a file that exists and is empty".
+  const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  return new Promise((resolve) => {
+    let settled = false
+    let child: ReturnType<typeof execFile> | undefined
+    const settle = (value: string | null): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      child?.kill()
+      resolve(value)
+    }
+    const timer = setTimeout(() => settle(null), SSH_G_TIMEOUT_MS)
+    try {
+      child = execFile(
+        'ssh',
+        ['-F', nullDevice, '-G', '--', host],
+        { timeout: SSH_G_TIMEOUT_MS },
+        (err, stdout) => {
+          settle(err ? null : (parseSshGOutput(stdout).strictHostKeyChecking ?? null))
+        }
+      )
+    } catch {
+      settle(null)
+    }
+  })
+}
+
 // Why: `ssh -G <host>` asks OpenSSH for the effective config, including
 // Include/Match/wildcard inheritance, without reimplementing OpenSSH matching.
 export function resolveWithSshG(host: string): Promise<SshResolvedConfig | null> {

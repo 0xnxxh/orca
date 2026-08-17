@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { decideHostKey, type HostKeyDecisionInput } from './ssh-host-key-decision'
+import {
+  decideHostKey,
+  strictestHostKeyChecking,
+  type HostKeyDecisionInput
+} from './ssh-host-key-decision'
 
 function input(overrides: Partial<HostKeyDecisionInput> = {}): HostKeyDecisionInput {
   return {
@@ -19,6 +23,45 @@ describe('deciding what to do with a presented host key', () => {
   it('accepts a key either source already holds', () => {
     expect(decideHostKey(input({ knownHostsOutcome: 'match' })).action).toBe('accept')
     expect(decideHostKey(input({ storeOutcome: 'match' })).action).toBe('accept')
+  })
+
+  // Precedence between the two sources, pinned in both directions. It was unpinned, and the order
+  // was wrong: a legitimate key rotation is exactly the case where they disagree.
+  it('accepts a rotated key once known_hosts holds it, even though our record is stale', () => {
+    // What the remedy we print produces: `ssh-keygen -R host` then reconnect re-adds the NEW key to
+    // known_hosts while our store still holds the old one. Refusing here was a permanent lockout,
+    // because nothing in the app clears the store.
+    expect(
+      decideHostKey(input({ knownHostsOutcome: 'match', storeOutcome: 'mismatch' })).action
+    ).toBe('accept')
+  })
+
+  it('still refuses a key known_hosts disagrees with, whatever our record says', () => {
+    // The direction that must NOT be relaxed: known_hosts is authoritative for refusal too, so a
+    // stale accept in our store cannot rescue a key ssh itself would reject.
+    const decision = decideHostKey(input({ knownHostsOutcome: 'mismatch', storeOutcome: 'match' }))
+
+    expect(decision.action).toBe('reject')
+    expect(decision.disagreeingSource).toBe('known-hosts')
+  })
+
+  it('names the store file in a changed-key rejection so the user can act on it', () => {
+    // Reachable for a host we trusted on first contact and never wrote to known_hosts: there is no
+    // `ssh-keygen -R` that cures it, so "remove the saved key" has to name a file or it names
+    // nothing. M1 fixed the case known_hosts CAN rescue; this is the one it cannot.
+    const decision = decideHostKey(
+      input({ storeOutcome: 'mismatch', hostKeyStoreFile: '/data/orca/ssh-host-keys.json' })
+    )
+
+    expect(decision.action).toBe('reject')
+    expect(decision.reason).toContain('/data/orca/ssh-host-keys.json')
+  })
+
+  it('falls back to the generic hint when the store path is unknown', () => {
+    const decision = decideHostKey(input({ storeOutcome: 'mismatch' }))
+
+    expect(decision.action).toBe('reject')
+    expect(decision.reason).toContain('remove the saved key')
   })
 
   it('remembers a first-contact key', () => {
@@ -350,5 +393,41 @@ describe('deciding what to do with a presented host key', () => {
     for (const overrides of cases) {
       expect(decideHostKey(input(overrides)).action).not.toBe('prompt')
     }
+  })
+})
+
+/**
+ * Merging a user-resolved policy with a separately-probed site policy.
+ *
+ * Only reachable on the `-F` path, where OpenSSH ignores /etc/ssh/ssh_config so the per-user
+ * resolution cannot represent a site policy at all. Before this, being unable to see the site policy
+ * meant refusing every unknown host — which locked out anyone whose HOME diverges from their passwd
+ * home (devcontainers, `su`, Nix shells) with no override.
+ */
+describe('merging the user and site host key policies', () => {
+  it('keeps the user value when the site could not be read', () => {
+    // The blind case that still fails strict: a null probe must not invent a policy.
+    expect(strictestHostKeyChecking('ask', null)).toBe('ask')
+    expect(strictestHostKeyChecking(undefined, null)).toBe('ask')
+  })
+
+  it('takes a strict site policy over a laxer user value', () => {
+    expect(strictestHostKeyChecking('ask', 'yes')).toBe('yes')
+    expect(strictestHostKeyChecking('no', 'true')).toBe('true')
+  })
+
+  it('does not let a lax site policy loosen the user', () => {
+    // The direction that must never relax: a permissive site config cannot downgrade a user who
+    // asked for strict, or we end up laxer than ssh itself.
+    expect(strictestHostKeyChecking('yes', 'no')).toBe('yes')
+    expect(strictestHostKeyChecking('ask', 'off')).toBe('ask')
+  })
+
+  it('lets the site raise ask to accept-new', () => {
+    expect(strictestHostKeyChecking('ask', 'accept-new')).toBe('accept-new')
+  })
+
+  it('keeps a strict user value against accept-new', () => {
+    expect(strictestHostKeyChecking('yes', 'accept-new')).toBe('yes')
   })
 })

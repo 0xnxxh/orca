@@ -56,6 +56,11 @@ export function initSshHostKeyStoreFile(dataFile: string): void {
   configuredStoreFile = getSshHostKeyStoreFile(dataFile)
 }
 
+/** The bound store path, for messages that must name the artefact a user has to remove. */
+export function boundSshHostKeyStoreFile(): string | null {
+  return configuredStoreFile
+}
+
 /**
  * Why throw rather than default to empty: an unconfigured store is a wiring bug, and answering
  * "nothing trusted" would quietly turn every host into first contact. The verifier wraps its work

@@ -51,6 +51,14 @@ export type HostKeyDecisionInput = {
   displayHost: string
   /** Needed for the remedy string: an off-port entry is keyed `[host]:port` in known_hosts. */
   port: number
+  /**
+   * Our own store's path, named in a changed-key rejection.
+   *
+   * Only that rejection needs it, and only because known_hosts cannot cure it: a host we trusted on
+   * first contact and never wrote to known_hosts has no `ssh-keygen -R` to run, so without naming a
+   * file the message describes a remedy the user cannot locate.
+   */
+  hostKeyStoreFile?: string
 }
 
 /**
@@ -78,8 +86,45 @@ function keygenRemoveTarget(displayHost: string, port: number): string {
 const STRICT_VALUES = new Set(['true', 'yes', 'always'])
 const LAX_VALUES = new Set(['false', 'no', 'off'])
 
+/**
+ * The stricter of a user-resolved and a site-resolved StrictHostKeyChecking.
+ *
+ * Needed only where the two were read separately: `ssh -F` makes OpenSSH ignore /etc/ssh/ssh_config,
+ * so the per-user resolution cannot represent a site policy and the site has to be probed on its
+ * own. Ordering is strict > accept-new > ask > lax, and anything unrecognised is left to the
+ * caller's own handling by falling through to the user value.
+ */
+export function strictestHostKeyChecking(
+  userValue: string | undefined,
+  siteValue: string | null
+): string {
+  const user = userValue ?? 'ask'
+  if (siteValue === null) {
+    return user
+  }
+  const site = siteValue.trim().toLowerCase()
+  if (STRICT_VALUES.has(site) && !STRICT_VALUES.has(user.trim().toLowerCase())) {
+    return site
+  }
+  // A site that is lax never loosens a user who is not: refusing to write trust is the safe side.
+  return LAX_VALUES.has(site) ? user : site === 'accept-new' && user === 'ask' ? site : user
+}
+
 const CHANGED_KEY_HINT =
   'If you rebuilt or reprovisioned this machine, remove the saved key and reconnect.'
+
+/**
+ * The same hint, naming the file when we know it.
+ *
+ * "Remove the saved key" names nothing a user can find. This rejection is reachable for a host we
+ * trusted on first contact and that has since rotated its key legitimately — known_hosts cannot
+ * rescue that one, so without a concrete path there is no way out of it at all.
+ */
+function changedKeyHint(hostKeyStoreFile: string | undefined): string {
+  return hostKeyStoreFile
+    ? `If you rebuilt or reprovisioned this machine, remove its entry from ${hostKeyStoreFile} and reconnect.`
+    : CHANGED_KEY_HINT
+}
 
 /**
  * Deliberately avoids the words "authentication failed" and "permission denied": the reconnect
@@ -120,7 +165,8 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
     siteConfigSuppressed,
     knownHostsUnreadable,
     displayHost,
-    port
+    port,
+    hostKeyStoreFile
   } = input
   const strict = input.strictHostKeyChecking.toLowerCase()
 
@@ -148,6 +194,15 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
       )
     }
   }
+  // Why known_hosts outranks our own record here: this is what a legitimate key rotation looks like
+  // once the user has run the remedy we print. `ssh-keygen -R host` then a reconnect leaves
+  // known_hosts holding the NEW key while our store still holds the old one, and checking the store
+  // first refused exactly the state that cure produces — permanently, since nothing in the app
+  // clears the store. Deferring to known_hosts concedes nothing: it is the artefact ssh itself
+  // obeys, so an attacker who can rewrite it has already won.
+  if (knownHostsOutcome === 'match') {
+    return { action: 'accept', outcome: 'match' }
+  }
   if (storeOutcome === 'mismatch') {
     return {
       action: 'reject',
@@ -155,12 +210,12 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
       disagreeingSource: 'orca-store',
       reason: rejection(
         displayHost,
-        `The key changed since you last connected. ${CHANGED_KEY_HINT}`
+        `The key changed since you last connected. ${changedKeyHint(hostKeyStoreFile)}`
       )
     }
   }
 
-  if (knownHostsOutcome === 'match' || storeOutcome === 'match') {
+  if (storeOutcome === 'match') {
     return { action: 'accept', outcome: 'match' }
   }
 
@@ -184,7 +239,7 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
         `The host offered a key of a type we have not seen for it before, while a key of another type is already known. This can mean the host was rebuilt, or that something is impersonating it.${
           fromKnownHosts
             ? ` ssh and git will refuse this host too. Run: ssh-keygen -R ${keygenRemoveTarget(displayHost, port)}`
-            : ` ${CHANGED_KEY_HINT}`
+            : ` ${changedKeyHint(hostKeyStoreFile)}`
         }`
       )
     }

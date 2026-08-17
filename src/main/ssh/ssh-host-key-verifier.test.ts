@@ -3,7 +3,6 @@ import { parseKnownHosts } from './ssh-known-hosts'
 import {
   createHostKeyVerifier,
   DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
-  FALLBACK_SERVER_HOST_KEY_ALGORITHMS,
   hostKeyFingerprintOf,
   orderServerHostKeyAlgorithms,
   type HostKeyVerifierDeps
@@ -219,7 +218,9 @@ describe('the ssh2 default algorithm list', () => {
   // client.connect, and only for hosts we already know, since those are the only ones we set
   // `algorithms` for.
   it('proposes nothing ssh2 would refuse', () => {
-    for (const algorithm of DEFAULT_SERVER_HOST_KEY_ALGORITHMS) {
+    // Null is the "could not read it" case, and the caller then leaves ssh2's defaults alone rather
+    // than proposing a guessed list — which is the only way this loop could ever have failed.
+    for (const algorithm of DEFAULT_SERVER_HOST_KEY_ALGORITHMS ?? []) {
       expect(ssh2Constants.SUPPORTED_SERVER_HOST_KEY).toContain(algorithm)
     }
   })
@@ -227,14 +228,10 @@ describe('the ssh2 default algorithm list', () => {
   // ssh2 prepends ssh-ed25519 only when a runtime probe succeeds, so a copy is not merely stale-able
   // — it can be wrong on a build where the probe fails. This asserts the fallback still matches on a
   // machine where the probe passes; it is the copy, so drift here is a review, not an outage.
-  it('keeps the fallback copy in step with ssh2', () => {
-    expect(FALLBACK_SERVER_HOST_KEY_ALGORITHMS).toEqual(ssh2Constants.DEFAULT_SERVER_HOST_KEY)
-  })
-
   // Type scoping is only safe because we can promote the type we hold, and RSA is negotiated under
   // three different names for one key.
   it('contains the RSA signature algorithms the ordering maps onto', () => {
-    expect(DEFAULT_SERVER_HOST_KEY_ALGORITHMS).toEqual(
+    expect(DEFAULT_SERVER_HOST_KEY_ALGORITHMS ?? []).toEqual(
       expect.arrayContaining(['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512'])
     )
   })
