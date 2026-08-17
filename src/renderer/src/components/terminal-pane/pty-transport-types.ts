@@ -89,6 +89,8 @@ export type PtyConnectResult = {
   snapshotSeq?: number
   isAlternateScreen?: boolean
   sessionExpired?: boolean
+  /** The host confirmed the session live but could not reopen its output delivery. */
+  deliveryUnresumable?: true
   coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }
   replay?: string
   startupCwdFallback?: { kind: 'worktree'; cwd: string }

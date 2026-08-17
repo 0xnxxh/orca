@@ -192,6 +192,42 @@ describe('createIpcPtyTransport', () => {
     })
   })
 
+  it('keeps a live SSH session distinct when only output delivery cannot resume', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawnMock = vi
+      .fn()
+      .mockRejectedValue(new Error('SSH_PTY_RESTORE_REQUIRED: ssh:ssh-1@@pty-live'))
+    ;(globalThis as { window: typeof window }).window = {
+      ...originalWindow,
+      api: {
+        ...originalWindow?.api,
+        pty: {
+          ...originalWindow?.api?.pty,
+          spawn: spawnMock,
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          onData: vi.fn(() => () => {}),
+          onReplay: vi.fn(() => () => {}),
+          onExit: vi.fn(() => () => {})
+        }
+      }
+    } as unknown as typeof window
+
+    const onError = vi.fn()
+    const result = await createIpcPtyTransport({ connectionId: 'ssh-1' }).connect({
+      url: '',
+      sessionId: 'ssh:ssh-1@@pty-live',
+      callbacks: { onError }
+    })
+
+    expect(onError).toHaveBeenCalledWith('SSH_PTY_RESTORE_REQUIRED: ssh:ssh-1@@pty-live')
+    expect(result).toEqual({
+      id: 'ssh:ssh-1@@pty-live',
+      deliveryUnresumable: true
+    })
+  })
+
   it('surfaces terminal session state save failures without the Electron IPC wrapper', async () => {
     const { createIpcPtyTransport } = await import('./pty-transport')
     const wrappedMessage = `Error invoking remote method 'pty:spawn': Error: ${createTerminalSessionStateSaveFailureMessage()}`
