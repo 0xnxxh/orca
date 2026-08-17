@@ -256,6 +256,23 @@ describe('Task/Dispatch lifecycle guards', () => {
     }
   )
 
+  it('blocks a Task when an interleaved stop settles its final active Dispatch', () => {
+    const database = createDatabase()
+    const task = database.createTask({ spec: 'interleaved legacy worker release' })
+    const stopping = startWorker(database, task.id, 'interleaved_stopping')
+    sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+    const abandoned = startWorker(database, task.id, 'interleaved_abandoned')
+
+    expect(database.beginWorkerStop(stopping.dispatchId).disposition).toBe('stopping')
+    expect(database.abandonWorkerDispatch(abandoned.dispatchId).disposition).toBe('abandoned')
+    expect(database.getTask(task.id)?.status).toBe('dispatched')
+
+    expect(database.settleWorkerStop(stopping.dispatchId).state).toBe('stopped')
+    expect(database.getTask(task.id)?.status).toBe('blocked')
+    expect(database.getDispatchContextById(stopping.dispatchId)?.status).toBe('failed')
+    expect(database.getDispatchContextById(abandoned.dispatchId)?.status).toBe('failed')
+  })
+
   it('rejects gate creation while a supervised worker remains active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'worker gate guard' })

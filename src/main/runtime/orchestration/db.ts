@@ -6450,6 +6450,7 @@ export class OrchestrationDb {
            WHERE id = ? AND status IN ('pending', 'dispatched')`
         )
         .run(dispatchId)
+      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
       this.db.exec('COMMIT')
       return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
     } catch (error) {
@@ -6495,6 +6496,7 @@ export class OrchestrationDb {
            WHERE id = ? AND status IN ('pending', 'dispatched')`
         )
         .run(dispatchId)
+      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
       this.db.exec('COMMIT')
       return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
     } catch (error) {
