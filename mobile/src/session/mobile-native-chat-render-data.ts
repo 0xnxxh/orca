@@ -94,11 +94,14 @@ export function buildMobileNativeChatTransientData({
     // this device (`findLandedImagePreviewEchoes` binds it to nothing else), so
     // its markers are placeholders — no visible source run needed to vouch for
     // them. Without this a marker-only host echo captions the user's own photo
-    // with a literal `[Image #1]`. Bounded by the images the turn now shows.
-    return {
-      ...message,
-      blocks: stripImagePromptMarkersFromTextBlocks(blocks, blocks.filter(isImageRefBlock).length)
-    }
+    // with a literal `[Image #1]`.
+    //
+    // Budget counts ONLY path-less blocks — the previews appended just above. A
+    // block with a path came from a real `[Image: source: …]` turn, so the fold
+    // already spent that marker; charging for it again would re-strip a surplus
+    // marker the fold deliberately preserved as the user's own words.
+    const unvouchedImages = blocks.filter((block) => isImageRefBlock(block) && !block.path).length
+    return { ...message, blocks: stripImagePromptMarkersFromTextBlocks(blocks, unvouchedImages) }
   })
   const data: NativeChatMessage[] = [
     ...renderedFolded,

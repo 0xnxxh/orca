@@ -202,6 +202,26 @@ describe('buildMobileNativeChatTransientData', () => {
     ])
   })
 
+  // Why: a block that already has a path came from a real source turn, so the
+  // fold spent that marker and deliberately kept the surplus one as the user's
+  // own words. Charging the preview for it again re-breaks STA-4363 at render.
+  it('does not re-strip a surplus marker the fold deliberately kept', () => {
+    const result = buildMobileNativeChatTransientData({
+      folded: foldMobileNativeChatMessages([
+        user('src', '[Image: source: /tmp/a.png]'),
+        user('prompt', '[Image #1] compare with the [Image #2] I mentioned')
+      ]),
+      streaming: null,
+      pending: [],
+      imagePreviewsByMessageId: { prompt: ['file:///phone-photo.jpg'] }
+    })
+
+    expect(result.data[0]?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png', url: 'file:///phone-photo.jpg' },
+      { type: 'text', text: 'compare with the [Image #2] I mentioned' }
+    ])
+  })
+
   // Why: no preview binding means no evidence, so the ticket's rule still holds.
   it('leaves marker text alone when no preview is bound', () => {
     const result = buildMobileNativeChatTransientData({
