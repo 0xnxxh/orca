@@ -18573,6 +18573,9 @@ export class OrcaRuntimeService {
         await options.beforeWrite?.(ptyId)
         assertAgentPromptRequestActive(options.signal)
         this.assertAgentPromptGeneration(ptyId, generation)
+        if (this.getAgentPromptActivity(handle, ptyId).status === 'permission') {
+          throw new Error('agent_prompt_blocked')
+        }
         if (nextChunk.done) {
           renderGate?.arm()
         }

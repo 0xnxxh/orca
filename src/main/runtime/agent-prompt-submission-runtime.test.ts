@@ -143,6 +143,25 @@ describe('agent prompt submission runtime', () => {
     expect(writes).toEqual([])
   })
 
+  it('stops a chunked paste when permission appears between chunks', async () => {
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    let writeChecks = 0
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'x'.repeat(20_000), {
+      beforeWrite: () => {
+        writeChecks += 1
+        if (writeChecks === 2) {
+          runtime.onPtyData('pty-prompt', '\x1b]0;Codex waiting for permission\x07', Date.now())
+        }
+      }
+    })
+
+    await expect(submission).rejects.toThrow('agent_prompt_blocked')
+    expect(writes).toHaveLength(2)
+    expect(writes[1]).toBe(AGENT_PROMPT_BRACKETED_PASTE_END)
+    expect(writes).not.toContain('\r')
+  })
+
   it('prefers a later permission title over an earlier explicit idle status', async () => {
     const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
     runtime.onPtyData(
