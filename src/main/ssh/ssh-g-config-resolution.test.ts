@@ -135,6 +135,61 @@ describe('siteConfigMayRestrictHostKeys', () => {
     await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(false)
   })
 
+  it('ignores a commented-out directive', async () => {
+    // A commented directive is not a policy. Reading it as one would reinstate the lockout for
+    // anyone whose distro ships the line commented, which is the common shape.
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Host *\n    # StrictHostKeyChecking yes\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(false)
+  })
+
+  it('sees the directive inside Host and Match blocks', async () => {
+    // No attempt is made to evaluate whether the block applies to this host — presence anywhere is
+    // enough, because guessing wrong in the permissive direction is the failure that matters.
+    const hostScoped = join(dir, 'host-scoped')
+    await writeFile(hostScoped, 'Host prod\n    StrictHostKeyChecking yes\n', 'utf-8')
+    const matchScoped = join(dir, 'match-scoped')
+    await writeFile(matchScoped, 'Match exec "true"\n    StrictHostKeyChecking yes\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([hostScoped])).resolves.toBe(true)
+    await expect(siteConfigMayRestrictHostKeys([matchScoped])).resolves.toBe(true)
+  })
+
+  it('sees the equals form', async () => {
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'StrictHostKeyChecking=yes\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('does not match a directive that merely starts the same way', async () => {
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'StrictHostKeyCheckingExtended yes\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(false)
+  })
+
+  it('follows a nested Include', async () => {
+    const inner = join(dir, 'inner')
+    await writeFile(inner, 'StrictHostKeyChecking yes\n', 'utf-8')
+    const middle = join(dir, 'middle')
+    await writeFile(middle, `Include ${inner}\n`, 'utf-8')
+    const outer = join(dir, 'ssh_config')
+    await writeFile(outer, `Include ${middle}\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([outer])).resolves.toBe(true)
+  })
+
+  it('terminates on an Include cycle', async () => {
+    const a = join(dir, 'a')
+    const b = join(dir, 'b')
+    await writeFile(a, `Include ${b}\n`, 'utf-8')
+    await writeFile(b, `Include ${a}\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([a])).resolves.toBe(false)
+  })
+
   it('treats an unreadable config as doubt rather than permission', async () => {
     const file = join(dir, 'ssh_config')
     await writeFile(file, 'Host *\n', 'utf-8')
