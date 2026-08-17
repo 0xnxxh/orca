@@ -4,7 +4,10 @@ import { resolveCommittedTitleAgentType } from '@/lib/pane-agent-evidence'
 import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { playDesktopNotificationSound } from '@/lib/desktop-notification-sound'
 import { showBlockedNotificationFallbackToast } from '@/lib/blocked-notification-fallback'
-import { recordAnnouncedAgentNotificationId } from '@/lib/announced-agent-notification-ids'
+import {
+  claimAnnouncedAgentNotificationId,
+  isAnnouncedAgentNotificationClaimCurrent
+} from '@/lib/announced-agent-notification-ids'
 import { buildAgentNotificationId } from '../../../../shared/agent-notification-id'
 import { resolveCompatibleAgentTypeForOwner } from '../../../../shared/agent-title-owner'
 import {
@@ -203,7 +206,7 @@ export function dispatchTerminalNotification(
         agentInterrupted: agentStatus.interrupted
       }
     : {}
-  const notificationId =
+  let notificationId =
     event.source === 'agent-task-complete'
       ? buildAgentNotificationId({
           worktreeId,
@@ -214,11 +217,14 @@ export function dispatchTerminalNotification(
           stateStartedAt: agentNotificationStateStartedAt
         })
       : null
+  let notificationClaim: ReturnType<typeof claimAnnouncedAgentNotificationId> | null = null
   if (notificationId && event.paneKey) {
-    // Why: acknowledging the pane must dismiss what was announced. A background
-    // turn's id is the turn stamp, which the still-working status row no longer
-    // carries, so it cannot be reconstructed from the store later.
-    recordAnnouncedAgentNotificationId(event.paneKey, notificationId)
+    const claimed = claimAnnouncedAgentNotificationId(event.paneKey, worktreeId, notificationId)
+    notificationClaim = claimed
+    notificationId = claimed.notificationId
+    if (claimed.supersededNotificationId) {
+      void window.api.notifications.dismiss([claimed.supersededNotificationId])
+    }
   }
 
   void window.api.notifications
@@ -235,6 +241,14 @@ export function dispatchTerminalNotification(
       ...agentSnapshot
     })
     .then((result) => {
+      if (
+        notificationClaim &&
+        event.paneKey &&
+        !isAnnouncedAgentNotificationClaimCurrent(notificationClaim.claimToken)
+      ) {
+        // Why: macOS delivery can finish after acknowledgement drained the claim.
+        void window.api.notifications.dismiss([notificationClaim.notificationId])
+      }
       if (result.delivered) {
         void playDesktopNotificationSound(customSoundId, customSoundVolume)
         return

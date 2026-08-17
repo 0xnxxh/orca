@@ -1198,12 +1198,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
 
   acknowledgedAgentsByPaneKey: {},
   acknowledgeAgents: (paneKeys) => {
-    const notificationIdsToDismiss = new Set<string>()
-    // Why: drain outside the updater — Zustand may re-run it, and each announced
-    // id is consumed once.
-    const announcedIdsByPaneKey = new Map<string, readonly string[]>(
-      paneKeys.map((key) => [key, takeAnnouncedAgentNotificationIds(key)] as const)
-    )
+    const fallbackIdsByPaneKey = new Map<string, Set<string>>()
     set((s) => {
       if (paneKeys.length === 0) {
         return s
@@ -1213,34 +1208,27 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       let next: Record<string, number> | null = null
       for (const key of paneKeys) {
         const prev = s.acknowledgedAgentsByPaneKey[key] ?? 0
-        const announced = announcedIdsByPaneKey.get(key)
-        if (announced && announced.length > 0) {
-          // Why: these are the ids the OS actually holds. The status rows below
-          // only reconstruct an id, and a background turn's row has moved on.
-          for (const id of announced) {
-            notificationIdsToDismiss.add(id)
-          }
-        } else {
-          const liveEntry = s.agentStatusByPaneKey?.[key]
-          if (liveEntry) {
-            collectAcknowledgedAgentNotificationId({
-              ids: notificationIdsToDismiss,
-              worktreeId: resolvePaneKeyWorktreeIdFromTabs(s, key) ?? liveEntry.worktreeId,
-              paneKey: key,
-              stateStartedAt: liveEntry.stateStartedAt,
-              previousAckAt: prev
-            })
-          }
-          const retained = s.retainedAgentsByPaneKey?.[key]
-          if (retained) {
-            collectAcknowledgedAgentNotificationId({
-              ids: notificationIdsToDismiss,
-              worktreeId: retained.worktreeId,
-              paneKey: key,
-              stateStartedAt: retained.entry.stateStartedAt,
-              previousAckAt: prev
-            })
-          }
+        const fallbackIds = fallbackIdsByPaneKey.get(key) ?? new Set<string>()
+        fallbackIdsByPaneKey.set(key, fallbackIds)
+        const liveEntry = s.agentStatusByPaneKey?.[key]
+        if (liveEntry) {
+          collectAcknowledgedAgentNotificationId({
+            ids: fallbackIds,
+            worktreeId: resolvePaneKeyWorktreeIdFromTabs(s, key) ?? liveEntry.worktreeId,
+            paneKey: key,
+            stateStartedAt: liveEntry.stateStartedAt,
+            previousAckAt: prev
+          })
+        }
+        const retained = s.retainedAgentsByPaneKey?.[key]
+        if (retained) {
+          collectAcknowledgedAgentNotificationId({
+            ids: fallbackIds,
+            worktreeId: retained.worktreeId,
+            paneKey: key,
+            stateStartedAt: retained.entry.stateStartedAt,
+            previousAckAt: prev
+          })
         }
         if (prev < now) {
           if (next === null) {
@@ -1251,9 +1239,18 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       }
       return next ? { acknowledgedAgentsByPaneKey: next } : s
     })
-    const notificationIds = [...notificationIdsToDismiss]
-    if (notificationIds.length > 0 && typeof window !== 'undefined') {
-      void window.api?.notifications?.dismiss?.(notificationIds)
+    if (typeof window !== 'undefined' && typeof window.api?.notifications?.dismiss === 'function') {
+      const notificationIdsToDismiss = new Set<string>()
+      for (const key of paneKeys) {
+        const announced = takeAnnouncedAgentNotificationIds(key)
+        const ids = announced.length > 0 ? announced : fallbackIdsByPaneKey.get(key)
+        for (const id of ids ?? []) {
+          notificationIdsToDismiss.add(id)
+        }
+      }
+      if (notificationIdsToDismiss.size > 0) {
+        void window.api.notifications.dismiss([...notificationIdsToDismiss])
+      }
     }
   },
   unacknowledgeAgents: (paneKeys) =>

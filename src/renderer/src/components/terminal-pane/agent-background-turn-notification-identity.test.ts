@@ -201,7 +201,29 @@ describe('Claude background-turn notification identity', () => {
     expect(dismissedNotificationIds()).toEqual([announcedId])
   })
 
-  it('keeps successive background turns on one pane distinct and dismisses both', () => {
+  it('dismisses again when native delivery settles after acknowledgement', async () => {
+    let resolveDispatch!: (result: { delivered: true }) => void
+    dispatchMock().mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDispatch = resolve
+      })
+    )
+    seedLiveClaudeWorkingRow(WORKING_STARTED_AT)
+    announceBackgroundTurns([
+      { stateStartedAt: WORKING_STARTED_AT, turnCompletedAt: TURN_COMPLETED_AT }
+    ])
+
+    useAppStore.getState().acknowledgeAgents([PANE_KEY])
+    expect(window.api.notifications.dismiss).toHaveBeenCalledTimes(1)
+
+    resolveDispatch({ delivered: true })
+    await Promise.resolve()
+
+    expect(window.api.notifications.dismiss).toHaveBeenCalledTimes(2)
+    expect(dismissedNotificationIds()).toEqual([agentNotificationId(TURN_COMPLETED_AT)])
+  })
+
+  it('replaces successive background turns on one pane and dismisses the shared id', () => {
     seedLiveClaudeWorkingRow(WORKING_STARTED_AT)
     const announcedSnapshots = announceBackgroundTurns([
       { stateStartedAt: WORKING_STARTED_AT, turnCompletedAt: TURN_COMPLETED_AT },
@@ -215,13 +237,13 @@ describe('Claude background-turn notification identity', () => {
     const ids = announcedNotificationIds()
     expect(ids).toEqual([
       agentNotificationId(TURN_COMPLETED_AT),
-      agentNotificationId(SECOND_TURN_COMPLETED_AT)
+      agentNotificationId(TURN_COMPLETED_AT)
     ])
-    expect(new Set(ids).size).toBe(2)
+    expect(new Set(ids).size).toBe(1)
 
     useAppStore.getState().acknowledgeAgents([PANE_KEY])
 
-    expect(dismissedNotificationIds()).toEqual(ids)
+    expect(dismissedNotificationIds()).toEqual([ids[0]])
   })
 
   it('announces a Claude background-turn completion when the remote clock trails the desktop', () => {

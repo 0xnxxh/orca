@@ -1,52 +1,88 @@
-/**
- * The notification ids a pane's agent completions were actually announced under,
- * held until that pane is acknowledged.
- *
- * Why a registry: a Claude background turn announces its banner under the
- * turn-complete stamp while the pane's status row stays on the working boundary,
- * so acknowledge cannot re-derive the id from the store. Successive background
- * turns each announce a distinct id, so every unacknowledged id has to be kept.
- */
+type AnnouncedAgentNotification = {
+  worktreeId: string
+  notificationId: string
+  claimToken: symbol
+}
 
-// Why bounded: a pane that is never acknowledged (backgrounded worktree, long
-// agent session) would otherwise accumulate one id per turn for the app's life.
+type ClaimedAgentNotificationId = {
+  notificationId: string
+  claimToken: symbol
+  supersededNotificationId?: string
+}
+
 const MAX_TRACKED_PANES = 128
-const MAX_IDS_PER_PANE = 16
 
-const announcedIdsByPaneKey = new Map<string, string[]>()
+const announcedNotificationByPaneKey = new Map<string, AnnouncedAgentNotification>()
 
-export function recordAnnouncedAgentNotificationId(paneKey: string, notificationId: string): void {
-  const ids = announcedIdsByPaneKey.get(paneKey) ?? []
-  // Why: re-announcing an id replaces the same OS banner, so one dismissal covers it.
-  if (ids.includes(notificationId)) {
-    return
+export function claimAnnouncedAgentNotificationId(
+  paneKey: string,
+  worktreeId: string,
+  candidateNotificationId: string
+): ClaimedAgentNotificationId {
+  const existing = announcedNotificationByPaneKey.get(paneKey)
+  if (existing?.worktreeId === worktreeId) {
+    // Re-insert so map order stays least-recently-announced first for eviction.
+    announcedNotificationByPaneKey.delete(paneKey)
+    announcedNotificationByPaneKey.set(paneKey, existing)
+    return { notificationId: existing.notificationId, claimToken: existing.claimToken }
   }
-  ids.push(notificationId)
-  if (ids.length > MAX_IDS_PER_PANE) {
-    ids.splice(0, ids.length - MAX_IDS_PER_PANE)
-  }
-  // Re-insert so map order stays least-recently-announced first for eviction.
-  announcedIdsByPaneKey.delete(paneKey)
-  announcedIdsByPaneKey.set(paneKey, ids)
-  while (announcedIdsByPaneKey.size > MAX_TRACKED_PANES) {
-    const oldestPaneKey = announcedIdsByPaneKey.keys().next().value
-    if (oldestPaneKey === undefined) {
-      return
+
+  let supersededNotificationId = existing?.notificationId
+  const claimToken = Symbol(paneKey)
+  announcedNotificationByPaneKey.delete(paneKey)
+  announcedNotificationByPaneKey.set(paneKey, {
+    worktreeId,
+    notificationId: candidateNotificationId,
+    claimToken
+  })
+  if (announcedNotificationByPaneKey.size > MAX_TRACKED_PANES) {
+    const oldestPaneKey = announcedNotificationByPaneKey.keys().next().value
+    if (oldestPaneKey !== undefined) {
+      const evicted = announcedNotificationByPaneKey.get(oldestPaneKey)
+      announcedNotificationByPaneKey.delete(oldestPaneKey)
+      supersededNotificationId = evicted?.notificationId
     }
-    announcedIdsByPaneKey.delete(oldestPaneKey)
+  }
+  return {
+    notificationId: candidateNotificationId,
+    claimToken,
+    ...(supersededNotificationId ? { supersededNotificationId } : {})
   }
 }
 
-/** Returns the pane's announced ids in announcement order and forgets them. */
+export function isAnnouncedAgentNotificationClaimCurrent(claimToken: symbol): boolean {
+  for (const announced of announcedNotificationByPaneKey.values()) {
+    if (announced.claimToken === claimToken) {
+      return true
+    }
+  }
+  return false
+}
+
+export function transferAnnouncedAgentNotificationClaim(
+  fromPaneKey: string,
+  toPaneKey: string
+): string | undefined {
+  const announced = announcedNotificationByPaneKey.get(fromPaneKey)
+  if (!announced || fromPaneKey === toPaneKey) {
+    return undefined
+  }
+  const supersededNotificationId = announcedNotificationByPaneKey.get(toPaneKey)?.notificationId
+  announcedNotificationByPaneKey.delete(fromPaneKey)
+  announcedNotificationByPaneKey.delete(toPaneKey)
+  announcedNotificationByPaneKey.set(toPaneKey, announced)
+  return supersededNotificationId
+}
+
 export function takeAnnouncedAgentNotificationIds(paneKey: string): readonly string[] {
-  const ids = announcedIdsByPaneKey.get(paneKey)
-  if (!ids) {
+  const announced = announcedNotificationByPaneKey.get(paneKey)
+  if (!announced) {
     return []
   }
-  announcedIdsByPaneKey.delete(paneKey)
-  return ids
+  announcedNotificationByPaneKey.delete(paneKey)
+  return [announced.notificationId]
 }
 
 export function resetAnnouncedAgentNotificationIdsForTest(): void {
-  announcedIdsByPaneKey.clear()
+  announcedNotificationByPaneKey.clear()
 }
