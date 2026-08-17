@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pending-echo'
 import {
-  MAX_GLUE_SPAN,
+  GLUE_SLIDE_BUDGET,
   retireLandedMobileNativeChatPending,
   selectGluedPendingIds
 } from './mobile-native-chat-pending-retirement'
@@ -201,6 +201,15 @@ describe('selectGluedPendingIds', () => {
     expect(retiredIds(messages, [stuckHead, ...pair])).toEqual(['p1', 'p2'])
   })
 
+  // Nothing bounds how many sends pile onto the agent's input line, so the
+  // slide's budget must never truncate a genuine glue.
+  it('retires a glued run far longer than the slide budget', () => {
+    const words = Array.from({ length: 12 }, (_, index) => `w${index}`)
+    const messages = [assistantTurn('m1', 'ready', 1000), userTurn('m2', words.join(' '), 5000)]
+    const pending = words.map((word, index) => pendingSend(`p${index}`, word, 'm1'))
+    expect(retiredIds(messages, pending)).toHaveLength(words.length)
+  })
+
   it('skips a caption-less image echo instead of gluing it', () => {
     const messages = [assistantTurn('m1', 'ready', 1000), userTurn('m2', 'one two', 5000)]
     const pending = [
@@ -229,8 +238,10 @@ describe('selectGluedPendingIds', () => {
   })
 
   // The cursor slides past a head that cannot match, so a turn may try several
-  // start positions — but each try is capped at MAX_GLUE_SPAN segments, which
-  // keeps the work linear in the run length rather than quadratic.
+  // start positions — but one inspection budget covers the whole slide, keeping
+  // the work linear in the run length rather than quadratic. The attempt already
+  // in flight is allowed to overshoot the remaining budget, deliberately: that is
+  // what guarantees a genuine long glue is never truncated.
   it('keeps segment inspection linear in the run length per transcript turn', () => {
     const pendingCount = 96
     const turnCount = 12
@@ -250,7 +261,7 @@ describe('selectGluedPendingIds', () => {
     } finally {
       startsWith.mockRestore()
     }
-    expect(segmentChecks).toBeLessThanOrEqual(turnCount * pendingCount * MAX_GLUE_SPAN)
+    expect(segmentChecks).toBeLessThanOrEqual(turnCount * (2 * pendingCount + GLUE_SLIDE_BUDGET))
   })
 })
 
