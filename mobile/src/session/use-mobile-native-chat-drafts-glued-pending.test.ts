@@ -260,6 +260,23 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
       await update([...afterReconnect, assistantTurn('m3', 'all green', 6000)])
       expect(state?.pending).toEqual([])
     })
+
+    // A send held here would sit as a live segment at the head of its run, so
+    // the cursor could never reach a later pair — the stuck bubble would take
+    // the whole feature down with it for the rest of the session.
+    it('leaves a later pair able to glue after the late read resolved the first send', async () => {
+      await mount([], true)
+      act(() => send('run the tests'))
+      const afterReconnect = [userTurn('m1', 'run the tests', 5000)]
+      await update(afterReconnect)
+      expect(state?.pending).toEqual([])
+
+      rapidSend('fix the', 'bug')
+      const glued = [...afterReconnect, userTurn('m2', 'fix the bug', 6000)]
+      await update(glued)
+      expect(state?.pending).toEqual([])
+      expect(renderedPendingTexts(glued, state)).toEqual([])
+    })
   })
 
   // A read that failed is not a boundary: `messages` is empty because the history
