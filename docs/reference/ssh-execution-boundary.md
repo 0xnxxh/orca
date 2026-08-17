@@ -13,7 +13,7 @@ Two consequences, both non-negotiable:
 
 The vocabulary is fixed: **`live` / `unverifiable` / `exited`**, taken from the incumbent `UnstoppedPtyVerdict`. Do not introduce synonyms, and never collapse `unverifiable` into either neighbour. `exited` requires positive evidence of absence from the host that owns the process; a transport failure can only ever produce `unverifiable`.
 
-Rule 1 is stated at `src/main/source-control/repo-default-branch.ts:76-78`, `src/main/repo-worktrees.ts:45-48`, `src/main/runtime/orca-runtime.ts:24242-24246`, and `src/renderer/src/lib/connection-context.ts:22-24`. It is enforced throughout `src/main/runtime/orca-runtime-git.ts` by the guard that throws `SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE` whenever `target.connectionId` is set and no provider is registered — grep that constant for the current call sites rather than trusting a count.
+Rule 1 is stated at `src/main/source-control/repo-default-branch.ts:76-78`, `src/main/repo-worktrees.ts:45-48`, `OrcaRuntimeService.probeWorktreeDrift` in `src/main/runtime/orca-runtime.ts`, and `src/renderer/src/lib/connection-context.ts:22-24`. It is enforced throughout `src/main/runtime/orca-runtime-git.ts` by the guard that throws `SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE` whenever `target.connectionId` is set and no provider is registered — grep that constant for the current call sites rather than trusting a count.
 
 `src/main/runtime/unstopped-pty-verification.ts:12-16` is the reference implementation of rule 2: it keeps `live` / `unverifiable` / `exited` as three distinct verdicts, and treats "we could not ask" as its own answer.
 
@@ -31,7 +31,7 @@ Rule 1 is stated at `src/main/source-control/repo-default-branch.ts:76-78`, `src
 
 ## Survival: what a disconnect does _not_ do
 
-By default, remote work survives your machine going away. The relay is a detached daemon (`nohup … </dev/null &`), it ignores `SIGHUP` (`src/relay/relay.ts:1361-1364`), the PTY is its child rather than the ssh channel's, and quitting Orca is a **detach, not a dispose** (`src/main/ssh/ssh-relay-session.ts:901-915`). Sleep additionally pushes `graceTimeSeconds: 0` to un-bound any running grace window.
+By default, remote work survives your machine going away. The relay is a detached daemon (`nohup … </dev/null &`), its handler in `src/relay/relay.ts` ignores `SIGHUP`, the PTY is its child rather than the ssh channel's, and quitting Orca is a **detach, not a dispose** (`src/main/ssh/ssh-relay-session.ts:901-915`). Sleep additionally pushes `graceTimeSeconds: 0` to un-bound any running grace window.
 
 Two ways remote work _can_ actually stop:
 
