@@ -320,6 +320,36 @@ describe('glued rapid sends', () => {
     expect(prunePendingSends(pending, advancedGlueTranscript('a b [Image #1]'))).toEqual(pending)
   })
 
+  // Why: an uncaptioned photo send has no match text, so it can never appear in a
+  // glued row — but it still separates the sends either side of it. Skipping it
+  // would retire those two echoes while their sends are still in flight.
+  it('does not glue across an uncaptioned image send', () => {
+    const pending = [
+      gluePending('p0', 'fix'),
+      { ...gluePending('p1', ''), imagePaths: ['/tmp/p.png'] },
+      gluePending('p2', 'bug')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('fix bug'))).toEqual(pending)
+  })
+
+  // Why: a send whose whole text is the placeholder normalizes to empty too.
+  it('does not glue across a marker-only image send', () => {
+    const pending = [
+      gluePending('p0', 'fix'),
+      { ...gluePending('p1', '[Image #1]'), imagePaths: ['/tmp/p.png'] },
+      gluePending('p2', 'bug')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('fix bug'))).toEqual(pending)
+  })
+
+  it('does not glue across a whitespace-only send', () => {
+    const pending = [gluePending('p0', 'fix'), gluePending('p1', '   '), gluePending('p2', 'bug')]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('fix bug'))).toEqual(pending)
+  })
+
   // Why: some hosts echo an image send as bare `[Image #n]` text with no
   // `[Image: source: …]` turn, so the markers are the only evidence the photo
   // landed. Reading such a row literally left both echoes — one a duplicate

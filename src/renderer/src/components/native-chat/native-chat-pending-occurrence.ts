@@ -231,13 +231,24 @@ export function selectPendingIndicesRepresentedByUserTexts(
     imageCount: entry.imagePaths?.filter(Boolean).length ?? 0
   }))
   for (const row of userRows) {
-    // Why: every unretired send stays a candidate, in send order. Dropping any of
-    // them here would let glue match a NON-CONTIGUOUS subsequence: with sends
-    // "fix", "the"+photo, "bug", a row reading "fix bug" would retire "fix" and
-    // "bug" even though a third send landed between them. The row can only be the
-    // glue of a contiguous run, so the budget below rejects unaffordable groups
-    // rather than skipping past them.
-    const open = remaining.filter((entry) => !represented.has(entry.index) && entry.text.length > 0)
+    // Why: a row can only be the glue of a CONTIGUOUS run of sends, so the scan
+    // walks them in send order and stops at the first one the row cannot contain.
+    // Filtering instead of stopping would match a non-contiguous subsequence and
+    // retire echoes whose sends are still in flight — with "fix", "the"+photo,
+    // "bug" a row reading "fix bug" would retire "fix" and "bug" around the
+    // photo. A send with no match text (an uncaptioned photo, or one whose whole
+    // text was an `[Image #n]` placeholder) can never appear in a glued row, but
+    // it still SEPARATES the sends either side of it, so it is a barrier too.
+    const open: typeof remaining = []
+    for (const entry of remaining) {
+      if (represented.has(entry.index)) {
+        continue
+      }
+      if (entry.text.length === 0) {
+        break
+      }
+      open.push(entry)
+    }
     const openTexts = open.map((entry) => entry.text)
     let gluedCount = 0
     for (const identity of row.markerEcho ? [row, row.markerEcho] : [row]) {
