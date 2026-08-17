@@ -4,7 +4,7 @@ How Orca splits work between your machine and an SSH host, what survives a disco
 
 ## The rule
 
-**The execution host owns everything that touches execution** — tools, credentials, identity, environment, processes. The client owns the UI and the connection, nothing else.
+**The execution host owns everything that touches execution** — tools, credentials, identity, environment, processes, and artifacts. The client owns the UI, transport, and Orca control-plane state, but no execution state.
 
 Two consequences, both non-negotiable:
 
@@ -35,7 +35,7 @@ By default, remote work survives your machine going away. The relay is a detache
 
 Two ways remote work _can_ actually stop:
 
-- **A bounded grace period.** The shipped default is `0` = keep alive until reset. If "keep terminals alive until reset" is unchecked, the persisted value is **24h**, after which the relay SIGKILLs every PTY. Note the asymmetry: sleep protects you, but ordinary disconnect and app quit do not. There is currently **no command that reports which setting is in effect for a target** — see Known gaps.
+- **A bounded grace period.** The shipped default is `0` = keep alive until reset. If "keep terminals alive until reset" is unchecked, the configurable range is **60s–7d** and the form defaults to **24h**. The countdown starts when the client disconnects, after which the relay SIGKILLs every PTY. Note the asymmetry: sleep protects you, but ordinary disconnect and app quit do not. There is currently **no command that reports which setting is in effect for a target** — see Known gaps.
 - **Host-acknowledged explicit user action** — End Remote Terminals, Reset Relay, removing the target, or closing the tab. When the host cannot acknowledge the request, closing a tab or removing a target may clear only client state; the remote verdict remains `unverifiable`.
 
 Reconnect re-attaches to the same live PTYs and replays a bounded buffer (`REPLAY_BUFFER_MAX`, 100 KB). Output beyond that while you were away is lost to the client even though the process was never interrupted: **the transcript is truncated; the work stays `live`.**
@@ -61,7 +61,7 @@ Several signals currently report the first as the second. Until the fixes below 
 | `hasChildProcesses: false`             | idle                        | `unverifiable`, possibly busy            |
 | `runtime_unavailable` → "Restart Orca" | the command failed          | it may have fully succeeded              |
 
-**The one real discriminator:** a relay drop makes every remote PTY on that target `unverifiable` together. A host-delivered termination event for one PTY while its siblings remain `live` establishes that PTY as `exited`; one quiet terminal without host evidence does not. Check the siblings and the source of the signal before assigning a verdict.
+**The one real discriminator:** a relay drop makes every remote PTY on that target `unverifiable` together. A host-delivered termination event for the current PTY incarnation and provider generation, while its siblings remain `live`, establishes that PTY as `exited`; a stale event or one quiet terminal without host evidence does not. Check the siblings, event identity, and the source of the signal before assigning a verdict.
 
 **Prefer artifacts over process state, but read them precisely.** A matching expected commit from `git ls-remote --heads origin <branch>` or a PR head lookup proves that commit reached the remote. A branch or PR alone does not prove the latest work was pushed, and an absent result does not prove that nothing was ever pushed: the ref may have been deleted, the PR may be closed, or the query may have failed. A clean _local_ worktree says nothing at all about the remote one.
 
@@ -76,7 +76,7 @@ Outstanding, roughly by impact on reaching a wrong conclusion:
 - **`restoreRequired` is relabeled `SSH_SESSION_EXPIRED`** in `SshPtyProvider.spawn` (`src/main/providers/ssh-pty-provider.ts`). A delivery-layer "cannot resume your output stream" becomes a claim the session `exited`; the lease is marked `expired`, filtered from all future reattaches, and a duplicate agent is cold-started over the same worktree while the original may still be `live`. Highest-impact open item. `abandonPtySourceRecovery` (`src/main/ssh/ssh-relay-session.ts:3006-3008`) handles the same relay answer correctly and is the model to copy.
 - **No `unverifiable` verdict** in the signals table above. Necessary but not sufficient on its own — the lease is often already destroyed before any verdict is rendered.
 - **`orca terminal list` has no host field**, and a runtime-scoped listing does not mark itself partial.
-- **No way to observe a target's effective grace period.** At 17 hours since last output, "unlimited" and "24h with 7 hours left" demand opposite actions, and nothing reports which applies.
+- **No way to observe a target's effective grace period.** At 17 hours since disconnect, "unlimited" and "24h with 7 hours left" demand opposite actions, and nothing reports which applies.
 - **Nothing in any error or command output points at this document.** A reader only finds these rules by being told they exist.
 - **Credentials are not provisioned on SSH hosts**: `gh` auth is never probed (`src/main/ipc/preflight.ts` is local/WSL only), git `user.name`/`user.email` produce an error message only, SSH agent forwarding happens only if your own `~/.ssh/config` sets `ForwardAgent yes`, and provider API keys are not carried at all. An agent can do all the work and fail at the push — which also makes artifact-checking inconclusive.
 - **`ORCA_CLI_COMMAND` is not set on SSH hosts** (`src/main/ipc/pty.ts:1883-1893` is WSL-only) although the bundled guides tell agents to prefer it. On Linux, bare `orca` is usually `/usr/bin/orca`, the GNOME screen reader. Orca's own PTYs prepend `~/.orca-relay/bin` to `PATH`, but a detached process started outside a login shell does not inherit that.
