@@ -279,7 +279,10 @@ describe('orchestration RPC methods', () => {
             taskId: task.id,
             ...(type === 'decision_gate' ? { question: 'Proceed?' } : {})
           })
-        })) as { lifecycle: { action: string; code: string } }
+        })) as {
+          lifecycle: { action: string; code: string }
+          message: { type: string }
+        }
 
         expect(rejected.lifecycle).toMatchObject({
           action: 'rejected',
@@ -288,6 +291,21 @@ describe('orchestration RPC methods', () => {
         expect(db.getTask(task.id)?.status).toBe('dispatched')
         expect(db.getDispatchContextById(dispatch.id)?.status).toBe('dispatched')
         expect(db.listGates({ taskId: task.id })).toHaveLength(0)
+        expect(rejected.message.type).toBe('status')
+
+        vi.mocked(runtime.getTerminalProcessIncarnation).mockReturnValue(
+          'runtime_test:term_worker:1'
+        )
+        const accepted = (await call('orchestration.send', {
+          from: 'term_worker',
+          subject: `${type} by assignee`,
+          type,
+          payload: JSON.stringify({
+            taskId: task.id,
+            ...(type === 'decision_gate' ? { question: 'Proceed?' } : {})
+          })
+        })) as { message: { type: string } }
+        expect(accepted.message.type).toBe(type)
       }
     )
 
