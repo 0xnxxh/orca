@@ -83,6 +83,29 @@ describe('Task/Dispatch lifecycle guards', () => {
     }
   )
 
+  it('settles a newer context-only legacy sibling after a worker report', () => {
+    const database = createDatabase()
+    const task = database.createTask({ spec: 'reversed legacy mixed split' })
+    const worker = startWorker(database, task.id, 'reversed_reporter')
+    sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+    const contextOnly = database.createDispatchContext(task.id, 'term_reversed_context')
+
+    expect(
+      database.settleWorkerReport({
+        taskId: task.id,
+        dispatchId: worker.dispatchId,
+        outcome: 'succeeded',
+        result: 'reversed sibling completed'
+      })
+    ).toEqual({ action: 'settled', outcome: 'succeeded', duplicate: false })
+    expect(database.getTask(task.id)?.status).toBe('completed')
+    expect(database.getDispatchContextById(contextOnly.id)).toMatchObject({
+      status: 'completed',
+      capability_revoked_at: expect.any(String)
+    })
+    expect(database.getActiveDispatchForTerminal('term_reversed_context')).toBeUndefined()
+  })
+
   it('rejects generic failure while a supervised worker remains active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'supervised failure guard' })

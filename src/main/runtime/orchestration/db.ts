@@ -7608,15 +7608,6 @@ export class OrchestrationDb {
         reason: `inactive dispatch ${params.dispatchId}: it or task ${params.taskId} is already settled.`
       }
     }
-    const latest = this.getActiveDispatchForTask(params.taskId)
-    if (latest?.id !== params.dispatchId) {
-      return {
-        action: 'rejected',
-        code: 'stale_dispatch',
-        reason: `Dispatch ${params.dispatchId} is not the current dispatch for task ${params.taskId}.`
-      }
-    }
-
     const conflictingWorker = this.db
       .prepare(
         `SELECT active.id
@@ -7633,6 +7624,15 @@ export class OrchestrationDb {
         action: 'rejected',
         code: 'inactive_dispatch',
         reason: `Task ${params.taskId} still has active supervised Dispatch ${conflictingWorker.id}; stop or settle it before completing ${params.dispatchId}.`
+      }
+    }
+    const reportingWorker = this.getWorkerDispatch(params.dispatchId)
+    const latest = this.getActiveDispatchForTask(params.taskId)
+    if (!reportingWorker && latest?.id !== params.dispatchId) {
+      return {
+        action: 'rejected',
+        code: 'stale_dispatch',
+        reason: `Dispatch ${params.dispatchId} is not the current dispatch for task ${params.taskId}.`
       }
     }
     const siblingDispatchIds = this.db
