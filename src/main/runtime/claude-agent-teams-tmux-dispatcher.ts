@@ -164,31 +164,25 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     const origin =
       (pane.splitFromPane ? team.panes.get(pane.splitFromPane) : undefined) ??
       team.panes.get(team.leaderPane)!
-    // Why: create the replacement before destroying the placeholder so a failed
-    // split leaves the fake pane id pointing at a still-live terminal; on cleanup
-    // failure, discard the new split and keep the placeholder registered.
     const previousHandle = pane.handle
-    const split = await api.splitTerminal(origin.handle, {
-      direction: pane.splitDirection ?? 'horizontal',
-      command,
-      env: paneEnv(team, pane.fakePaneId),
-      envToDelete: ['TERM_PROGRAM'],
-      activate: false
-    })
+    const close = await api.closeTerminal(previousHandle)
+    if (!close.ptyKilled) {
+      pane.respawnBlockedReason = describeUnconfirmedAgentStop(close)
+      throw new Error(pane.respawnBlockedReason)
+    }
     try {
-      const close = await api.closeTerminal(previousHandle)
-      if (!close.ptyKilled) {
-        pane.handle = split.handle
-        pane.respawnBlockedReason = describeUnconfirmedAgentStop(close)
-        throw new Error(pane.respawnBlockedReason)
-      }
+      const split = await api.splitTerminal(origin.handle, {
+        direction: pane.splitDirection ?? 'horizontal',
+        command,
+        env: paneEnv(team, pane.fakePaneId),
+        envToDelete: ['TERM_PROGRAM'],
+        activate: false
+      })
+      pane.handle = split.handle
     } catch (error) {
-      if (pane.handle === previousHandle) {
-        await api.closeTerminal(split.handle).catch(() => {})
-      }
+      this.removePane(team, pane)
       throw error
     }
-    pane.handle = split.handle
     return ''
   }
 
@@ -281,13 +275,17 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     if (!close.ptyKilled) {
       throw new Error(describeUnconfirmedAgentStop(close))
     }
+    this.removePane(team, pane)
+    return ''
+  }
+
+  private removePane(team: AgentTeam, pane: TeamPane): void {
     team.panes.delete(pane.fakePaneId)
     team.paneOrder = team.paneOrder.filter((id) => id !== pane.fakePaneId)
     if (team.mainVertical?.lastColumnPane === pane.fakePaneId) {
       team.mainVertical.lastColumnPane =
         [...team.paneOrder].toReversed().find((id) => id !== team.leaderPane) ?? null
     }
-    return ''
   }
 
   private async lastPane(
