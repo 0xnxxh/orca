@@ -26,7 +26,7 @@ describe('continuous Relay outage escalation', () => {
     const failure = new RelayOuterError(4408)
     const activeRelay = new FakeRelaySession('connected', failure)
     activeRelay.getLastConnectedAt = () => Date.now() - 120_000
-    const logical = createStableLogicalRpcClient(activeRelay, 'relay')
+    const logical = createStableLogicalRpcClient(new FakeSession('disconnected'), 'tailscale')
     const publishedAttempts: number[] = []
     logical.onConnectionPathChange(() => publishedAttempts.push(logical.getReconnectAttempt()))
     const openRelay = vi.fn(() => {
@@ -34,6 +34,7 @@ describe('continuous Relay outage escalation', () => {
       setTimeout(() => session.publishState('disconnected'), 0)
       return session
     })
+    openRelay.mockReturnValueOnce(activeRelay)
     const deps = dependencies({
       openDirect: vi.fn(() => new FakeSession('disconnected')),
       openRelay,
@@ -42,6 +43,8 @@ describe('continuous Relay outage escalation', () => {
     const supervisor = new MobileEndpointSupervisor(logical, host, deps)
 
     await supervisor.start()
+    expect(openRelay).toHaveBeenCalledOnce()
+    expect(logical.getActivePath()).toBe('relay')
     activeRelay.publishState('disconnected')
     await vi.advanceTimersByTimeAsync(3_000)
 
