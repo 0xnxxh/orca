@@ -34828,6 +34828,68 @@ describe('OrcaRuntimeService', () => {
     expect(replacementCleanup).toHaveBeenCalledTimes(1)
   })
 
+  it('releases an owned subscription only while its registration still owns the id', async () => {
+    const runtime = createRuntime()
+    const oldCleanup = vi.fn()
+    const replacementCleanup = vi.fn()
+
+    const oldRegistration = runtime.registerOwnedSubscriptionCleanup(
+      'terminal:owned',
+      oldCleanup,
+      'conn-old'
+    )
+    expect(oldRegistration.isCurrent()).toBe(true)
+
+    runtime.registerOwnedSubscriptionCleanup('terminal:owned', replacementCleanup, 'conn-new')
+    expect(oldRegistration.isCurrent()).toBe(false)
+    expect(oldCleanup).toHaveBeenCalledTimes(1)
+
+    // The stale registration must not reach the replacement that now owns the id.
+    oldRegistration.releaseIfCurrent()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(replacementCleanup).not.toHaveBeenCalled()
+  })
+
+  it('releases an owned subscription when the registration is still current', async () => {
+    const runtime = createRuntime()
+    const cleanup = vi.fn()
+
+    const registration = runtime.registerOwnedSubscriptionCleanup('terminal:live', cleanup, 'conn')
+    registration.releaseIfCurrent()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    expect(registration.isCurrent()).toBe(false)
+  })
+
+  it('refuses an unsubscribe from a connection that no longer owns the subscription', async () => {
+    const runtime = createRuntime()
+    const oldCleanup = vi.fn()
+    const replacementCleanup = vi.fn()
+
+    runtime.registerSubscriptionCleanup('terminal:unsub', oldCleanup, 'conn-old')
+    runtime.registerSubscriptionCleanup('terminal:unsub', replacementCleanup, 'conn-new')
+
+    expect(runtime.cleanupSubscriptionIfOwnedByConnection('terminal:unsub', 'conn-old')).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(replacementCleanup).not.toHaveBeenCalled()
+
+    expect(runtime.cleanupSubscriptionIfOwnedByConnection('terminal:unsub', 'conn-new')).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(replacementCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('tears down unconditionally for in-process callers that have no connection', async () => {
+    const runtime = createRuntime()
+    const cleanup = vi.fn()
+
+    runtime.registerSubscriptionCleanup('terminal:inproc', cleanup, 'conn-owner')
+    expect(runtime.cleanupSubscriptionIfOwnedByConnection('terminal:inproc', undefined)).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
   it('does not deliver or accept browser screencast frames before ready', async () => {
     const runtime = createRuntime()
     const done = deferred<void>()
