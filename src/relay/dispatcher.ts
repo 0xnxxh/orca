@@ -31,6 +31,10 @@ import {
   type LegacyPublicationLease
 } from './legacy-relay-publication-ledger'
 import type { PtyConsumerCloseCause } from '../shared/pty-consumer-session-contract'
+import {
+  SKILL_INSTALL_RPC_ERROR_CODE,
+  SkillInstallFailureSchema
+} from '../shared/skill-install-failure'
 
 export type {
   RelayClientSinkOptions,
@@ -582,9 +586,8 @@ export class RelayDispatcher {
       method,
       ...(params !== undefined ? { params } : {})
     }
-    const frame = this.prepareFrame(msg)
-    const frameBytes = frame.frameBytes
     this.runPublicationTransaction(() => {
+      let frame: PreparedRelayFrame | undefined
       for (const client of this.clients.values()) {
         if (client.closed) {
           continue
@@ -592,6 +595,7 @@ export class RelayDispatcher {
         if (method === 'pty.data' && !this.admitsPtyDataPublication(client.id, params ?? {})) {
           continue
         }
+        frame ??= this.prepareFrame(msg)
         if (method === 'pty.replay') {
           // Why: replay is never re-sent, so it takes the control lane where overflow is fatal — the
           // writer closes the client and reconnect reloads history rather than stranding a short buffer.
@@ -601,7 +605,7 @@ export class RelayDispatcher {
         // Why: closing can never make an oversized frame sendable — the producer regenerates it after
         // reattach and re-kills the link, turning a recoverable drop into an endless reconnect loop.
         if (!this.publishPreparedToClient(client, frame, 'ordinary')) {
-          this.logDroppedProducerNotification(client, method, frameBytes)
+          this.logDroppedProducerNotification(client, method, frame.frameBytes)
         }
       }
     })
@@ -1038,13 +1042,25 @@ export class RelayDispatcher {
         return
       }
       const message = err instanceof Error ? err.message : String(err)
-      const code = (err as { code?: number }).code ?? -32000
-      const accepted = this.sendResponse(client, req.id, undefined, { code, message }, (result) => {
-        settleResponse({
-          ok: false,
-          error: result.ok ? new Error(message) : result.error
-        })
-      })
+      const errorCode = (err as { code?: unknown }).code
+      const code = typeof errorCode === 'number' ? errorCode : -32000
+      const skillFailure =
+        errorCode === SKILL_INSTALL_RPC_ERROR_CODE
+          ? SkillInstallFailureSchema.safeParse((err as { data?: unknown }).data)
+          : null
+      const data = skillFailure?.success === true ? skillFailure.data : undefined
+      const accepted = this.sendResponse(
+        client,
+        req.id,
+        undefined,
+        { code, message, ...(data === undefined ? {} : { data }) },
+        (result) => {
+          settleResponse({
+            ok: false,
+            error: result.ok ? new Error(message) : result.error
+          })
+        }
+      )
       if (!accepted) {
         settleResponse({ ok: false, error: new Error('Relay error response was not admitted') })
       }
