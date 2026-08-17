@@ -86,6 +86,7 @@ export function TerminalQuickCommandAdvancedSection({
           advancedOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
         )}
         aria-hidden={!advancedOpen}
+        inert={!advancedOpen}
       >
         <div className="min-h-0">
           <div

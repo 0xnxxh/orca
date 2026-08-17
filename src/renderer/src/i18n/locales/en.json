@@ -2809,7 +2809,7 @@
               "e4e5fed3b3": "Toggle append Enter",
               "c936c2d6d2": "Submit immediately instead of only inserting text.",
               "5fa607d807": "Append Enter",
-              "compact_label": "Append Enter — run immediately"
+              "767e4be3e3": "Append Enter — run immediately"
             },
             "TerminalQuickCommandDialog": {
               "925b8e0f6e": "Advanced",

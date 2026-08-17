@@ -25,7 +25,7 @@ export function TerminalQuickCommandAppendEnterSwitch({
         />
         <span className="truncate text-[11px] text-muted-foreground">
           {translate(
-            'auto.components.terminal.quick.commands.TerminalQuickCommandAppendEnterSwitch.compact_label',
+            'auto.components.terminal.quick.commands.TerminalQuickCommandAppendEnterSwitch.767e4be3e3',
             'Append Enter — run immediately'
           )}
         </span>

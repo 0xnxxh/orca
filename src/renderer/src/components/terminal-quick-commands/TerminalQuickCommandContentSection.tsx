@@ -40,6 +40,16 @@ export function TerminalQuickCommandContentSection({
   toggleAppendEnter
 }: TerminalQuickCommandContentSectionProps): React.JSX.Element {
   const commandText = isTerminalAgentQuickCommand(draft) ? draft.prompt : draft.command
+  // Why: the frame header is a plain span, so the textarea carries the accessible name itself.
+  const commandFieldLabel = isAgentAction
+    ? translate(
+        'auto.components.terminal.quick.commands.TerminalQuickCommandDialog.dc921c17ee',
+        'Prompt'
+      )
+    : translate(
+        'auto.components.terminal.quick.commands.TerminalQuickCommandDialog.command_label',
+        'Command'
+      )
 
   return (
     <div className="space-y-3">
@@ -128,15 +138,7 @@ export function TerminalQuickCommandContentSection({
         <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/70 px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-              {isAgentAction
-                ? translate(
-                    'auto.components.terminal.quick.commands.TerminalQuickCommandDialog.dc921c17ee',
-                    'Prompt'
-                  )
-                : translate(
-                    'auto.components.terminal.quick.commands.TerminalQuickCommandDialog.command_label',
-                    'Command'
-                  )}
+              {commandFieldLabel}
             </span>
             <span className="rounded-full border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground">
               {isAgentAction
@@ -162,6 +164,7 @@ export function TerminalQuickCommandContentSection({
 
         <textarea
           value={commandText}
+          aria-label={commandFieldLabel}
           onChange={(event) => {
             const text = event.target.value
             draftMemoryRef.current = isAgentAction
