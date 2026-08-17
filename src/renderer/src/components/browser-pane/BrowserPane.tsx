@@ -61,7 +61,10 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { useAppStore } from '@/store'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { ORCA_BROWSER_BLANK_URL, ORCA_BROWSER_PARTITION } from '../../../../shared/constants'
-import { BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
+import {
+  BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY,
+  BROWSER_DIRECT_RAW_INPUT_RUNTIME_CAPABILITY
+} from '../../../../shared/protocol-version'
 import { getOrcaProfileBrowserDefaultPartition } from '../../../../shared/orca-profiles'
 import type {
   BrowserCertificateProceedResult,
@@ -190,6 +193,17 @@ import { useContextualTour } from '@/components/contextual-tours/use-contextual-
 import { translate } from '@/i18n/i18n'
 import { isBrowserPagePanePaintable } from './browser-page-paintability'
 import { openWorkspaceBrowserTab } from '@/lib/workspace-browser-tab-open'
+import {
+  getRemoteBrowserPointerCommands,
+  isRemoteBrowserPointerDrag,
+  type RemoteBrowserPointerButton,
+  type RemoteBrowserPointerModifier,
+  type RemoteBrowserPointerSample
+} from './remote-browser-pointer-gesture'
+import {
+  buildLegacyRemoteBrowserKeypressExpression,
+  buildLegacyRemoteBrowserWheelExpression
+} from './remote-browser-legacy-input'
 import { useMarkupMode, type MarkupCaptureContext } from './markup/useMarkupMode'
 import { MarkupOverlay } from './markup/MarkupOverlay'
 import { MarkupDrawButton } from './markup/MarkupDrawButton'
@@ -329,6 +343,14 @@ type PendingRemoteBrowserWheel = {
   point: RemoteBrowserImagePoint
   dx: number
   dy: number
+}
+
+type PendingRemoteBrowserPointer = {
+  target: RuntimeClientTarget & { kind: 'environment' }
+  pageId: string
+  worktree: string
+  operationToken: RemoteBrowserOperationToken
+  sample: RemoteBrowserPointerSample
 }
 
 const EMPTY_BROWSER_ANNOTATIONS: BrowserPageAnnotation[] = []
@@ -615,6 +637,28 @@ function getRemoteBrowserMouseButton(button: number): 'left' | 'middle' | 'right
     return 'right'
   }
   return null
+}
+
+function getRemoteBrowserPointerModifiers(event: {
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+}): RemoteBrowserPointerModifier[] {
+  const modifiers: RemoteBrowserPointerModifier[] = []
+  if (event.metaKey) {
+    modifiers.push('cmd')
+  }
+  if (event.ctrlKey) {
+    modifiers.push('ctrl')
+  }
+  if (event.altKey) {
+    modifiers.push('alt')
+  }
+  if (event.shiftKey) {
+    modifiers.push('shift')
+  }
+  return modifiers
 }
 
 function buildRemoteContextMenuExpression(x: number, y: number): string {
@@ -915,6 +959,8 @@ function RemoteBrowserPagePane({
   const remoteViewportTimerRef = useRef<number | null>(null)
   const streamFrameUrlRef = useRef<string | null>(null)
   const remoteInputQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+  const remoteInputGenerationRef = useRef(0)
+  const pendingRemotePointerRef = useRef<PendingRemoteBrowserPointer | null>(null)
   const pendingRemoteWheelRef = useRef<PendingRemoteBrowserWheel | null>(null)
   const remoteWheelFrameRef = useRef<number | null>(null)
   const remoteWheelInFlightRef = useRef(false)
@@ -939,9 +985,19 @@ function RemoteBrowserPagePane({
   const closeBrowserPage = useAppStore((s) => s.closeBrowserPage)
   const closeBrowserTab = useAppStore((s) => s.closeBrowserTab)
   const keybindings = useAppStore((state) => state.keybindings)
+  const remoteRuntimeCompatibilityIdentity = useAppStore((state) => {
+    const entry = state.runtimeStatusByEnvironmentId.get(activeRuntimeEnvironmentId)
+    const supportsDirectInput = entry?.status?.capabilities?.includes(
+      BROWSER_DIRECT_RAW_INPUT_RUNTIME_CAPABILITY
+    )
+    return `${entry?.connectionGeneration ?? 0}:${entry?.status?.runtimeId ?? ''}:${supportsDirectInput === true ? '1' : '0'}`
+  })
 
   // Why: runtimes predating browser.certificate-trust.v1 can't honor a proceed request, so hide "Proceed Anyway" until support is advertised.
   const [remoteCertificateTrustSupported, setRemoteCertificateTrustSupported] = useState(false)
+  const [remoteDirectRawInputSupported, setRemoteDirectRawInputSupported] = useState<
+    boolean | null
+  >(null)
   const remoteCertificateEnvironmentId = remotePageHandle?.environmentId ?? null
   const certificateChallengeId = certificateFailure?.challengeId ?? null
   useEffect(() => {
@@ -968,6 +1024,32 @@ function RemoteBrowserPagePane({
       cancelled = true
     }
   }, [remoteCertificateEnvironmentId, certificateChallengeId])
+
+  useEffect(() => {
+    if (!activeRuntimeEnvironmentId) {
+      setRemoteDirectRawInputSupported(null)
+      return
+    }
+    let cancelled = false
+    setRemoteDirectRawInputSupported(null)
+    void runtimeEnvironmentSupportsCapability(
+      activeRuntimeEnvironmentId,
+      BROWSER_DIRECT_RAW_INPUT_RUNTIME_CAPABILITY
+    )
+      .then((supported) => {
+        if (!cancelled) {
+          setRemoteDirectRawInputSupported(supported)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRemoteDirectRawInputSupported(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeRuntimeEnvironmentId, remoteRuntimeCompatibilityIdentity])
 
   useLayoutEffect(() => {
     currentBrowserTabIdRef.current = browserTab.id
@@ -1055,6 +1137,11 @@ function RemoteBrowserPagePane({
     }
   }, [])
 
+  const clearPendingRemoteInput = useCallback((): void => {
+    remoteInputGenerationRef.current += 1
+    remoteInputQueueRef.current = Promise.resolve()
+  }, [])
+
   const closeMissingRemotePage = useCallback(
     (remotePageId: string | null = lifecycle.tokens.remotePage): void => {
       const state = useAppStore.getState()
@@ -1066,7 +1153,8 @@ function RemoteBrowserPagePane({
         window.clearTimeout(remoteViewportTimerRef.current)
         remoteViewportTimerRef.current = null
       }
-      remoteInputQueueRef.current = Promise.resolve()
+      clearPendingRemoteInput()
+      pendingRemotePointerRef.current = null
       clearStreamFrame()
       setPaneNotice(null)
       setPaneBusy(false)
@@ -1082,6 +1170,7 @@ function RemoteBrowserPagePane({
       browserTab.id,
       browserTab.workspaceId,
       clearStreamFrame,
+      clearPendingRemoteInput,
       closeBrowserPage,
       closeBrowserTab,
       lifecycle
@@ -1179,7 +1268,14 @@ function RemoteBrowserPagePane({
   )
 
   const enqueueRemoteInput = useCallback((operation: () => Promise<void>): Promise<void> => {
-    const next = remoteInputQueueRef.current.catch(() => {}).then(operation)
+    const generation = remoteInputGenerationRef.current
+    const next = remoteInputQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        if (remoteInputGenerationRef.current === generation) {
+          await operation()
+        }
+      })
     remoteInputQueueRef.current = next.catch(() => {})
     return next
   }, [])
@@ -1207,6 +1303,7 @@ function RemoteBrowserPagePane({
         remoteViewportTimerRef.current = null
       }
       clearPendingRemoteWheel()
+      pendingRemotePointerRef.current = null
       if (streamFrameUrlRef.current) {
         URL.revokeObjectURL(streamFrameUrlRef.current)
         streamFrameUrlRef.current = null
@@ -1218,6 +1315,7 @@ function RemoteBrowserPagePane({
     // Why: only reset frame/wheel on identity change; bumping the stream/operation generations here races the streaming effect and wedges the pane.
     lifecycle.forgetStreamViewportSize()
     clearPendingRemoteWheel()
+    pendingRemotePointerRef.current = null
     clearStreamFrame()
   }, [
     activeRuntimeEnvironmentId,
@@ -1463,6 +1561,7 @@ function RemoteBrowserPagePane({
   useRemoteBrowserStreamActivation({
     activeRuntimeEnvironmentId,
     browserPageId: browserTab.id,
+    clearPendingRemoteInput,
     clearPendingRemoteWheel,
     isActive,
     lifecycle,
@@ -1652,30 +1751,104 @@ function RemoteBrowserPagePane({
     }
     event.preventDefault()
     image.focus()
+    image.setPointerCapture(event.pointerId)
     setContextMenu(null)
     setPaneNotice(null)
+    pendingRemotePointerRef.current = {
+      target,
+      pageId,
+      worktree: runtimeWorktree,
+      operationToken,
+      sample: {
+        pointerId: event.pointerId,
+        x: point.x,
+        y: point.y,
+        button,
+        modifiers: getRemoteBrowserPointerModifiers(event)
+      }
+    }
+  }
+
+  const handleRemotePointerUp = (event: React.PointerEvent<HTMLImageElement>): void => {
+    const pending = pendingRemotePointerRef.current
+    if (!pending || pending.sample.pointerId !== event.pointerId) {
+      return
+    }
+    pendingRemotePointerRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    const point = getRemoteImagePoint(event)
+    if (busy || !point) {
+      return
+    }
+    const commands = getRemoteBrowserPointerCommands(pending.sample, {
+      pointerId: event.pointerId,
+      x: point.x,
+      y: point.y
+    })
+    if (!commands) {
+      return
+    }
+    const isDrag = isRemoteBrowserPointerDrag(pending.sample, {
+      pointerId: event.pointerId,
+      x: point.x,
+      y: point.y
+    })
+    event.preventDefault()
+    setPaneNotice(null)
     enqueueRemoteInput(async () => {
-      if (!isCurrentRemoteOperationToken(operationToken)) {
+      if (!isCurrentRemoteOperationToken(pending.operationToken)) {
         return
       }
+      let directInputSupported = remoteDirectRawInputSupported
+      if (isDrag && directInputSupported === null) {
+        try {
+          directInputSupported = await runtimeEnvironmentSupportsCapability(
+            pending.target.environmentId,
+            BROWSER_DIRECT_RAW_INPUT_RUNTIME_CAPABILITY
+          )
+        } catch {
+          directInputSupported = false
+        }
+      }
+      if (isDrag && !directInputSupported) {
+        if (isCurrentRemoteOperationToken(pending.operationToken)) {
+          setPaneNotice({
+            kind: 'consequence',
+            text: 'Drag input requires updating the paired runtime.'
+          })
+        }
+        return
+      }
+      let pressedButton: RemoteBrowserPointerButton | null = null
       try {
-        const params = { worktree: runtimeWorktree, page: pageId }
-        await callRuntimeRpc(
-          target,
-          'browser.mouseMove',
-          { ...params, x: point.x, y: point.y },
-          { timeoutMs: 15_000, suppressFeatureInteraction: true }
-        )
-        await callRuntimeRpc(
-          target,
-          'browser.mouseDown',
-          { ...params, button },
-          { timeoutMs: 15_000, suppressFeatureInteraction: true }
-        )
+        for (const command of commands) {
+          await callRuntimeRpc(
+            pending.target,
+            command.method,
+            { worktree: pending.worktree, page: pending.pageId, ...command.params },
+            { timeoutMs: 15_000, suppressFeatureInteraction: true }
+          )
+          if (command.method === 'browser.mouseDown') {
+            pressedButton = command.params.button
+          } else if (command.method === 'browser.mouseUp') {
+            pressedButton = null
+          }
+        }
+        scheduleRemoteTabInfoRefresh(pending.operationToken, 250)
       } catch (error) {
-        if (isCurrentRemoteOperationToken(operationToken)) {
+        if (pressedButton) {
+          void callRuntimeRpc(
+            pending.target,
+            'browser.mouseUp',
+            { worktree: pending.worktree, page: pending.pageId, button: pressedButton },
+            { timeoutMs: 3_000, suppressFeatureInteraction: true }
+          ).catch(() => {})
+        }
+        if (isCurrentRemoteOperationToken(pending.operationToken)) {
           if (isRemoteBrowserPageMissingError(error)) {
-            closeMissingRemotePage(pageId)
+            closeMissingRemotePage(pending.pageId)
             return
           }
           setPaneNotice({
@@ -1687,55 +1860,13 @@ function RemoteBrowserPagePane({
     })
   }
 
-  const handleRemotePointerUp = (event: React.PointerEvent<HTMLImageElement>): void => {
-    if (busy) {
-      return
+  const handleRemotePointerCancel = (event: React.PointerEvent<HTMLImageElement>): void => {
+    if (pendingRemotePointerRef.current?.sample.pointerId === event.pointerId) {
+      pendingRemotePointerRef.current = null
     }
-    const target = runtimeTarget()
-    const pageId = lifecycle.tokens.remotePage
-    const operationToken = pageId ? createRemoteOperationToken(pageId) : null
-    const point = getRemoteImagePoint(event)
-    const button = getRemoteBrowserMouseButton(event.button)
-    if (button === 'right') {
-      return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
     }
-    if (!target || !pageId || !operationToken || !point || !button) {
-      return
-    }
-    event.preventDefault()
-    setPaneNotice(null)
-    enqueueRemoteInput(async () => {
-      if (!isCurrentRemoteOperationToken(operationToken)) {
-        return
-      }
-      try {
-        const params = { worktree: runtimeWorktree, page: pageId }
-        await callRuntimeRpc(
-          target,
-          'browser.mouseMove',
-          { ...params, x: point.x, y: point.y },
-          { timeoutMs: 15_000, suppressFeatureInteraction: true }
-        )
-        await callRuntimeRpc(
-          target,
-          'browser.mouseUp',
-          { ...params, button },
-          { timeoutMs: 15_000, suppressFeatureInteraction: true }
-        )
-        scheduleRemoteTabInfoRefresh(operationToken, 250)
-      } catch (error) {
-        if (isCurrentRemoteOperationToken(operationToken)) {
-          if (isRemoteBrowserPageMissingError(error)) {
-            closeMissingRemotePage(pageId)
-            return
-          }
-          setPaneNotice({
-            kind: 'consequence',
-            text: error instanceof Error ? error.message : 'Remote mouse input failed.'
-          })
-        }
-      }
-    })
   }
 
   const handleRemoteContextMenu = (event: React.MouseEvent<HTMLImageElement>): void => {
@@ -1822,12 +1953,25 @@ function RemoteBrowserPagePane({
         return
       }
       try {
-        await callRuntimeRpc(
-          target,
-          'browser.keypress',
-          { ...params, key },
-          { timeoutMs: 15_000, suppressFeatureInteraction: true }
-        )
+        if (remoteDirectRawInputSupported) {
+          await callRuntimeRpc(
+            target,
+            'browser.keypress',
+            { ...params, key },
+            { timeoutMs: 15_000, suppressFeatureInteraction: true }
+          )
+        } else {
+          const expression = buildLegacyRemoteBrowserKeypressExpression(key)
+          if (!expression) {
+            throw new Error('This keyboard shortcut requires updating the paired runtime.')
+          }
+          await callRuntimeRpc(
+            target,
+            'browser.eval',
+            { ...params, expression },
+            { timeoutMs: 15_000, suppressFeatureInteraction: true }
+          )
+        }
         if (
           key === 'Enter' ||
           key === 'Meta+r' ||
@@ -1871,22 +2015,30 @@ function RemoteBrowserPagePane({
           return
         }
         try {
-          await callRuntimeRpc(
-            target,
-            'browser.mouseMove',
-            { ...params, x: point.x, y: point.y },
-            { timeoutMs: 15_000, suppressFeatureInteraction: true }
-          )
-          await callRuntimeRpc(
-            target,
-            'browser.mouseWheel',
-            {
-              ...params,
-              dx,
-              dy
-            },
-            { timeoutMs: 15_000, suppressFeatureInteraction: true }
-          )
+          if (remoteDirectRawInputSupported) {
+            await callRuntimeRpc(
+              target,
+              'browser.mouseMove',
+              { ...params, x: point.x, y: point.y },
+              { timeoutMs: 15_000, suppressFeatureInteraction: true }
+            )
+            await callRuntimeRpc(
+              target,
+              'browser.mouseWheel',
+              { ...params, dx, dy },
+              { timeoutMs: 15_000, suppressFeatureInteraction: true }
+            )
+          } else {
+            await callRuntimeRpc(
+              target,
+              'browser.eval',
+              {
+                ...params,
+                expression: buildLegacyRemoteBrowserWheelExpression(point.x, point.y, dx, dy)
+              },
+              { timeoutMs: 15_000, suppressFeatureInteraction: true }
+            )
+          }
           scheduleRemoteTabInfoRefresh(operationToken, 400)
         } catch (error) {
           if (isCurrentRemoteOperationToken(operationToken)) {
@@ -1912,7 +2064,8 @@ function RemoteBrowserPagePane({
     enqueueRemoteInput,
     isCurrentRemoteOperationToken,
     scheduleRemoteTabInfoRefresh,
-    runtimeWorktree
+    runtimeWorktree,
+    remoteDirectRawInputSupported
   ])
 
   const handleRemoteScreenshotWheel = useCallback(
@@ -2278,6 +2431,7 @@ function RemoteBrowserPagePane({
             className="absolute top-0 left-0 max-w-none cursor-default bg-white outline-none"
             onPointerDown={handleRemotePointerDown}
             onPointerUp={handleRemotePointerUp}
+            onPointerCancel={handleRemotePointerCancel}
             onContextMenu={handleRemoteContextMenu}
             onKeyDown={handleRemoteScreenshotKeyDown}
             draggable={false}
