@@ -46,7 +46,14 @@ import { getRepoMapFromState, getWorktreeMapFromState } from '../../store/select
 import { getHostedReviewCacheKey } from '../../store/slices/hosted-review'
 import { issueCacheKey as getIssueCacheKey } from '../../store/slices/github'
 import { refreshGitStatusForWorktree } from '../right-sidebar/git-status-refresh'
+import {
+  getSelectedDeletableWorkspaceRows,
+  getVisibleDeletableWorkspaceIds
+} from './workspace-space-delete-selection'
 import { runWorktreeBatchDelete } from '../sidebar/delete-worktree-flow'
+import { toWorktreeDeleteIdentities } from '../sidebar/worktree-delete-request'
+import { showWorkspaceListChangedToast } from '../sidebar/stale-workspace-list-toast'
+import { getWorktreeOnHostFromState } from '../../store/selectors'
 import { prepareActiveWorktreeFocusAfterDelete } from '../sidebar/active-worktree-focus-after-delete'
 import { branchDisplayName } from '../sidebar/WorktreeCardHelpers'
 import { Badge } from '../ui/badge'
@@ -75,8 +82,6 @@ import {
   countWorkspaceSpaceActiveAgents,
   getLargestWorkspaceSpaceItemSize,
   getLargestWorkspaceSpaceRowSize,
-  getSelectedDeletableWorkspaceIds,
-  getVisibleDeletableWorkspaceIds,
   getWorkspaceSpaceGitStatusRefreshCandidates,
   isWorkspaceSpaceRowReadyToDelete,
   pruneWorkspaceSpaceSelectedIds,
@@ -1491,9 +1496,13 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     sourceRows.find((row) => row.worktreeId === nextTreemapZoomWorktreeId && row.status === 'ok') ??
     null
   const maxSize = getLargestWorkspaceSpaceRowSize(rows)
-  const selectedDeletableIds = useMemo(
-    () => getSelectedDeletableWorkspaceIds(rows, nextSelectedIds, isWorktreeUnavailableForDelete),
+  const selectedDeletableRows = useMemo(
+    () => getSelectedDeletableWorkspaceRows(rows, nextSelectedIds, isWorktreeUnavailableForDelete),
     [isWorktreeUnavailableForDelete, nextSelectedIds, rows]
+  )
+  const selectedDeletableIds = useMemo(
+    () => selectedDeletableRows.map((row) => row.worktreeId),
+    [selectedDeletableRows]
   )
   const selectedDeletableIdSet = useMemo(
     () => new Set(selectedDeletableIds),
@@ -1606,11 +1615,31 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   )
 
   const deleteWorktrees = useCallback(
-    (worktreeIds: readonly string[]): void => {
-      if (worktreeIds.length === 0) {
+    (targets: readonly WorkspaceSpaceWorktree[]): void => {
+      if (targets.length === 0) {
         return
       }
-      runWorktreeBatchDelete(worktreeIds, {
+      // Why (STA-4343): the Space scan lists one row per host, so a bare id would
+      // route the delete at whichever host the id-keyed lookup happens to hold.
+      // Resolve each row on ITS host and hand over the store row's own identity —
+      // a Space row carries no instanceId, so a hand-built one would be rejected
+      // as stale by the confirmed-target check.
+      const state = useAppStore.getState()
+      const identities = toWorktreeDeleteIdentities(
+        targets.flatMap((target) => {
+          const row = getWorktreeOnHostFromState(
+            state,
+            target.worktreeId,
+            target.executionHostId ?? undefined
+          )
+          return row ? [row] : []
+        })
+      )
+      if (identities.length !== targets.length) {
+        showWorkspaceListChangedToast()
+        return
+      }
+      runWorktreeBatchDelete(identities, {
         forceConfirm: true,
         onDeleted: handleDeletedWorktrees
       })
@@ -1663,10 +1692,10 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   )
 
   const deleteSelected = (): void => {
-    if (selectedDeletableIds.length === 0) {
+    if (selectedDeletableRows.length === 0) {
       return
     }
-    deleteWorktrees(selectedDeletableIds)
+    deleteWorktrees(selectedDeletableRows)
   }
 
   return (
@@ -2082,7 +2111,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
                     onToggleSelected={() => toggleSelection(worktree.worktreeId)}
                     onInspect={() => setInspectedWorktreeId(worktree.worktreeId)}
                     onOpenWorkspace={() => activateAndRevealWorktree(worktree.worktreeId)}
-                    onDelete={() => deleteWorktrees([worktree.worktreeId])}
+                    onDelete={() => deleteWorktrees([worktree])}
                     onForceDelete={() => forceDeleteWorktree(worktree)}
                   />
                 ))

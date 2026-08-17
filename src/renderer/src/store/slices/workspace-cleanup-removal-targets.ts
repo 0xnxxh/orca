@@ -26,6 +26,9 @@ import { getWorktreeOperationOwnerHostIds } from '@/lib/worktree-operation-route
 import { translate } from '@/i18n/i18n'
 import type { WorkspaceCleanupFailure } from './workspace-cleanup'
 
+/** Distinct from every ExecutionHostId, so a hostless row cannot alias one. */
+const UNQUALIFIED_HOST_BUCKET = Symbol('unqualified-cleanup-host')
+
 export type WorkspaceCleanupRemovalTarget = {
   kind: 'target'
   worktreeId: string
@@ -90,8 +93,17 @@ export function resolveWorkspaceCleanupRemovalTargets(
     const displayName = approved[0]?.displayName ?? worktreeId
     // Why: one id confirmed for two hosts in a single batch cannot say which
     // row the user meant, and picking either one may delete the other's work.
+    //
+    // Why the STRICT resolver: the display identity defaults a hostless row to
+    // `local`, so a hostless row and a genuine local row for the same id share an
+    // identity and this gate would not fire. Destructive code may not guess a
+    // host — an unqualified row is its own bucket here.
     if (
-      new Set(approved.map((candidate) => getWorkspaceCleanupCandidateIdentity(candidate))).size > 1
+      new Set(
+        approved.map(
+          (candidate) => resolveWorkspaceCleanupRemovalHostId(candidate) ?? UNQUALIFIED_HOST_BUCKET
+        )
+      ).size > 1
     ) {
       return ambiguousHostFailure(worktreeId, displayName)
     }

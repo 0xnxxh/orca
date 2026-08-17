@@ -1,3 +1,7 @@
+import {
+  getSelectedDeletableWorkspaceIds,
+  getVisibleDeletableWorkspaceIds
+} from './workspace-space-delete-selection'
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceSpaceWorktree } from '../../../../shared/workspace-space-types'
 import {
@@ -6,8 +10,6 @@ import {
   filterWorkspaceSpaceRows,
   getLargestWorkspaceSpaceItemSize,
   getLargestWorkspaceSpaceRowSize,
-  getSelectedDeletableWorkspaceIds,
-  getVisibleDeletableWorkspaceIds,
   getWorkspaceSpaceGitStatusRefreshCandidates,
   isWorkspaceSpaceFilterQueryTooLarge,
   isWorkspaceSpaceRowReadyToDelete,
