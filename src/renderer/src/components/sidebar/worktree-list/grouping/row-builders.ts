@@ -174,7 +174,7 @@ export function appendWorktreeRows(
     groupDepth: number
     sectionKey: string
     hostContextLabelByRepoId?: ReadonlyMap<string, string>
-    hostContextLabelByWorktreeId?: ReadonlyMap<string, string>
+    hostContextLabelByWorktreeIdentity?: ReadonlyMap<string, string>
     cyclicLineageIds: ReadonlySet<string>
   }
 ): void {
@@ -184,7 +184,7 @@ export function appendWorktreeRows(
     groupDepth,
     sectionKey,
     hostContextLabelByRepoId,
-    hostContextLabelByWorktreeId,
+    hostContextLabelByWorktreeIdentity,
     cyclicLineageIds
   } = options
   if (!nestLineage) {
@@ -200,7 +200,7 @@ export function appendWorktreeRows(
           lineageChildCount: 0,
           lineageCollapsed: false,
           hostContextLabel:
-            hostContextLabelByWorktreeId?.get(getWorktreeHostIdentity(worktree)) ??
+            hostContextLabelByWorktreeIdentity?.get(getWorktreeHostIdentity(worktree)) ??
             hostContextLabelByRepoId?.get(worktree.repoId)
         })
       )
@@ -250,7 +250,7 @@ export function appendWorktreeRows(
         lineageChildCount: children.length,
         lineageCollapsed,
         hostContextLabel:
-          hostContextLabelByWorktreeId?.get(getWorktreeHostIdentity(worktree)) ??
+          hostContextLabelByWorktreeIdentity?.get(getWorktreeHostIdentity(worktree)) ??
           hostContextLabelByRepoId?.get(worktree.repoId)
       })
     )
