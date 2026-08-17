@@ -2,30 +2,49 @@
 // Why: a failed diff load renders the error text as the modified body. If that pane stays editable
 // the save path writes it over the real file, because attemptEditorFileSave falls back to the body
 // shown when no draft exists.
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, render, type RenderResult } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OpenFile } from '@/store/slices/editor'
 import type { DiffContent } from './editor-panel-content-types'
 
 const captured = vi.hoisted(() => ({
-  diffProps: [] as { editable?: boolean; onSave?: unknown; onContentChange?: unknown }[]
+  diffProps: [] as {
+    editable?: boolean
+    onSave?: unknown
+    onContentChange?: unknown
+    modifiedContent?: string
+  }[],
+  // Why: one entry per DiffViewer instance, so the tests can tell a remount from an in-place prop change.
+  mountEvents: [] as string[],
+  mountCount: 0
 }))
 
-vi.mock('@/lib/lazy-with-retry', () => ({
-  lazyWithRetry: (factory: () => Promise<unknown>) => {
-    if (factory.toString().includes('/DiffViewer.tsx')) {
-      return function MockDiffViewer(props: {
-        editable?: boolean
-        onSave?: unknown
-        onContentChange?: unknown
-      }) {
-        captured.diffProps.push(props)
-        return null
+vi.mock('@/lib/lazy-with-retry', async () => {
+  const { useEffect } = await import('react')
+  return {
+    lazyWithRetry: (factory: () => Promise<unknown>) => {
+      if (factory.toString().includes('/DiffViewer.tsx')) {
+        return function MockDiffViewer(props: {
+          editable?: boolean
+          onSave?: unknown
+          onContentChange?: unknown
+          modifiedContent?: string
+        }) {
+          captured.diffProps.push(props)
+          useEffect(() => {
+            const id = ++captured.mountCount
+            captured.mountEvents.push(`mount:${id}`)
+            return () => {
+              captured.mountEvents.push(`unmount:${id}`)
+            }
+          }, [])
+          return null
+        }
       }
+      return () => null
     }
-    return () => null
   }
-}))
+})
 
 vi.mock('@/store', () => {
   const state = {
@@ -60,14 +79,17 @@ const ACTIVE_FILE: OpenFile = {
   diffSource: 'unstaged'
 }
 
-function renderDiff(diff: DiffContent): void {
-  render(
+function diffElement(
+  diff: DiffContent,
+  editBuffers: Record<string, string> = {}
+): React.JSX.Element {
+  return (
     <EditorContent
       activeFile={ACTIVE_FILE}
       viewStateScopeId={ACTIVE_FILE.id}
       fileContents={{}}
       diffContents={{ [ACTIVE_FILE.id]: diff }}
-      editBuffers={{}}
+      editBuffers={editBuffers}
       openFiles={[ACTIVE_FILE]}
       worktreeEntries={[]}
       resolvedLanguage="typescript"
@@ -89,6 +111,10 @@ function renderDiff(diff: DiffContent): void {
   )
 }
 
+function renderDiff(diff: DiffContent, editBuffers: Record<string, string> = {}): RenderResult {
+  return render(diffElement(diff, editBuffers))
+}
+
 function textDiff(modifiedContent: string, loadError?: boolean): DiffContent {
   return {
     kind: 'text',
@@ -103,6 +129,8 @@ function textDiff(modifiedContent: string, loadError?: boolean): DiffContent {
 afterEach(() => {
   cleanup()
   captured.diffProps.length = 0
+  captured.mountEvents.length = 0
+  captured.mountCount = 0
 })
 
 describe('EditorContent diff load failures', () => {
@@ -114,6 +142,42 @@ describe('EditorContent diff load failures', () => {
     expect(props?.onSave).toBeUndefined()
     // Why: no draft can be minted either, or the next save would write the typed-over message.
     expect(props?.onContentChange).toBeUndefined()
+  })
+
+  it('keeps an existing draft editable and saveable when a refetch fails under it', () => {
+    // Why: the draft, not the error text, is what renders — locking it would strand unsaved work.
+    renderDiff(textDiff('Error loading diff: RuntimeRpcCallError: too large', true), {
+      [ACTIVE_FILE.id]: 'export const drafted = 1\n'
+    })
+
+    const props = captured.diffProps.at(-1)
+    expect(props?.modifiedContent).toBe('export const drafted = 1\n')
+    expect(props?.editable).toBe(true)
+    expect(props?.onSave).toBeTypeOf('function')
+  })
+
+  it('keeps the same viewer instance when a recovered refetch makes the live pane editable again', () => {
+    // Why: the recovery is unattended (git-status or external-change refetch), so remounting would
+    // re-run DiffViewer's mount-time focus grab and steal keystrokes; DiffViewer re-wires in place instead.
+    const { rerender } = renderDiff(
+      textDiff('Error loading diff: RuntimeRpcCallError: too large', true)
+    )
+    expect(captured.diffProps.at(-1)?.editable).toBe(false)
+    expect(captured.mountEvents).toEqual(['mount:1'])
+
+    rerender(diffElement(textDiff('export const a = 1\n')))
+
+    expect(captured.diffProps.at(-1)?.editable).toBe(true)
+    expect(captured.mountEvents).toEqual(['mount:1'])
+  })
+
+  it('keeps the same viewer instance when a refetch only changes the content', () => {
+    // Why: guards the remount key against churning Monaco (and its undo stack) on every content refresh.
+    const { rerender } = renderDiff(textDiff('export const a = 1\n'))
+
+    rerender(diffElement(textDiff('export const a = 2\n')))
+
+    expect(captured.mountEvents).toEqual(['mount:1'])
   })
 
   it('leaves a normally loaded unstaged diff editable', () => {

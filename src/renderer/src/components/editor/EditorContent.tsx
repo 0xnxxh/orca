@@ -895,9 +895,10 @@ export function EditorContent({
     modifiedDiffBuffer === undefined &&
     dc.modifiedContent.length === 0
   )
-  // Why: the body is a load-failure message, not file content. Editing must stay off so no draft
-  // is minted and no save shortcut is installed — either would write that text over the real file.
-  const diffEditable = isEditable && dc.loadError !== true
+  // Why: a load-failure body is a message, not file content — keep it read-only so no draft is
+  // minted and no save writes it over the file. An existing draft is the user's own text, and it
+  // is what renders here, so it stays editable and saveable.
+  const diffEditable = isEditable && (dc.loadError !== true || modifiedDiffBuffer !== undefined)
   // Why: shared by both diff sub-branches (preview and source) so preview mode surfaces the external change too.
   const diffExternalChangeBanner =
     activeFile.externalMutation === 'changed' ? (
