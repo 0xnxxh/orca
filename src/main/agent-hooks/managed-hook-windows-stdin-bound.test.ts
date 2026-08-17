@@ -30,7 +30,8 @@ import {
   MANAGED_HOOK_TIMEOUT_SECONDS,
   WINDOWS_CLAUDE_HOOK_TIMEOUT_SECONDS,
   buildWindowsAgentHookCurlPostCommand,
-  buildWindowsAgentHookPostCommand
+  buildWindowsAgentHookPostCommand,
+  createManagedCommandMatcher
 } from './installer-utils'
 import {
   WINDOWS_HOOK_STDIN_DRAIN_COMMAND,
@@ -124,9 +125,12 @@ describe('Windows managed-hook stdin bound (#13285)', () => {
 
         const hooksDir = join(home, '.orca', 'agent-hooks')
         const claude = readFileSync(join(hooksDir, 'claude-hook.cmd'), 'utf8')
-        const collectTimeouts = (value: unknown, scriptName: string): number[] => {
+        const collectTimeouts = (
+          value: unknown,
+          isManagedCommand: (command: string | undefined) => boolean
+        ): number[] => {
           if (Array.isArray(value)) {
-            return value.flatMap((entry) => collectTimeouts(entry, scriptName))
+            return value.flatMap((entry) => collectTimeouts(entry, isManagedCommand))
           }
           if (!value || typeof value !== 'object') {
             return []
@@ -134,16 +138,19 @@ describe('Windows managed-hook stdin bound (#13285)', () => {
           const record = value as Record<string, unknown>
           const own =
             typeof record.command === 'string' &&
-            record.command.includes(scriptName) &&
+            isManagedCommand(record.command) &&
             typeof record.timeout === 'number'
               ? [record.timeout]
               : []
           return own.concat(
-            Object.values(record).flatMap((entry) => collectTimeouts(entry, scriptName))
+            Object.values(record).flatMap((entry) => collectTimeouts(entry, isManagedCommand))
           )
         }
         const readTimeouts = (configPath: string, scriptName: string): number[] =>
-          collectTimeouts(JSON.parse(readFileSync(configPath, 'utf8')), scriptName)
+          collectTimeouts(
+            JSON.parse(readFileSync(configPath, 'utf8')),
+            createManagedCommandMatcher(scriptName)
+          )
         expect(readTimeouts(claudeConfigPath, 'claude-hook.cmd')).toEqual(
           Array(11).fill(WINDOWS_CLAUDE_HOOK_TIMEOUT_SECONDS)
         )
