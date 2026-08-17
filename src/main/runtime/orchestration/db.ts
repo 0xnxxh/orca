@@ -5125,7 +5125,13 @@ export class OrchestrationDb {
         )
         .run(stage, reason, dispatchId)
       this.db
-        .prepare("UPDATE tasks SET status = 'failed', completed_at = datetime('now') WHERE id = ?")
+        .prepare(
+          `UPDATE tasks SET status = 'failed', completed_at = datetime('now')
+           WHERE id = ? AND NOT EXISTS (
+             SELECT 1 FROM dispatch_contexts
+             WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
+           )`
+        )
         .run(dispatch.task_id)
       this.closeQuestionsForDispatch(dispatchId)
       this.db.exec('COMMIT')
@@ -5250,7 +5256,12 @@ export class OrchestrationDb {
           .run(reason, params.dispatchId)
         this.db
           .prepare(
-            "UPDATE tasks SET status = 'failed', completed_at = datetime('now') WHERE id = ? AND status IN ('blocked', 'dispatched')"
+            `UPDATE tasks SET status = 'failed', completed_at = datetime('now')
+             WHERE id = ? AND status IN ('blocked', 'dispatched')
+               AND NOT EXISTS (
+                 SELECT 1 FROM dispatch_contexts
+                 WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
+               )`
           )
           .run(dispatch.task_id)
         this.closeQuestionsForDispatch(params.dispatchId)
@@ -5317,7 +5328,11 @@ export class OrchestrationDb {
             .prepare(
               `UPDATE tasks
                SET status = ?, completed_at = CASE WHEN ? = 'failed' THEN datetime('now') ELSE NULL END
-               WHERE id = ? AND status IN ('dispatched', 'blocked')`
+               WHERE id = ? AND status IN ('dispatched', 'blocked')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM dispatch_contexts
+                   WHERE task_id = tasks.id AND status IN ('pending', 'dispatched')
+                 )`
             )
             .run(taskStatus, taskStatus, dispatch.task_id)
         }

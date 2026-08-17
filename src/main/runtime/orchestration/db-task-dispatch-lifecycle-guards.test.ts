@@ -121,6 +121,76 @@ describe('Task/Dispatch lifecycle guards', () => {
     expectCapability(database, worker, false)
   })
 
+  it('keeps a Task dispatched when missing-terminal recovery leaves another worker active', () => {
+    const database = createDatabase()
+    const task = database.createTask({ spec: 'legacy missing-terminal split' })
+    const missing = startWorker(database, task.id, 'missing')
+    sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+    const live = startWorker(database, task.id, 'live')
+
+    database.reconcileMissingWorkerTerminal(missing.dispatchId, 'terminal missing')
+
+    expect(database.getTask(task.id)?.status).toBe('dispatched')
+    expect(database.getDispatchContextById(missing.dispatchId)).toMatchObject({
+      status: 'failed',
+      capability_revoked_at: expect.any(String)
+    })
+    expect(database.getWorkerDispatch(missing.dispatchId)?.state).toBe('abandoned')
+    expect(database.getDispatchContextById(live.dispatchId)?.status).toBe('dispatched')
+    expect(database.getWorkerDispatch(live.dispatchId)?.state).toBe('ready')
+    expectCapability(database, missing, false)
+    expectCapability(database, live, true)
+
+    database.reconcileMissingWorkerTerminal(live.dispatchId, 'second terminal missing')
+    expect(database.getTask(task.id)?.status).toBe('ready')
+    expectCapability(database, live, false)
+  })
+
+  it.each(['local', 'federated'] as const)(
+    'keeps a Task dispatched when a %s worker start fails beside a live worker',
+    (kind) => {
+      const database = createDatabase()
+      const task = database.createTask({ spec: `${kind} split start failure` })
+      const failed = database.createStartingWorkerDispatch({
+        taskId: task.id,
+        startOptions: {},
+        ...(kind === 'federated'
+          ? {
+              federation: {
+                environmentId: 'server-1',
+                environmentName: 'worker server',
+                peerFingerprint: 'peer-1',
+                protocolVersion: 3
+              }
+            }
+          : {})
+      })
+      sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+      const live = startWorker(database, task.id, `${kind}_live`)
+
+      if (kind === 'local') {
+        database.failWorkerStart(failed.dispatch.id, 'start_failed', 'worker failed to start')
+      } else {
+        database.reconcileFederatedWorkerStart({
+          dispatchId: failed.dispatch.id,
+          state: 'failed',
+          stage: 'start_failed',
+          lastError: 'worker failed to start'
+        })
+      }
+
+      expect(database.getTask(task.id)?.status).toBe('dispatched')
+      expect(database.getDispatchContextById(failed.dispatch.id)).toMatchObject({
+        status: 'failed',
+        capability_revoked_at: expect.any(String)
+      })
+      expect(database.getWorkerDispatch(failed.dispatch.id)?.state).toBe('failed')
+      expect(database.getDispatchContextById(live.dispatchId)?.status).toBe('dispatched')
+      expect(database.getWorkerDispatch(live.dispatchId)?.state).toBe('ready')
+      expectCapability(database, live, true)
+    }
+  )
+
   it('rejects gate creation while a supervised worker remains active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'worker gate guard' })
