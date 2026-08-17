@@ -111,10 +111,11 @@ printf '%s' "$TEXT" | ORCA computer set-value --app <app> --element-index <index
 ## Screenshots
 
 There is no `computer screenshot` subcommand, and none is needed: `get-app-state` and every
-action command request a screenshot by default unless `--no-screenshot` is passed. Use
-`--json` to write a successful capture to disk and read its path from
-`result.screenshot.path`. Pretty mode writes no image file; `get-app-state` reports capture
-metadata, while action output reports only screenshot failures.
+action command request a screenshot by default unless `--no-screenshot` is passed. With
+`--json`, a successful capture is normally written to disk and its path reported at
+`result.screenshot.path`. If temporary export fails, the JSON keeps the base64 bytes at
+`result.screenshot.data` and omits `path`. Pretty mode writes no image file; `get-app-state`
+reports capture metadata, while action output reports only screenshot failures.
 
 Use the tree for indexes/actions and the screenshot for visual confirmation; failed capture usually means hidden, minimized, off-screen, or permission-blocked.
 

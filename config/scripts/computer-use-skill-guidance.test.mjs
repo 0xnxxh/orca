@@ -51,8 +51,10 @@ describe('computer-use skill guidance', () => {
     expect(bundledGuide).toBeDefined()
 
     for (const skill of [readFileSync(guidePath, 'utf8'), bundledGuide]) {
-      expect(skill).toContain('`--json` to write a successful capture to disk')
+      expect(skill).toContain('a successful capture is normally written to disk')
       expect(skill).toContain('`result.screenshot.path`')
+      expect(skill).toContain('base64 bytes at')
+      expect(skill).toContain('`result.screenshot.data` and omits `path`')
       expect(skill).toContain('Pretty mode writes no image file')
     }
   })
