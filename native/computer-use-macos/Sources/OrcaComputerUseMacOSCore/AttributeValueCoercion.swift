@@ -75,19 +75,69 @@ public struct AttributeValueCoercion: Equatable {
             return integer
         }
 
-        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 2 else { return nil }
+        var unsigned = value[...]
+        let isNegative = unsigned.first == "-"
+        if isNegative || unsigned.first == "+" {
+            unsigned = unsigned.dropFirst()
+        }
+
+        let exponentIndex = unsigned.firstIndex { $0 == "e" || $0 == "E" }
+        let significand = exponentIndex.map { unsigned[..<$0] } ?? unsigned
+        let exponentText = exponentIndex.map { unsigned[unsigned.index(after: $0)...] }
+        guard exponentText?.contains(where: { $0 == "e" || $0 == "E" }) != true else { return nil }
+
+        let exponent: Int?
+        if let exponentText {
+            let digits = exponentText.first == "+" || exponentText.first == "-"
+                ? exponentText.dropFirst()
+                : exponentText
+            guard !digits.isEmpty, digits.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }) else {
+                return nil
+            }
+            exponent = Int(exponentText)
+        } else {
+            exponent = 0
+        }
+
+        let parts = significand.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count <= 2 else { return nil }
         let whole = parts[0]
-        let fraction = parts[1]
-        let unsignedWhole = whole.first == "+" || whole.first == "-" ? whole.dropFirst() : whole[...]
-        guard !unsignedWhole.isEmpty || !fraction.isEmpty,
-              fraction.allSatisfy({ $0 == "0" })
+        let fraction = parts.count == 2 ? parts[1] : Substring()
+        guard !whole.isEmpty || !fraction.isEmpty,
+              whole.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+              fraction.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 })
         else {
             return nil
         }
 
-        let normalized = unsignedWhole.isEmpty ? "\(whole)0" : String(whole)
-        return Int64(normalized)
+        let digits = whole + fraction
+        let significant = digits.drop(while: { $0 == "0" })
+        guard !significant.isEmpty else { return 0 }
+        guard let exponent else { return nil }
+
+        let trailingZeroCount = significant.reversed().prefix(while: { $0 == "0" }).count
+        let normalized: String
+        if exponent >= fraction.count {
+            let zeroCount = exponent - fraction.count
+            guard significant.count <= 19, zeroCount <= 19 - significant.count else { return nil }
+            normalized = String(significant) + String(repeating: "0", count: zeroCount)
+        } else {
+            let removedCount: Int
+            if exponent >= 0 {
+                removedCount = fraction.count - exponent
+            } else {
+                guard fraction.count <= trailingZeroCount,
+                      exponent.magnitude <= UInt(trailingZeroCount - fraction.count)
+                else {
+                    return nil
+                }
+                removedCount = fraction.count + Int(exponent.magnitude)
+            }
+            guard removedCount <= trailingZeroCount else { return nil }
+            normalized = String(significant.dropLast(removedCount))
+        }
+
+        return Int64(isNegative ? "-\(normalized)" : normalized)
     }
 
     private static func decode(_ value: CFTypeRef) -> Value? {
