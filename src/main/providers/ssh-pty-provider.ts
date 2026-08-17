@@ -23,6 +23,7 @@ import { SshPtySpawnExitRaceTracker } from './ssh-pty-spawn-exit-race'
 import { SshAgentSessionCapabilities } from './ssh-agent-session-capabilities'
 import type { PtyProcessInspection } from './pty-process-inspection'
 import { writeToSshPty, writeToSshPtyWithSettlement } from './ssh-pty-write'
+import { SshPtyLivenessState } from './ssh-pty-liveness-state'
 
 // Why: sequential relay teardown calls share one absolute budget; convert to the mux-relative timeout only at dispatch.
 function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: number } | undefined {
@@ -33,8 +34,7 @@ function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: numbe
 export class SshPtyProvider implements IPtyProvider {
   private mux: SshChannelMultiplexer
   private connectionId: string
-  private livePtyIds = new Set<string>()
-  private unverifiablePtyIds = new Set<string>()
+  private readonly livenessState: SshPtyLivenessState
   readonly getAppliedSize: NonNullable<IPtyProvider['getAppliedSize']>
   private readonly agentSessionCapabilities: SshAgentSessionCapabilities
   private spawnExitRaces = new SshPtySpawnExitRaceTracker()
@@ -47,19 +47,21 @@ export class SshPtyProvider implements IPtyProvider {
     connectionId: string,
     mux: SshChannelMultiplexer,
     private readonly remoteCliBridgeEnv?: RemoteCliBridgeEnv,
-    readonly providerGeneration = 1
+    readonly providerGeneration = 1,
+    initialUnverifiablePtyIds: Iterable<string> = []
   ) {
     this.connectionId = connectionId
     this.mux = mux
     this.agentSessionCapabilities = new SshAgentSessionCapabilities(mux)
     this.getAppliedSize = createSshPtyAppliedSizeReader(mux, connectionId)
+    this.livenessState = new SshPtyLivenessState(this.toAppPtyId, initialUnverifiablePtyIds)
 
     this.outputState = new SshPtyProviderOutputState(providerGeneration, {
       mux,
       toAppPtyId: (id) => this.toAppPtyId(id),
-      livePtyIds: this.livePtyIds,
+      livePtyIds: this.livenessState.livePtyIds,
       recordExit: (relayPtyId, incarnationId) => {
-        this.unverifiablePtyIds.delete(this.toAppPtyId(relayPtyId))
+        this.acceptExitedPty(this.toAppPtyId(relayPtyId))
         this.spawnExitRaces.recordExit(relayPtyId, incarnationId)
       }
     })
@@ -67,8 +69,7 @@ export class SshPtyProvider implements IPtyProvider {
 
   dispose(): void {
     this.outputState.dispose()
-    this.livePtyIds.clear()
-    this.unverifiablePtyIds.clear()
+    this.livenessState.clear()
   }
 
   getConnectionId = (): string => this.connectionId
@@ -104,7 +105,8 @@ export class SshPtyProvider implements IPtyProvider {
         rememberPtyIncarnation: (relayPtyId, incarnationId) =>
           this.outputState.rememberPtyIncarnation(relayPtyId, incarnationId),
         acceptLivePty: (relayPtyId) => this.acceptLivePty(relayPtyId),
-        acceptUnverifiablePty: (relayPtyId) => this.acceptUnverifiablePty(relayPtyId)
+        acceptUnverifiablePty: (relayPtyId) => this.acceptUnverifiablePty(relayPtyId),
+        acceptExitedPty: (relayPtyId) => this.acceptExitedPty(relayPtyId)
       })
     }
 
@@ -162,6 +164,7 @@ export class SshPtyProvider implements IPtyProvider {
       rememberPtyIncarnation: (ptyId, incarnationId) =>
         this.outputState.rememberPtyIncarnation(ptyId, incarnationId)
     })
+    this.acceptLivePty(id)
   }
 
   async attachForReconnect(
@@ -181,7 +184,7 @@ export class SshPtyProvider implements IPtyProvider {
       ...(expected?.tabId ? { expectedTabId: expected.tabId } : {})
     }
     const relayPtyId = this.toRelayPtyId(id)
-    return await requestSshPtyAttach({
+    const result = await requestSshPtyAttach({
       mux: this.mux,
       relayPtyId,
       params,
@@ -191,6 +194,8 @@ export class SshPtyProvider implements IPtyProvider {
       rememberPtyIncarnation: (ptyId, incarnationId) =>
         this.outputState.rememberPtyIncarnation(ptyId, incarnationId)
     })
+    this.acceptLivePty(id)
+    return result
   }
 
   write(id: string, data: string): boolean {
@@ -218,8 +223,7 @@ export class SshPtyProvider implements IPtyProvider {
       },
       relayTimeoutOptions(opts.deadlineMs)
     )
-    this.livePtyIds.delete(id)
-    this.unverifiablePtyIds.delete(id)
+    this.acceptExitedPty(id)
   }
 
   async sendSignal(id: string, signal: string): Promise<void> {
@@ -294,19 +298,20 @@ export class SshPtyProvider implements IPtyProvider {
   }
 
   // `hasPty` retains routing ownership; liveness callers must use the tri-state probe.
-  hasPty = (id: string): boolean => this.livePtyIds.has(id) || this.unverifiablePtyIds.has(id)
+  hasPty = (id: string): boolean => this.livenessState.hasRoutingOwnership(id)
 
-  probePtyLiveness = async (id: string): Promise<boolean | null> =>
-    this.unverifiablePtyIds.has(id) ? null : this.livePtyIds.has(id)
+  probePtyLiveness = async (id: string): Promise<boolean | null> => this.livenessState.probe(id)
 
-  private acceptLivePty(id: string): void {
-    this.unverifiablePtyIds.delete(id)
-    this.livePtyIds.add(id)
+  acceptLivePty(id: string): void {
+    this.livenessState.acceptLive(id)
   }
 
-  private acceptUnverifiablePty(id: string): void {
-    this.livePtyIds.delete(id)
-    this.unverifiablePtyIds.add(id)
+  acceptUnverifiablePty(id: string): void {
+    this.livenessState.acceptUnverifiable(id)
+  }
+
+  acceptExitedPty(id: string): void {
+    this.livenessState.acceptExited(id)
   }
 
   async getDefaultShell(): Promise<string> {

@@ -4,6 +4,7 @@ import {
   SSH_PTY_RESTORE_REQUIRED_ERROR,
   SSH_SESSION_EXPIRED_ERROR
 } from './ssh-pty-errors'
+import { MAX_SSH_PTY_EXIT_TOMBSTONES } from './ssh-pty-liveness-state'
 import { SshPtyProvider } from './ssh-pty-provider'
 
 // The relay answers `restoreRequired` from its DELIVERY layer only: `requireRestore`
@@ -41,6 +42,33 @@ async function spawnError(provider: SshPtyProvider): Promise<string> {
 }
 
 describe('SSH PTY reattach when the relay requires source restoration', () => {
+  it('keeps an unprobed PTY unverifiable', async () => {
+    const provider = new SshPtyProvider('conn-1', createMockMux() as never)
+
+    expect(provider.hasPty('ssh:conn-1@@pty-unprobed')).toBe(false)
+    await expect(provider.probePtyLiveness('ssh:conn-1@@pty-unprobed')).resolves.toBeNull()
+  })
+
+  it('retains routing ownership for a reconnecting PTY without reporting it live', async () => {
+    const id = 'ssh:conn-1@@pty-reconnecting'
+    const provider = new SshPtyProvider('conn-1', createMockMux() as never, undefined, 1, [id])
+
+    expect(provider.hasPty(id)).toBe(true)
+    await expect(provider.probePtyLiveness(id)).resolves.toBeNull()
+  })
+
+  it('bounds exited PTY evidence and evicts to unverifiable', async () => {
+    const provider = new SshPtyProvider('conn-1', createMockMux() as never)
+    for (let index = 0; index <= MAX_SSH_PTY_EXIT_TOMBSTONES; index += 1) {
+      provider.acceptExitedPty(`pty-${index}`)
+    }
+
+    await expect(provider.probePtyLiveness('ssh:conn-1@@pty-0')).resolves.toBeNull()
+    await expect(
+      provider.probePtyLiveness(`ssh:conn-1@@pty-${MAX_SSH_PTY_EXIT_TOMBSTONES}`)
+    ).resolves.toBe(false)
+  })
+
   it('re-attaches over the live PTY instead of reporting exited', async () => {
     const mux = createMockMux()
     // Why: the relay retires the stale delivery record as the restoreRequired response settles,

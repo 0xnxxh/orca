@@ -5,6 +5,7 @@ import {
   SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR,
   SSH_PTY_RESTORE_REQUIRED_ERROR,
   SSH_SESSION_EXPIRED_ERROR,
+  isSshPtyExitedEvidenceError,
   isSshPtyIdentityMismatchError,
   isSshPtyNotFoundError
 } from './ssh-pty-errors'
@@ -262,6 +263,7 @@ export async function reattachSshPtySessionForSpawn(
   args: Parameters<typeof reattachSshPtySessionWithExitFence>[0] & {
     acceptLivePty: (relayPtyId: string) => void
     acceptUnverifiablePty: (relayPtyId: string) => void
+    acceptExitedPty: (relayPtyId: string) => void
   }
 ): Promise<PtySpawnResult> {
   let result: SshPtyReattachResult | undefined
@@ -277,11 +279,7 @@ export async function reattachSshPtySessionForSpawn(
       try {
         result = await reattachSshPtySessionWithExitFence(args)
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (
-          message.includes(SSH_SESSION_EXPIRED_ERROR) ||
-          message === 'agent_session_exited_during_start'
-        ) {
+        if (isSshPtyIdentityMismatchError(error) || isSshPtyExitedEvidenceError(error)) {
           throw error
         }
         // Why: losing contact during verification is unverifiable, not live or exited.
@@ -304,6 +302,9 @@ export async function reattachSshPtySessionForSpawn(
     return spawnResult
   } catch (error) {
     await result?.sourceActivationLease?.rollback()
+    if (isSshPtyExitedEvidenceError(error)) {
+      args.acceptExitedPty(result?.id ?? toAppSshPtyId(args.connectionId, args.sessionId))
+    }
     throw error
   }
 }

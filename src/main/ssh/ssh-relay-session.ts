@@ -1009,11 +1009,21 @@ export class SshRelaySession {
     this.wireUpRemoteOrcaCli(mux, connectionIncarnation)
 
     const providerGeneration = allocateSshPtyProviderGeneration()
+    const initialUnverifiablePtyIds = new Set(
+      [
+        ...getPtyIdsForConnection(this.targetId),
+        ...this.store
+          .getSshRemotePtyLeases(this.targetId)
+          .filter((lease) => lease.state !== 'terminated' && lease.state !== 'expired')
+          .map((lease) => lease.ptyId)
+      ].map((ptyId) => toAppSshPtyId(this.targetId, ptyId))
+    )
     const ptyProvider = new SshPtyProvider(
       this.targetId,
       mux,
       this.remoteCliBridgeEnv ?? undefined,
-      providerGeneration
+      providerGeneration,
+      initialUnverifiablePtyIds
     )
     const consumerOwnerState = this.activePtyConsumerOwner()
     if (consumerOwnerState) {
@@ -2509,7 +2519,7 @@ export class SshRelaySession {
       if (!shouldContinue()) {
         return
       }
-      this.handlePtyReattachFailure(ptyId, appPtyId, pendingReattach, error)
+      this.handlePtyReattachFailure(ptyProvider, ptyId, appPtyId, pendingReattach, error)
     } finally {
       recoveryActivationLease?.retire()
       sourceActivationLease?.rollback()
@@ -2649,12 +2659,14 @@ export class SshRelaySession {
   }
 
   private handlePtyReattachFailure(
+    ptyProvider: SshPtyProvider,
     ptyId: string,
     appPtyId: string,
     pending: PendingPtyReattach,
     error: unknown
   ): void {
     if (!isSshPtyNotFoundError(error)) {
+      ptyProvider.acceptUnverifiablePty?.(appPtyId)
       pending.restoreRequired = 'reattachAttemptsExhausted'
       this.wakeRecovery(pending)
       console.warn(
@@ -2672,6 +2684,7 @@ export class SshRelaySession {
       )
       return
     }
+    ptyProvider.acceptExitedPty?.(appPtyId)
     console.warn(
       `[ssh-relay-session] Dropping stale PTY ${ptyId} for ${this.targetId} after relay reattach failed: ${
         error instanceof Error ? error.message : String(error)

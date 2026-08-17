@@ -20,6 +20,15 @@ export function isSshPtyLivenessUnverifiableError(error: unknown): boolean {
   return message.includes(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
 }
 
+export function isSshPtyExitedEvidenceError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    !isSshPtyIdentityMismatchError(error) &&
+    (message.includes(SSH_SESSION_EXPIRED_ERROR) ||
+      message === 'agent_session_exited_during_start')
+  )
+}
+
 export function isSshPtyIdentityMismatchError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return message.includes(SSH_PTY_IDENTITY_MISMATCH_ERROR) || /identity mismatch/i.test(message)
