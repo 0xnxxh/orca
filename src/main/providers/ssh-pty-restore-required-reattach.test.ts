@@ -69,6 +69,35 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(true)
   })
 
+  it('keeps the verified live PTY when the fresh delivery attach loses contact', async () => {
+    const mux = createMockMux()
+    mux.request
+      .mockResolvedValueOnce(restoreRequiredAnswer)
+      .mockRejectedValueOnce(new Error('Multiplexer disposed'))
+    const provider = new SshPtyProvider('conn-1', mux as never)
+
+    const message = await spawnError(provider)
+
+    expect(message).toContain(SSH_PTY_RESTORE_REQUIRED_ERROR)
+    expect(message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
+    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(true)
+    expect(mux.request.mock.calls.filter((call) => call[0] === 'pty.attach')).toHaveLength(2)
+  })
+
+  it('reports exited when the fresh delivery attach authoritatively finds no PTY', async () => {
+    const mux = createMockMux()
+    mux.request
+      .mockResolvedValueOnce(restoreRequiredAnswer)
+      .mockRejectedValueOnce(new Error('PTY "pty-old" not found'))
+    const provider = new SshPtyProvider('conn-1', mux as never)
+
+    const message = await spawnError(provider)
+
+    expect(message).toContain(`${SSH_SESSION_EXPIRED_ERROR}: pty-old`)
+    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(false)
+    expect(mux.request.mock.calls.filter((call) => call[0] === 'pty.attach')).toHaveLength(2)
+  })
+
   it('expires the lease when the relay authoritatively reports exited', async () => {
     const mux = createMockMux()
     mux.request.mockRejectedValue(new Error('PTY "pty-old" not found'))

@@ -272,7 +272,24 @@ export async function reattachSshPtySessionForSpawn(
       if (unresumable.sourceActivationLease) {
         await unresumable.sourceActivationLease.rollback()
       }
-      result = await reattachSshPtySessionWithExitFence(args)
+      try {
+        result = await reattachSshPtySessionWithExitFence(args)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (
+          message.includes(SSH_SESSION_EXPIRED_ERROR) ||
+          message === 'agent_session_exited_during_start'
+        ) {
+          throw error
+        }
+        // Why: the first answer proved the PTY live; losing contact during fresh delivery cannot
+        // turn that into an exited verdict or authorize a duplicate spawn.
+        args.acceptLivePty(unresumable.id)
+        throw new Error(
+          `${SSH_PTY_RESTORE_REQUIRED_ERROR}: ${toRelaySshPtyId(args.connectionId, unresumable.id)}`,
+          { cause: error }
+        )
+      }
       if (result.sourceRecovery?.status === 'restoreRequired') {
         args.acceptLivePty(result.id)
         throw new Error(
