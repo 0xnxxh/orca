@@ -24,8 +24,7 @@ export function isSshPtyExitedEvidenceError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return (
     !isSshPtyIdentityMismatchError(error) &&
-    (message.includes(SSH_SESSION_EXPIRED_ERROR) ||
-      message === 'agent_session_exited_during_start')
+    (message.includes(SSH_SESSION_EXPIRED_ERROR) || message === 'agent_session_exited_during_start')
   )
 }
 

@@ -66,9 +66,6 @@ vi.mock('../providers/ssh-pty-provider', () => ({
   isSshPtyIdentityMismatchError: (err: unknown) =>
     (err instanceof Error ? err.message : String(err)).includes('identity mismatch'),
   SshPtyProvider: class MockSshPtyProvider {
-    private livePtyIds = new Set<string>()
-    private unverifiablePtyIds = new Set<string>()
-    private exitedPtyIds = new Set<string>()
     onData = vi.fn().mockReturnValue(() => {})
     onReplay = vi.fn().mockReturnValue(() => {})
     onExit = vi.fn().mockReturnValue(() => {})
@@ -76,32 +73,6 @@ vi.mock('../providers/ssh-pty-provider', () => ({
     attachForReconnect = vi.fn().mockResolvedValue({})
     setPtyDeliveryPauseAdapter = pauseAdapterMock
     dispose = vi.fn()
-
-    constructor(
-      _connectionId: string,
-      _mux: unknown,
-      _remoteCliBridgeEnv: unknown,
-      _providerGeneration: number,
-      initialUnverifiablePtyIds: Iterable<string> = []
-    ) {
-      this.unverifiablePtyIds = new Set(initialUnverifiablePtyIds)
-    }
-
-    hasPty = (id: string): boolean => this.livePtyIds.has(id) || this.unverifiablePtyIds.has(id)
-    probePtyLiveness = vi.fn(
-      async (id: string): Promise<boolean | null> =>
-        this.livePtyIds.has(id) ? true : this.exitedPtyIds.has(id) ? false : null
-    )
-    acceptUnverifiablePty = vi.fn((id: string) => {
-      this.livePtyIds.delete(id)
-      this.exitedPtyIds.delete(id)
-      this.unverifiablePtyIds.add(id)
-    })
-    acceptExitedPty = vi.fn((id: string) => {
-      this.livePtyIds.delete(id)
-      this.unverifiablePtyIds.delete(id)
-      this.exitedPtyIds.add(id)
-    })
   }
 }))
 
@@ -233,41 +204,6 @@ describe('SshRelaySession', () => {
     expect(registerSshPtyProvider).toHaveBeenCalledWith('target-1', expect.anything())
     expect(registerSshFilesystemProvider).toHaveBeenCalledWith('target-1', expect.anything())
     expect(registerSshGitProvider).toHaveBeenCalledWith('target-1', expect.anything())
-  })
-
-  it('keeps a transiently unreattached PTY unverifiable after the relay becomes ready', async () => {
-    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    const { getSshPtyProvider } = await import('../ipc/pty')
-    vi.mocked(getPtyIdsForConnection).mockReturnValue(['pty-unverifiable'])
-    vi.mocked(getSshPtyProvider).mockImplementationOnce(() => {
-      const provider = vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1] as {
-        attachForReconnect: ReturnType<typeof vi.fn>
-      }
-      provider.attachForReconnect.mockRejectedValue(new Error('transport interrupted'))
-      return provider as never
-    })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
-
-    try {
-      await session.establish(mockConn)
-      const provider = vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1] as {
-        hasPty: (id: string) => boolean
-        probePtyLiveness: (id: string) => Promise<boolean | null>
-      }
-      const appPtyId = 'ssh:target-1@@pty-unverifiable'
-
-      expect(session.getState()).toBe('ready')
-      expect(provider.hasPty(appPtyId)).toBe(true)
-      await expect(provider.probePtyLiveness(appPtyId)).resolves.toBeNull()
-      expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
-        'target-1',
-        'pty-unverifiable',
-        'expired'
-      )
-    } finally {
-      warn.mockRestore()
-    }
   })
 
   it('continues provider registration when the relay managed-hook request fails', async () => {

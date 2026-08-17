@@ -84,12 +84,25 @@ vi.mock('../providers/ssh-pty-provider', () => ({
   isSshPtyNotFoundError: (error: unknown) => String(error).includes('not found'),
   isSshPtyIdentityMismatchError: (error: unknown) => String(error).includes('identity mismatch'),
   SshPtyProvider: class MockSshPtyProvider {
+    readonly initialUnverifiablePtyIds: Set<string>
     onData = vi.fn().mockReturnValue(() => {})
     onReplay = vi.fn().mockReturnValue(() => {})
     onExit = vi.fn().mockReturnValue(() => {})
     attach = vi.fn().mockResolvedValue(undefined)
     attachForReconnect = vi.fn().mockResolvedValue({})
+    acceptUnverifiablePty = vi.fn()
+    acceptExitedPty = vi.fn()
     dispose = vi.fn()
+
+    constructor(
+      _connectionId: string,
+      _mux: unknown,
+      _remoteCliBridgeEnv: unknown,
+      _providerGeneration: number,
+      initialUnverifiablePtyIds: Iterable<string> = []
+    ) {
+      this.initialUnverifiablePtyIds = new Set(initialUnverifiablePtyIds)
+    }
   }
 }))
 vi.mock('../providers/ssh-filesystem-provider', () => ({
@@ -179,6 +192,42 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     vi.mocked(randomUUID).mockReturnValue('00000000-0000-4000-8000-000000000001')
     mockDeploySuccess()
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
+  })
+
+  it('keeps a transiently unreattached PTY unverifiable after the relay becomes ready', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(getPtyIdsForConnection).mockReturnValue(['pty-unverifiable'])
+    vi.mocked(getSshPtyProvider).mockImplementationOnce(() => {
+      const provider = vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1] as unknown as {
+        attachForReconnect: ReturnType<typeof vi.fn>
+      }
+      provider.attachForReconnect.mockRejectedValue(new Error('transport interrupted'))
+      return provider as never
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+
+    try {
+      await session.establish(mockConn)
+      const provider = vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1] as unknown as {
+        initialUnverifiablePtyIds: Set<string>
+        acceptUnverifiablePty: ReturnType<typeof vi.fn>
+        acceptExitedPty: ReturnType<typeof vi.fn>
+      }
+      const appPtyId = 'ssh:target-1@@pty-unverifiable'
+
+      expect(session.getState()).toBe('ready')
+      expect(provider.initialUnverifiablePtyIds).toContain(appPtyId)
+      expect(provider.acceptUnverifiablePty).toHaveBeenCalledWith(appPtyId)
+      expect(provider.acceptExitedPty).not.toHaveBeenCalled()
+      expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
+        'target-1',
+        'pty-unverifiable',
+        'expired'
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('bounds fifty reattaches to eight workers without slow or failed sibling head-of-line delay', async () => {
