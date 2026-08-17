@@ -34661,6 +34661,22 @@ export class OrcaRuntimeService {
     return this.hasSustainedTitleIdle(pty)
   }
 
+  /** Re-read the leaf the waiter registered against. `syncWindowGraph` rebuilds
+   *  `this.leaves` with fresh objects on every renderer publish, so a record captured in a
+   *  poll closure stops advancing almost immediately — its title and status freeze at their
+   *  registration values and the waiter becomes unsatisfiable. Falls back to the captured
+   *  record so a closed pane still reaches its own timeout rather than throwing. */
+  private getLiveLeafRecord(captured: RuntimeLeafRecord): RuntimeLeafRecord {
+    return this.leaves.get(this.getLeafKey(captured.tabId, captured.leafId)) ?? captured
+  }
+
+  /** Same re-read for PTY records. These are mutated in place today, but a drop and
+   *  re-register under the same id (restore, reconnect, disconnected-record prune) mints a
+   *  new object, which would strand this poll the same way. */
+  private getLivePtyRecord(captured: RuntimePtyWorktreeRecord): RuntimePtyWorktreeRecord {
+    return this.ptysById.get(captured.ptyId) ?? captured
+  }
+
   private isLeafTuiIdleSatisfied(leaf: RuntimeLeafRecord, waitText: string): boolean {
     const title = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
     if (
@@ -34741,7 +34757,10 @@ export class OrcaRuntimeService {
   }
 
   // Why: the primary OSC-title signal can't fire for daemon-hosted terminals (no PTY data through the runtime), so this fallback polls the renderer-synced tab title + foreground-process quiescence; self-cancels when the OSC path fires.
-  private startTuiIdleFallbackPoll(waiter: TerminalWaiter, leaf: RuntimeLeafRecord): void {
+  private startTuiIdleFallbackPoll(
+    waiter: TerminalWaiter,
+    registeredLeaf: RuntimeLeafRecord
+  ): void {
     let foregroundPollInFlight = false
     waiter.pollInterval = setInterval(async () => {
       if (!waiter.pollInterval) {
@@ -34749,6 +34768,7 @@ export class OrcaRuntimeService {
       }
       let startedForegroundPoll = false
       try {
+        const leaf = this.getLiveLeafRecord(registeredLeaf)
         const leafWaitText = buildTerminalWaitText(
           leaf.tailBuffer,
           leaf.tailPartialLine,
@@ -34810,7 +34830,10 @@ export class OrcaRuntimeService {
     }, TUI_IDLE_POLL_INTERVAL_MS)
   }
 
-  private startPtyTuiIdleFallbackPoll(waiter: TerminalWaiter, pty: RuntimePtyWorktreeRecord): void {
+  private startPtyTuiIdleFallbackPoll(
+    waiter: TerminalWaiter,
+    registeredPty: RuntimePtyWorktreeRecord
+  ): void {
     let foregroundPollInFlight = false
     waiter.pollInterval = setInterval(async () => {
       if (!waiter.pollInterval) {
@@ -34818,6 +34841,7 @@ export class OrcaRuntimeService {
       }
       let startedForegroundPoll = false
       try {
+        const pty = this.getLivePtyRecord(registeredPty)
         const ptyWaitText = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
         const blockedReason = detectTerminalWaitBlockedReason(ptyWaitText)
         if (blockedReason) {
