@@ -29,8 +29,13 @@ vi.mock('./github-api-repository', async (importOriginal) =>
 import { getPRForBranch, getPRForBranchOutcome } from './client'
 import { resetPRForBranchMocks } from './client-test-harness'
 
-const { ghExecFileAsyncMock, getOwnerRepoMock, gitExecFileAsyncMock, getSshGitProviderMock } =
-  clientMocks
+const {
+  ghExecFileAsyncMock,
+  getOwnerRepoMock,
+  gitExecFileAsyncMock,
+  getSshGitProviderMock,
+  resolvePRRepositoryCandidatesMock
+} = clientMocks
 
 const MERGED_BRANCH = 'fix-tab-strip-layout-test'
 const MERGED_HEAD_OID = 'current-head-oid'
@@ -124,6 +129,30 @@ describe('getPRForBranch SSH execution boundary', () => {
     const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
 
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+    expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
+  })
+
+  it('reports an upstream error when candidate discovery finds no SSH provider', async () => {
+    resolvePRRepositoryCandidatesMock.mockResolvedValue({ candidates: [], headRepo: null })
+    getSshGitProviderMock.mockReturnValue(undefined)
+
+    const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
+
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
+    expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
+  })
+
+  it('reports an upstream error when candidate discovery loses SSH mid-flight', async () => {
+    resolvePRRepositoryCandidatesMock.mockResolvedValue({ candidates: [], headRepo: null })
+    getSshGitProviderMock.mockReturnValue({
+      exec: vi.fn().mockRejectedValue(new Error('SSH transport closed'))
+    })
+
+    const outcome = await getPRForBranchOutcome('/remote/repo', MERGED_BRANCH, null, 'ssh-1')
+
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
     expect(outcome).toMatchObject({ kind: 'upstream-error', errorType: 'unknown' })
   })
 
