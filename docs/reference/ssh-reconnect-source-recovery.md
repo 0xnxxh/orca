@@ -128,3 +128,20 @@ the renderer retries.
 
 The SSH e2e lane must be green and triggering on **source** changes before any of this is attempted.
 It was skipping for 15 specs; four regressions reached a user during that window.
+
+## Open: the pane behind a preserved tab does not always rebind
+
+The merge now keeps a local tab the host has never been told about, so the tab and its title survive
+a reconnect. The reattach behind it does not, reliably — measured at three runs in four against the
+Docker-SSH lane. When it misses, the store holds the tab, the tab bar renders it, and the pane never
+rebinds: the "frozen tab" shape the original report described, one layer down from the deletion that
+used to cause it.
+
+Deliberately NOT asserted in `ssh-reconnect-tab-destruction.spec.ts`. A one-in-four flake in the lane
+that exists to catch this class costs more than it proves — the lane stops being trusted, which is
+exactly how the earlier silent-skip failure happened. Tab survival is asserted there and is
+deterministic; the liveness gap is recorded here instead.
+
+Worth checking first, since it is the same shape as everything else in this file: the tab is absent
+from the host snapshot, so whatever drives the per-tab reattach after an apply may simply not know to
+reattach a tab the snapshot never mentioned.
