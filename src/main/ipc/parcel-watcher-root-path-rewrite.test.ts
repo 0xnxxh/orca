@@ -9,10 +9,13 @@
  * and relay watch passes, so assert it there for both subscription entry points.
  */
 import type * as NodeFs from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  createAliasedWatcherRoot,
+  removeAliasedWatcherRoot,
+  type AliasedWatcherRoot
+} from './watcher-aliased-root-fixture'
 import {
   acknowledgeWatcherSubscribe,
   currentWatcherChild,
@@ -52,23 +55,8 @@ import {
   type WatcherProcessEvent
 } from './parcel-watcher-process'
 
-type SymlinkedRoot = {
-  base: string
-  realRoot: string
-  linkedRoot: string
-}
-
-async function createSymlinkedRoot(): Promise<SymlinkedRoot> {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'watcher-rewrite-')))
-  const realRoot = join(base, 'real')
-  const linkedRoot = join(base, 'linked')
-  await mkdir(realRoot, { recursive: true })
-  await symlink(realRoot, linkedRoot)
-  return { base, realRoot, linkedRoot }
-}
-
 describe('watcher-process root path rewrite', () => {
-  let root: SymlinkedRoot | null = null
+  let root: AliasedWatcherRoot | null = null
 
   beforeEach(() => {
     resetWatcherProcessForTest()
@@ -85,19 +73,17 @@ describe('watcher-process root path rewrite', () => {
     resetRuntimeWatcherProcessForTest()
     vi.unstubAllEnvs()
     vi.clearAllMocks()
-    if (root) {
-      await rm(root.base, { recursive: true, force: true })
-      root = null
-    }
+    await removeAliasedWatcherRoot(root)
+    root = null
   })
 
   async function subscribeAndEmit(
     subscribe: typeof subscribeViaWatcherProcess,
-    linkedRoot: string,
+    aliasRoot: string,
     events: WatcherProcessEvent[]
   ): Promise<WatcherProcessEvent[][]> {
     const delivered: WatcherProcessEvent[][] = []
-    const pending = subscribe(linkedRoot, (_error, batch) => delivered.push(batch), {})
+    const pending = subscribe(aliasRoot, (_error, batch) => delivered.push(batch), {})
     const child = currentWatcherChild(forkMock)
     const id = acknowledgeWatcherSubscribe(child)
     await pending
@@ -105,9 +91,9 @@ describe('watcher-process root path rewrite', () => {
     return delivered
   }
 
-  it('rewrites symlink-resolved paths for desktop watches', async () => {
-    root = await createSymlinkedRoot()
-    const delivered = await subscribeAndEmit(subscribeViaWatcherProcess, root.linkedRoot, [
+  it('rewrites resolved-alias paths for desktop watches', async () => {
+    root = await createAliasedWatcherRoot('watcher-rewrite-')
+    const delivered = await subscribeAndEmit(subscribeViaWatcherProcess, root.aliasRoot, [
       { type: 'update', path: join(root.realRoot, 'src', 'agent-edit.ts'), isDirectory: false }
     ])
 
@@ -115,7 +101,7 @@ describe('watcher-process root path rewrite', () => {
       [
         {
           type: 'update',
-          path: join(root.linkedRoot, 'src', 'agent-edit.ts'),
+          path: join(root.aliasRoot, 'src', 'agent-edit.ts'),
           isDirectory: false
         }
       ]
@@ -123,19 +109,19 @@ describe('watcher-process root path rewrite', () => {
   })
 
   // The runtime pool is also what a relay host uses for every SSH worktree watch.
-  it('rewrites symlink-resolved paths for runtime and relay watches', async () => {
-    root = await createSymlinkedRoot()
-    const delivered = await subscribeAndEmit(subscribeViaRuntimeWatcherProcess, root.linkedRoot, [
+  it('rewrites resolved-alias paths for runtime and relay watches', async () => {
+    root = await createAliasedWatcherRoot('watcher-rewrite-')
+    const delivered = await subscribeAndEmit(subscribeViaRuntimeWatcherProcess, root.aliasRoot, [
       { type: 'create', path: join(root.realRoot, 'docs', 'notes.md') }
     ])
 
     expect(delivered).toEqual([
-      [{ type: 'create', path: join(root.linkedRoot, 'docs', 'notes.md') }]
+      [{ type: 'create', path: join(root.aliasRoot, 'docs', 'notes.md') }]
     ])
   })
 
   it('leaves an unaliased root untouched', async () => {
-    root = await createSymlinkedRoot()
+    root = await createAliasedWatcherRoot('watcher-rewrite-')
     const eventPath = join(root.realRoot, 'src', 'agent-edit.ts')
     const delivered = await subscribeAndEmit(subscribeViaWatcherProcess, root.realRoot, [
       { type: 'update', path: eventPath, isDirectory: false }
