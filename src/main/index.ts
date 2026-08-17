@@ -143,8 +143,10 @@ import {
   clearGpuFallbackMarker,
   clearSupersededGpuFallbackMarker,
   readActiveGpuFallbackMarker,
+  sweepOrphanedGpuFallbackMarkerWrites,
   writeGpuFallbackMarker,
   type GpuFallbackEnvironment,
+  type GpuFallbackMarker,
   type WindowsGpuFallbackEnvironment
 } from './startup/gpu-fallback-marker'
 import {
@@ -933,14 +935,17 @@ ipcMain.handle('ui:consumePendingSkillShare', () => {
   return skillShareDeepLinks.consume()
 })
 
-ipcMain.handle(
-  'app:getGpuFallbackStatus',
-  (): GpuFallbackStatus => ({
+ipcMain.handle('app:getGpuFallbackStatus', (): GpuFallbackStatus => {
+  const marker = readGpuFallbackMarkerForThisBuild()
+  return {
     active: gpuFallbackActiveThisLaunch,
     engagedAt: gpuFallbackEngagedAt,
-    enabledForNextLaunch: isGpuFallbackEnabledForNextLaunch()
-  })
-)
+    enabledForNextLaunch: marker !== null,
+    // Why: the marker is the standing decision. An active launch with no marker only happens
+    // when the automatic write failed, which is never a pin — so it cannot be reported as one.
+    source: marker?.source ?? (gpuFallbackActiveThisLaunch ? 'automatic' : null)
+  }
+})
 
 // Why: without an exit a user whose driver was fixed stays in software rendering until the
 // next release, and without an entry a user with a known-bad driver cannot pin the workaround.
@@ -1820,6 +1825,7 @@ function armGpuCrashHistoryReset(): void {
     // Why: everything sweepable is already older than the horizon, so it has no business on
     // the ready-to-show path — folding it in here also spaces it to once per launch.
     sweepOrphanedGpuCrashHistoryWrites(getCanonicalUserDataPath())
+    sweepOrphanedGpuFallbackMarkerWrites(getCanonicalUserDataPath())
     applyGpuCrashHistoryReset()
   }, GPU_CRASH_HISTORY_RESET_DELAY_MS)
   gpuCrashHistoryResetTimer.unref?.()
@@ -1882,11 +1888,10 @@ function clearGpuFallbackState(): void {
   recordCrashBreadcrumb('gpu_fallback_cleared')
 }
 
-function isGpuFallbackEnabledForNextLaunch(): boolean {
+/** The persisted decision in force for the next launch, pin or automatic; null off Windows. */
+function readGpuFallbackMarkerForThisBuild(): GpuFallbackMarker | null {
   const environment = getWindowsGpuFallbackEnvironment()
-  return environment
-    ? readActiveGpuFallbackMarker(getCanonicalUserDataPath(), environment) !== null
-    : false
+  return environment ? readActiveGpuFallbackMarker(getCanonicalUserDataPath(), environment) : null
 }
 
 /**

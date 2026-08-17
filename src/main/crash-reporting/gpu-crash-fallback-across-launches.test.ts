@@ -144,7 +144,7 @@ function runLaunch(
       forgetGpuCrashLaunch(userDataPath, launchId)
     }
     if (reset.clearSupersededMarker) {
-      clearSupersededGpuFallbackMarker(userDataPath, WINDOWS_ENVIRONMENT)
+      clearSupersededGpuFallbackMarker(userDataPath, WINDOWS_ENVIRONMENT, nowEpochMs)
     }
   }
   return {
@@ -376,6 +376,23 @@ describe('GPU crash fallback across app launches', () => {
     expect(fresh.softwareRendering).toBe(false)
     expect(rescue.softwareRendering).toBe(true)
     expect(rescue.breadcrumbs[0]?.data?.source).toBe('crash-history-after-update')
+  })
+
+  // Why: nothing else ever expires that record — its reaper needs a launch that survives a
+  // minute, which a machine used in short bursts never provides. A driver generation later it
+  // would still be turning one spurious startup GPU death into a build-long downgrade.
+  it('ignores a superseded-build record from months ago', () => {
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: startedAt - 13 * WEEK_MS, crashesInWindow: 3 },
+      { ...WINDOWS_ENVIRONMENT, appVersion: '1.4.183' }
+    )
+
+    const spurious = runCrashingLaunch(userDataPath, 0, startedAt)
+    const next = runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
+
+    expect([spurious.softwareRendering, next.softwareRendering]).toEqual([false, false])
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
   })
 
   // Why: the previous build's head start is spent the moment this build proves it boots.

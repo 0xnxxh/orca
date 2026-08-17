@@ -41,7 +41,7 @@ export function engageGpuFallbackForLaunch({
   nowEpochMs: number
   hooks: GpuFallbackLaunchHooks
 }): GpuFallbackLaunchDecision {
-  const markerState = readGpuFallbackMarkerState(userDataPath, environment)
+  const markerState = readGpuFallbackMarkerState(userDataPath, environment, nowEpochMs)
   const decision = decideGpuFallbackForLaunch({
     marker: markerState.active,
     supersededBuildMarker: markerState.supersededBuild,

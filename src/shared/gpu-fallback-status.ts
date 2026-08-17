@@ -1,3 +1,6 @@
+/** `user` = asked for in Settings and standing until revoked; `automatic` = derived from repeated crashes. */
+export type GpuFallbackSource = 'automatic' | 'user'
+
 /** Whether this launch booted in Safe Graphics Mode (hardware acceleration disabled). */
 export type GpuFallbackStatus = {
   active: boolean
@@ -12,4 +15,10 @@ export type GpuFallbackStatus = {
    * and the relaunch that carries it out.
    */
   enabledForNextLaunch: boolean
+  /**
+   * Who decided, null when Safe Graphics Mode is neither on nor pending. The renderer must
+   * not tell a user who pinned this that a crash caused it — that contradicts the dialog
+   * they just accepted and teaches them to distrust the notice where it is true.
+   */
+  source: GpuFallbackSource | null
 }

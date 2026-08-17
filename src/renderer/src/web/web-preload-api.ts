@@ -582,7 +582,12 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       recoverLegacyWorkerTerminalsForRendererStartup: () => Promise.resolve(),
       // Safe Graphics Mode is a win32 desktop-only fallback; the browser has no equivalent.
       getGpuFallbackStatus: () =>
-        Promise.resolve({ active: false, engagedAt: null, enabledForNextLaunch: false }),
+        Promise.resolve({
+          active: false,
+          engagedAt: null,
+          enabledForNextLaunch: false,
+          source: null
+        }),
       setGpuFallbackEnabled: () => Promise.resolve(),
       startupDiagnostic: () => Promise.resolve(),
       getKeyboardInputSourceId: () => Promise.resolve(null),

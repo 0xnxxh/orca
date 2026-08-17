@@ -6135,6 +6135,8 @@
         "SafeGraphicsMode": {
           "title": "Safe Graphics Mode",
           "activeDescription": "Hardware acceleration is off because Orca's graphics process crashed on repeated launches. Rendering may be slower.",
+          "pinnedDescription": "On because you turned it on. Hardware acceleration stays off, including after Orca updates, until you turn this back off.",
+          "keepAfterUpdates": "Keep on after updates",
           "inactiveDescription": "Off. Orca is using hardware acceleration, and turns this on by itself only after repeated graphics crashes at startup.",
           "confirmTitle": "Restart with hardware acceleration?",
           "confirmDescription": "If the graphics driver still crashes, Orca returns to Safe Graphics Mode by itself after three failed launches.",

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   durableWriteTempPath,
@@ -6,6 +6,7 @@ import {
   writeFileDurableSync
 } from '../durable-file-write'
 import type { GpuFallbackEnvironment, WindowsGpuFallbackEnvironment } from './gpu-fallback-marker'
+import { readPersistedJson, type PersistedJsonRead } from './persisted-json-read'
 
 /**
  * Persisted GPU-crash evidence, sibling of gpu-fallback.json.
@@ -78,40 +79,40 @@ function parseEntry(value: unknown): GpuCrashHistoryEntry | null {
   }
 }
 
-function readGpuCrashHistory(userDataPath: string): GpuCrashHistory | null {
-  try {
-    const parsed = JSON.parse(readFileSync(historyPath(userDataPath), 'utf-8')) as Partial<
-      Record<keyof GpuCrashHistory, unknown>
-    >
-    if (parsed.schemeVersion !== GPU_CRASH_HISTORY_SCHEME_VERSION) {
-      return null
-    }
-    if (
-      typeof parsed.appVersion !== 'string' ||
-      typeof parsed.electronVersion !== 'string' ||
-      parsed.platform !== 'win32' ||
-      !Array.isArray(parsed.crashes)
-    ) {
-      return null
-    }
-    return {
-      schemeVersion: GPU_CRASH_HISTORY_SCHEME_VERSION,
-      appVersion: parsed.appVersion,
-      electronVersion: parsed.electronVersion,
-      platform: parsed.platform,
-      // Why: capped before parsing, not just on write. This runs before whenReady, and only
-      // the newest entries can still be inside the horizon, so a file grown by anything other
-      // than this code costs the launch path a bounded parse instead of one linear in its size.
-      // Dropping an unreadable entry keeps the rest: a truncated write is still evidence.
-      crashes: parsed.crashes
-        .slice(-GPU_CRASH_HISTORY_MAX_ENTRIES)
-        .map(parseEntry)
-        .filter((entry): entry is GpuCrashHistoryEntry => entry !== null)
-    }
-  } catch {
-    // missing or corrupt means no evidence
+function parseHistory(value: unknown): GpuCrashHistory | null {
+  if (typeof value !== 'object' || value === null) {
+    return null
   }
-  return null
+  const parsed = value as Partial<Record<keyof GpuCrashHistory, unknown>>
+  if (parsed.schemeVersion !== GPU_CRASH_HISTORY_SCHEME_VERSION) {
+    return null
+  }
+  if (
+    typeof parsed.appVersion !== 'string' ||
+    typeof parsed.electronVersion !== 'string' ||
+    parsed.platform !== 'win32' ||
+    !Array.isArray(parsed.crashes)
+  ) {
+    return null
+  }
+  return {
+    schemeVersion: GPU_CRASH_HISTORY_SCHEME_VERSION,
+    appVersion: parsed.appVersion,
+    electronVersion: parsed.electronVersion,
+    platform: parsed.platform,
+    // Why: capped before parsing, not just on write. This runs before whenReady, and only
+    // the newest entries can still be inside the horizon, so a file grown by anything other
+    // than this code costs the launch path a bounded parse instead of one linear in its size.
+    // Dropping an unreadable entry keeps the rest: a truncated write is still evidence.
+    crashes: parsed.crashes
+      .slice(-GPU_CRASH_HISTORY_MAX_ENTRIES)
+      .map(parseEntry)
+      .filter((entry): entry is GpuCrashHistoryEntry => entry !== null)
+  }
+}
+
+function readGpuCrashHistory(userDataPath: string): PersistedJsonRead<GpuCrashHistory> {
+  return readPersistedJson(historyPath(userDataPath), parseHistory)
 }
 
 /**
@@ -137,13 +138,28 @@ export function readActiveGpuCrashHistory(
   userDataPath: string,
   environment: GpuFallbackEnvironment
 ): readonly GpuCrashHistoryEntry[] {
-  const history = readGpuCrashHistory(userDataPath)
-  if (!history) {
-    if (existsSync(historyPath(userDataPath))) {
+  return loadActiveGpuCrashHistory(userDataPath, environment).crashes
+}
+
+/**
+ * `readActiveGpuCrashHistory` plus whether the empty list means "nothing recorded" or
+ * "this process could not read what is recorded" — a distinction only the write path needs.
+ */
+function loadActiveGpuCrashHistory(
+  userDataPath: string,
+  environment: GpuFallbackEnvironment
+): { crashes: readonly GpuCrashHistoryEntry[]; unreadable: boolean } {
+  const read = readGpuCrashHistory(userDataPath)
+  if (read.kind !== 'ok') {
+    // Why: delete only what parsed as not-ours. A file this process merely could not open —
+    // a Defender sharing violation right after the publishing rename is the Windows shape —
+    // is still every earlier launch's evidence, and it ages out of the horizon by itself.
+    if (read.kind === 'invalid') {
       clearGpuCrashHistory(userDataPath)
     }
-    return []
+    return { crashes: [], unreadable: read.kind === 'unreadable' }
   }
+  const history = read.value
   if (
     environment.platform !== 'win32' ||
     history.platform !== environment.platform ||
@@ -151,9 +167,9 @@ export function readActiveGpuCrashHistory(
     history.electronVersion !== environment.electronVersion
   ) {
     clearGpuCrashHistory(userDataPath)
-    return []
+    return { crashes: [], unreadable: false }
   }
-  return history.crashes
+  return { crashes: history.crashes, unreadable: false }
 }
 
 /**
@@ -205,8 +221,10 @@ export function recordGpuCrashInHistory(
   if (entry.msSinceLaunch > GPU_CRASH_STARTUP_WINDOW_MS) {
     return
   }
-  const existing = readActiveGpuCrashHistory(userDataPath, environment)
-  if (existing.some((crash) => crash.launchId === entry.launchId)) {
+  const existing = loadActiveGpuCrashHistory(userDataPath, environment)
+  // Why: publishing a one-entry file over a history we failed to read would erase the other
+  // launches just as surely as deleting it. One launch's entry is the cheaper thing to lose.
+  if (existing.unreadable || existing.crashes.some((crash) => crash.launchId === entry.launchId)) {
     return
   }
   writeGpuCrashHistory(userDataPath, {
@@ -214,7 +232,7 @@ export function recordGpuCrashInHistory(
     appVersion: environment.appVersion,
     electronVersion: environment.electronVersion,
     platform: 'win32',
-    crashes: [...existing, entry].slice(-GPU_CRASH_HISTORY_MAX_ENTRIES)
+    crashes: [...existing.crashes, entry].slice(-GPU_CRASH_HISTORY_MAX_ENTRIES)
   })
 }
 
@@ -226,10 +244,11 @@ export function recordGpuCrashInHistory(
  * about the earlier launches that died before any window existed.
  */
 export function forgetGpuCrashLaunch(userDataPath: string, launchId: string): void {
-  const history = readGpuCrashHistory(userDataPath)
-  if (!history) {
+  const read = readGpuCrashHistory(userDataPath)
+  if (read.kind !== 'ok') {
     return
   }
+  const history = read.value
   const crashes = history.crashes.filter((crash) => crash.launchId !== launchId)
   if (crashes.length === history.crashes.length) {
     return

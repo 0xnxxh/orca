@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Loader2, RotateCw } from 'lucide-react'
+import { Loader2, Pin, RotateCw } from 'lucide-react'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { translate } from '@/i18n/i18n'
+import type { GpuFallbackSource } from '../../../../shared/gpu-fallback-status'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
 import { SearchableSetting } from './SearchableSetting'
@@ -21,8 +22,10 @@ export function SafeGraphicsModeSetting(): React.JSX.Element {
   const mountedRef = useMountedRef()
   const [active, setActive] = useState(false)
   const [enabled, setEnabled] = useState(false)
+  const [source, setSource] = useState<GpuFallbackSource | null>(null)
   const [confirming, setConfirming] = useState<boolean | null>(null)
   const [relaunching, setRelaunching] = useState(false)
+  const [pinning, setPinning] = useState(false)
 
   useEffect(() => {
     const getGpuFallbackStatus = window.api?.app?.getGpuFallbackStatus
@@ -35,6 +38,7 @@ export function SafeGraphicsModeSetting(): React.JSX.Element {
         if (!cancelled) {
           setActive(status.active)
           setEnabled(status.enabledForNextLaunch || status.active)
+          setSource(status.source)
         }
       },
       (error: unknown) => {
@@ -45,6 +49,33 @@ export function SafeGraphicsModeSetting(): React.JSX.Element {
       cancelled = true
     }
   }, [])
+
+  /**
+   * Converts the automatic engagement in force into the user's own standing choice.
+   *
+   * Why no relaunch: software rendering is already on, so the pin is a rewrite of the marker.
+   * Without this the only way to reach a pin is to turn the workaround off first and take a
+   * hardware launch on the driver that just proved it kills startup — the exact trade the
+   * whole cross-launch rescue exists to spare this user, once per update forever.
+   */
+  const handlePin = (): void => {
+    setPinning(true)
+    void (async () => {
+      try {
+        await window.api.app.setGpuFallbackEnabled(true)
+        if (mountedRef.current) {
+          setSource('user')
+          setEnabled(true)
+        }
+      } catch (error) {
+        console.error('[gpu-fallback] failed to pin Safe Graphics Mode:', error)
+      } finally {
+        if (mountedRef.current) {
+          setPinning(false)
+        }
+      }
+    })()
+  }
 
   const handleRelaunch = (target: boolean): void => {
     setRelaunching(true)
@@ -61,6 +92,11 @@ export function SafeGraphicsModeSetting(): React.JSX.Element {
     })()
   }
 
+  const pinned = source === 'user'
+  // Why: only an engagement Orca made on its own is worth converting; a confirmation already
+  // on screen owns the next decision, and the switch alone cannot express "on, and keep it on".
+  const canPin = active && !pinned && confirming === null
+
   return (
     <SearchableSetting
       title={getAdvancedSearchEntry().safeGraphicsMode.title}
@@ -75,16 +111,36 @@ export function SafeGraphicsModeSetting(): React.JSX.Element {
             {translate('auto.components.settings.SafeGraphicsMode.title', 'Safe Graphics Mode')}
           </Label>
           <p className="text-xs text-muted-foreground">
-            {active
+            {pinned
               ? translate(
-                  'auto.components.settings.SafeGraphicsMode.activeDescription',
-                  "Hardware acceleration is off because Orca's graphics process crashed on repeated launches. Rendering may be slower."
+                  'auto.components.settings.SafeGraphicsMode.pinnedDescription',
+                  'On because you turned it on. Hardware acceleration stays off, including after Orca updates, until you turn this back off.'
                 )
-              : translate(
-                  'auto.components.settings.SafeGraphicsMode.inactiveDescription',
-                  'Off. Orca is using hardware acceleration, and turns this on by itself only after repeated graphics crashes at startup.'
-                )}
+              : active
+                ? translate(
+                    'auto.components.settings.SafeGraphicsMode.activeDescription',
+                    "Hardware acceleration is off because Orca's graphics process crashed on repeated launches. Rendering may be slower."
+                  )
+                : translate(
+                    'auto.components.settings.SafeGraphicsMode.inactiveDescription',
+                    'Off. Orca is using hardware acceleration, and turns this on by itself only after repeated graphics crashes at startup.'
+                  )}
           </p>
+          {canPin ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePin}
+              disabled={pinning || relaunching}
+              className="mt-1 gap-1.5"
+            >
+              {pinning ? <Loader2 className="animate-spin" /> : <Pin />}
+              {translate(
+                'auto.components.settings.SafeGraphicsMode.keepAfterUpdates',
+                'Keep on after updates'
+              )}
+            </Button>
+          ) : null}
         </div>
         <SettingsSwitch
           checked={confirming ?? enabled}

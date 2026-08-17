@@ -46,6 +46,10 @@ export function useGpuFallbackNotice(): void {
         if (
           cancelled ||
           !status.active ||
+          // Why: the user pinned this in Settings and accepted a dialog saying so. Warning them
+          // that a crash caused it is false, and it teaches them to distrust a notice that is
+          // true on the machines it was written for. Settings still reports the state.
+          status.source === 'user' ||
           shownThisSession.current ||
           isGpuFallbackNoticeDismissed(status.engagedAt)
         ) {

@@ -7,13 +7,21 @@ import { GpuFallbackNoticeHost } from './GpuFallbackNoticeHost'
 
 const ENGAGED_AT = 1_760_000_000_000
 
+type Status = {
+  active: boolean
+  engagedAt: number | null
+  enabledForNextLaunch: boolean
+  source: 'automatic' | 'user' | null
+}
+
 const getGpuFallbackStatus = vi.hoisted(() =>
   vi.fn(
-    async (): Promise<{
-      active: boolean
-      engagedAt: number | null
-      enabledForNextLaunch: boolean
-    }> => ({ active: false, engagedAt: null, enabledForNextLaunch: false })
+    async (): Promise<Status> => ({
+      active: false,
+      engagedAt: null,
+      enabledForNextLaunch: false,
+      source: null
+    })
   )
 )
 const setGpuFallbackEnabled = vi.hoisted(() => vi.fn(async () => {}))
@@ -48,7 +56,8 @@ describe('useGpuFallbackNotice', () => {
     getGpuFallbackStatus.mockResolvedValue({
       active: false,
       engagedAt: null,
-      enabledForNextLaunch: false
+      enabledForNextLaunch: false,
+      source: null
     })
     window.localStorage.clear()
     setGpuFallbackEnabled.mockReset()
@@ -80,7 +89,8 @@ describe('useGpuFallbackNotice', () => {
     getGpuFallbackStatus.mockResolvedValue({
       active: true,
       engagedAt: ENGAGED_AT,
-      enabledForNextLaunch: true
+      enabledForNextLaunch: true,
+      source: 'automatic'
     })
     render(<GpuFallbackNoticeHost />)
 
@@ -90,13 +100,32 @@ describe('useGpuFallbackNotice', () => {
     expect(vi.mocked(toast.warning).mock.calls[0]?.[0]).toBe('Orca started in Safe Graphics Mode')
   })
 
+  // Why: the copy blames repeated graphics crashes. Saying that to a user who just accepted a
+  // dialog turning Safe Graphics Mode on is false, and it trains them to distrust the warning
+  // on the machines where it is true. Settings still reports the state and owns the exit.
+  it('does not warn about a mode the user pinned themselves', async () => {
+    getGpuFallbackStatus.mockResolvedValue({
+      active: true,
+      engagedAt: ENGAGED_AT,
+      enabledForNextLaunch: true,
+      source: 'user'
+    })
+    render(<GpuFallbackNoticeHost />)
+
+    await waitFor(() => {
+      expect(getGpuFallbackStatus).toHaveBeenCalled()
+    })
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
   // Why: the downgrade lasts for the whole build, so the toast points at the persistent
   // Settings surface instead of being the sole (and dismissible, one-shot) exit.
   it('deep-links to the Safe Graphics Mode setting rather than relaunching directly', async () => {
     getGpuFallbackStatus.mockResolvedValue({
       active: true,
       engagedAt: ENGAGED_AT,
-      enabledForNextLaunch: true
+      enabledForNextLaunch: true,
+      source: 'automatic'
     })
     render(<GpuFallbackNoticeHost />)
 
@@ -125,7 +154,8 @@ describe('useGpuFallbackNotice', () => {
     getGpuFallbackStatus.mockResolvedValue({
       active: true,
       engagedAt: ENGAGED_AT,
-      enabledForNextLaunch: true
+      enabledForNextLaunch: true,
+      source: 'automatic'
     })
     render(<GpuFallbackNoticeHost />)
 
@@ -154,7 +184,8 @@ describe('useGpuFallbackNotice', () => {
     getGpuFallbackStatus.mockResolvedValue({
       active: true,
       engagedAt: ENGAGED_AT,
-      enabledForNextLaunch: true
+      enabledForNextLaunch: true,
+      source: 'automatic'
     })
     render(<GpuFallbackNoticeHost />)
 
@@ -182,7 +213,8 @@ describe('useGpuFallbackNotice', () => {
     getGpuFallbackStatus.mockResolvedValue({
       active: true,
       engagedAt: ENGAGED_AT,
-      enabledForNextLaunch: true
+      enabledForNextLaunch: true,
+      source: 'automatic'
     })
     render(<GpuFallbackNoticeHost />)
     await waitFor(() => {
@@ -199,7 +231,8 @@ describe('useGpuFallbackNotice', () => {
     getGpuFallbackStatus.mockResolvedValue({
       active: true,
       engagedAt: ENGAGED_AT + 60_000,
-      enabledForNextLaunch: true
+      enabledForNextLaunch: true,
+      source: 'automatic'
     })
     render(<GpuFallbackNoticeHost />)
 

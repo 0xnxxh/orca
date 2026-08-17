@@ -5,10 +5,22 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SafeGraphicsModeSetting } from './SafeGraphicsModeSetting'
 
-type Status = { active: boolean; engagedAt: number | null; enabledForNextLaunch: boolean }
+type Status = {
+  active: boolean
+  engagedAt: number | null
+  enabledForNextLaunch: boolean
+  source: 'automatic' | 'user' | null
+}
 
-const OFF: Status = { active: false, engagedAt: null, enabledForNextLaunch: false }
-const ON: Status = { active: true, engagedAt: 1_760_000_000_000, enabledForNextLaunch: true }
+const OFF: Status = { active: false, engagedAt: null, enabledForNextLaunch: false, source: null }
+const ON: Status = {
+  active: true,
+  engagedAt: 1_760_000_000_000,
+  enabledForNextLaunch: true,
+  source: 'automatic'
+}
+const PINNED: Status = { ...ON, source: 'user' }
+const KEEP_ON = 'Keep on after updates'
 
 const getGpuFallbackStatus = vi.hoisted(() => vi.fn(async (): Promise<Status> => OFF))
 const setGpuFallbackEnabled = vi.hoisted(() => vi.fn(async (_enabled: boolean) => {}))
@@ -86,6 +98,52 @@ describe('SafeGraphicsModeSetting', () => {
     await waitFor(() => {
       expect(relaunch).toHaveBeenCalledTimes(1)
     })
+  })
+
+  // Why: the automatic copy blames repeated crashes, which contradicts the dialog a pinning
+  // user just accepted; and a pin has nothing to convert, so the row must not offer it.
+  it('reports a user-pinned mode as the choice the user made', async () => {
+    getGpuFallbackStatus.mockResolvedValue(PINNED)
+    render(<SafeGraphicsModeSetting />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('switch').getAttribute('data-state')).toBe('checked')
+    })
+    expect(screen.getByText(/On because you turned it on/)).toBeTruthy()
+    expect(screen.queryByText(/graphics process crashed/)).toBeNull()
+    expect(screen.queryByRole('button', { name: KEEP_ON })).toBeNull()
+  })
+
+  // Why: with only the switch, a user already in automatic fallback can reach a pin solely by
+  // turning the workaround off and taking a hardware launch on the driver that kills startup —
+  // once per update, forever. Pinning is a marker rewrite; software rendering is already on.
+  it('pins an automatic engagement without an intervening hardware launch', async () => {
+    getGpuFallbackStatus.mockResolvedValue(ON)
+    render(<SafeGraphicsModeSetting />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: KEEP_ON })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: KEEP_ON }))
+
+    await waitFor(() => {
+      expect(setGpuFallbackEnabled).toHaveBeenCalledWith(true)
+    })
+    expect(relaunch).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(screen.getByText(/On because you turned it on/)).toBeTruthy()
+    })
+    expect(screen.queryByRole('button', { name: KEEP_ON })).toBeNull()
+    expect(screen.getByRole('switch').getAttribute('data-state')).toBe('checked')
+  })
+
+  it('offers no pin while hardware acceleration is on', async () => {
+    render(<SafeGraphicsModeSetting />)
+
+    await waitFor(() => {
+      expect(getGpuFallbackStatus).toHaveBeenCalled()
+    })
+    expect(screen.queryByRole('button', { name: KEEP_ON })).toBeNull()
   })
 
   it('backs out of the confirmation without touching the durable artifacts', async () => {
