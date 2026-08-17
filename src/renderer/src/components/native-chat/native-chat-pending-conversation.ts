@@ -12,7 +12,6 @@
 // for good — so every later send is written under a real conversation and no
 // replacement can reach back for a pre-identity echo.
 
-import { setBoundedScopeCacheEntry } from './native-chat-composer-scope-cache'
 import {
   latestClearSentAt,
   readPendingSendCache,
@@ -22,10 +21,9 @@ import {
   type NativeChatPendingSendScope
 } from './native-chat-pending'
 
-// Why: LRU-bounded like the other per-pane caches in this folder. Shedding the
-// oldest binding is safe — the claim empties the bucket, and nothing writes to
-// it again once the pane has an identity, so a re-bound pane finds it empty.
-const boundPanes = new Map<string, true>()
+// Why: this is a correctness tombstone, not a payload cache. Evicting it would
+// reopen the bootstrap claim for a replacement after enough other panes bind.
+const boundPanes = new Set<string>()
 
 function panePendingKey(scope: NativeChatPendingSendScope): string {
   return `${scope.paneKey}\0${scope.agent}`
@@ -37,7 +35,7 @@ function claimPaneBootstrapBucket(scope: NativeChatPendingSendScope): boolean {
   if (boundPanes.has(key)) {
     return false
   }
-  setBoundedScopeCacheEntry(boundPanes, key, true)
+  boundPanes.add(key)
   return true
 }
 

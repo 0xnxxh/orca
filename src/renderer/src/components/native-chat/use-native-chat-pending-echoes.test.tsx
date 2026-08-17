@@ -104,6 +104,30 @@ describe('useNativeChatPendingEchoes', () => {
     expect(echoedTexts(view.result.current.pending, replacement)).toEqual([])
   })
 
+  it('does not expose predecessor pending during the replacement render', () => {
+    const renders: string[][] = []
+    const props: NativeChatPendingEchoesInput = {
+      paneKey: PANE,
+      agent: 'codex',
+      sessionId: 'session-a',
+      messages: []
+    }
+    const view = renderHook(
+      (next: NativeChatPendingEchoesInput) => {
+        const current = useNativeChatPendingEchoes(next)
+        renders.push(current.pending.map((entry) => entry.text))
+        return current
+      },
+      { initialProps: props }
+    )
+    act(() => view.result.current.onOptimisticSend('predecessor prompt'))
+    renders.length = 0
+
+    view.rerender({ ...props, sessionId: 'session-b' })
+
+    expect(renders[0]).toEqual([])
+  })
+
   it('keeps the predecessor echo unreachable across a remount', () => {
     const first = renderEchoes()
     act(() => {

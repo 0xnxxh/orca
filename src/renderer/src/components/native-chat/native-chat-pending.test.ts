@@ -581,6 +581,26 @@ describe('pending send cache', () => {
 
     expect(readPendingSendCache(scope)).toEqual([])
   })
+
+  it('keeps only the latest eight sends within a conversation', () => {
+    clearPendingSendCacheForTests()
+    const scope = { paneKey: 'tab-a:leaf-a', agent: 'codex', conversationId: 'session-a' }
+
+    for (let index = 0; index < 10; index += 1) {
+      appendPendingSendCache(scope, pendingOf(`p${index}`, `prompt ${index}`))
+    }
+
+    expect(readPendingSendCache(scope).map((entry) => entry.id)).toEqual([
+      'p2',
+      'p3',
+      'p4',
+      'p5',
+      'p6',
+      'p7',
+      'p8',
+      'p9'
+    ])
+  })
 })
 
 describe('isPendingMessageId', () => {

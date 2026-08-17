@@ -144,4 +144,17 @@ describe('claimBootstrapPendingSends', () => {
 
     expect(readPendingSendCache(scopeOf('session-b'))).toEqual([])
   })
+
+  it('stays closed after many other panes bind', () => {
+    appendPendingSendCache(bootstrapScope, send('p1', 'first prompt', 10))
+    claimBootstrapPendingSends(scopeOf('session-a'), [])
+    appendPendingSendCache(bootstrapScope, send('p2', 'post-bootstrap prompt', 20))
+
+    for (let index = 0; index < 129; index += 1) {
+      claimBootstrapPendingSends(scopeOf(`other-${index}`, `other-pane-${index}`), [])
+    }
+    claimBootstrapPendingSends(scopeOf('session-b'), [])
+
+    expect(textsIn(scopeOf('session-b'))).toEqual([])
+  })
 })

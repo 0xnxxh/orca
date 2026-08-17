@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { NativeChatMessage } from '../../../../shared/native-chat-types'
 import { claimBootstrapPendingSends } from './native-chat-pending-conversation'
 import {
@@ -63,11 +63,15 @@ export function useNativeChatPendingEchoes({
   const [pending, setPending] = useState<NativeChatPendingSend[]>(() =>
     readPendingSendCache(pendingScope)
   )
+  const renderedPendingScope = useRef(pendingScope)
+  // A conversation replacement must not render its predecessor even once
+  // before the commit-phase cache handoff resets local state.
+  const scopedPending = renderedPendingScope.current === pendingScope ? pending : []
   const [commandMarkers, setCommandMarkers] = useState<NativeChatCommandMarker[]>(() =>
     readCommandMarkerCache(commandMarkerScope)
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Why: the claim has to run before the read, or the first render after the
     // agent reports its session id sees an empty bucket and flashes the empty
     // state while the pre-identity echo is still waiting for its real turn.
@@ -77,6 +81,7 @@ export function useNativeChatPendingEchoes({
       pendingScope,
       readCommandMarkerCache({ paneKey, agent, sessionId: null })
     )
+    renderedPendingScope.current = pendingScope
     setPending(readPendingSendCache(pendingScope))
   }, [pendingScope, paneKey, agent])
   useEffect(() => {
@@ -125,7 +130,7 @@ export function useNativeChatPendingEchoes({
   }, [pendingScope])
 
   return {
-    pending,
+    pending: scopedPending,
     commandMarkers,
     onOptimisticSend,
     onOptimisticSendCanceled,
