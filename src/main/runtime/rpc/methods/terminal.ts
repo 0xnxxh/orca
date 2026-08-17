@@ -2976,7 +2976,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           await runtime.handleMobileSubscribe(ptyId, clientId, undefined)
           if (closed || signal?.aborted) {
             // Why: a disconnect can win the awaited subscribe and resurrect mobile presence after cleanup already released it.
-            runtime.handleMobileUnsubscribe(ptyId, clientId)
+            // Why the ownership check: presence is keyed by (ptyId, clientId) with no
+            // refcount, and `closed` is exactly the post-rebind state — releasing here
+            // would delete the replacement subscriber's presence, not ours.
+            if (registration.isCurrent()) {
+              runtime.handleMobileUnsubscribe(ptyId, clientId)
+            }
             if (!closed) {
               registration.releaseIfCurrent()
             }
