@@ -332,6 +332,7 @@ import { createUpdaterQuitAbortRelay } from '../shared/renderer-restart-preparat
 import {
   prepareAndInvokeAppRestart,
   prepareAndInvokeUpdaterInstall,
+  registerRelaunchPreparationRequestHandler,
   registerRendererRestartIpcRelays
 } from './renderer-restart-wiring'
 
@@ -356,6 +357,9 @@ const updaterQuitAbortRelay = createUpdaterQuitAbortRelay(
 )
 
 registerRendererRestartIpcRelays(ipcRenderer, window, updaterQuitAbortRelay)
+// Why: a relaunch invoked from another window (e.g. a dashboard popout) must
+// still back this window's dirty editors up before main calls app.exit(0).
+registerRelaunchPreparationRequestHandler(ipcRenderer, window, awaitBeforeUnloadCheckpoint)
 
 function getLinuxDisplayServer(): 'wayland' | 'x11' | null {
   if (process.platform !== 'linux') {
