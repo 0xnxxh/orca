@@ -11,12 +11,20 @@ vi.mock('../wsl', async (importOriginal) => {
 })
 
 import { validateWorkingDirectoryAsync } from './local-pty-utils'
+import { _resetWorkingDirectoryValidationStateForTest } from './working-directory-validation'
 
 let tempDir: string
+
+/** UNC probes now start after a lane acquire, so let that microtask land. */
+const flushLaneAcquire = async (): Promise<void> => {
+  await Promise.resolve()
+  await Promise.resolve()
+}
 
 beforeEach(async () => {
   wslUncDirectoryExistsAsyncMock.mockReset()
   wslUncDirectoryExistsAsyncMock.mockResolvedValue(null)
+  _resetWorkingDirectoryValidationStateForTest()
   tempDir = await mkdtemp(path.join(os.tmpdir(), 'orca-cwd-validate-'))
 })
 
@@ -137,6 +145,71 @@ describe('validateWorkingDirectoryAsync', () => {
     })
   })
 
+  describe('UNC route concurrency', () => {
+    beforeEach(() => {
+      vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('caps concurrent probes against one unreachable distro', async () => {
+      // Four dead paths would otherwise hold all four libuv fs threads.
+      let inFlight = 0
+      let peak = 0
+      wslUncDirectoryExistsAsyncMock.mockImplementation(
+        () =>
+          new Promise<boolean>(() => {
+            inFlight += 1
+            peak = Math.max(peak, inFlight)
+          })
+      )
+
+      for (let index = 0; index < 4; index += 1) {
+        void validateWorkingDirectoryAsync(`\\\\wsl.localhost\\Ubuntu\\capped-${index}`).catch(
+          () => {}
+        )
+      }
+      await flushLaneAcquire()
+
+      expect(peak).toBe(2)
+    })
+
+    it('keeps a healthy local path out of a stalled share queue', async () => {
+      wslUncDirectoryExistsAsyncMock.mockReturnValue(new Promise<boolean>(() => {}))
+      for (let index = 0; index < 4; index += 1) {
+        void validateWorkingDirectoryAsync(`\\\\wsl.localhost\\Ubuntu\\blocking-${index}`).catch(
+          () => {}
+        )
+      }
+
+      // A local-disk path must not queue behind a dead server.
+      await expect(validateWorkingDirectoryAsync(tempDir)).resolves.toBeUndefined()
+    })
+
+    it('gives separate servers separate lanes', async () => {
+      let inFlight = 0
+      wslUncDirectoryExistsAsyncMock.mockImplementation(
+        () =>
+          new Promise<boolean>(() => {
+            inFlight += 1
+          })
+      )
+
+      for (const distro of ['AlphaDistro', 'BetaDistro']) {
+        for (let index = 0; index < 2; index += 1) {
+          void validateWorkingDirectoryAsync(`\\\\wsl.localhost\\${distro}\\lane-${index}`).catch(
+            () => {}
+          )
+        }
+      }
+      await flushLaneAcquire()
+
+      expect(inFlight).toBe(4)
+    })
+  })
+
   describe('WSL UNC paths', () => {
     const wslPath = '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo'
 
@@ -165,6 +238,7 @@ describe('validateWorkingDirectoryAsync', () => {
 
       const first = validateWorkingDirectoryAsync(wslPath)
       const second = validateWorkingDirectoryAsync(wslPath)
+      await flushLaneAcquire()
       expect(wslUncDirectoryExistsAsyncMock).toHaveBeenCalledOnce()
 
       releaseProbe()

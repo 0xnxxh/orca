@@ -261,7 +261,7 @@ export function createStableLogicalRpcClient(
       }
       pendingRequests.clear()
       state = nextSession.getState()
-      connectionPath.clearMigrationAfterConnected()
+      connectionPath.clearAfterConnected()
       for (const listener of stateListeners) {
         listener(state)
       }
@@ -321,6 +321,9 @@ export function createStableLogicalRpcClient(
       return
     }
     state = next
+    if (next === 'connected') {
+      connectionPath.clearAfterConnected()
+    }
     for (const listener of stateListeners) {
       listener(next)
     }

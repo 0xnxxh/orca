@@ -18,7 +18,11 @@ import { retireTerminalSurfaceFromPersistence } from '../runtime/mobile-session-
 import { SSH_PROVIDER_UNREGISTERED_REASON } from '../../shared/pty-liveness-verdict'
 import type { GlobalSettings } from '../../shared/global-settings-types'
 import type { TuiAgent } from '../../shared/tui-agent'
-import { toSshExecutionHostId } from '../../shared/execution-host'
+import {
+  LOCAL_EXECUTION_HOST_ID,
+  toSshExecutionHostId,
+  type ExecutionHostId
+} from '../../shared/execution-host'
 import { normalizeRuntimePathForComparison } from '../../shared/cross-platform-path'
 import { terminalOutputBacklogCapChars } from '../../shared/terminal-scrollback-policy'
 import type {
@@ -73,6 +77,7 @@ import {
 } from '../../shared/pi-agent-kind'
 import { isPwshAvailableAsync } from '../pwsh'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
+import type { PtyProcessInfo } from '../providers/pty-process-info'
 import { normalizeWindowsTerminalCwd } from '../providers/windows-shell-args'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 import { isPtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
@@ -258,6 +263,36 @@ function registeredPtyProviders(): RegisteredPtyProvider[] {
     { provider: localProvider, connectionId: null },
     ...Array.from(sshProviders, ([connectionId, provider]) => ({ provider, connectionId }))
   ]
+}
+
+async function listRegisteredPtyProcessesWithHostScope(
+  onSshInventoryUnavailable?: (connectionId: string, error: unknown) => void
+): Promise<{
+  processes: PtyProcessInfo[]
+  hostIds: ExecutionHostId[]
+}> {
+  const providers = registeredPtyProviders()
+  const providerSessions = await Promise.all(
+    providers.map(async ({ provider, connectionId }) => {
+      try {
+        return {
+          processes: await provider.listProcesses(),
+          hostId: connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
+        }
+      } catch (error) {
+        if (!connectionId) {
+          throw error
+        }
+        onSshInventoryUnavailable?.(connectionId, error)
+        return null
+      }
+    })
+  )
+  const respondingSessions = providerSessions.filter((session) => session !== null)
+  return {
+    processes: respondingSessions.flatMap((session) => session.processes),
+    hostIds: respondingSessions.map((session) => session.hostId)
+  }
 }
 
 const SYNTHETIC_KILL_EXIT_DUPLICATE_WINDOW_MS = 30_000
@@ -4753,8 +4788,7 @@ export function registerPtyHandlers(
         rows: args.rows,
         cwd,
         env,
-        ...(isNewDaemonSession ? { isNewSession: true } : {}),
-        historyIsolationEnabled: getSettings?.()?.terminalScopeHistoryByWorktree ?? true
+        ...(isNewDaemonSession ? { isNewSession: true } : {})
       }
       if (!args.connectionId && !isDaemonHostSpawn) {
         spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }
@@ -5808,19 +5842,10 @@ export function registerPtyHandlers(
           throw error
         }
       }
-      const providerSessions = await Promise.all([
-        localProvider.listProcesses(),
-        ...Array.from(sshProviders, async ([sshConnectionId, provider]) => {
-          try {
-            return await provider.listProcesses()
-          } catch (error) {
-            markSshInventoryUnverifiable(sshConnectionId, error)
-            return []
-          }
-        })
-      ])
-      return providerSessions.flat()
+      return (await listRegisteredPtyProcessesWithHostScope(markSshInventoryUnverifiable)).processes
     },
+    listProcessesWithHostScope: () =>
+      listRegisteredPtyProcessesWithHostScope(markSshInventoryUnverifiable),
     serializeBuffer: (ptyId, opts) => {
       // Why: mobile xterm must start from the desktop's exact screen state/dimensions before live TUI chunks render correctly.
       return requestSerializedBuffer(ptyId, opts)
@@ -6529,8 +6554,7 @@ export function registerPtyHandlers(
           cwd,
           ...(prevalidatedCwd && !isDaemonHostSpawn ? { prevalidatedCwd } : {}),
           env: spawnEnv,
-          ...(isMintedSessionId ? { isNewSession: true } : {}),
-          historyIsolationEnabled: getSettings?.()?.terminalScopeHistoryByWorktree ?? true
+          ...(isMintedSessionId ? { isNewSession: true } : {})
         }
         if (!args.connectionId && !isDaemonHostSpawn) {
           spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }

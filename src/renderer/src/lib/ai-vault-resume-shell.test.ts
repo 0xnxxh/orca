@@ -51,33 +51,45 @@ function withLoginShell<T>(shell: string, run: () => T): T {
 }
 
 describe('resolveAiVaultResumeStartupShell', () => {
-  // Why no login-shell cases: the Unix branch emits quoting and env clearing that
-  // are correct in sh and fish alike, so it no longer probes $SHELL at all — see
-  // startup-shell-portability.live-shell.test.ts for the proof it holds.
-  it.each(['/opt/homebrew/bin/fish', '/bin/zsh', '/bin/bash'])(
-    'reports one Unix dialect regardless of the login shell (%s)',
-    (loginShell) => {
-      expect(
-        withLoginShell(loginShell, () =>
-          resolveAiVaultResumeStartupShell({
-            state: makeState(),
-            worktreeId: 'repo-1::worktree-1',
-            platform: 'darwin',
-            isLocalSession: true
-          })
-        )
-      ).toBe('posix')
-    }
-  )
+  it('reports the fish dialect for a local session under a fish login shell', () => {
+    expect(
+      withLoginShell('/opt/homebrew/bin/fish', () =>
+        resolveAiVaultResumeStartupShell({
+          state: makeState(),
+          worktreeId: 'repo-1::worktree-1',
+          platform: 'darwin',
+          isLocalSession: true,
+          parsedByClientLoginShell: true
+        })
+      )
+    ).toBe('fish')
+  })
 
-  it('stays on the Unix dialect for a LOCAL session whose command a remote host parses', () => {
+  it('stays on sh for zsh users', () => {
+    expect(
+      withLoginShell('/bin/zsh', () =>
+        resolveAiVaultResumeStartupShell({
+          state: makeState(),
+          worktreeId: 'repo-1::worktree-1',
+          platform: 'darwin',
+          isLocalSession: true,
+          parsedByClientLoginShell: true
+        })
+      )
+    ).toBe('posix')
+  })
+
+  it('stays on sh for a LOCAL session whose command a remote host parses', () => {
+    // The reachable case: a locally scanned session has no executionHostId, so
+    // isLocalSession stays true while the command is bound for an SSH host.
     expect(
       withLoginShell('/opt/homebrew/bin/fish', () =>
         resolveAiVaultResumeStartupShell({
           state: makeState(),
           worktreeId: 'repo-1::worktree-1',
           platform: 'linux',
-          isLocalSession: true
+          isLocalSession: true,
+          parsedByClientLoginShell: false
         })
       )
     ).toBe('posix')
@@ -92,7 +104,23 @@ describe('copied real-home Codex resume command', () => {
     codexHome: null
   }
 
-  it('clears inherited Codex homes for a worktree on an SSH host', () => {
+  it('clears inherited Codex homes with fish syntax under a fish login shell', () => {
+    expect(
+      withLoginShell('/opt/homebrew/bin/fish', () =>
+        buildAiVaultResumeCopyCommandForWorktree({
+          state: makeState(),
+          worktreeId: 'repo-1::worktree-1',
+          session
+        })
+      )
+    ).toBe(
+      "set -e CODEX_HOME; set -e ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
+    )
+  })
+
+  it('keeps `unset` when a fish client targets an SSH worktree', () => {
+    // The session was scanned locally (no executionHostId), but the worktree lives
+    // on an SSH host: `set -e CODEX_HOME` would enable errexit there, not clear it.
     expect(
       withLoginShell('/opt/homebrew/bin/fish', () =>
         buildAiVaultResumeCopyCommandForWorktree({
@@ -102,15 +130,11 @@ describe('copied real-home Codex resume command', () => {
         })
       )
     ).toBe(
-      `command test -n "$fish_pid" && set --erase -g CODEX_HOME ORCA_CODEX_HOME; ` +
-        `command test -z "$fish_pid" && unset CODEX_HOME ORCA_CODEX_HOME; true; ` +
-        `cd '/home/alice/repo' && codex 'resume' 'session one'`
+      "unset CODEX_HOME; unset ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
     )
   })
 
-  it('emits the same self-contained teardown under an sh-family login shell', () => {
-    // Why identical to the fish case: this text is COPIED, so it may be pasted
-    // into any shell — it carries its own fish/sh branch instead of guessing.
+  it('keeps `unset` for sh-family login shells', () => {
     expect(
       withLoginShell('/bin/bash', () =>
         buildAiVaultResumeCopyCommandForWorktree({
@@ -120,9 +144,7 @@ describe('copied real-home Codex resume command', () => {
         })
       )
     ).toBe(
-      `command test -n "$fish_pid" && set --erase -g CODEX_HOME ORCA_CODEX_HOME; ` +
-        `command test -z "$fish_pid" && unset CODEX_HOME ORCA_CODEX_HOME; true; ` +
-        `cd '/home/alice/repo' && codex 'resume' 'session one'`
+      "unset CODEX_HOME; unset ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
     )
   })
 })
