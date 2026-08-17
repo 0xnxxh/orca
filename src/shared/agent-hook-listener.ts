@@ -1774,6 +1774,17 @@ function extractAmpToolFields(
   return {}
 }
 
+/**
+ * Retires any cached tool fields. PermissionRequest is the only OpenCode-family event that
+ * carries them, and isNewTurnEvent is false for this family, so nothing else ever resets the
+ * cache — without an explicit retire, resolveToolState inherits one answered permission onto
+ * every later frame in the pane and the row reads a resolved command as the live tool.
+ */
+const OPENCODE_TOOL_FIELDS_RETIRED: ToolSnapshot = {
+  hasToolUpdate: true,
+  hasToolInputField: true
+}
+
 function extractOpenCodeToolFields(
   eventName: unknown,
   hookPayload: Record<string, unknown>
@@ -1781,7 +1792,7 @@ function extractOpenCodeToolFields(
   if (eventName === 'MessagePart' && hookPayload.role === 'assistant') {
     const text = readString(hookPayload, 'text')
     if (text) {
-      return { lastAssistantMessage: capOpenCodeHookText(text) }
+      return { ...OPENCODE_TOOL_FIELDS_RETIRED, lastAssistantMessage: capOpenCodeHookText(text) }
     }
   }
   if (eventName === 'AskUserQuestion') {
@@ -1790,7 +1801,7 @@ function extractOpenCodeToolFields(
       ? hookPayload.tool_input
       : stripHookEnvelopeKeys(hookPayload)
     return {
-      hasToolUpdate: true,
+      ...OPENCODE_TOOL_FIELDS_RETIRED,
       interactivePrompt: deriveInteractivePrompt('AskUserQuestion', toolInputSource)
     }
   }
@@ -1798,11 +1809,16 @@ function extractOpenCodeToolFields(
     // Why: the payload is permission.asked's event.properties — `permission` names what is
     // being requested and `metadata`/`patterns` say which command or path it covers. Without
     // them the row is a bare 'waiting' that cannot tell the user what to approve.
+    // The SDK types `metadata` as Record<string, unknown>, so these keys come from the tools
+    // themselves: bash sends `command`, edit sends `filepath`, webfetch sends `url` (verified
+    // against opencode 1.18.18). `file_path`/`path` cover tools that spell it the common way.
+    // `diff` is deliberately absent — edit ships the whole patch and it would swamp the row.
     const metadata = hookPayload.metadata
     const metadataInput =
       metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
         ? readFirstString(metadata as Record<string, unknown>, [
             'command',
+            'filepath',
             'file_path',
             'path',
             'url'
@@ -1821,7 +1837,7 @@ function extractOpenCodeToolFields(
       { hasToolInputField: hasAnyOwnField(hookPayload, ['metadata', 'patterns']) }
     )
   }
-  return {}
+  return OPENCODE_TOOL_FIELDS_RETIRED
 }
 
 function extractCursorToolFields(
