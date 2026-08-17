@@ -639,29 +639,42 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         const dispatch = routing.dispatchId
           ? db.getDispatchContextById(routing.dispatchId)
           : undefined
-        if ((msg.type === 'worker_done' || msg.type === 'heartbeat') && dispatch?.capability_hash) {
-          const authority = db.verifyDispatchCapability({
-            dispatchId: dispatch.id,
-            capability: orchestrationCapability,
-            paneKey: senderPaneKey,
-            processIncarnation:
-              attestedCaller?.processIncarnation ??
-              runtime.getTerminalProcessIncarnation(from) ??
-              undefined
-          })
+        const lifecycleMessage = msg.type === 'worker_done' || msg.type === 'heartbeat'
+        if (
+          lifecycleMessage &&
+          dispatch &&
+          (dispatch.capability_hash || dispatch.process_incarnation)
+        ) {
+          const processIncarnation =
+            attestedCaller?.processIncarnation ??
+            runtime.getTerminalProcessIncarnation(from) ??
+            undefined
+          const capabilityBacked = Boolean(dispatch.capability_hash)
+          const authority = capabilityBacked
+            ? db.verifyDispatchCapability({
+                dispatchId: dispatch.id,
+                capability: orchestrationCapability,
+                paneKey: senderPaneKey,
+                processIncarnation
+              })
+            : {
+                valid: db.isDispatchProcessCurrent({
+                  dispatchId: dispatch.id,
+                  paneKey: senderPaneKey ?? null,
+                  processIncarnation: processIncarnation ?? null
+                }),
+                reason: `Dispatch ${dispatch.id} process incarnation is no longer current for its pane.`
+              }
           if (!authority.valid) {
+            const code = capabilityBacked ? 'dispatch_capability_invalid' : 'sender_not_assignee'
             const rejection =
-              db.convertLifecycleMessageToRejection(
-                msg.id,
-                'dispatch_capability_invalid',
-                authority.reason
-              ) ?? msg
+              db.convertLifecycleMessageToRejection(msg.id, code, authority.reason) ?? msg
             runtime.notifyMessageArrived(rejection.to_handle, rejection.type)
             return {
               message: rejection,
               lifecycle: {
                 action: 'rejected',
-                code: 'dispatch_capability_invalid',
+                code,
                 reason: authority.reason
               }
             }

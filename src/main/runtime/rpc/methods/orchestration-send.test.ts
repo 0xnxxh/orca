@@ -206,6 +206,50 @@ describe('orchestration RPC methods', () => {
       expect(result).toMatchObject({ lifecycle: { action: 'completed' } })
     })
 
+    it('fences a replacement process for a capability-less manual Dispatch', async () => {
+      setup()
+      const task = db.createTask({ spec: 'process-bound manual work' })
+      const dispatch = db.createDispatchContext(
+        task.id,
+        'term_worker',
+        'tab_worker:leaf_worker',
+        undefined,
+        'runtime_test:term_worker:1'
+      )
+      vi.mocked(runtime.getTerminalPaneKey).mockImplementation((handle) =>
+        handle === 'term_worker' ? 'tab_worker:leaf_worker' : coordinatorPaneKey
+      )
+      vi.mocked(runtime.getTerminalProcessIncarnation).mockReturnValue('runtime_test:term_worker:2')
+      const payload = JSON.stringify({
+        taskId: task.id,
+        dispatchId: dispatch.id,
+        outcome: 'succeeded'
+      })
+
+      const rejected = (await call('orchestration.send', {
+        from: 'term_worker',
+        subject: 'Done after replacement',
+        type: 'worker_done',
+        payload
+      })) as { lifecycle: { action: string; code: string } }
+
+      expect(rejected.lifecycle).toEqual({
+        action: 'rejected',
+        code: 'sender_not_assignee',
+        reason: `Dispatch ${dispatch.id} process incarnation is no longer current for its pane.`
+      })
+      expect(db.getTask(task.id)?.status).toBe('dispatched')
+
+      vi.mocked(runtime.getTerminalProcessIncarnation).mockReturnValue('runtime_test:term_worker:1')
+      const accepted = (await call('orchestration.send', {
+        from: 'term_worker',
+        subject: 'Done by assignee',
+        type: 'worker_done',
+        payload
+      })) as { lifecycle: { action: string } }
+      expect(accepted.lifecycle.action).toBe('completed')
+    })
+
     it('rejects an identity-less lifecycle send resolved through the coordinator handle', async () => {
       setup()
       const task = db.createTask({ spec: 'work' })

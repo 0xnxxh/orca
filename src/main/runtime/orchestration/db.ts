@@ -6414,7 +6414,7 @@ export class OrchestrationDb {
            WHERE id = ?`
         )
         .run(dispatchId)
-      this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(dispatch.task_id)
+      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
       this.closeQuestionsForDispatch(dispatchId)
       this.db.exec('COMMIT')
       return {
@@ -6592,7 +6592,7 @@ export class OrchestrationDb {
            WHERE id = ?`
         )
         .run(dispatchId)
-      this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(dispatch.task_id)
+      this.blockTaskWithoutActiveSibling(dispatch.task_id, dispatchId)
       this.closeQuestionsForDispatch(dispatchId)
       this.db.exec('COMMIT')
       return {
@@ -7316,6 +7316,26 @@ export class OrchestrationDb {
       .get(taskId) as DispatchContextRow | undefined
   }
 
+  private getActiveDispatchForTask(taskId: string): DispatchContextRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM dispatch_contexts WHERE task_id = ? AND status IN ('pending', 'dispatched') ORDER BY rowid DESC LIMIT 1"
+      )
+      .get(taskId) as DispatchContextRow | undefined
+  }
+
+  private blockTaskWithoutActiveSibling(taskId: string, dispatchId: string): void {
+    this.db
+      .prepare(
+        `UPDATE tasks SET status = 'blocked'
+         WHERE id = ? AND NOT EXISTS (
+           SELECT 1 FROM dispatch_contexts
+           WHERE task_id = tasks.id AND id != ? AND status IN ('pending', 'dispatched')
+         )`
+      )
+      .run(taskId, dispatchId)
+  }
+
   getDispatchContextById(dispatchId: string): DispatchContextRow | undefined {
     return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(dispatchId) as
       | DispatchContextRow
@@ -7586,7 +7606,7 @@ export class OrchestrationDb {
         reason: `inactive dispatch ${params.dispatchId}: it or task ${params.taskId} is already settled.`
       }
     }
-    const latest = this.getDispatchContext(params.taskId)
+    const latest = this.getActiveDispatchForTask(params.taskId)
     if (latest?.id !== params.dispatchId) {
       return {
         action: 'rejected',
@@ -7670,11 +7690,7 @@ export class OrchestrationDb {
   }
 
   failActiveDispatchForTask(taskId: string, error: string): DispatchContextRow | undefined {
-    const active = this.db
-      .prepare(
-        "SELECT * FROM dispatch_contexts WHERE task_id = ? AND status IN ('pending', 'dispatched') ORDER BY rowid DESC LIMIT 1"
-      )
-      .get(taskId) as DispatchContextRow | undefined
+    const active = this.getActiveDispatchForTask(taskId)
     return active ? this.failDispatch(active.id, error) : undefined
   }
 

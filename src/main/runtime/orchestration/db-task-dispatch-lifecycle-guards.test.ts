@@ -224,6 +224,38 @@ describe('Task/Dispatch lifecycle guards', () => {
     }
   )
 
+  it.each(['stop', 'abandon'] as const)(
+    '%s preserves a live worker sibling and lets it report',
+    (operation) => {
+      const database = createDatabase()
+      const task = database.createTask({ spec: `${operation} legacy worker split` })
+      const live = startWorker(database, task.id, `${operation}_live`)
+      sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+      const released = startWorker(database, task.id, `${operation}_released`)
+
+      if (operation === 'stop') {
+        expect(database.beginWorkerStop(released.dispatchId).disposition).toBe('stopping')
+        expect(database.settleWorkerStop(released.dispatchId).state).toBe('stopped')
+      } else {
+        expect(database.abandonWorkerDispatch(released.dispatchId).disposition).toBe('abandoned')
+      }
+
+      expect(database.getTask(task.id)?.status).toBe('dispatched')
+      expect(database.getDispatchContextById(live.dispatchId)?.status).toBe('dispatched')
+      expectCapability(database, live, true)
+      expect(
+        database.settleWorkerReport({
+          taskId: task.id,
+          dispatchId: live.dispatchId,
+          outcome: 'succeeded',
+          result: `${operation} sibling completed`
+        })
+      ).toEqual({ action: 'settled', outcome: 'succeeded', duplicate: false })
+      expect(database.getTask(task.id)?.status).toBe('completed')
+      expectCapability(database, live, false)
+    }
+  )
+
   it('rejects gate creation while a supervised worker remains active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'worker gate guard' })
