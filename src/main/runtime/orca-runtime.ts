@@ -10986,7 +10986,11 @@ export class OrcaRuntimeService {
         // bell — the chunk's agentStatus:set events must reach the renderer
         // before its pty:sideEffect batch.
         retainedAgentStatusChanged = this.emitTerminalAgentStatusEvents(ptyId, agentStatusChunk)
-        this.restoreAgentPromptLifecycleByteOrder(ptyId, data)
+        const lastPayloadTitleOffset =
+          agentStatusChunk.lastPayloadCleanOffset === null
+            ? null
+            : (previousTitleScanTail?.length ?? 0) + agentStatusChunk.lastPayloadCleanOffset
+        this.restoreAgentPromptLifecycleByteOrder(ptyId, titleInput, lastPayloadTitleOffset)
       } finally {
         // Why: flushed in the finally so a throwing tracker callback cannot
         // strand this chunk's facts to be emitted under the next chunk's seq.
@@ -11947,12 +11951,19 @@ export class OrcaRuntimeService {
     )
   }
 
-  private restoreAgentPromptLifecycleByteOrder(ptyId: string, data: string): void {
-    const titleStart = findLastCompleteOscTitleStart(data)
-    if (titleStart <= data.lastIndexOf('\x1b]9999;')) {
+  private restoreAgentPromptLifecycleByteOrder(
+    ptyId: string,
+    titleInput: string,
+    lastPayloadTitleOffset: number | null
+  ): void {
+    if (lastPayloadTitleOffset === null) {
       return
     }
-    const title = extractLastOscTitle(data)
+    const titleRange = findLastCompleteOscTitleRange(titleInput)
+    if (!titleRange || titleRange.end <= lastPayloadTitleOffset) {
+      return
+    }
+    const title = extractLastOscTitle(titleInput)
     if (title === null) {
       return
     }
@@ -12036,6 +12047,7 @@ export class OrcaRuntimeService {
       if (pty) {
         pty.wslDistro = null
       }
+      // Why: raced post-spawn bytes may already contain the replacement's permission state.
       if (replacesExistingRuntimeGeneration && postSpawnSequence === 0) {
         this.resetTrackedTerminalStateForProviderGeneration(ptyId)
       }
@@ -18207,6 +18219,7 @@ export class OrcaRuntimeService {
       explicitStatus && explicitStatus.status !== 'permission' ? explicitStatus.updatedAt : -1,
       lifecycle?.status && lifecycle.status !== 'permission' ? lifecycle.updatedAt : -1
     )
+    // Equal wall-clock observations fail closed because their raw intra-chunk order is unknown.
     return newestPermissionAt >= 0 && newestPermissionAt >= newestClearAt
   }
 
@@ -39483,25 +39496,43 @@ function isTerminalSendSettlementAgent(
   return agent === 'claude' || agent === 'codex'
 }
 
-function findLastCompleteOscTitleStart(data: string): number {
-  let searchFrom = data.length
-  while (searchFrom > 0) {
-    const start = data.lastIndexOf('\x1b]', searchFrom - 1)
+function findLastCompleteOscTitleRange(data: string): { start: number; end: number } | null {
+  // Why: one forward cursor keeps hostile unterminated OSC output linear-time.
+  let last: { start: number; end: number } | null = null
+  let searchFrom = 0
+  while (searchFrom < data.length) {
+    const start = data.indexOf('\x1b]', searchFrom)
     if (start === -1) {
-      return -1
+      break
     }
-    const commandEnd = data.indexOf(';', start + 2)
-    const command = commandEnd === -1 ? '' : data.slice(start + 2, commandEnd)
-    if (command === '0' || command === '1' || command === '2') {
-      const bel = data.indexOf('\x07', commandEnd + 1)
-      const stringTerminator = data.indexOf('\x1b\\', commandEnd + 1)
-      if (bel !== -1 || stringTerminator !== -1) {
-        return start
+    const command = data[start + 2]
+    if ((command !== '0' && command !== '1' && command !== '2') || data[start + 3] !== ';') {
+      searchFrom = start + 2
+      continue
+    }
+    let cursor = start + 4
+    for (; cursor < data.length; cursor += 1) {
+      if (data[cursor] === '\x07') {
+        last = { start, end: cursor + 1 }
+        searchFrom = cursor + 1
+        break
       }
+      if (data[cursor] !== '\x1b') {
+        continue
+      }
+      if (data[cursor + 1] === '\\') {
+        last = { start, end: cursor + 2 }
+        searchFrom = cursor + 2
+      } else {
+        searchFrom = cursor
+      }
+      break
     }
-    searchFrom = start
+    if (cursor === data.length) {
+      break
+    }
   }
-  return -1
+  return last
 }
 
 function terminalTitleBlocksExplicitAgentStatus(title: string | null): boolean {

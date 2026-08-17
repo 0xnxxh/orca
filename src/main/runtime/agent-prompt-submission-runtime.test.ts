@@ -176,6 +176,48 @@ describe('agent prompt submission runtime', () => {
     expect(writes).toEqual([])
   })
 
+  it('does not paste when split status stripping completes a permission title', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data === '\r') {
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+      }
+    })
+    runtime.onPtyData(
+      'pty-prompt',
+      '\x1b]0;Codex waiting for permission\x1b]9999;{"state":"working","agentType":"aider"',
+      Date.now()
+    )
+    runtime.onPtyData('pty-prompt', '}\x07\x07', Date.now())
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    const rejected = expect(submission).rejects.toThrow('agent_prompt_blocked')
+    await vi.runAllTimersAsync()
+
+    await rejected
+    expect(writes).toEqual([])
+  })
+
+  it('preserves hook permission after an earlier live idle title', async () => {
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    runtime.onPtyData(
+      'pty-prompt',
+      'Permission required\nAllow once\nAllow always\nReject\n',
+      Date.now()
+    )
+    runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
+    runtime.onPtyData(
+      'pty-prompt',
+      '\x1b]9999;{"state":"waiting","agentType":"aider"}\x07',
+      Date.now()
+    )
+
+    await expect(runtime.sendTerminalAgentPrompt(handle, 'review this')).rejects.toThrow(
+      'agent_prompt_blocked'
+    )
+    expect(writes).toEqual([])
+  })
+
   it('does not block on permission text restored only as history', async () => {
     vi.useFakeTimers()
     const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
@@ -474,6 +516,32 @@ describe('agent prompt submission runtime', () => {
 
     await expect(submission).resolves.toMatchObject({ accepted: true })
     expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+  })
+
+  it('fails closed when new bytes race a reset after old permission output', async () => {
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-prompt',
+      { value: 0, generation: 'continued' },
+      0
+    )
+    runtime.onPtyData(
+      'pty-prompt',
+      'Permission required\nAllow once\nAllow always\nReject\n',
+      Date.now()
+    )
+    const sequenceAtSpawnStart = runtime.getPtyOutputSequence('pty-prompt')
+    runtime.onPtyData('pty-prompt', 'replacement startup output\n', Date.now())
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-prompt',
+      { value: 0, generation: 'reset' },
+      sequenceAtSpawnStart
+    )
+
+    await expect(runtime.sendTerminalAgentPrompt(handle, 'review this')).rejects.toThrow(
+      'agent_prompt_blocked'
+    )
+    expect(writes).toEqual([])
   })
 
   it('reports permission reached after the first Enter as blocked', async () => {
