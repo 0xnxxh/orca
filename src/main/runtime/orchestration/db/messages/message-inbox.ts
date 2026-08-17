@@ -4,6 +4,30 @@ import { addLifecycleRejectionMarker } from '../lifecycle-rejection-marker'
 import type { OrchestrationDb } from '../orchestration-db'
 
 const MESSAGE_ID_UPDATE_BATCH_SIZE = 500
+const MESSAGE_MUTATION_SAVEPOINT = 'message_id_mutation'
+
+function runBatchedMessageMutation(
+  db: OrchestrationDb,
+  ids: string[],
+  sqlForPlaceholders: (placeholders: string) => string
+): void {
+  if (ids.length === 0) {
+    return
+  }
+  db.db.exec(`SAVEPOINT ${MESSAGE_MUTATION_SAVEPOINT}`)
+  try {
+    for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
+      const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
+      const placeholders = batch.map(() => '?').join(',')
+      db.db.prepare(sqlForPlaceholders(placeholders)).run(...batch)
+    }
+    db.db.exec(`RELEASE ${MESSAGE_MUTATION_SAVEPOINT}`)
+  } catch (error) {
+    db.db.exec(`ROLLBACK TO ${MESSAGE_MUTATION_SAVEPOINT}`)
+    db.db.exec(`RELEASE ${MESSAGE_MUTATION_SAVEPOINT}`)
+    throw error
+  }
+}
 
 export function getUnreadMessages(
   this: OrchestrationDb,
@@ -123,35 +147,31 @@ export function getMessageById(this: OrchestrationDb, id: string): MessageRow | 
 }
 
 export function markAsRead(this: OrchestrationDb, ids: string[]): void {
-  for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
-    const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
-    const placeholders = batch.map(() => '?').join(',')
-    this.db.prepare(`UPDATE messages SET read = 1 WHERE id IN (${placeholders})`).run(...batch)
-  }
+  runBatchedMessageMutation(
+    this,
+    ids,
+    (placeholders) => `UPDATE messages SET read = 1 WHERE id IN (${placeholders})`
+  )
 }
 
 // Why: use datetime('now') so delivered_at matches the space-format UTC shape of the table's other timestamps for correct ordering (§3.2).
 export function markAsDelivered(this: OrchestrationDb, ids: string[]): void {
-  for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
-    const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
-    const placeholders = batch.map(() => '?').join(',')
-    this.db
-      .prepare(`UPDATE messages SET delivered_at = datetime('now') WHERE id IN (${placeholders})`)
-      .run(...batch)
-  }
+  runBatchedMessageMutation(
+    this,
+    ids,
+    (placeholders) =>
+      `UPDATE messages SET delivered_at = datetime('now') WHERE id IN (${placeholders})`
+  )
 }
 
 export function markAsUndelivered(this: OrchestrationDb, ids: string[]): void {
-  for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
-    const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
-    const placeholders = batch.map(() => '?').join(',')
-    this.db
-      .prepare(
-        `UPDATE messages SET delivered_at = NULL
-         WHERE read = 0 AND id IN (${placeholders})`
-      )
-      .run(...batch)
-  }
+  runBatchedMessageMutation(
+    this,
+    ids,
+    (placeholders) =>
+      `UPDATE messages SET delivered_at = NULL
+       WHERE read = 0 AND id IN (${placeholders})`
+  )
 }
 
 export function areUnreadMessages(this: OrchestrationDb, toHandle: string, ids: string[]): boolean {
@@ -173,15 +193,12 @@ export function areUnreadMessages(this: OrchestrationDb, toHandle: string, ids: 
 
 // Why: superseded lifecycle messages stay in history but must not be consumed or injected after their dispatch finished.
 export function markAsReadAndDelivered(this: OrchestrationDb, ids: string[]): void {
-  for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
-    const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
-    const placeholders = batch.map(() => '?').join(',')
-    this.db
-      .prepare(
-        `UPDATE messages SET read = 1, delivered_at = COALESCE(delivered_at, datetime('now')) WHERE id IN (${placeholders})`
-      )
-      .run(...batch)
-  }
+  runBatchedMessageMutation(
+    this,
+    ids,
+    (placeholders) =>
+      `UPDATE messages SET read = 1, delivered_at = COALESCE(delivered_at, datetime('now')) WHERE id IN (${placeholders})`
+  )
 }
 
 export function getInbox(this: OrchestrationDb, limit = 20): MessageRow[] {
