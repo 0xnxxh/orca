@@ -18,10 +18,9 @@
  * falls outside it: the editor never reloads an agent's edit, the File Explorer
  * never refreshes, and Source Control never re-runs status.
  *
- * So hand the backend the resolved directory (which is watchable everywhere and
- * lets @parcel/watcher's own ignore paths match), then map delivered paths back
- * to the caller's spelling so the "event paths live under worktreePath"
- * contract holds on every platform.
+ * So hand the backend the resolved directory, which is watchable everywhere,
+ * then map delivered paths back to the caller's spelling so the "event paths
+ * live under worktreePath" contract holds on every platform.
  */
 import { realpathSync } from 'node:fs'
 
