@@ -1,6 +1,6 @@
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
-import { getWorktreeMapFromState } from '@/store/selectors'
+import { getWorktreeOnHostFromState } from '@/store/selectors'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { translate } from '@/i18n/i18n'
 import {
@@ -79,7 +79,14 @@ export async function runWorktreeDeletesInParallel(
         const failedInGroup: (typeof group)[number][] = []
         for (const target of group) {
           // A queued target may be recreated while an earlier repo sibling is deleting.
-          const currentTarget = getWorktreeMapFromState(useAppStore.getState()).get(target.id)
+          // Why by host (STA-4343): the id-keyed map keeps ONE row per `repoId::path`,
+          // so on a two-host collision it can hand back the other host's row — whose
+          // instanceId never matches, silently dropping a delete the user confirmed.
+          const currentTarget = getWorktreeOnHostFromState(
+            useAppStore.getState(),
+            target.id,
+            target.hostId
+          )
           if (!currentTarget || currentTarget.instanceId !== target.instanceId) {
             useAppStore.getState().clearWorktreeDeleteState(target.id)
             listChanged = true

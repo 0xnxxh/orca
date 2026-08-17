@@ -1,6 +1,7 @@
 import type { Worktree } from '../../../../shared/worktree/types'
 import type { PreservedBranchCleanup } from '@/lib/preserved-branch-cleanup'
 import { normalizeExecutionHostId } from '../../../../shared/execution-host'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
 
 export type WorktreeBatchDeleteOptions = {
   forceConfirm?: boolean
@@ -12,6 +13,9 @@ export type WorktreeDeleteIdentity = Pick<Worktree, 'id' | 'instanceId' | 'hostI
 
 export type WorktreeDeleteOptions = {
   expectedInstanceId?: string
+  /** Why (STA-4343): the id-keyed map holds one row per `repoId::path`, so a row
+   *  that knows its host must say so or the delete lands on the other one. */
+  expectedHostId?: ExecutionHostId
 }
 
 export type WorktreeDeleteWithToastOptions = {

@@ -33,7 +33,14 @@ export { runWorktreeDeletesInParallel, runWorktreeDeleteWithToast }
  */
 export function runWorktreeDelete(worktreeId: string, options: WorktreeDeleteOptions = {}): void {
   const state = useAppStore.getState()
-  const target = getWorktreeMapFromState(state).get(worktreeId) ?? null
+  // Why (STA-4343): the id-keyed map keeps one row per `repoId::path`, so a caller
+  // acting on a specific sidebar row has to name that row's host — otherwise
+  // deleting the SSH row destroys the local checkout at the same path.
+  const target = options.expectedHostId
+    ? (getAllWorktreesFromState(state).find(
+        (entry) => entry.id === worktreeId && entry.hostId === options.expectedHostId
+      ) ?? null)
+    : (getWorktreeMapFromState(state).get(worktreeId) ?? null)
   const instanceChanged =
     Object.hasOwn(options, 'expectedInstanceId') &&
     target?.instanceId !== options.expectedInstanceId

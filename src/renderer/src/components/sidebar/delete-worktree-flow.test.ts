@@ -56,7 +56,13 @@ vi.mock('@/store', () => ({
 
 vi.mock('@/store/selectors', () => ({
   getAllWorktreesFromState: () => Array.from(mocks.state.worktreeMap.values()),
-  getWorktreeMapFromState: () => mocks.state.worktreeMap
+  getWorktreeMapFromState: () => mocks.state.worktreeMap,
+  // Host-qualified lookup (STA-4343); this fixture keys one row per id, so the
+  // host only has to agree when the row declares one.
+  getWorktreeOnHostFromState: (_state: unknown, worktreeId: string, hostId?: string) => {
+    const row = mocks.state.worktreeMap.get(worktreeId)
+    return row && (!hostId || row.hostId === hostId) ? row : undefined
+  }
 }))
 
 vi.mock('@/lib/worktree-activation', () => ({

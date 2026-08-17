@@ -72,10 +72,17 @@ const WORKTREE_ID = 'repo1::/shared/workspace/path'
 const WORKTREE_PATH = '/shared/workspace/path'
 const FIRST_WORKTREE_ID = 'repo1::/first/very-long-workspace/path'
 
+/**
+ * `force` here is the real thing, not a flag: a dirty worktree makes
+ * shouldForceWorkspaceCleanupRemoval true, which is what the cleanup slice reads.
+ * Force is the least re-checked destructive path, so every routing claim has to
+ * hold on it too.
+ */
 function makeHostCandidate(
   executionHostId: ExecutionHostId | undefined,
   connectionId: string | null = executionHostId === HOST_B_HOST_ID ? 'ssh-1' : null,
-  worktreeId = WORKTREE_ID
+  worktreeId = WORKTREE_ID,
+  force = false
 ): WorkspaceCleanupCandidate {
   const workspacePath = worktreeId.slice(worktreeId.indexOf('::') + 2)
   return {
@@ -90,7 +97,7 @@ function makeHostCandidate(
     tier: 'ready',
     selectedByDefault: true,
     reasons: ['idle-clean'],
-    blockers: [],
+    blockers: force ? ['dirty-files'] : [],
     lastActivityAt: NOW - 30 * 24 * 60 * 60 * 1000,
     localContext: {
       terminalTabCount: 0,
@@ -100,8 +107,8 @@ function makeHostCandidate(
       newestDiffCommentAt: null,
       retainedDoneAgentCount: 0
     },
-    git: { clean: true, upstreamAhead: 0, upstreamBehind: 0, checkedAt: NOW },
-    fingerprint: `fingerprint-${executionHostId ?? 'unqualified'}`
+    git: { clean: !force, upstreamAhead: 0, upstreamBehind: 0, checkedAt: NOW },
+    fingerprint: `fingerprint-${executionHostId ?? 'unqualified'}${force ? '-force' : ''}`
   }
 }
 
@@ -146,11 +153,13 @@ function createHostDirectories(): HostDirectories {
 /** Deletes for real on whichever host the removal is routed to. */
 function installRemovalTransport(
   hostRootsByHostId: Record<string, string>,
-  routedHostIds: string[]
+  routedHostIds: string[],
+  routedForce?: boolean[]
 ): void {
   mockApi.worktrees.remove.mockImplementation(
-    async (args: { worktreeId: string; hostId?: string }) => {
+    async (args: { worktreeId: string; hostId?: string; force?: boolean }) => {
       routedHostIds.push(args.hostId ?? '<missing>')
+      routedForce?.push(args.force === true)
       const hostRoot = args.hostId ? hostRootsByHostId[args.hostId] : undefined
       if (hostRoot) {
         fs.rmSync(path.join(hostRoot, toHostRelativePath(args.worktreeId)), {
@@ -377,6 +386,92 @@ describe('STA-4343: cleanup deletes on the confirmed host, never the active one'
     expect(routedHostIds).toEqual([HOST_A_HOST_ID, HOST_A_HOST_ID])
     expect(removal.removedIds).toEqual([FIRST_WORKTREE_ID, WORKTREE_ID])
     expect(removal.failures).toEqual([])
+  })
+})
+
+describe.each([
+  { label: 'normal', force: false },
+  { label: 'force', force: true }
+])('STA-4343: confirmed-host routing holds under $label removal', ({ force }) => {
+  it('deletes the confirmed remote row while the ACTIVE local one survives', async () => {
+    const hosts = createHostDirectories()
+    const routedHostIds: string[] = []
+    const routedForce: boolean[] = []
+    installRemovalTransport(
+      { [HOST_A_HOST_ID]: hosts.hostARoot, [HOST_B_HOST_ID]: hosts.hostBRoot },
+      routedHostIds,
+      routedForce
+    )
+    const hostBCandidate = makeHostCandidate(HOST_B_HOST_ID, undefined, WORKTREE_ID, force)
+    seedScan([makeHostCandidate(HOST_A_HOST_ID, undefined, WORKTREE_ID, force), hostBCandidate])
+
+    const store = createTestStore()
+    seedStore(store, {
+      // The ACTIVE workspace is host A's, so routing prefers host A on its own.
+      activeWorktreeId: WORKTREE_ID,
+      activeWorkspaceExecutionHostId: HOST_A_HOST_ID,
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: WORKTREE_ID,
+            repoId: 'repo1',
+            path: WORKTREE_PATH,
+            hostId: HOST_A_HOST_ID
+          }),
+          makeWorktree({
+            id: WORKTREE_ID,
+            repoId: 'repo1',
+            path: WORKTREE_PATH,
+            hostId: HOST_B_HOST_ID
+          })
+        ]
+      }
+    } as Partial<AppState>)
+
+    const removal = await store
+      .getState()
+      .removeWorkspaceCleanupCandidates([WORKTREE_ID], { approvedCandidates: [hostBCandidate] })
+
+    expect(removal.failures).toEqual([])
+    expect(removal.removedIds).toEqual([WORKTREE_ID])
+    expect(routedHostIds).toEqual([HOST_B_HOST_ID])
+    expect(routedForce).toEqual([force])
+    expect(fs.existsSync(hosts.hostBMarkerPath), 'confirmed host B must be gone').toBe(false)
+    expect(fs.existsSync(hosts.hostAMarkerPath), 'ACTIVE host A must survive').toBe(true)
+  })
+
+  // NO FALSE REFUSALS: the guard must not turn an ordinary one-host delete into
+  // an error, force included.
+  it('still deletes an ordinary single-host workspace', async () => {
+    const hosts = createHostDirectories()
+    const routedHostIds: string[] = []
+    const routedForce: boolean[] = []
+    installRemovalTransport({ [HOST_A_HOST_ID]: hosts.hostARoot }, routedHostIds, routedForce)
+    const candidate = makeHostCandidate(HOST_A_HOST_ID, undefined, WORKTREE_ID, force)
+    seedScan([candidate])
+
+    const store = createTestStore()
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: WORKTREE_ID,
+            repoId: 'repo1',
+            path: WORKTREE_PATH,
+            hostId: HOST_A_HOST_ID
+          })
+        ]
+      }
+    } as Partial<AppState>)
+
+    const removal = await store
+      .getState()
+      .removeWorkspaceCleanupCandidates([WORKTREE_ID], { approvedCandidates: [candidate] })
+
+    expect(removal.failures).toEqual([])
+    expect(removal.removedIds).toEqual([WORKTREE_ID])
+    expect(routedForce).toEqual([force])
+    expect(fs.existsSync(hosts.hostAMarkerPath)).toBe(false)
   })
 })
 
