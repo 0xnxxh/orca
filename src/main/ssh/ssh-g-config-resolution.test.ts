@@ -182,6 +182,48 @@ describe('siteConfigMayRestrictHostKeys', () => {
     await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
   })
 
+  it('follows a single-quoted Include path that contains a space', async () => {
+    // OpenSSH quotes with either character — 10.2p1 honours the single-quoted form too. Modelling
+    // only double quotes left this splitting into fragments that resolve to nothing, which is the
+    // same fail-open the double-quote case was raised for.
+    const spaced = join(dir, 'sq ace')
+    await mkdir(spaced, { recursive: true })
+    await writeFile(join(spaced, 'site.conf'), 'StrictHostKeyChecking yes\n', 'utf-8')
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, `Include '${join(spaced, 'site.conf')}'\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('follows an Include path whose space is backslash-escaped', async () => {
+    // The third spelling OpenSSH honours (verified against 10.2p1).
+    const spaced = join(dir, 'esc ape')
+    await mkdir(spaced, { recursive: true })
+    await writeFile(join(spaced, 'site.conf'), 'StrictHostKeyChecking yes\n', 'utf-8')
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, `Include ${join(spaced, 'site.conf').replace(' ', '\\ ')}\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('keeps backslashes that are path separators rather than escapes', async () => {
+    // The Windows trap: the site config lives at C:\\ProgramData\\ssh\\ssh_config, so treating every
+    // backslash as an escape would eat the separators of any Include beneath it, resolve to nothing,
+    // and reintroduce the fail-open on the platform this matters most for. Only a backslash before
+    // whitespace escapes.
+    //
+    // Discriminating on POSIX by giving the file a literal backslash in its NAME, which is legal
+    // here: preserved, the path resolves and the directive is found; swallowed, it resolves to
+    // `winlikesite.conf`, which does not exist — and a bare `.resolves.toBe(false)` could not tell
+    // those apart, since a missing path answers false either way.
+    const literal = join(dir, 'winlike\\site.conf')
+    await writeFile(literal, 'StrictHostKeyChecking yes\n', 'utf-8')
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, `Include ${literal}\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
   it('stays strict when an Include quote never closes', async () => {
     const file = join(dir, 'ssh_config')
     await writeFile(file, `Include "${join(dir, 'unterminated.conf')}\n`, 'utf-8')

@@ -137,24 +137,36 @@ export async function siteConfigMayRestrictHostKeys(
 }
 
 /**
- * One Include's arguments, honouring double quotes, or null when a quote never closes.
+ * One Include's arguments, or null when a quote or escape never completes.
  *
- * Splitting on whitespace first and unquoting after cannot see a quoted path that CONTAINS a space:
- * `Include "/etc/ssh/my confs/site.conf"` became two tokens, neither of which resolved, and two
- * missing paths read as "no site policy". OpenSSH honours that form (verified against 10.2p1), and
- * it is likelier on Windows, where `C:\Program Files\…` is ordinary. Unquoted spaces still split —
- * that also matches OpenSSH, which treats them as two separate paths.
+ * Every spelling OpenSSH accepts for a path with a space has to hold together here, because the ones
+ * that don't fail OPEN: splitting produces fragments that resolve to nothing, and "nothing there" is
+ * indistinguishable from "no site policy". All three were confirmed honoured against 10.2p1 —
+ * `"a b/x"`, `'a b/x'` and `a\ b/x` — and a path with a space is ordinary on Windows.
+ *
+ * An UNQUOTED space still splits, which also matches OpenSSH: it reads that as two paths.
  */
 function splitIncludeArguments(pattern: string): string[] | null {
   const tokens: string[] = []
   let current = ''
-  let quoted = false
+  let quote: '"' | "'" | null = null
   let started = false
-  for (const char of pattern) {
-    if (char === '"') {
-      quoted = !quoted
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index]
+    // ONLY a backslash before whitespace is an escape. Treating every backslash as one would be
+    // catastrophic on the platform this function most needs to be right for: the Windows site config
+    // lives at C:\ProgramData\ssh\ssh_config, and a general escape would eat every separator in an
+    // Include beneath it — C:\ProgramData\ssh\x.conf becomes C:ProgramDatasshx.conf, which resolves
+    // to nothing, which reads as "no policy". That is the very fail-open this narrowing exists to
+    // close, so the escape is limited to the one spelling that needs it.
+    if (char === '\\' && /\s/.test(pattern[index + 1] ?? '')) {
+      current += pattern[index + 1]
+      index += 1
       started = true
-    } else if (!quoted && /\s/.test(char)) {
+    } else if (quote ? char === quote : char === '"' || char === "'") {
+      quote = quote ? null : (char as '"' | "'")
+      started = true
+    } else if (!quote && /\s/.test(char)) {
       if (started) {
         tokens.push(current)
       }
@@ -165,7 +177,9 @@ function splitIncludeArguments(pattern: string): string[] | null {
       started = true
     }
   }
-  if (quoted) {
+  // An unterminated quote means we cannot know where the path ended — OpenSSH rejects the whole
+  // config for it — so there is no reading to trust and doubt wins.
+  if (quote) {
     return null
   }
   if (started) {

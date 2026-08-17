@@ -52,8 +52,19 @@ export function mergeDirectSshRemoteWorkspaceSession(
   // that active-tab-owner-worktree.ts exists to mitigate (React #185).
   //
   // The merge does not create that state; it used to destroy it, by deleting every local tab under a
-  // replaced worktree. Keeping live panes cost that accidental cure, so the guarantee is made
-  // explicit here instead: this function never emits one tab id twice, whatever it was handed.
+  // replaced worktree. Keeping live panes cost that accidental cure, so the guarantee is restored
+  // for the part this function rewrites: no tab id is emitted twice ACROSS THE REPLACED WORKTREES.
+  //
+  // Deliberately not stronger than that. A worktree that is neither replaced nor named by the host is
+  // never walked — its tabs pass through from `current` verbatim — so a duplicate straddling that
+  // boundary still survives, and the only place to catch it is after both halves are assembled.
+  // Doing it there was tried and REVERTED: the tie-break has to pick a survivor, and every rule
+  // available at that point is wrong during a worktree-id change, which is the very thing that
+  // produces these duplicates. Preferring the active worktree keeps the OLD id's copy at the moment a
+  // rename lands, because the active worktree has not moved yet — which left the new worktree with no
+  // tabs, so its groups were never created, and remote-workspace-snapshot-duplicate-tab-repair.test
+  // .ts caught it. A duplicate is survivable and already mitigated by active-tab-owner-worktree.ts;
+  // deleting the tabs of the worktree the user is about to land in is not.
   const emittedTabIds = new Set<string>()
   const remoteKnownTabIds = new Set(
     Object.values(remote.tabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.id))
