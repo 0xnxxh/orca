@@ -89,4 +89,30 @@ describe('orchestration.send Dispatch authority', () => {
     expect(db.getTask(task.id)?.status).toBe('dispatched')
     expect(db.getDispatchContextById(dispatch.id)?.status).toBe('dispatched')
   })
+
+  it.each(['escalation', 'decision_gate'] as const)(
+    'accepts a matching legacy sender with a newly observed pane for %s',
+    async (type) => {
+      setup()
+      const task = db.createTask({ spec: 'legacy owned assignment' })
+      db.createDispatchContext(task.id, 'term_legacy')
+      vi.mocked(runtime.getTerminalPaneKey).mockImplementation((handle) =>
+        handle === 'term_legacy' ? 'tab_legacy:leaf_legacy' : harness.coordinatorPaneKey
+      )
+
+      const result = (await send({
+        from: 'term_legacy',
+        type,
+        subject: 'Legitimate legacy control',
+        payload: JSON.stringify({
+          taskId: task.id,
+          ...(type === 'decision_gate' ? { question: 'Proceed?' } : {})
+        })
+      })) as { message: { type: string }; lifecycle?: { action: string } }
+
+      expect(result.message.type).toBe(type)
+      expect(result.lifecycle).toBeUndefined()
+      expect(db.getTask(task.id)?.status).toBe('dispatched')
+    }
+  )
 })

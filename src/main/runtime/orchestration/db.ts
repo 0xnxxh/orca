@@ -7500,7 +7500,9 @@ export class OrchestrationDb {
     ) {
       return true
     }
-    return params.handle === dispatch.assignee_handle && !params.paneKey
+    return (
+      params.handle === dispatch.assignee_handle && (!params.paneKey || !dispatch.assignee_pane_key)
+    )
   }
 
   private findActiveDispatchForAssignee(
