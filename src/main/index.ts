@@ -1813,35 +1813,30 @@ function armGpuCrashHistoryReset(): void {
   if (gpuCrashHistoryResetTimer || isServeMode || process.platform !== 'win32') {
     return
   }
-  sweepOrphanedGpuCrashHistoryWrites(getCanonicalUserDataPath())
-  if (gpuFallbackActiveThisLaunch) {
-    return
-  }
+  // Why: armed even in software rendering, because the timer also carries the orphan sweep;
+  // resolveGpuCrashHistoryReset is the single place that decides what the history owes.
   gpuCrashHistoryResetTimer = setTimeout(() => {
     gpuCrashHistoryResetTimer = null
+    // Why: everything sweepable is already older than the horizon, so it has no business on
+    // the ready-to-show path — folding it in here also spaces it to once per launch.
+    sweepOrphanedGpuCrashHistoryWrites(getCanonicalUserDataPath())
     applyGpuCrashHistoryReset()
   }, GPU_CRASH_HISTORY_RESET_DELAY_MS)
   gpuCrashHistoryResetTimer.unref?.()
 }
 
 function applyGpuCrashHistoryReset(): void {
-  const action = resolveGpuCrashHistoryReset({
+  const reset = resolveGpuCrashHistoryReset({
     gpuCrashedDuringStartup: gpuCrashedDuringStartupThisLaunch,
     gpuFallbackActive: gpuFallbackActiveThisLaunch
   })
-  if (action === 'none') {
-    return
-  }
   const userDataPath = getCanonicalUserDataPath()
   const environment = getWindowsGpuFallbackEnvironment()
   try {
-    if (action === 'forget-this-launch') {
+    if (reset.forgetThisLaunch) {
       forgetGpuCrashLaunch(userDataPath, getMainProcessLifecycleIdentity().mainProcessLaunchId)
-      return
     }
-    clearGpuCrashHistory(userDataPath)
-    // Why: a build that boots has no use for the previous build's lowered threshold.
-    if (environment) {
+    if (reset.clearSupersededMarker && environment) {
       clearSupersededGpuFallbackMarker(userDataPath, environment)
     }
   } catch (error) {
@@ -1861,21 +1856,18 @@ function cancelGpuCrashHistoryReset(): void {
  * The prompt said "leaves graphics settings unchanged" and the user took it, so the
  * silent cross-launch path must not impose on the next boot what was just refused.
  *
- * How much that covers depends on what raised the prompt. Over startup crashes the
- * user refused the cross-launch conclusion itself, so all of the evidence is spent.
- * A purely mid-session burst is never recorded as startup evidence and was never
- * what the user was asked about — earlier launches that died before any window
- * existed are not on trial there.
+ * Scoped to this launch like every other lifecycle operation on the history: the
+ * prompt fires on any three GPU deaths inside 30s, including a purely mid-session
+ * burst that was never recorded as startup evidence, so a decline cannot be read as
+ * a verdict on launches that died before any window existed.
  */
 function discardGpuCrashEvidenceAfterDecline(): void {
   gpuFallbackDeclinedThisLaunch = true
-  const userDataPath = getCanonicalUserDataPath()
   try {
-    if (gpuCrashedDuringStartupThisLaunch) {
-      clearGpuCrashHistory(userDataPath)
-      return
-    }
-    forgetGpuCrashLaunch(userDataPath, getMainProcessLifecycleIdentity().mainProcessLaunchId)
+    forgetGpuCrashLaunch(
+      getCanonicalUserDataPath(),
+      getMainProcessLifecycleIdentity().mainProcessLaunchId
+    )
   } catch (error) {
     console.warn('[gpu-fallback] failed to discard crash evidence:', error)
   }

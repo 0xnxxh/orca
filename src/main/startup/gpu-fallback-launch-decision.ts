@@ -81,8 +81,16 @@ export function decideGpuFallbackForLaunch({
   }
 }
 
-/** `clear-all` = the driver works today; `forget-this-launch` = only this launch is exonerated. */
-export type GpuCrashHistoryResetAction = 'clear-all' | 'forget-this-launch' | 'none'
+export type GpuCrashHistoryReset = {
+  /**
+   * Drop this launch's entry, if it has one. The history is only ever mutated one
+   * launchId at a time, so a launch answers for itself and never for the launches
+   * that died before any window existed.
+   */
+  forgetThisLaunch: boolean
+  /** Spend the previous build's lowered threshold: this build reached a window with no GPU death at all. */
+  clearSupersededMarker: boolean
+}
 
 /**
  * What a launch that painted a window and then survived a minute has proved.
@@ -91,9 +99,9 @@ export type GpuCrashHistoryResetAction = 'clear-all' | 'forget-this-launch' | 'n
  * nothing about the driver — and if the marker write failed, the history is the
  * only thing keeping the fallback on.
  *
- * A launch whose GPU child died during startup and painted anyway is not "cannot
- * even boot", so it stops counting for itself; but the launches that died before
- * any window existed are not this launch's to exonerate.
+ * Otherwise the launch demonstrably booted, so it stops counting as "cannot even
+ * boot" evidence — for itself only. A startup GPU death still bars spending the
+ * previous build's head start: the child is dying on this build too.
  */
 export function resolveGpuCrashHistoryReset({
   gpuCrashedDuringStartup,
@@ -101,9 +109,9 @@ export function resolveGpuCrashHistoryReset({
 }: {
   gpuCrashedDuringStartup: boolean
   gpuFallbackActive: boolean
-}): GpuCrashHistoryResetAction {
+}): GpuCrashHistoryReset {
   if (gpuFallbackActive) {
-    return 'none'
+    return { forgetThisLaunch: false, clearSupersededMarker: false }
   }
-  return gpuCrashedDuringStartup ? 'forget-this-launch' : 'clear-all'
+  return { forgetThisLaunch: true, clearSupersededMarker: !gpuCrashedDuringStartup }
 }

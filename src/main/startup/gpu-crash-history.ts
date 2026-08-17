@@ -99,8 +99,12 @@ function readGpuCrashHistory(userDataPath: string): GpuCrashHistory | null {
       appVersion: parsed.appVersion,
       electronVersion: parsed.electronVersion,
       platform: parsed.platform,
-      // Why: a truncated write can leave one unreadable entry; the rest is still evidence.
+      // Why: capped before parsing, not just on write. This runs before whenReady, and only
+      // the newest entries can still be inside the horizon, so a file grown by anything other
+      // than this code costs the launch path a bounded parse instead of one linear in its size.
+      // Dropping an unreadable entry keeps the rest: a truncated write is still evidence.
       crashes: parsed.crashes
+        .slice(-GPU_CRASH_HISTORY_MAX_ENTRIES)
         .map(parseEntry)
         .filter((entry): entry is GpuCrashHistoryEntry => entry !== null)
     }
@@ -110,6 +114,12 @@ function readGpuCrashHistory(userDataPath: string): GpuCrashHistory | null {
   return null
 }
 
+/**
+ * Whole-file drop. Reserved for events that retire the evidence outright — it was
+ * promoted into the marker, or the user set Safe Graphics Mode by hand. Every
+ * per-launch lifecycle step goes through forgetGpuCrashLaunch instead, because one
+ * launch is never entitled to speak for the launches it did not live through.
+ */
 export function clearGpuCrashHistory(userDataPath: string): void {
   try {
     rmSync(historyPath(userDataPath), { force: true })

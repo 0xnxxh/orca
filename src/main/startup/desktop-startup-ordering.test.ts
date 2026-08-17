@@ -120,6 +120,12 @@ describe('startup ordering', () => {
     expect(arm).toContain('resolveGpuCrashHistoryReset({')
     expect(arm).toContain('gpuCrashedDuringStartup: gpuCrashedDuringStartupThisLaunch')
     expect(arm).toContain('gpuFallbackActive: gpuFallbackActiveThisLaunch')
+    // Why: the orphan sweep is a readdir + per-file stat and everything it can delete is already
+    // older than the horizon, so it belongs behind the timer, never on the ready-to-show path.
+    expect(arm.indexOf('sweepOrphanedGpuCrashHistoryWrites(')).toBeGreaterThan(
+      arm.indexOf('setTimeout(')
+    )
+    expect(arm.indexOf('setTimeout(')).toBeGreaterThanOrEqual(0)
   })
 
   it('requires daemon authority before restored-subagent liveness runs', () => {

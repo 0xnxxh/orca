@@ -161,18 +161,20 @@ describe('post-update threshold', () => {
 })
 
 describe('resolveGpuCrashHistoryReset', () => {
-  it('clears everything when a launch painted with no startup GPU death', () => {
+  // Why: a clean boot spends the previous build's lowered threshold, but the history is still
+  // only ever touched one launchId at a time — other launches' evidence is not this one's to drop.
+  it('forgets only this launch when it painted with no startup GPU death', () => {
     expect(
       resolveGpuCrashHistoryReset({ gpuCrashedDuringStartup: false, gpuFallbackActive: false })
-    ).toBe('clear-all')
+    ).toEqual({ forgetThisLaunch: true, clearSupersededMarker: true })
   })
 
   // Why: Chromium respawns the dead child and the window paints anyway, so this launch is not
-  // "cannot even boot" — but the launches that died before any window existed still are.
-  it('exonerates only the launch whose GPU child died during startup', () => {
+  // "cannot even boot" — but the child is still dying, so the update keeps its head start.
+  it('exonerates the launch whose GPU child died during startup without spending the head start', () => {
     expect(
       resolveGpuCrashHistoryReset({ gpuCrashedDuringStartup: true, gpuFallbackActive: false })
-    ).toBe('forget-this-launch')
+    ).toEqual({ forgetThisLaunch: true, clearSupersededMarker: false })
   })
 
   // Why: `in-process-gpu` leaves no GPU child to die, so surviving proves nothing about the
@@ -180,6 +182,6 @@ describe('resolveGpuCrashHistoryReset', () => {
   it('proves nothing when the launch only booted because software rendering was on', () => {
     expect(
       resolveGpuCrashHistoryReset({ gpuCrashedDuringStartup: false, gpuFallbackActive: true })
-    ).toBe('none')
+    ).toEqual({ forgetThisLaunch: false, clearSupersededMarker: false })
   })
 })

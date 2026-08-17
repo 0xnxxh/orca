@@ -77,6 +77,29 @@ describe('gpu-crash-history', () => {
     expect(crashes.at(-1)?.launchId).toBe(`launch-${GPU_CRASH_HISTORY_MAX_ENTRIES + 3}`)
   })
 
+  // Why: this parse runs before whenReady, so the cost must not depend on a file this code
+  // never wrote — a foreign or hand-edited history cannot make the launch path do linear work.
+  it('caps on read, not only on write', () => {
+    writeFileSync(
+      join(userDataPath, GPU_CRASH_HISTORY_FILE),
+      JSON.stringify({
+        schemeVersion: 1,
+        appVersion: ENVIRONMENT.appVersion,
+        electronVersion: ENVIRONMENT.electronVersion,
+        platform: 'win32',
+        crashes: Array.from({ length: 5_000 }, (_, launch) => ({
+          atEpochMs: NOW + launch,
+          msSinceLaunch: 581,
+          launchId: `launch-${launch}`
+        }))
+      })
+    )
+    const crashes = readActiveGpuCrashHistory(userDataPath, ENVIRONMENT)
+
+    expect(crashes).toHaveLength(GPU_CRASH_HISTORY_MAX_ENTRIES)
+    expect(crashes.at(-1)?.launchId).toBe('launch-4999')
+  })
+
   // Why: a driver in a respawn loop emits dozens of crashes under one launchId; if each
   // took a cap slot, one noisy launch would evict every other launch's evidence and the
   // distinct-launch counter could never reach its threshold.

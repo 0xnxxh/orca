@@ -128,27 +128,22 @@ function runLaunch(
       const result = tracker.recordGpuCrash(crashAtMsSinceLaunch + crash)
       crashesInWindow = result.crashesInWindow
       if (result.shouldEngageFallback && inSessionPromptDecision !== 'restart') {
-        // index.ts: a decline over startup crashes refuses the cross-launch conclusion itself;
-        // over a mid-session burst it answers for this launch only.
-        if (gpuCrashedDuringStartup) {
-          clearGpuCrashHistory(userDataPath)
-        } else {
-          forgetGpuCrashLaunch(userDataPath, launchId)
-        }
+        // index.ts: declining answers for this launch only.
+        forgetGpuCrashLaunch(userDataPath, launchId)
         break
       }
     }
   }
   // index.ts arms this on ready-to-show and resolves it 60s later.
   if (survivesAMinutePastReadyToShow) {
-    const action = resolveGpuCrashHistoryReset({
+    const reset = resolveGpuCrashHistoryReset({
       gpuCrashedDuringStartup,
       gpuFallbackActive: decision.engage
     })
-    if (action === 'forget-this-launch') {
+    if (reset.forgetThisLaunch) {
       forgetGpuCrashLaunch(userDataPath, launchId)
-    } else if (action === 'clear-all') {
-      clearGpuCrashHistory(userDataPath)
+    }
+    if (reset.clearSupersededMarker) {
       clearSupersededGpuFallbackMarker(userDataPath, WINDOWS_ENVIRONMENT)
     }
   }
@@ -243,8 +238,11 @@ describe('GPU crash fallback across app launches', () => {
     expect(later.breadcrumbs[0]?.data?.source).toBe('marker')
   })
 
-  // Why: a launch that reached the window and survived a minute proves the driver works today.
-  it('resets after a successful launch: 2 crashes, 1 success, 2 crashes must not engage', () => {
+  // Why: the launch is the unit of evidence, so a launch that reached the window drops its own
+  // entry and nothing else. Four launches that really did die before any window existed are four
+  // dead launches inside ten minutes, whether or not a good one happened between them; the
+  // wall-clock horizon is what stops evidence accumulating, not a passing launch's veto.
+  it('does not let a launch that booted erase the launches that died at startup', () => {
     runCrashingLaunch(userDataPath, 0, startedAt)
     runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
     runLaunch(userDataPath, {
@@ -253,17 +251,21 @@ describe('GPU crash fallback across app launches', () => {
       crashAtMsSinceLaunch: null,
       survivesAMinutePastReadyToShow: true
     })
+
+    expect(
+      readActiveGpuCrashHistory(userDataPath, WINDOWS_ENVIRONMENT).map((crash) => crash.launchId)
+    ).toEqual(['launch-0', 'launch-1'])
     const outcomes = [
       runCrashingLaunch(userDataPath, 2, startedAt + 5 * MINUTE_MS),
       runCrashingLaunch(userDataPath, 3, startedAt + 6 * MINUTE_MS)
     ]
 
-    expect(outcomes.map((outcome) => outcome.softwareRendering)).toEqual([false, false])
-    expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+    expect(outcomes.map((outcome) => outcome.softwareRendering)).toEqual([false, true])
   })
 
   // Why: the modal promises "Keep Running leaves graphics settings unchanged", so the silent
-  // cross-launch path must not impose on the next boot exactly what was just refused.
+  // cross-launch path must not impose on the next boot exactly what was just refused — for the
+  // launch that raised it. The launches that died before any window existed were never on trial.
   it('does not override an explicit decline of the in-session prompt', () => {
     runCrashingLaunch(userDataPath, 0, startedAt)
     runCrashingLaunch(userDataPath, 1, startedAt + 10_000)
@@ -279,6 +281,9 @@ describe('GPU crash fallback across app launches', () => {
     expect(declined.crashesInWindow).toBe(DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD)
     expect(next.softwareRendering).toBe(false)
     expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+    expect(
+      readActiveGpuCrashHistory(userDataPath, WINDOWS_ENVIRONMENT).map((crash) => crash.launchId)
+    ).toEqual(['launch-0', 'launch-1', 'launch-3'])
   })
 
   // Why: without a wall-clock horizon, ordinary background churn would eventually
