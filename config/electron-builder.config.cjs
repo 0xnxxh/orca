@@ -461,7 +461,10 @@ module.exports = {
       },
       featureWallResources
     ],
-    target: ['AppImage', 'deb'],
+    // Why all three: the release pipeline publishes AppImage, deb, and rpm, and
+    // the rpm block below is fully configured. Leaving rpm out here made a local
+    // `pnpm build:linux` produce a different artifact set than a release cut.
+    target: ['AppImage', 'deb', 'rpm'],
     maintainer: 'stablyai',
     category: 'Utility'
   },

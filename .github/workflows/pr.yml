@@ -421,6 +421,12 @@ jobs:
       - name: Verify headless serve signal shutdown
         run: node config/scripts/run-headless-serve-shutdown-docker.mjs --appimage dist/orca-linux.AppImage
 
+      # Why: the CLI failures this guards are environmental — no /dev/fuse, no
+      # display, userns restricted, chrome-sandbox not root-owned setuid. A
+      # default container is all four, which is the only place they reproduce.
+      - name: Verify Linux CLI launch contract
+        run: node config/scripts/run-linux-cli-launch-contract-docker.mjs --appimage dist/orca-linux.AppImage
+
       - name: Smoke packaged CLI
         run: node config/scripts/smoke-packaged-cli.mjs --app-dir=dist/linux-unpacked
 
