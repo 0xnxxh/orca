@@ -185,6 +185,7 @@ describe('validated cookie replacement', () => {
     expect(result.ok).toBe(false)
     expect(cookiesRemoveMock.mock.calls).toEqual([
       ['https://example.com/', 'existing'],
+      ['https://example.com/', 'second'],
       ['https://example.com/', 'first']
     ])
     expect(restoreClearIdentitiesMock).toHaveBeenCalledOnce()
@@ -213,8 +214,12 @@ describe('validated cookie replacement', () => {
     const result = await importCookiesFromFile(filePath, 'persist:test')
 
     expect(result.ok).toBe(false)
-    // Why: the imported cookie is still removed — that half of the rollback is lossless.
-    expect(cookiesRemoveMock.mock.calls).toEqual([['https://example.com/', 'first']])
+    // Why: a rejected CDP command does not prove the cookie was not written before the transport
+    // failed, so rollback must remove the failing coordinate as well as earlier successes.
+    expect(cookiesRemoveMock.mock.calls).toEqual([
+      ['https://example.com/', 'second'],
+      ['https://example.com/', 'first']
+    ])
     expect(restoreClearIdentitiesMock).not.toHaveBeenCalled()
   })
 

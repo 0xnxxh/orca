@@ -194,6 +194,6 @@ describe('writeImportedCookies', () => {
       silentOptions
     )
 
-    expect(phase.importedKeys).toEqual([{ url: 'https://app.example/settings', name: 'scoped' }])
+    expect(phase.attemptedKeys).toEqual([{ url: 'https://app.example/settings', name: 'scoped' }])
   })
 })

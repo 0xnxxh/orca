@@ -85,7 +85,7 @@ export function importedCookieRemovalKey(identity: CookieClearIdentity): {
 export type SourceCookieToWrite = ImportedCookieFields & { partition: SourcePartitionRead }
 
 export type ImportWritePhase = {
-  importedKeys: { url: string; name: string }[]
+  attemptedKeys: { url: string; name: string }[]
   importedCount: number
   writeRejected: number
   partitionSkipped: number
@@ -95,7 +95,7 @@ export type ImportWritePhase = {
 
 export function emptyImportWritePhase(): ImportWritePhase {
   return {
-    importedKeys: [],
+    attemptedKeys: [],
     importedCount: 0,
     writeRejected: 0,
     partitionSkipped: 0,
@@ -212,9 +212,11 @@ export async function writeImportedCookies(
       )
       continue
     }
+    // Why: a rejected CDP command can still have reached Chromium before the transport failed.
+    // Record the coordinate before dispatch so a replace rollback removes every possible write.
+    phase.attemptedKeys.push(importedCookieRemovalKey(plan.identity))
     try {
       await store.writeCookieIdentity(plan.identity)
-      phase.importedKeys.push(importedCookieRemovalKey(plan.identity))
       phase.importedCount += 1
       phase.domains.add(summaryDomain(cookie.domain))
     } catch (err) {

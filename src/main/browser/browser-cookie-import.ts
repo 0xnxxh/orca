@@ -705,7 +705,7 @@ async function importValidatedCookies(
 
       if (phase.failure && replaced) {
         const rollbackFailures: unknown[] = []
-        for (const cookie of phase.importedKeys.toReversed()) {
+        for (const cookie of phase.attemptedKeys.toReversed()) {
           try {
             await cookieClearStore.remove(cookie.url, cookie.name)
           } catch (err) {

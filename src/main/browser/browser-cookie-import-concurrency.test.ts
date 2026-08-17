@@ -163,6 +163,30 @@ describe('cookie import mutation transactions', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  it('removes a rejected write that reached the populated jar before CDP detached', async () => {
+    const jar = [jarCookie('original', 'old')]
+    const session = makeSession(join(root, 'target'), jar, async (identity) => {
+      replaceCoordinate(jar, identity)
+      if (identity.name === 'detach-after-write') {
+        throw new Error('debugger detached after dispatch')
+      }
+    })
+    sessionFromPartitionMock.mockReturnValue(session)
+    const sourcePath = join(root, 'source.json')
+    writeFileSync(
+      sourcePath,
+      JSON.stringify([
+        { domain: '.example.com', name: 'first', value: 'new', secure: true },
+        { domain: '.example.com', name: 'detach-after-write', value: 'leak', secure: true }
+      ])
+    )
+
+    const result = await importCookiesFromFile(sourcePath, 'persist:test')
+
+    expect(result.ok).toBe(false)
+    expect(jar).toEqual([jarCookie('original', 'old')])
+  })
+
   it('prevents a stale validated-import rollback from deleting a successful concurrent import', async () => {
     const jar = [jarCookie('original', 'old')]
     const failureReached = deferred()
