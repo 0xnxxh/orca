@@ -89,7 +89,9 @@ describe('Task/Dispatch concurrency', () => {
       return prepare(sql)
     })
 
-    expect(first.db.failDispatch(started.dispatch.id, 'stale failure')).toMatchObject({
+    expect(
+      first.db.failDispatch(started.dispatch.id, 'stale failure', { workerProcessExited: true })
+    ).toMatchObject({
       status: 'completed',
       failure_count: 0
     })

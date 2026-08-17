@@ -1,5 +1,6 @@
 /** Decision-gate handling: opening a gate from a worker message and keeping gated tasks blocked. */
 import type { OrchestrationDb } from './db'
+import { OrchestrationError } from './orchestration-error'
 import type { MessageRow } from './types'
 
 export function openDecisionGateFromMessage(
@@ -23,11 +24,23 @@ export function openDecisionGateFromMessage(
     return
   }
 
-  db.createGate({
-    taskId: payload.taskId,
-    question: payload.question,
-    options: payload.options
-  })
+  try {
+    db.createGate({
+      taskId: payload.taskId,
+      question: payload.question,
+      options: payload.options,
+      requester: { handle: msg.from_handle, paneKey: msg.sender_pane_key }
+    })
+  } catch (error) {
+    if (
+      error instanceof OrchestrationError &&
+      (error.code === 'consumer_fenced' || error.code === 'task_not_startable')
+    ) {
+      onLog(`Rejected decision gate from ${msg.from_handle}: ${error.message}`)
+      return
+    }
+    throw error
+  }
 
   onLog(`Task ${payload.taskId} blocked on decision gate`)
 }

@@ -32,6 +32,14 @@ export function applyEscalationToDispatch(
     return null
   }
 
+  const worker = db.getWorkerDispatch(dispatch.id)
+  if (worker && !['failed', 'succeeded', 'stopped', 'abandoned'].includes(worker.state)) {
+    onLog(
+      `Task ${taskId} remains dispatched until supervised worker ${dispatch.id} stops or reports.`
+    )
+    return null
+  }
+
   // Why: fail the dispatch to increment the circuit breaker; under threshold the task returns to 'pending' for re-dispatch next tick.
   const updated = db.failDispatch(dispatch.id, msg.subject)
   if (updated?.status === 'circuit_broken') {

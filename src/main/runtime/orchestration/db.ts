@@ -7590,6 +7590,31 @@ export class OrchestrationDb {
       }
     }
 
+    const conflictingWorker = this.db
+      .prepare(
+        `SELECT active.id
+         FROM dispatch_contexts active
+         JOIN worker_dispatches worker ON worker.dispatch_id = active.id
+         WHERE active.task_id = ? AND active.id != ?
+           AND active.status IN ('pending', 'dispatched')
+           AND worker.state NOT IN ('failed', 'succeeded', 'stopped', 'abandoned')
+         ORDER BY active.rowid DESC LIMIT 1`
+      )
+      .get(params.taskId, params.dispatchId) as Pick<DispatchContextRow, 'id'> | undefined
+    if (conflictingWorker) {
+      return {
+        action: 'rejected',
+        code: 'inactive_dispatch',
+        reason: `Task ${params.taskId} still has active supervised Dispatch ${conflictingWorker.id}; stop or settle it before completing ${params.dispatchId}.`
+      }
+    }
+    const siblingDispatchIds = this.db
+      .prepare(
+        `SELECT id FROM dispatch_contexts
+         WHERE task_id = ? AND id != ? AND status IN ('pending', 'dispatched')`
+      )
+      .all(params.taskId, params.dispatchId) as Pick<DispatchContextRow, 'id'>[]
+
     this.db.exec('SAVEPOINT settle_worker_report')
     const dispatchUpdate = this.db
       .prepare(
@@ -7623,7 +7648,15 @@ export class OrchestrationDb {
          WHERE dispatch_id = ? AND state = 'ready'`
       )
       .run(params.outcome === 'succeeded' ? 'succeeded' : 'failed', params.dispatchId)
+    this.settleActiveDispatchesForTask(
+      params.taskId,
+      expectedDispatchStatus,
+      params.outcome === 'failed' ? params.result : undefined
+    )
     this.closeQuestionsForDispatch(params.dispatchId)
+    for (const sibling of siblingDispatchIds) {
+      this.closeQuestionsForDispatch(sibling.id)
+    }
     if (params.outcome === 'succeeded') {
       this.promoteReadyTasks(params.taskId)
     }
@@ -7662,7 +7695,11 @@ export class OrchestrationDb {
       .all(thresholdIso, thresholdIso) as DispatchContextRow[]
   }
 
-  failDispatch(ctxId: string, error: string): DispatchContextRow | undefined {
+  failDispatch(
+    ctxId: string,
+    error: string,
+    options: { workerProcessExited?: boolean } = {}
+  ): DispatchContextRow | undefined {
     this.db.exec('SAVEPOINT fail_dispatch')
     try {
       const updated = this.db
@@ -7672,15 +7709,45 @@ export class OrchestrationDb {
                failure_count = failure_count + 1, last_failure = ?,
                completed_at = COALESCE(completed_at, datetime('now')),
                capability_revoked_at = COALESCE(capability_revoked_at, datetime('now'))
-           WHERE id = ? AND status IN ('pending', 'dispatched')`
+           WHERE id = ? AND status IN ('pending', 'dispatched')
+             AND (? = 1 OR NOT EXISTS (
+               SELECT 1 FROM worker_dispatches worker
+               WHERE worker.dispatch_id = dispatch_contexts.id
+                 AND worker.state NOT IN ('failed', 'succeeded', 'stopped', 'abandoned')
+             ))`
         )
-        .run(error, ctxId)
+        .run(error, ctxId, options.workerProcessExited ? 1 : 0)
       const ctx = this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
         | DispatchContextRow
         | undefined
+      const worker = this.getWorkerDispatch(ctxId)
       if (updated.changes !== 1 || !ctx) {
+        if (
+          ctx &&
+          worker &&
+          !['failed', 'succeeded', 'stopped', 'abandoned'].includes(worker.state) &&
+          !options.workerProcessExited
+        ) {
+          throw new OrchestrationError(
+            'task_not_startable',
+            `Dispatch ${ctxId} has an active supervised worker; stop it or settle its report first.`,
+            { dispatchId: ctxId }
+          )
+        }
         this.db.exec('RELEASE fail_dispatch')
         return ctx
+      }
+
+      if (worker && options.workerProcessExited) {
+        this.db
+          .prepare(
+            `UPDATE worker_dispatches
+             SET state = 'failed', stage = 'process_exited', last_error = ?,
+                 updated_at = datetime('now')
+             WHERE dispatch_id = ?
+               AND state NOT IN ('failed', 'succeeded', 'stopped', 'abandoned')`
+          )
+          .run(error, ctxId)
       }
 
       // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
@@ -7705,25 +7772,78 @@ export class OrchestrationDb {
 
   // ── Decision Gates ──
 
-  createGate(gate: { taskId: string; question: string; options?: string[] }): DecisionGateRow {
-    const id = generateId('gate')
-    const optionsJson = JSON.stringify(gate.options ?? [])
-    this.db
-      .prepare(
-        'INSERT INTO decision_gates (id, run_id, task_id, question, options) VALUES (?, ?, ?, ?, ?)'
-      )
-      .run(
-        id,
-        this.getTask(gate.taskId)?.run_id ?? LEGACY_RUN_ID,
-        gate.taskId,
-        gate.question,
-        optionsJson
-      )
+  createGate(gate: {
+    taskId: string
+    question: string
+    options?: string[]
+    requester?: { handle: string; paneKey?: string | null }
+  }): DecisionGateRow {
+    this.db.exec('SAVEPOINT create_gate')
+    try {
+      const active = this.db
+        .prepare(
+          `SELECT * FROM dispatch_contexts
+           WHERE task_id = ? AND status IN ('pending', 'dispatched')
+           ORDER BY rowid DESC LIMIT 1`
+        )
+        .get(gate.taskId) as DispatchContextRow | undefined
+      if (
+        gate.requester &&
+        (!active ||
+          active.assignee_handle !== gate.requester.handle ||
+          (gate.requester.paneKey &&
+            active.assignee_pane_key &&
+            !isEquivalentPaneKey(active.assignee_pane_key, gate.requester.paneKey)))
+      ) {
+        throw new OrchestrationError(
+          'consumer_fenced',
+          `Terminal ${gate.requester.handle} does not own the active Dispatch for Task ${gate.taskId}.`,
+          { taskId: gate.taskId, dispatchId: active?.id }
+        )
+      }
+      const activeWorker = this.db
+        .prepare(
+          `SELECT active.id
+           FROM dispatch_contexts active
+           JOIN worker_dispatches worker ON worker.dispatch_id = active.id
+           WHERE active.task_id = ? AND active.status IN ('pending', 'dispatched')
+             AND worker.state NOT IN ('failed', 'succeeded', 'stopped', 'abandoned')
+           ORDER BY active.rowid DESC LIMIT 1`
+        )
+        .get(gate.taskId) as Pick<DispatchContextRow, 'id'> | undefined
+      if (activeWorker) {
+        throw new OrchestrationError(
+          'task_not_startable',
+          `Task ${gate.taskId} cannot open a gate while supervised Dispatch ${activeWorker.id} is active; stop or settle its worker first.`,
+          { taskId: gate.taskId, dispatchId: activeWorker.id }
+        )
+      }
 
-    this.completeActiveDispatchesForTask(gate.taskId)
-    this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(gate.taskId)
-
-    return this.db.prepare('SELECT * FROM decision_gates WHERE id = ?').get(id) as DecisionGateRow
+      const id = generateId('gate')
+      const optionsJson = JSON.stringify(gate.options ?? [])
+      this.db
+        .prepare(
+          'INSERT INTO decision_gates (id, run_id, task_id, question, options) VALUES (?, ?, ?, ?, ?)'
+        )
+        .run(
+          id,
+          this.getTask(gate.taskId)?.run_id ?? LEGACY_RUN_ID,
+          gate.taskId,
+          gate.question,
+          optionsJson
+        )
+      this.completeActiveDispatchesForTask(gate.taskId)
+      this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(gate.taskId)
+      const created = this.db.prepare('SELECT * FROM decision_gates WHERE id = ?').get(id) as
+        | DecisionGateRow
+        | undefined
+      this.db.exec('RELEASE create_gate')
+      return created as DecisionGateRow
+    } catch (error) {
+      this.db.exec('ROLLBACK TO create_gate')
+      this.db.exec('RELEASE create_gate')
+      throw error
+    }
   }
 
   resolveGate(gateId: string, resolution: string): DecisionGateRow | undefined {
@@ -7734,18 +7854,26 @@ export class OrchestrationDb {
       return undefined
     }
 
-    this.db
-      .prepare(
-        "UPDATE decision_gates SET status = 'resolved', resolution = ?, resolved_at = datetime('now') WHERE id = ?"
-      )
-      .run(resolution, gateId)
+    this.db.exec('SAVEPOINT resolve_gate')
+    try {
+      this.db
+        .prepare(
+          "UPDATE decision_gates SET status = 'resolved', resolution = ?, resolved_at = datetime('now') WHERE id = ?"
+        )
+        .run(resolution, gateId)
 
-    // Why: set to 'ready' (not the previous status) so the coordinator re-dispatches the worker with the resolution context.
-    this.db.prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(gate.task_id)
-
-    return this.db.prepare('SELECT * FROM decision_gates WHERE id = ?').get(gateId) as
-      | DecisionGateRow
-      | undefined
+      // Why: ready lets the coordinator re-dispatch with the resolution context.
+      this.updateTaskStatus(gate.task_id, 'ready')
+      const resolved = this.db.prepare('SELECT * FROM decision_gates WHERE id = ?').get(gateId) as
+        | DecisionGateRow
+        | undefined
+      this.db.exec('RELEASE resolve_gate')
+      return resolved
+    } catch (error) {
+      this.db.exec('ROLLBACK TO resolve_gate')
+      this.db.exec('RELEASE resolve_gate')
+      throw error
+    }
   }
 
   timeoutGate(gateId: string): DecisionGateRow | undefined {
