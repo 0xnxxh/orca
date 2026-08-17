@@ -148,6 +148,14 @@ describe('humanizeTerminalError', () => {
     expect(humanized).not.toContain('exited')
   })
 
+  // Why: the relay reports the PTY live; the copy must not leak the internal PTY id.
+  it('says the session is live when delivery could not be resumed', () => {
+    const humanized = humanizeTerminalError('SSH_PTY_RESTORE_REQUIRED: orca:2f1c@@pty-7')
+    expect(humanized).not.toContain('SSH_PTY_RESTORE_REQUIRED')
+    expect(humanized).not.toContain('orca:2f1c@@pty-7')
+    expect(humanized).toContain('session is live')
+  })
+
   it('replaces only the unreattachable line in an aggregated error', () => {
     const humanized = humanizeTerminalError('Paste failed.\nSSH_SESSION_EXPIRED: orca:2f1c@@pty-7')
     expect(humanized.startsWith('Paste failed.\n')).toBe(true)
@@ -186,6 +194,10 @@ describe('isExplainedTerminalError', () => {
         'Error invoking remote method \'pty:spawn\': Error: PTY "orca:2f1c@@pty-7" not found'
       )
     ).toBe(true)
+  })
+
+  it('suppresses the issue link when live PTY delivery could not be resumed', () => {
+    expect(isExplainedTerminalError('SSH_PTY_RESTORE_REQUIRED: orca:2f1c@@pty-7')).toBe(true)
   })
 
   it('keeps the issue link for errors Orca cannot explain', () => {
@@ -257,6 +269,20 @@ describe('shouldOfferDaemonRestart', () => {
   it('does not match unrelated terminal spawn errors', () => {
     expect(shouldOfferDaemonRestart('SSH connection is not active.')).toBe(false)
     expect(shouldOfferDaemonRestart('node-pty: open_slave failed: EMFILE (errno 24)')).toBe(false)
+  })
+})
+
+describe('TerminalErrorToast known errors', () => {
+  it('renders live restore guidance without an issue link', () => {
+    const view = render(
+      React.createElement(TerminalErrorToast, {
+        error: 'SSH_PTY_RESTORE_REQUIRED: orca:2f1c@@pty-7',
+        onDismiss: vi.fn()
+      })
+    )
+
+    expect(view.container.textContent).toContain('session is live')
+    expect(view.queryByText('file an issue')).toBeNull()
   })
 })
 

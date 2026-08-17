@@ -2,6 +2,7 @@ import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { isPtyIncarnationId, type PtyIncarnationId } from '../../shared/pty-incarnation'
 import {
   SSH_PTY_IDENTITY_MISMATCH_ERROR,
+  SSH_PTY_RESTORE_REQUIRED_ERROR,
   SSH_SESSION_EXPIRED_ERROR,
   isSshPtyIdentityMismatchError,
   isSshPtyNotFoundError
@@ -253,5 +254,38 @@ export async function reattachSshPtySessionWithExitFence(
     throw error
   } finally {
     args.exitRaceTracker.finish(operation)
+  }
+}
+
+export async function reattachSshPtySessionForSpawn(
+  args: Parameters<typeof reattachSshPtySessionWithExitFence>[0] & {
+    acceptLivePty: (relayPtyId: string) => void
+  }
+): Promise<PtySpawnResult> {
+  let result: SshPtyReattachResult | undefined
+  try {
+    result = await reattachSshPtySessionWithExitFence(args)
+    if (result.sourceRecovery?.status === 'restoreRequired') {
+      // Why: restoreRequired retired only the delivery record; a fresh attach targets the live PTY.
+      const unresumable = result
+      result = undefined
+      if (unresumable.sourceActivationLease) {
+        await unresumable.sourceActivationLease.rollback()
+      }
+      result = await reattachSshPtySessionWithExitFence(args)
+      if (result.sourceRecovery?.status === 'restoreRequired') {
+        args.acceptLivePty(result.id)
+        throw new Error(
+          `${SSH_PTY_RESTORE_REQUIRED_ERROR}: ${toRelaySshPtyId(args.connectionId, result.id)}`
+        )
+      }
+    }
+    args.acceptLivePty(result.id)
+    result.sourceActivationLease?.commit()
+    const { sourceActivationLease: _lease, sourceRecovery: _recovery, ...spawnResult } = result
+    return spawnResult
+  } catch (error) {
+    await result?.sourceActivationLease?.rollback()
+    throw error
   }
 }
