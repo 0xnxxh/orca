@@ -1,4 +1,4 @@
-import { PTY_STILL_RUNNING_NOTE, describeUnconfirmedStop } from '../shared/pty-liveness-verdict'
+import { PTY_LIVE_NOTE, describeUnconfirmedStop } from '../shared/pty-liveness-verdict'
 import type {
   RuntimeTerminalClose,
   RuntimeTerminalCreate,
@@ -177,7 +177,7 @@ function describePtyStop(close: RuntimeTerminalClose): string {
     return ' PTY killed.'
   }
   if (close.ptyStopVerdict === 'live') {
-    return ` ${PTY_STILL_RUNNING_NOTE}`
+    return ` ${PTY_LIVE_NOTE}`
   }
   if (close.ptyStopVerdict === 'unverifiable') {
     return ` ${describeUnconfirmedStop(close.ptyStopReason ?? 'its host could not be reached')}`

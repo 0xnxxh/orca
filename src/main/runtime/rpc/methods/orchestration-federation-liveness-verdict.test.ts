@@ -82,7 +82,7 @@ describe('federation host liveness verdicts', () => {
     })
   })
 
-  it('uses the canonical live verdict for an observed running process', async () => {
+  it('uses the canonical live verdict for an observed process', async () => {
     vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
       handle: HANDLE,
       worktreeId: 'repo::remote-worktree',

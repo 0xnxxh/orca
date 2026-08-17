@@ -46,7 +46,7 @@ describe('formatTerminalClose', () => {
     )
   })
 
-  it('names a PTY still known to be running', () => {
+  it('names a PTY known to be live', () => {
     expect(
       formatTerminalClose({
         close: {
@@ -56,6 +56,6 @@ describe('formatTerminalClose', () => {
           ptyStopVerdict: 'live'
         }
       })
-    ).toBe('Closed terminal term_live. The PTY is still running.')
+    ).toBe('Closed terminal term_live. The PTY is live.')
   })
 })

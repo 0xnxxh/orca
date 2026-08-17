@@ -121,7 +121,7 @@ describe('worker-stop against a terminal we lost contact with', () => {
     expect(stopped.lastError).toContain('could not be confirmed stopped')
   })
 
-  it('uses the canonical live verdict for an observed running process', async () => {
+  it('uses the canonical live verdict for an observed process', async () => {
     vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
       handle: 'term_worker',
       worktreeId: 'repo::worktree',

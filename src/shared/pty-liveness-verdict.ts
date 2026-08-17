@@ -1,5 +1,5 @@
 /**
- * The one vocabulary Orca uses to talk about whether a PTY is still running.
+ * The one vocabulary Orca uses to talk about whether a PTY is live.
  *
  * `exited` requires positive evidence of absence from the owning host. Losing
  * contact with that host — an unregistered SSH provider, a dropped relay, an
@@ -13,7 +13,7 @@ export type PtyLivenessVerdict =
 
 export const SSH_PROVIDER_UNREGISTERED_REASON = 'its SSH provider is no longer registered'
 export const NO_OBSERVING_PROVIDER_REASON = 'no registered provider can observe its host'
-export const PTY_STILL_RUNNING_NOTE = 'The PTY is still running.'
+export const PTY_LIVE_NOTE = 'The PTY is live.'
 
 /** The one sentence every surface uses to admit a stop was not confirmed. */
 export function describeUnconfirmedStop(reason: string): string {
@@ -27,7 +27,7 @@ export function describeUnconfirmedAgentStop(close: {
 }): string {
   const detail =
     close.ptyStopVerdict === 'live'
-      ? 'it is still running'
+      ? 'it is live'
       : (close.ptyStopReason ?? 'the stop outcome could not be verified')
   return `The agent terminal was closed but its process could not be confirmed stopped: ${detail}.`
 }
