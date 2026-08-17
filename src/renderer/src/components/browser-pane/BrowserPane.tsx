@@ -89,6 +89,7 @@ import {
 import { getLiveBrowserUrl, rememberLiveBrowserUrl, seedLiveBrowserUrl } from './browser-runtime'
 import { ensureBrowserPageWebview } from './browser-page-webview'
 import { RemoteBrowserStreamLifecycle } from './remote-browser-stream-lifecycle'
+import { getLegacyViewportForRendering } from './remote-browser-legacy-viewport'
 import { isRemoteBrowserPageMissingError } from './remote-browser-stream-errors'
 import type {
   RemoteBrowserOperationToken,
@@ -1522,10 +1523,14 @@ function RemoteBrowserPagePane({
         naturalHeight: image.naturalHeight,
         metadata: frameMetadata,
         remoteCssViewportSize: remoteCssViewportSizeRef.current,
-        remoteViewportSize: remoteViewportSizeRef.current
+        remoteViewportSize: remoteViewportSizeRef.current,
+        legacyViewportSize: getLegacyViewportForRendering(
+          lifecycle.viewportForSync(),
+          remoteViewportSizeRef.current
+        )
       })
     },
-    [frameMetadata]
+    [frameMetadata, lifecycle]
   )
 
   const scheduleRemoteTabInfoRefresh = useCallback(
@@ -2169,7 +2174,14 @@ function RemoteBrowserPagePane({
     return () => image.removeEventListener('wheel', handleRemoteScreenshotWheel)
   }, [frameUrl, handleRemoteScreenshotWheel])
 
-  const remoteFrameStyle = useMemo(() => getRemoteBrowserFrameStyle(frameMetadata), [frameMetadata])
+  const remoteFrameStyle = useMemo(
+    () =>
+      getRemoteBrowserFrameStyle(
+        frameMetadata,
+        getLegacyViewportForRendering(lifecycle.viewportForSync(), remoteViewportSizeRef.current)
+      ),
+    [frameMetadata, lifecycle]
+  )
   const remoteFailureUrl = browserTab.loadError?.validatedUrl ?? browserTab.url
   const remoteFailureExternalUrl = resolveRemoteFailureExternalUrl(remoteFailureUrl)
   const showRemoteFailureOverlay =
