@@ -2,10 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  buildWslExecArgs,
-  buildWslInteractiveLoginShellCommand
-} from '../../shared/wsl-login-shell-command'
+import { buildWslInteractiveLoginShellCommand } from '../../shared/wsl-login-shell-command'
 import { resolveSetupRunnerCommand } from '../../shared/setup-runner-command'
 import { resolveWindowsShellLaunchArgs } from './windows-shell-args'
 
@@ -15,7 +12,11 @@ const CMD_CODEX_LAUNCH_PREFLIGHT =
 
 function expectedWslArgs(linuxCwd: string, distro?: string): string[] {
   const command = `cd '${linuxCwd}' && export PATH="$HOME/.local/bin:$PATH" && ${buildWslInteractiveLoginShellCommand()}`
-  return buildWslExecArgs(distro, ['sh', '-c', command])
+  // Why spelled out rather than calling buildWslExecArgs: deriving the
+  // expectation from the helper under test would still pass if it regressed
+  // to the `--` separator.
+  const shellArgs = ['--exec', 'sh', '-c', command]
+  return distro ? ['-d', distro, ...shellArgs] : shellArgs
 }
 
 function decodePowerShellCommand(result: ReturnType<typeof resolveWindowsShellLaunchArgs>): string {

@@ -10,8 +10,13 @@ import { describe, expect, it } from 'vitest'
 // Two spellings reach wsl.exe, and both have shipped a regression: an argv array, and
 // a command line built as a string (PowerShell setup commands). Comments describing
 // the old form are allowed — only code is scanned.
-const ARGV_FORM = /'--',\s*'(?:\/[\w./-]+\/)?(?:sh|bash|zsh|dash|ash|ksh|mksh|env)'/
-const STRING_FORM = /wsl(?:\.exe)?\b[^\n]*?[^-]--\s+(?:sh|bash|zsh|dash|env)\b/
+// Guest programs Orca hands to wsl.exe. An allowlist rather than "any quoted
+// token", because git's own `--` pathspec separator is followed by one too.
+const GUEST_PROGRAM = String.raw`(?:\/[\w./-]+\/)?(?:sh|bash|zsh|dash|ash|ksh|mksh|env|rm|cat|printf|node|python3?)`
+// `\s*` has to cross newlines: the formatter puts each argv element on its own
+// line, which is the exact shape this guard exists to catch.
+const ARGV_FORM = new RegExp(String.raw`'--',\s*'${GUEST_PROGRAM}'`)
+const STRING_FORM = new RegExp(String.raw`wsl(?:\.exe)?\b[^\n]*?[^-]--\s+${GUEST_PROGRAM}\b`)
 
 const SCANNED_ROOTS = ['src', 'config', 'tests']
 const SCANNED_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.js']
@@ -41,11 +46,17 @@ function collectSourceFiles(root: string): string[] {
   return found
 }
 
-/** Drop comment-only lines so prose about the old `--` form does not trip the guard. */
-function codeLines(contents: string): string[] {
+/**
+ * Drop comment-only lines, then rejoin.
+ *
+ * Why rejoin: an argv array is formatted one element per line, so matching each
+ * line in isolation cannot see `'--',\n  'bash'` — the shape the guard is for.
+ */
+function codeText(contents: string): string {
   return contents
     .split('\n')
     .filter((line) => !/^\s*(?:\/\/|\/\*|\*)/.test(line))
+    .join('\n')
 }
 
 describe('wsl.exe mode separator', () => {
@@ -61,10 +72,21 @@ describe('wsl.exe mode separator', () => {
     ['argv array', ARGV_FORM],
     ['command string', STRING_FORM]
   ])('never hands the guest shell to wsl.exe through `--` (%s)', (_form, pattern) => {
-    const offenders = files.filter((file) =>
-      codeLines(readFileSync(file, 'utf8')).some((line) => pattern.test(line))
-    )
+    const offenders = files.filter((file) => {
+      const text = codeText(readFileSync(file, 'utf8'))
+      // Why scoped to WSL files: other tools take a `--` separator followed by a
+      // program too (tmux `split-window … -- cat`), and those are correct.
+      return /wsl/i.test(text) && pattern.test(text)
+    })
 
     expect(offenders.map((file) => relative(repoRoot, file))).toEqual([])
+  })
+
+  it('sees a `--` separator split across lines by the formatter', () => {
+    // Why: the guard once matched line-by-line and was blind to this exact shape,
+    // which is how every multi-element argv array in this repo is formatted.
+    const formatted = ["args: [", "  '-d',", "  distro,", "  '--',", "  'bash'", "]"].join('\n')
+
+    expect(ARGV_FORM.test(codeText(formatted))).toBe(true)
   })
 })

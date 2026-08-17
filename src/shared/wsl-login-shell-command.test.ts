@@ -163,22 +163,27 @@ describe('wsl login shell command helpers', () => {
   }, 30_000)
 
   // Why: `--` expands $name in argv against the guest env before the guest runs,
-  // so these scripts used to reach the shell already rewritten. Each case below
-  // returned the wrong bytes until the argv went through --exec.
+  // so these scripts reached the shell already rewritten. Each case below was
+  // measured to return DIFFERENT bytes under `--` than under `--exec`; cases
+  // that merely look risky but are unaffected (a sed backreference has no `$`)
+  // are deliberately not here, because they would pass either way.
   it.each([
-    ['awk field reference', `echo 'a b' | awk '{print $2}'`, 'b\n'],
-    ['literal escaped dollar', `printf '[%s]' "\\$HOME"`, '[$HOME]'],
-    ['sed backreference', `echo abc | sed -E 's/(a)(b)/\\2\\1/'`, 'bac\n'],
-    ['single-quoted dollar', `printf '[%s]' '$PATH'`, '[$PATH]']
+    ['awk field reference', ['sh', '-c', `echo 'a b' | awk '{print $2}'`], 'b\n'],
+    ['literal escaped dollar', ['sh', '-c', `printf '[%s]' "\\$HOME"`], '[$HOME]'],
+    ['single-quoted dollar', ['sh', '-c', `printf '[%s]' '$PATH'`], '[$PATH]'],
+    // The shape wslUncDirectoryExists uses: `--` blanked $1, so every existing
+    // directory probed as missing.
+    ['positional argument', ['sh', '-c', 'printf "[%s]" "$1"', 'sh', 'ARG'], '[ARG]'],
+    ['shell local', ['sh', '-c', 'x=hi; printf "[%s]" "$x"'], '[hi]']
   ])(
     'passes %s to the guest byte-for-byte',
-    (_name, script, expected) => {
+    (_name, shellArgs, expected) => {
       if (!canRunWslSh()) {
         return
       }
 
       expect(
-        execFileSync('wsl.exe', buildWslExecArgs(undefined, ['sh', '-c', script]), {
+        execFileSync('wsl.exe', buildWslExecArgs(undefined, shellArgs), {
           encoding: 'utf8',
           timeout: WSL_TEST_COMMAND_TIMEOUT_MS
         })
