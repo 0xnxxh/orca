@@ -19,7 +19,7 @@ import type {
 export function formatTerminalList(result: RuntimeTerminalListResult): string {
   const scope = formatTerminalListHostScope(result.hostScope)
   if (result.terminals.length === 0) {
-    return `No live terminals.\n${scope}`
+    return `No terminals listed.\n${scope}`
   }
   const body = result.terminals
     .map(

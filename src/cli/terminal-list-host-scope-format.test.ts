@@ -62,7 +62,7 @@ describe('formatTerminalList scope declaration', () => {
       })
     )
 
-    expect(output).toContain('No live terminals')
+    expect(output).toContain('No terminals listed')
     expect(output).toContain('scope: local')
     expect(output).toContain('not covered: ssh:box-1')
   })

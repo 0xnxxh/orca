@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { OrcaRuntimeService } from './orca-runtime'
 import { getDefaultWorkspaceSession } from '../../shared/constants'
 import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
+import { folderWorkspaceKey } from '../../shared/workspace-scope'
 
-// An agent once declared a task dead because `terminal list` came back without
-// its worker: the worker was alive on an SSH host, and nothing in the response
+// An agent once declared a task exited because `terminal list` came back without
+// its worker: the worker was live on an SSH host, and nothing in the response
 // said the listing was scoped or which host each row ran on.
 
 const LOCAL_WORKTREE_ID = 'repo-local::/tmp/local-worktree'
@@ -35,6 +36,9 @@ function makeStore() {
   const session: WorkspaceSessionState = getDefaultWorkspaceSession()
   return {
     getWorkspaceSession: vi.fn(() => session),
+    getWorkspaceSessionHostIds: vi.fn(() => ['local', 'ssh:box-1']),
+    getFolderWorkspaces: vi.fn(() => []),
+    getProjectGroups: vi.fn(() => []),
     setWorkspaceSession: vi.fn(),
     getRepos: vi.fn(() => REPOS),
     getRepo: vi.fn((id: string) => REPOS.find((repo) => repo.id === id)),
@@ -47,10 +51,29 @@ function makeStore() {
   }
 }
 
+function makeSshFolderWorkspace() {
+  return {
+    id: 'folder-ssh',
+    projectGroupId: 'group-1',
+    name: 'SSH folder',
+    folderPath: '/remote/folder',
+    connectionId: 'box-2',
+    linkedTask: null,
+    comment: '',
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 0,
+    lastActivityAt: 0,
+    createdAt: 0,
+    updatedAt: 0
+  }
+}
+
 type GraphLeaf = { worktreeId: string; leafId: string; ptyId: string }
 
-function makeRuntime(leaves: GraphLeaf[]): OrcaRuntimeService {
-  const runtime = new OrcaRuntimeService(makeStore() as never)
+function makeRuntime(leaves: GraphLeaf[], store = makeStore()): OrcaRuntimeService {
+  const runtime = new OrcaRuntimeService(store as never)
   runtime.setPtyController({
     spawn: vi.fn(async () => ({ id: 'never' })),
     write: () => true,
@@ -130,6 +153,157 @@ describe('listTerminals scope declaration', () => {
 
     expect(result.hostScope?.hostIds).toEqual(['local', 'ssh:box-1'])
     expect(result.hostScope?.omittedHostIds).toEqual([])
+  })
+
+  it('does not claim a paired runtime was covered from a mirrored row', async () => {
+    const runtime = makeRuntime([
+      {
+        worktreeId: LOCAL_WORKTREE_ID,
+        leafId: REMOTE_LEAF_ID,
+        ptyId: 'remote:env-7@@handle-1'
+      }
+    ])
+
+    const result = await runtime.listTerminals()
+
+    expect(result.hostScope?.hostIds).toEqual(['local'])
+    expect(result.hostScope?.omittedHostIds).toEqual(['runtime:env-7', 'ssh:box-1'])
+  })
+
+  it('keeps a repo-known paired runtime omitted without a mirrored row', async () => {
+    const baseStore = makeStore()
+    const repos = [
+      REPOS[0]!,
+      {
+        id: 'repo-runtime',
+        path: '/remote/runtime-worktree',
+        displayName: 'runtime',
+        badgeColor: '#000000',
+        addedAt: 0,
+        executionHostId: 'runtime:env-9' as const
+      }
+    ]
+    const runtime = makeRuntime([], {
+      ...baseStore,
+      getRepos: vi.fn(() => repos),
+      getRepo: vi.fn((id: string) => repos.find((repo) => repo.id === id)),
+      getWorkspaceSessionHostIds: vi.fn(() => ['local'])
+    })
+
+    const result = await runtime.listTerminals()
+
+    expect(result.hostScope?.hostIds).toEqual(['local'])
+    expect(result.hostScope?.omittedHostIds).toEqual(['runtime:env-9'])
+  })
+
+  it('keeps a repo-known paired runtime omitted in a worktree-scoped listing', async () => {
+    const baseStore = makeStore()
+    const repos = [
+      REPOS[0]!,
+      {
+        id: 'repo-runtime',
+        path: '/remote/runtime-worktree',
+        displayName: 'runtime',
+        badgeColor: '#000000',
+        addedAt: 0,
+        executionHostId: 'runtime:env-9' as const
+      }
+    ]
+    const runtime = makeRuntime([], {
+      ...baseStore,
+      getRepos: vi.fn(() => repos),
+      getRepo: vi.fn((id: string) => repos.find((repo) => repo.id === id)),
+      getWorkspaceSessionHostIds: vi.fn(() => ['local'])
+    })
+
+    const result = await runtime.listTerminals(`id:${LOCAL_WORKTREE_ID}`)
+
+    expect(result.hostScope?.hostIds).toEqual(['local'])
+    expect(result.hostScope?.omittedHostIds).toEqual(['runtime:env-9'])
+  })
+
+  it('covers a queried SSH host used only by a folder workspace', async () => {
+    const baseStore = makeStore()
+    const folderWorkspace = makeSshFolderWorkspace()
+    const runtime = makeRuntime([], {
+      ...baseStore,
+      getRepos: vi.fn(() => [REPOS[0]!]),
+      getRepo: vi.fn((id: string) => (id === REPOS[0]!.id ? REPOS[0] : undefined)),
+      getWorkspaceSessionHostIds: vi.fn(() => ['local']),
+      getFolderWorkspaces: vi.fn(() => [folderWorkspace])
+    })
+    runtime.setPtyController({
+      spawn: vi.fn(async () => ({ id: 'never' })),
+      write: () => true,
+      kill: () => true,
+      listProcesses: vi.fn(async () => []),
+      listProcessesWithHostScope: vi.fn(async () => ({
+        processes: [],
+        hostIds: ['local', 'ssh:box-2']
+      }))
+    } as never)
+
+    const result = await runtime.listTerminals(`id:${folderWorkspaceKey(folderWorkspace.id)}`)
+
+    expect(result.hostScope?.hostIds).toEqual(['ssh:box-2'])
+    expect(result.hostScope?.omittedHostIds).toEqual(['local'])
+  })
+
+  it('keeps a disconnected folder-workspace SSH host omitted', async () => {
+    const baseStore = makeStore()
+    const folderWorkspace = makeSshFolderWorkspace()
+    const runtime = makeRuntime([], {
+      ...baseStore,
+      getRepos: vi.fn(() => [REPOS[0]!]),
+      getRepo: vi.fn((id: string) => (id === REPOS[0]!.id ? REPOS[0] : undefined)),
+      getWorkspaceSessionHostIds: vi.fn(() => ['local']),
+      getFolderWorkspaces: vi.fn(() => [folderWorkspace])
+    })
+    runtime.setPtyController({
+      spawn: vi.fn(async () => ({ id: 'never' })),
+      write: () => true,
+      kill: () => true,
+      listProcesses: vi.fn(async () => {
+        throw new Error('relay unavailable')
+      })
+    } as never)
+
+    const result = await runtime.listTerminals(`id:${folderWorkspaceKey(folderWorkspace.id)}`)
+
+    expect(result.hostScope?.hostIds).toEqual([])
+    expect(result.hostScope?.omittedHostIds).toEqual(['local', 'ssh:box-2'])
+  })
+
+  it('keeps a disconnected SSH host omitted when only local inventory answered', async () => {
+    const runtime = makeRuntime([])
+    runtime.setPtyController({
+      spawn: vi.fn(async () => ({ id: 'never' })),
+      write: () => true,
+      kill: () => true,
+      listProcesses: vi.fn(async () => [])
+    } as never)
+
+    const result = await runtime.listTerminals()
+
+    expect(result.hostScope?.hostIds).toEqual(['local'])
+    expect(result.hostScope?.omittedHostIds).toEqual(['ssh:box-1'])
+  })
+
+  it('marks every known host omitted when process inventory is unverifiable', async () => {
+    const runtime = makeRuntime([])
+    runtime.setPtyController({
+      spawn: vi.fn(async () => ({ id: 'never' })),
+      write: () => true,
+      kill: () => true,
+      listProcesses: vi.fn(async () => {
+        throw new Error('relay unavailable')
+      })
+    } as never)
+
+    const result = await runtime.listTerminals()
+
+    expect(result.hostScope?.hostIds).toEqual([])
+    expect(result.hostScope?.omittedHostIds).toEqual(['local', 'ssh:box-1'])
   })
 
   it('reports the hosts a worktree-scoped listing skipped, so an empty result is not absolute', async () => {

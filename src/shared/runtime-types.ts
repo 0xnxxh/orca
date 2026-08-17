@@ -521,8 +521,8 @@ export type RuntimeTerminalVisualLayout = {
  *  answering runtime names them — `_meta.runtimeId` says which runtime that is. */
 export type RuntimeTerminalListHostScope = {
   hostIds: ExecutionHostId[]
-  /** Known hosts this listing skipped; a live terminal on one of them is absent
-   *  from `terminals` without being dead. */
+  /** Known hosts this listing skipped; a live terminal on one of them can be
+   *  absent from `terminals` without having exited. */
   omittedHostIds: ExecutionHostId[]
 }
 

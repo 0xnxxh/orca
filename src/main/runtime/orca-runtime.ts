@@ -1869,6 +1869,10 @@ type RuntimePtyController = {
   // Why: exact-id mobile polls should not enumerate every local and SSH PTY.
   hasPty?(ptyId: string): boolean | null
   listProcesses?(connectionId?: string | null): Promise<PtyProcessInfo[]>
+  listProcessesWithHostScope?(): Promise<{
+    processes: PtyProcessInfo[]
+    hostIds: ExecutionHostId[]
+  }>
   serializeBuffer?(
     ptyId: string,
     opts?: { scrollbackRows?: number; altScreenForcesZeroRows?: boolean }
@@ -1913,6 +1917,7 @@ type PtyControllerInventory = Readonly<{
   // must consult the unscoped inventory or a misattributed live PTY reads as dead.
   allLivePtyIds: ReadonlySet<string>
   terminalIdentityByPtyId: ReadonlyMap<string, PtyControllerTerminalIdentity>
+  queriedHostIds: ReadonlySet<ExecutionHostId>
 }>
 
 type WorktreeStartupDraftPaste = {
@@ -5818,15 +5823,37 @@ export class OrcaRuntimeService {
     return worktreeIds
   }
 
-  // Every execution host this runtime can answer for; 'local' is always one of
-  // them because the runtime itself runs somewhere.
-  private listKnownExecutionHostIds(): Set<ExecutionHostId> {
+  // Every execution host known to this runtime; knowledge is not coverage.
+  private listKnownExecutionHostIds(
+    additionalHostIds: Iterable<ExecutionHostId> = [],
+    includeConfiguredHosts = true
+  ): Set<ExecutionHostId> {
     const hostIds = new Set<ExecutionHostId>([LOCAL_EXECUTION_HOST_ID])
-    for (const repo of this.store?.getRepos?.() ?? []) {
-      hostIds.add(getRepoExecutionHostId(repo))
-    }
     for (const hostId of this.store?.getWorkspaceSessionHostIds?.() ?? []) {
       hostIds.add(hostId)
+    }
+    for (const hostId of additionalHostIds) {
+      hostIds.add(hostId)
+    }
+    if (!includeConfiguredHosts) {
+      return hostIds
+    }
+    const repos = this.store?.getRepos?.() ?? []
+    for (const repo of repos) {
+      hostIds.add(getRepoExecutionHostId(repo))
+    }
+    const projectGroups = this.store?.getProjectGroups?.() ?? []
+    for (const workspace of this.store?.getFolderWorkspaces?.() ?? []) {
+      const connection = inferFolderWorkspacePathConnection({
+        folderPath: workspace.folderPath,
+        projectGroupId: workspace.projectGroupId,
+        connectionId: workspace.connectionId ?? null,
+        projectGroups,
+        repos
+      })
+      if (connection.kind === 'ssh') {
+        hostIds.add(toSshExecutionHostId(connection.connectionId))
+      }
     }
     return hostIds
   }
@@ -16653,7 +16680,12 @@ export class OrcaRuntimeService {
 
     return {
       terminals: listedTerminals,
-      hostScope: this.buildTerminalListHostScope(targetWorktreeId, matchingTerminals),
+      hostScope: this.buildTerminalListHostScope(
+        targetWorktreeId,
+        matchingTerminals,
+        worktreesById.values(),
+        controllerInventory?.queriedHostIds ?? new Set()
+      ),
       ...(visualLayouts.length > 0 ? { visualLayouts } : {}),
       topologyRevisions: Object.fromEntries(
         [...new Set(matchingTerminals.map((terminal) => terminal.worktreeId))].map((worktreeId) => [
@@ -16667,25 +16699,38 @@ export class OrcaRuntimeService {
   }
 
   // A worktree-scoped request answers for one host only, so name the hosts it
-  // skipped: absence from a scoped listing is not evidence a worker died.
+  // skipped: absence from a scoped listing is not evidence a worker exited.
   private buildTerminalListHostScope(
     targetWorktreeId: string | null,
-    terminals: readonly RuntimeTerminalSummary[]
+    terminals: readonly RuntimeTerminalSummary[],
+    worktrees: Iterable<ResolvedWorktree>,
+    queriedHostIds: ReadonlySet<ExecutionHostId>
   ): RuntimeTerminalListHostScope {
-    const knownHostIds = this.listKnownExecutionHostIds()
+    const knownHostIds = this.listKnownExecutionHostIds(
+      queriedHostIds,
+      targetWorktreeId !== FLOATING_TERMINAL_WORKTREE_ID
+    )
+    for (const worktree of worktrees) {
+      if (worktree.hostId) {
+        knownHostIds.add(worktree.hostId)
+      }
+    }
+    for (const terminal of terminals) {
+      if (terminal.executionHostId) {
+        knownHostIds.add(terminal.executionHostId)
+      }
+    }
     const scopedHostId = targetWorktreeId
       ? this.tryGetWorkspaceSessionHostIdForWorktree(targetWorktreeId)
       : null
-    const coveredHostIds = new Set<ExecutionHostId>(
-      targetWorktreeId ? (scopedHostId ? [scopedHostId] : []) : knownHostIds
+    const candidates = targetWorktreeId ? (scopedHostId ? [scopedHostId] : []) : knownHostIds
+    // Paired runtimes own a separate control plane. Mirrored rows are evidence
+    // for those rows only; this runtime cannot claim their complete inventory.
+    const coveredHostIds = new Set(
+      [...candidates].filter(
+        (hostId) => queriedHostIds.has(hostId) && parseExecutionHostId(hostId)?.kind !== 'runtime'
+      )
     )
-    // A listed row's host is covered by definition, even when it is a paired
-    // runtime this host would not otherwise enumerate.
-    for (const terminal of terminals) {
-      if (terminal.executionHostId) {
-        coveredHostIds.add(terminal.executionHostId)
-      }
-    }
     return {
       hostIds: [...coveredHostIds].sort(),
       omittedHostIds: [...knownHostIds].filter((hostId) => !coveredHostIds.has(hostId)).sort()
@@ -31249,7 +31294,8 @@ export class OrcaRuntimeService {
         return {
           livePtyIds: targetedLiveness,
           allLivePtyIds: targetedLiveness,
-          terminalIdentityByPtyId: new Map()
+          terminalIdentityByPtyId: new Map(),
+          queriedHostIds: new Set([LOCAL_EXECUTION_HOST_ID])
         }
       }
     }
@@ -31264,8 +31310,28 @@ export class OrcaRuntimeService {
     } else {
       this.ptyControllerInventoryGenerationByProvider.set(providerKey, inventoryGeneration)
     }
+    const processInventory =
+      connectionId === undefined && this.ptyController.listProcessesWithHostScope
+        ? this.ptyController.listProcessesWithHostScope()
+        : this.ptyController.listProcesses(connectionId).then((processes) => {
+            const hostIds = new Set<ExecutionHostId>()
+            if (connectionId === undefined || connectionId === null) {
+              hostIds.add(LOCAL_EXECUTION_HOST_ID)
+            } else {
+              hostIds.add(toSshExecutionHostId(connectionId))
+            }
+            if (connectionId === undefined) {
+              for (const process of processes) {
+                const ssh = parseAppSshPtyId(process.id)
+                if (ssh) {
+                  hostIds.add(toSshExecutionHostId(ssh.connectionId))
+                }
+              }
+            }
+            return { processes, hostIds: [...hostIds] }
+          })
     const sessionsResult = await withTimeoutResult(
-      this.ptyController.listProcesses(connectionId),
+      processInventory,
       deadline === undefined
         ? PTY_CONTROLLER_LIST_TIMEOUT_MS
         : Math.max(1, Math.min(PTY_CONTROLLER_LIST_TIMEOUT_MS, deadline - Date.now()))
@@ -31286,7 +31352,8 @@ export class OrcaRuntimeService {
     if (!isCurrentInventory) {
       return null
     }
-    const sessions = sessionsResult.value
+    const sessions = sessionsResult.value.processes
+    const queriedHostIds = new Set(sessionsResult.value.hostIds)
     const controllerIdentityByPtyId = new Map<string, PtyControllerTerminalIdentity>()
     const ptyIdByControllerHandle = new Map<string, string>()
     const ambiguousControllerPtyIds = new Set<string>()
@@ -31465,7 +31532,8 @@ export class OrcaRuntimeService {
     return {
       livePtyIds: targetWorktreeId ? selectedLivePtyIds : allLivePtyIds,
       allLivePtyIds,
-      terminalIdentityByPtyId: controllerIdentityByPtyId
+      terminalIdentityByPtyId: controllerIdentityByPtyId,
+      queriedHostIds
     }
   }
 
