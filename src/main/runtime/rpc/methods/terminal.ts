@@ -2957,7 +2957,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         })
         const subscriptionId = `${params.terminal}:${clientId}`
         // Why: chat needs the input-floor ack without registering a view subscriber or transporting duplicate PTY output.
-        runtime.registerSubscriptionCleanup(
+        const registration = runtime.registerOwnedSubscriptionCleanup(
           subscriptionId,
           () => {
             closed = true
@@ -2969,8 +2969,8 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         )
         void runtime
           .waitForTerminal(params.terminal, { condition: 'exit', signal })
-          .then(() => runtime.cleanupSubscription(subscriptionId))
-          .catch(() => runtime.cleanupSubscription(subscriptionId))
+          .then(() => registration.releaseIfCurrent())
+          .catch(() => registration.releaseIfCurrent())
         try {
           // Why: a lease-only subscriber has no terminal view, so its cached viewport must never phone-fit the PTY.
           await runtime.handleMobileSubscribe(ptyId, clientId, undefined)
@@ -2978,14 +2978,14 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             // Why: a disconnect can win the awaited subscribe and resurrect mobile presence after cleanup already released it.
             runtime.handleMobileUnsubscribe(ptyId, clientId)
             if (!closed) {
-              runtime.cleanupSubscription(subscriptionId)
+              registration.releaseIfCurrent()
             }
             return
           }
           emit({ type: 'subscribed', streamId: null, lines: [], truncated: false })
           await streamClosed
         } catch (error) {
-          runtime.cleanupSubscription(subscriptionId)
+          registration.releaseIfCurrent()
           throw error
         }
         return
@@ -3005,7 +3005,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           resolveStream = resolve
         })
         // Why: register before viewport/snapshot awaits so a socket close can't orphan the stream listeners or its remote-desktop width floor.
-        runtime.registerSubscriptionCleanup(
+        const registration = runtime.registerOwnedSubscriptionCleanup(
           subscriptionId,
           () => {
             closed = true
@@ -3036,13 +3036,13 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             )
           }
           if (closed || signal?.aborted) {
-            runtime.cleanupSubscription(subscriptionId)
+            registration.releaseIfCurrent()
             return
           }
           const read = await runtime.readTerminal(params.terminal)
           const serialized = await serializeBudgetedMobileSnapshot(runtime, ptyId, false)
           if (closed || signal?.aborted) {
-            runtime.cleanupSubscription(subscriptionId)
+            registration.releaseIfCurrent()
             return
           }
           const size = runtime.getTerminalSize(ptyId)
@@ -3091,11 +3091,11 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           // Why: bind the exit-waiter to the connection signal so socket close/error removes it instead of leaking until real exit.
           void runtime
             .waitForTerminal(params.terminal, { condition: 'exit', signal })
-            .then(() => runtime.cleanupSubscription(subscriptionId))
-            .catch(() => runtime.cleanupSubscription(subscriptionId))
+            .then(() => registration.releaseIfCurrent())
+            .catch(() => registration.releaseIfCurrent())
           await streamClosed
         } catch (error) {
-          runtime.cleanupSubscription(subscriptionId)
+          registration.releaseIfCurrent()
           throw error
         }
         return
@@ -3131,7 +3131,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
       })
       // Why: register cleanup before any await so a mid-subscribe disconnect still removes mobile presence; client-scoped ids also allow parallel desktop subscribers.
       const subscriptionId = clientId ? `${params.terminal}:${clientId}` : params.terminal
-      runtime.registerSubscriptionCleanup(
+      const registration = runtime.registerOwnedSubscriptionCleanup(
         subscriptionId,
         () => {
           outputBatcher?.flush()
@@ -3153,10 +3153,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         connectionId
       )
       // Why: bind the exit-waiter to the connection signal so socket close/error removes it instead of leaking until real exit.
+      // Why releaseIfCurrent: the signal aborts per socket, so after a reconnect rebinds
+      // this id a keyed teardown here would kill the replacement stream (STA-4510).
       void runtime
         .waitForTerminal(params.terminal, { condition: 'exit', signal })
-        .then(() => runtime.cleanupSubscription(subscriptionId))
-        .catch(() => runtime.cleanupSubscription(subscriptionId))
+        .then(() => registration.releaseIfCurrent())
+        .catch(() => registration.releaseIfCurrent())
       const sendFrame = (
         opcode: TerminalStreamOpcode,
         payload: Uint8Array<ArrayBufferLike> = new Uint8Array(),
@@ -3714,7 +3716,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             })
           : () => {}
       } catch (error) {
-        runtime.cleanupSubscription(subscriptionId)
+        registration.releaseIfCurrent()
         throw error
       }
 
@@ -3724,13 +3726,22 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
   defineMethod({
     name: 'terminal.unsubscribe',
     params: TerminalUnsubscribe,
-    handler: async (params, { runtime }) => {
+    handler: async (params, { runtime, connectionId }) => {
+      // Why: only the connection that owns the subscription may retire it — a stale
+      // unsubscribe from the pre-reconnect socket names an id the replacement now owns.
+      let unsubscribed = runtime.cleanupSubscriptionIfOwnedByConnection(
+        params.subscriptionId,
+        connectionId
+      )
       // Why: older builds send a bare-handle subscriptionId, so also try the reconstructed `${terminal}:${clientId}` composite key.
-      runtime.cleanupSubscription(params.subscriptionId)
       if (params.client && !params.subscriptionId.includes(':')) {
-        runtime.cleanupSubscription(`${params.subscriptionId}:${params.client.id}`)
+        unsubscribed =
+          runtime.cleanupSubscriptionIfOwnedByConnection(
+            `${params.subscriptionId}:${params.client.id}`,
+            connectionId
+          ) || unsubscribed
       }
-      return { unsubscribed: true }
+      return { unsubscribed }
     }
   }),
   defineMethod({
