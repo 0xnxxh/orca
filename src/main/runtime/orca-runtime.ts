@@ -13796,7 +13796,9 @@ export class OrcaRuntimeService {
     subscriptionId: string,
     connectionId: string | undefined
   ): boolean {
-    // Why: in-process callers have no socket identity; preserve their direct teardown.
+    // Why: an absent connectionId means a connection-less caller — the local
+    // unix-socket dispatch path, gated by the 0o600 metadata token. That tier keeps
+    // unconditional teardown authority; this guard scopes socket clients only.
     if (!connectionId) {
       this.cleanupSubscription(subscriptionId)
       return true

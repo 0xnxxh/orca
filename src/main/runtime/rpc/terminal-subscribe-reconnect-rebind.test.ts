@@ -8,113 +8,7 @@ import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame
 } from '../../../shared/terminal-stream-protocol'
-
-// Faithful port of the real subscription registry (orca-runtime.ts:13677-13815).
-// The existing subscribe tests use a naive Map that never evicts the prior
-// generation, which is precisely what hides the reconnect race.
-function createSubscriptionRegistry() {
-  const cleanups = new Map<string, () => void | Promise<void>>()
-  const byConnection = new Map<string, Set<string>>()
-  const connectionByEntry = new Map<string, string>()
-
-  const removeIndex = (id: string): void => {
-    const connectionId = connectionByEntry.get(id)
-    if (!connectionId) {
-      return
-    }
-    connectionByEntry.delete(id)
-    const set = byConnection.get(connectionId)
-    if (!set) {
-      return
-    }
-    set.delete(id)
-    if (set.size === 0) {
-      byConnection.delete(connectionId)
-    }
-  }
-
-  const cleanupSubscription = (id: string): void => {
-    const cleanup = cleanups.get(id)
-    if (!cleanup) {
-      return
-    }
-    void Promise.resolve(cleanup()).then(() => {
-      if (cleanups.get(id) !== cleanup) {
-        return
-      }
-      cleanups.delete(id)
-      removeIndex(id)
-    })
-  }
-
-  const registerSubscriptionCleanup = (
-    id: string,
-    cleanup: () => void | Promise<void>,
-    connectionId?: string
-  ): void => {
-    if (cleanups.get(id)) {
-      removeIndex(id)
-      cleanupSubscription(id)
-    }
-    cleanups.set(id, cleanup)
-    if (!connectionId) {
-      return
-    }
-    let set = byConnection.get(connectionId)
-    if (!set) {
-      set = new Set()
-      byConnection.set(connectionId, set)
-    }
-    set.add(id)
-    connectionByEntry.set(id, connectionId)
-  }
-
-  const cleanupSubscriptionsForConnection = (connectionId: string): void => {
-    const set = byConnection.get(connectionId)
-    if (!set) {
-      return
-    }
-    for (const id of Array.from(set)) {
-      if (connectionByEntry.get(id) !== connectionId) {
-        set.delete(id)
-        continue
-      }
-      cleanupSubscription(id)
-    }
-    if (set.size === 0) {
-      byConnection.delete(connectionId)
-    }
-  }
-
-  const cleanupOwnedSubscription = (
-    id: string,
-    expectedCleanup: () => void | Promise<void>
-  ): void => {
-    if (cleanups.get(id) !== expectedCleanup) {
-      return
-    }
-    cleanupSubscription(id)
-  }
-
-  const registerOwnedSubscriptionCleanup = (
-    id: string,
-    cleanup: () => void | Promise<void>,
-    connectionId?: string
-  ) => {
-    registerSubscriptionCleanup(id, cleanup, connectionId)
-    return {
-      isCurrent: () => cleanups.get(id) === cleanup,
-      releaseIfCurrent: () => cleanupOwnedSubscription(id, cleanup)
-    }
-  }
-
-  return {
-    registerSubscriptionCleanup,
-    registerOwnedSubscriptionCleanup,
-    cleanupSubscription,
-    cleanupSubscriptionsForConnection
-  }
-}
+import { createSubscriptionRegistryDouble } from './subscription-registry-test-double'
 
 const makeRequest = (params: unknown): RpcRequest => ({
   id: 'req-1',
@@ -131,7 +25,7 @@ const subscribeParams = {
 
 describe('terminal.subscribe reconnect rebind (STA-4510)', () => {
   it('keeps the rebound live stream when the pre-reconnect connection aborts', async () => {
-    const registry = createSubscriptionRegistry()
+    const registry = createSubscriptionRegistryDouble()
     const dataListeners: ((data: string, meta?: { seq?: number; rawLength?: number }) => void)[] =
       []
 
