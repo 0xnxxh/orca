@@ -28,7 +28,6 @@ export class SshPtyProviderOutputState {
     args: {
       mux: SshChannelMultiplexer
       toAppPtyId: (id: string) => string
-      acceptLivePty: (id: string) => void
       recordExit: (relayPtyId: string, incarnationId: unknown) => void
     }
   ) {
@@ -44,8 +43,6 @@ export class SshPtyProviderOutputState {
       peekPtyIncarnation: (relayPtyId) => this.incarnationByRelayPtyId.get(relayPtyId),
       recordExit: (relayPtyId, incarnationId) => {
         args.recordExit(relayPtyId, incarnationId)
-        this.incarnationByRelayPtyId.delete(relayPtyId)
-        this.pausedRelayPtyIds.delete(relayPtyId)
       }
     })
   }
@@ -126,6 +123,12 @@ export class SshPtyProviderOutputState {
     ) {
       this.incarnationByRelayPtyId.set(relayPtyId, incarnationId)
     }
+  }
+
+  acceptExit(relayPtyId: string): void {
+    this.subscription?.acceptExit(relayPtyId)
+    this.incarnationByRelayPtyId.delete(relayPtyId)
+    this.pausedRelayPtyIds.delete(relayPtyId)
   }
 
   private resolvePtyIncarnation(relayPtyId: string, incarnationId: unknown): string {

@@ -59,7 +59,6 @@ export class SshPtyProvider implements IPtyProvider {
     this.outputState = new SshPtyProviderOutputState(providerGeneration, {
       mux,
       toAppPtyId: (id) => this.toAppPtyId(id),
-      acceptLivePty: (id) => this.acceptLivePty(id),
       recordExit: (relayPtyId, incarnationId) => {
         this.spawnExitRaces.recordExit(relayPtyId, incarnationId)
       }
@@ -310,6 +309,7 @@ export class SshPtyProvider implements IPtyProvider {
   }
 
   acceptExitedPty(id: string): void {
+    this.outputState.acceptExit(this.toRelayPtyId(id))
     this.livenessState.acceptExited(id)
   }
 

@@ -26,6 +26,7 @@ export type SshPtyReceivingActivationLease = Readonly<{
 
 export type SshPtyNotificationSubscription = Readonly<{
   dispose: () => void
+  acceptExit: (relayPtyId: string) => void
   installReceivingActivation: (
     relayPtyId: string,
     activation: PtySourceReceivingActivation
@@ -39,7 +40,6 @@ export function subscribeSshPtyNotifications(args: {
   rejectedDataListeners?: Set<SshPtyDataCallback>
   replayListeners: Set<SshPtyReplayCallback>
   exitListeners: Set<SshPtyExitCallback>
-  acceptLivePty: (id: string) => void
   recordExit: (relayPtyId: string, incarnationId: unknown) => void
   providerGeneration: number
   resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
@@ -70,7 +70,6 @@ export function subscribeSshPtyNotifications(args: {
   }
   const publishData = (pending: PendingSshPtySourceData): void => {
     const payload = toDataPayload(pending)
-    args.acceptLivePty(payload.id)
     for (const listener of args.dataListeners) {
       listener(payload)
     }
@@ -163,9 +162,7 @@ export function subscribeSshPtyNotifications(args: {
     if (method === 'pty.exit') {
       const id = args.toAppPtyId(relayPtyId)
       const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
-      rejectedPublications.delete(relayPtyId)
       args.recordExit(relayPtyId, params.incarnationId)
-      sourceDeliveries.recordExit(relayPtyId)
       for (const listener of args.exitListeners) {
         listener({
           id,
@@ -181,7 +178,6 @@ export function subscribeSshPtyNotifications(args: {
     }
     if (method === 'pty.replay') {
       const id = args.toAppPtyId(relayPtyId)
-      args.acceptLivePty(id)
       for (const listener of args.replayListeners) {
         listener({ id, data: params.data as string })
       }
@@ -209,6 +205,10 @@ export function subscribeSshPtyNotifications(args: {
     publishData(pending)
   })
   return Object.freeze({
+    acceptExit: (relayPtyId) => {
+      rejectedPublications.delete(relayPtyId)
+      sourceDeliveries.recordExit(relayPtyId)
+    },
     dispose: () => {
       rejectedPublications.clear()
       dispose()

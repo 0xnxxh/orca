@@ -88,6 +88,20 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(provider.probePtyLiveness(id)).resolves.toBe(true)
   })
 
+  it('does not revive an exited PTY from unvalidated data or replay', async () => {
+    const id = 'ssh:conn-1@@pty-exited'
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    provider.onData(() => {})
+    provider.onReplay(() => {})
+    provider.acceptExitedPty(id)
+
+    notificationHandler(mux)('pty.data', { id: 'pty-exited', data: 'stale' })
+    notificationHandler(mux)('pty.replay', { id: 'pty-exited', data: 'stale replay' })
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBe(false)
+  })
+
   it('bounds exited PTY evidence and evicts to unverifiable', async () => {
     const provider = new SshPtyProvider('conn-1', createMockMux() as never)
     for (let index = 0; index <= MAX_SSH_PTY_EXIT_TOMBSTONES; index += 1) {

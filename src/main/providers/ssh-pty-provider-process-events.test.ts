@@ -176,6 +176,29 @@ describe('SshPtyProvider process listings and events', () => {
     ])
   })
 
+  it('keeps the current incarnation after a stale raw exit until owner acceptance', async () => {
+    const dataHandler = vi.fn()
+    provider.onData(dataHandler)
+    mux.request.mockResolvedValue([
+      { id: 'pty-1', incarnationId: 'incarnation-current', cwd: '/home', title: 'zsh' }
+    ])
+    await provider.listProcesses()
+    const notify = mux.onNotification.mock.calls[0][0]
+
+    notify('pty.exit', { id: 'pty-1', code: 0, incarnationId: 'incarnation-stale' })
+    notify('pty.data', { id: 'pty-1', data: 'current-output' })
+
+    expect(dataHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ ptyIncarnation: 'incarnation-current' })
+    )
+
+    provider.acceptExitedPty(scopedPty1)
+    notify('pty.data', { id: 'pty-1', data: 'new-output' })
+    expect(dataHandler).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ptyIncarnation: 'legacy:1:1:pty-1' })
+    )
+  })
+
   it('supports listener removal, fanout, and connection namespaces', () => {
     const removed = vi.fn()
     const first = vi.fn()

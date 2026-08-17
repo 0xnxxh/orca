@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 
-const { acceptOutputExitMock, muxRequestMock } = vi.hoisted(() => ({
+const { acceptOutputDataMock, acceptOutputExitMock, muxRequestMock } = vi.hoisted(() => ({
+  acceptOutputDataMock: vi.fn().mockResolvedValue(undefined),
   acceptOutputExitMock: vi.fn().mockResolvedValue(undefined),
   muxRequestMock: vi.fn()
 }))
@@ -17,7 +18,7 @@ vi.mock('./ssh-pty-consumer-session', () => ({
   }))
 }))
 vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
-  acceptSshPtyOutputData: vi.fn().mockResolvedValue(undefined),
+  acceptSshPtyOutputData: acceptOutputDataMock,
   acceptSshPtyOutputExit: acceptOutputExitMock,
   allocateSshPtyProviderGeneration: vi.fn(() => 31),
   beginSshPtyOutputGenerationMigration: vi.fn(() => ({
@@ -101,6 +102,7 @@ describe('SSH relay PTY incarnation exits', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     muxRequestMock.mockResolvedValue([])
+    acceptOutputDataMock.mockResolvedValue(undefined)
     mockDeploySuccess()
     vi.mocked(isCurrentPtyExit).mockReturnValue(true)
   })
@@ -166,5 +168,45 @@ describe('SSH relay PTY incarnation exits', () => {
     )
     expect(acceptExitedPty).toHaveBeenCalledExactlyOnceWith('ssh:target-1@@pty-reused')
     expect(runtime.onPtyExit).not.toHaveBeenCalled()
+  })
+
+  it('promotes liveness only after current output passes intake fencing', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
+      onData: ReturnType<typeof vi.fn>
+    }
+    const onData = provider.onData.mock.calls[0]?.[0] as (payload: {
+      id: string
+      data: string
+      providerGeneration: number
+      ptyIncarnation: string
+    }) => void
+    const acceptLivePty = vi.fn()
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      providerGeneration: 31,
+      acceptLivePty
+    } as never)
+    acceptOutputDataMock.mockRejectedValueOnce(new Error('stale incarnation'))
+
+    onData({
+      id: 'ssh:target-1@@pty-reused',
+      data: 'stale',
+      providerGeneration: 31,
+      ptyIncarnation: 'old-incarnation'
+    })
+    await vi.waitFor(() => expect(acceptOutputDataMock).toHaveBeenCalledTimes(1))
+    expect(acceptLivePty).not.toHaveBeenCalled()
+
+    onData({
+      id: 'ssh:target-1@@pty-reused',
+      data: 'current',
+      providerGeneration: 31,
+      ptyIncarnation: 'current-incarnation'
+    })
+    await vi.waitFor(() =>
+      expect(acceptLivePty).toHaveBeenCalledExactlyOnceWith('ssh:target-1@@pty-reused')
+    )
   })
 })

@@ -1853,6 +1853,12 @@ export class SshRelaySession {
       transformed: payload.transformed === true,
       ...(typeof payload.seq === 'number' ? { sequence: payload.seq } : {}),
       ...(source ? { source } : {})
+    }).then((receipt) => {
+      const provider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
+      if (provider?.providerGeneration === payload.providerGeneration) {
+        provider.acceptLivePty(payload.id)
+      }
+      return receipt
     })
   }
 

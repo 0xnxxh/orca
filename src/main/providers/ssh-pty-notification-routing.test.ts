@@ -16,7 +16,6 @@ function createSubscription() {
   const replayListeners = new Set<(payload: { id: string; data: string }) => void>()
   const exitListeners = new Set<(payload: { id: string; code: number }) => void>()
   const livePtyIds = new Set<string>()
-  const acceptLivePty = vi.fn((id: string) => livePtyIds.add(id))
   const recordExit = vi.fn()
   const toAppPtyId = vi.fn((id: string) => `ssh:conn@@${id}`)
   const resolvePtyIncarnation = vi.fn((id: string) => `incarnation:${id}`)
@@ -27,7 +26,6 @@ function createSubscription() {
     dataListeners: dataListeners as never,
     replayListeners: replayListeners as never,
     exitListeners: exitListeners as never,
-    acceptLivePty,
     recordExit,
     providerGeneration: 7,
     resolvePtyIncarnation,
@@ -50,9 +48,9 @@ function createSubscription() {
     replayListeners,
     exitListeners,
     livePtyIds,
-    acceptLivePty,
     recordExit,
     resolvePtyIncarnation,
+    acceptExit: subscription.acceptExit,
     installReceivingActivation: subscription.installReceivingActivation
   }
 }
@@ -93,7 +91,7 @@ describe('subscribeSshPtyNotifications', () => {
     handler('pty.data', { id: 'pty-1', data: 'hello', rawLength: 5, seq: 9 })
 
     expect(toAppPtyId).toHaveBeenCalledWith('pty-1')
-    expect(livePtyIds.has('ssh:conn@@pty-1')).toBe(true)
+    expect(livePtyIds.has('ssh:conn@@pty-1')).toBe(false)
     expect(onData).toHaveBeenCalledWith({
       id: 'ssh:conn@@pty-1',
       data: 'hello',
@@ -548,11 +546,11 @@ describe('subscribeSshPtyNotifications', () => {
 
     expect(onRecoveryData).toHaveBeenCalledTimes(2)
     expect(onData).toHaveBeenCalledWith(expect.objectContaining({ data: 'live' }))
-    expect(livePtyIds).toContain('ssh:conn@@pty-1')
+    expect(livePtyIds).not.toContain('ssh:conn@@pty-1')
   })
 
-  it('retires an exited private recovery when its activation commits', () => {
-    const { handler, mux, dataListeners, livePtyIds, installReceivingActivation } =
+  it('retires an owner-accepted exit private recovery when its activation commits', () => {
+    const { handler, mux, dataListeners, livePtyIds, acceptExit, installReceivingActivation } =
       createSubscription()
     const onData = vi.fn()
     const onRecoveryData = vi.fn()
@@ -571,6 +569,7 @@ describe('subscribeSshPtyNotifications', () => {
     const recoveryLease = lease.transferToRecovery(onRecoveryData)
 
     handler('pty.exit', { id: 'pty-1', code: 0, incarnationId: 'incarnation-1' })
+    acceptExit('pty-1')
     recoveryLease.commit()
     handler('pty.data', {
       id: 'pty-1',
