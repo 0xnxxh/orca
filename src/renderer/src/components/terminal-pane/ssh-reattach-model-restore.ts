@@ -61,6 +61,12 @@ export function decideSshReattachPaintSource(args: {
   return contentLength === 0 ? 'relay-replay' : 'main-model-snapshot'
 }
 
+const ESCAPE = String.fromCharCode(27)
+/** Matches a private-mode set/reset once the leading ESC has been split away. */
+const PRIVATE_MODE_SEQUENCE = /^\[\?([0-9;]*)([hl])/
+/** 47 and 1047 count alongside 1049: older apps still use them. */
+const ALTERNATE_SCREEN_MODES = new Set(['47', '1047', '1049'])
+
 /**
  * The last alternate-screen transition in a relay replay, or null if it holds none.
  *
@@ -76,9 +82,13 @@ export function lastAlternateScreenTransition(
     return null
   }
   let transition: 'entered' | 'exited' | null = null
-  // A tail can begin mid-escape, so match forward rather than assuming a well-formed start.
-  for (const match of replay.matchAll(/\x1b\[\?([0-9;]*)([hl])/g)) {
-    if (match[1].split(';').some((mode) => mode === '47' || mode === '1047' || mode === '1049')) {
+  // Split on ESC rather than matching it. Every private-mode sequence begins immediately after one,
+  // so the two are equivalent — and no-control-regex forbids the escape inside a pattern, which is
+  // worth respecting rather than suppressing when the alternative reads no worse. A tail can begin
+  // mid-escape, so the first chunk is ordinary text and simply fails to match.
+  for (const chunk of replay.split(ESCAPE)) {
+    const match = PRIVATE_MODE_SEQUENCE.exec(chunk)
+    if (match?.[1].split(';').some((mode) => ALTERNATE_SCREEN_MODES.has(mode))) {
       transition = match[2] === 'h' ? 'entered' : 'exited'
     }
   }

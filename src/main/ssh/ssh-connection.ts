@@ -43,12 +43,8 @@ import {
   DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
   orderServerHostKeyAlgorithms
 } from './ssh-host-key-verifier'
-import {
-  HostKeyVerificationError,
-  isHostKeyVerificationError,
-  strictestHostKeyChecking
-} from './ssh-host-key-decision'
-import { resolveSiteStrictHostKeyChecking, sshGArgsForHost } from './ssh-g-config-resolution'
+import { HostKeyVerificationError, isHostKeyVerificationError } from './ssh-host-key-decision'
+import { siteConfigMayRestrictHostKeys, sshGArgsForHost } from './ssh-g-config-resolution'
 import {
   boundSshHostKeyStoreFile,
   loadTrustedHostKeys,
@@ -1249,14 +1245,11 @@ export class SshConnection {
     const sshGSuppressedSiteConfig =
       hostKeyResolved !== null &&
       sshGArgsForHost(this.target.configHost || this.target.label).includes('-F')
-    // Being blind to the site policy is only a reason to refuse if we cannot go and read it. Ask ssh
-    // for the system config on its own; a value means we are no longer blind, and only a probe that
-    // fails leaves the strict rule standing. Costs one `ssh -G` on the rare path that already needed
-    // -F, and nothing on the common one.
-    const siteStrictHostKeyChecking = sshGSuppressedSiteConfig
-      ? await resolveSiteStrictHostKeyChecking(this.target.configHost || this.target.label)
-      : null
-    const siteConfigSuppressed = sshGSuppressedSiteConfig && siteStrictHostKeyChecking === null
+    // Being blind to the site policy is only a reason to refuse if the site config could actually be
+    // setting one. ssh cannot answer that — `-F` excludes the system config as surely as the user's,
+    // and `-F /dev/null` reports built-in defaults rather than inverting the exclusion — so the file
+    // is read instead, conservatively: any doubt keeps the refusal.
+    const siteConfigSuppressed = sshGSuppressedSiteConfig && (await siteConfigMayRestrictHostKeys())
     const knownHostsEvidence = await loadKnownHostsEvidence(resolveKnownHostsFiles(hostKeyResolved))
     const knownHostsEntries = knownHostsEvidence.entries
     // Preloaded because ssh2's verifier decides synchronously; the same reason known_hosts is read
@@ -1297,17 +1290,8 @@ export class SshConnection {
         // The name we looked up, not the label: the mismatch message prints `ssh-keygen -R <host>`
         // and a label removes nothing from known_hosts.
         displayHost: hostKeyLookupHost,
-        // Why the stricter of the two rather than the user's: on the -F path the resolved value was
-        // produced without /etc/ssh/ssh_config, so it cannot represent a site policy at all. ssh -G
-        // also cannot tell "the user set ask" apart from "nothing set it, so ask is the default",
-        // which is what a faithful first-value-wins merge would need. Taking the stricter can only
-        // over-restrict against a user who deliberately relaxed a host the site locks down — and
-        // that case refused outright until now.
         hostKeyStoreFile: boundSshHostKeyStoreFile() ?? undefined,
-        strictHostKeyChecking: strictestHostKeyChecking(
-          hostKeyResolved?.strictHostKeyChecking,
-          siteStrictHostKeyChecking
-        ),
+        strictHostKeyChecking: hostKeyResolved?.strictHostKeyChecking ?? 'ask',
         isHostKeyAlias,
         isEphemeralRuntimeTarget: this.target.owner?.type === 'on-demand-runtime',
         siteConfigSuppressed,

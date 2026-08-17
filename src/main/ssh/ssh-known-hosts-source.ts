@@ -5,6 +5,7 @@
  * their hosts through `ssh` and `git`. We only read; writing to a file shared with every other SSH
  * tool on the machine is out of scope. See docs/reference/ssh-host-key-verification.md (D1, D2).
  */
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -29,7 +30,30 @@ export function resolveKnownHostsFiles(resolved: SshResolvedConfig | null): stri
   if (reported.length === 0) {
     return defaultKnownHostsFiles()
   }
-  return [...new Set(reported.filter((path) => path !== EXPLICIT_NONE))]
+  return [...new Set(rejoinSpaceSplitPaths(reported.filter((path) => path !== EXPLICIT_NONE)))]
+}
+
+/**
+ * Undo the split when `ssh -G` reported ONE path that happens to contain a space.
+ *
+ * OpenSSH prints this value unquoted and space-separated, even when the config quoted it — verified
+ * against 10.2p1, which echoes `UserKnownHostsFile "/tmp/a b/known_hosts"` back as
+ * `userknownhostsfile /tmp/a b/known_hosts`. So the format cannot distinguish one spaced path from
+ * two paths, and splitting shreds `C:\Users\John Doe\.ssh\known_hosts` into fragments that resolve
+ * to nothing. Every fragment then misses with ENOENT, which reads as "absent" rather than
+ * "unreadable" — so the user appears to know no hosts at all, and a changed key that known_hosts
+ * would have refused is accepted as first contact instead.
+ *
+ * The filesystem is the only thing that can disambiguate, so it decides: if no fragment exists but
+ * the rejoined path does, it was one path. A list where any fragment exists is left alone, since
+ * that is a genuine multi-file configuration.
+ */
+function rejoinSpaceSplitPaths(paths: readonly string[]): string[] {
+  if (paths.length < 2 || paths.some((path) => existsSync(path))) {
+    return [...paths]
+  }
+  const rejoined = paths.join(' ')
+  return existsSync(rejoined) ? [rejoined] : [...paths]
 }
 
 /**

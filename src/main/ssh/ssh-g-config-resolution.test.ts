@@ -1,17 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as NodeOs from 'node:os'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-const { existsSyncMock, homedirMock, userInfoMock, execFileMock } = vi.hoisted(() => ({
+type NodeOsModule = typeof NodeOs
+
+const { existsSyncMock, homedirMock, userInfoMock } = vi.hoisted(() => ({
   existsSyncMock: vi.fn<(path: string) => boolean>(() => true),
   homedirMock: vi.fn<() => string>(() => '/home/env'),
-  userInfoMock: vi.fn<() => { homedir: string }>(() => ({ homedir: '/home/env' })),
-  execFileMock: vi.fn()
+  userInfoMock: vi.fn<() => { homedir: string }>(() => ({ homedir: '/home/env' }))
 }))
 
 vi.mock('node:fs', () => ({ existsSync: existsSyncMock }))
-vi.mock('node:os', () => ({ homedir: homedirMock, userInfo: userInfoMock }))
-vi.mock('node:child_process', () => ({ execFile: execFileMock }))
+// Why importOriginal: the site-config tests need a real tmpdir(), and a bare factory would replace
+// the whole module and leave every other export undefined.
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<NodeOsModule>()),
+  homedir: homedirMock,
+  userInfo: userInfoMock
+}))
 
-import { resolveSiteStrictHostKeyChecking, sshGArgsForHost } from './ssh-g-config-resolution'
+import { siteConfigMayRestrictHostKeys, sshGArgsForHost } from './ssh-g-config-resolution'
 
 describe('sshGArgsForHost', () => {
   beforeEach(() => {
@@ -65,52 +75,75 @@ describe('sshGArgsForHost', () => {
 })
 
 /**
- * The site policy, read on its own.
+ * Whether the system-wide ssh_config could restrict host keys.
  *
- * `ssh -F <file>` makes OpenSSH ignore /etc/ssh/ssh_config entirely, so on the HOME-divergent path
- * the ordinary resolution cannot see a site-wide StrictHostKeyChecking. Being unable to see it used
- * to mean refusing every unknown host, which locks out anyone whose HOME diverges from their passwd
- * home — devcontainers, `su`, Nix shells. Pointing -F at the null device inverts the exclusion so
- * the value can simply be read.
+ * `-F` excludes /etc/ssh/ssh_config as well as the per-user file, and there is no ssh-only way to
+ * read one while suppressing the other — `-F /dev/null` reports built-in defaults, which would make
+ * every machine look permissive. So the file is read, and the question asked is deliberately weaker
+ * than "what is the policy": anything ambiguous keeps the caller fail-closed.
  */
-describe('resolveSiteStrictHostKeyChecking', () => {
-  beforeEach(() => {
-    execFileMock.mockReset()
+describe('siteConfigMayRestrictHostKeys', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'orca-site-ssh-config-'))
   })
 
-  function respond(err: Error | null, stdout: string): void {
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb) => {
-      cb(err, stdout, '')
-      return { kill: vi.fn() }
-    })
-  }
-
-  it('reads the value from the system config alone', async () => {
-    respond(null, 'stricthostkeychecking yes\nuser someone\n')
-
-    await expect(resolveSiteStrictHostKeyChecking('prod')).resolves.toBe('yes')
-
-    const args = execFileMock.mock.calls[0][1]
-    // The null device is what excludes the per-user file; -- keeps a host starting with '-' a host.
-    expect(args).toContain('-F')
-    expect(args).toContain(process.platform === 'win32' ? 'NUL' : '/dev/null')
-    expect(args).toContain('-G')
-    expect(args.slice(-2)).toEqual(['--', 'prod'])
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
   })
 
-  it('answers null when ssh fails, so the caller stays blind and strict', async () => {
-    respond(new Error('ssh: not found'), '')
-
-    await expect(resolveSiteStrictHostKeyChecking('prod')).resolves.toBeNull()
+  it('answers no when there is no system config at all', async () => {
+    // The case that used to lock people out: nothing to be blind to.
+    await expect(siteConfigMayRestrictHostKeys([join(dir, 'absent')])).resolves.toBe(false)
   })
 
-  it('answers the default when the system config names no policy', async () => {
-    // A successful read that sets nothing is still a successful read, and that is the distinction
-    // the caller needs: null means "we could not look", which is the only case that keeps refusing
-    // unknown hosts. `ask` here clears the blindness without relaxing anything — strictestHostKeyChecking
-    // leaves the user's value alone against it.
-    respond(null, 'user someone\n')
+  it('answers no for a config that says nothing about host keys', async () => {
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Host *\n    SendEnv LANG LC_*\n', 'utf-8')
 
-    await expect(resolveSiteStrictHostKeyChecking('prod')).resolves.toBe('ask')
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(false)
+  })
+
+  it('answers yes when the directive is present, whatever its value', async () => {
+    // The value is not parsed on purpose: presence alone is enough to stay strict.
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Host *\n    StrictHostKeyChecking no\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('follows the Include OpenSSH ships by default', async () => {
+    // macOS and most distros ship `Include /etc/ssh/ssh_config.d/*`, so missing this would read as
+    // "no policy" on nearly every machine that has one.
+    const includeDir = join(dir, 'ssh_config.d')
+    await mkdir(includeDir)
+    await writeFile(join(includeDir, '10-site.conf'), 'StrictHostKeyChecking yes\n', 'utf-8')
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Include ssh_config.d/*\nHost *\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('answers no when an Included directory holds nothing relevant', async () => {
+    const includeDir = join(dir, 'ssh_config.d')
+    await mkdir(includeDir)
+    await writeFile(join(includeDir, '10-site.conf'), 'SendEnv LANG\n', 'utf-8')
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Include ssh_config.d/*\n', 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(false)
+  })
+
+  it('treats an unreadable config as doubt rather than permission', async () => {
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, 'Host *\n', 'utf-8')
+    await chmod(file, 0o000)
+
+    try {
+      await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+    } finally {
+      await chmod(file, 0o600)
+    }
   })
 })

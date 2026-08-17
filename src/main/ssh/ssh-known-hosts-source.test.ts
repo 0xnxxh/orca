@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -375,5 +375,60 @@ describe('resolveKnownHostsLookupHost', () => {
     expect(
       resolveKnownHostsLookupHost(resolvedConfig({ hostname: '' }), 'direct.example').host
     ).toBe('direct.example')
+  })
+})
+
+/**
+ * `ssh -G` prints UserKnownHostsFile unquoted and space-separated, even when the config quoted it —
+ * verified against OpenSSH 10.2p1. So one path containing a space is indistinguishable from two
+ * paths, and splitting it shreds `C:\\Users\\John Doe\\.ssh\\known_hosts` into fragments that resolve
+ * to nothing. Every fragment then misses with ENOENT, which reads as "absent" rather than
+ * "unreadable", so the user appears to know no hosts and a CHANGED key is accepted as first contact.
+ */
+describe('a known_hosts path containing a space', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'orca known hosts '))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('is rejoined when the split fragments resolve to nothing', async () => {
+    const spaced = join(dir, 'known_hosts')
+    expect(spaced).toContain(' ')
+    await writeFile(spaced, '', 'utf-8')
+
+    // Exactly what parseKnownHostsFileList hands over for this value.
+    const resolved = resolveKnownHostsFiles({
+      userKnownHostsFiles: spaced.split(' '),
+      globalKnownHostsFiles: []
+    } as never)
+
+    expect(resolved).toEqual([spaced])
+  })
+
+  it('leaves a genuine multi-file list alone', async () => {
+    // Any fragment existing means these really are separate paths, not one shredded one.
+    const real = join(dir, 'first')
+    await writeFile(real, '', 'utf-8')
+
+    const resolved = resolveKnownHostsFiles({
+      userKnownHostsFiles: [real, '/tmp/orca-does-not-exist-known-hosts'],
+      globalKnownHostsFiles: []
+    } as never)
+
+    expect(resolved).toEqual([real, '/tmp/orca-does-not-exist-known-hosts'])
+  })
+
+  it('leaves a single unresolvable path alone rather than inventing one', async () => {
+    const resolved = resolveKnownHostsFiles({
+      userKnownHostsFiles: ['/tmp/orca-absent-known-hosts'],
+      globalKnownHostsFiles: []
+    } as never)
+
+    expect(resolved).toEqual(['/tmp/orca-absent-known-hosts'])
   })
 })

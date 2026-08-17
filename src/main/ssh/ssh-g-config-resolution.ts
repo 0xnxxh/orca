@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdir, readFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { homedir, userInfo } from 'node:os'
 import { resolveSshConfigHomePath } from './ssh-config-path-expansion'
 
@@ -59,48 +60,94 @@ export function sshGArgsForHost(host: string): string[] {
   return ['-G', '--', host]
 }
 
+/** OpenSSH's system-wide client config, which `-F` excludes along with the per-user one. */
+const SITE_SSH_CONFIG_FILES =
+  process.platform === 'win32'
+    ? [join(process.env.ProgramData ?? 'C:\\ProgramData', 'ssh', 'ssh_config')]
+    : ['/etc/ssh/ssh_config']
+
+const STRICT_HOST_KEY_DIRECTIVE = /^\s*stricthostkeychecking\b/i
+const INCLUDE_DIRECTIVE = /^\s*include\s+(.+?)\s*$/i
+
 /**
- * The site-wide StrictHostKeyChecking, read on its own.
+ * Whether the system-wide ssh_config could be setting StrictHostKeyChecking.
  *
- * Only needed on the `-F` path, where OpenSSH ignores /etc/ssh/ssh_config entirely and the resolved
- * config above therefore cannot see a site policy. Pointing `-F` at the null device inverts that: no
- * per-user file participates, so what comes back is the system config plus built-in defaults.
+ * Needed because `-F` excludes /etc/ssh/ssh_config as well as the per-user file, so on that path the
+ * resolved config cannot represent a site policy — and there is no ssh-only way to read one while
+ * suppressing the other. `-F /dev/null` does NOT invert the exclusion; it reports built-in defaults,
+ * which would make this look permissive on every machine.
  *
- * Without this the caller had to treat "we could not read the site policy" as "refuse every unknown
- * host", which locks out anyone whose HOME diverges from their passwd home — devcontainers, `su`,
- * Nix shells, some corporate launchers — with no override. Reading it turns a blind rule into data.
- *
- * Returns null when ssh cannot answer, and the caller stays blind-and-strict for that case.
+ * So this reads the file instead, and deliberately answers a WEAKER question than "what is the
+ * policy". Anything ambiguous — unreadable, an Include we cannot resolve, the directive present at
+ * all — answers true and the caller stays fail-closed. Only a site config that demonstrably says
+ * nothing about host keys clears it, which is the common case this exists to stop punishing.
  */
-export function resolveSiteStrictHostKeyChecking(host: string): Promise<string | null> {
-  // Windows ssh accepts NUL for the same purpose; both are "a file that exists and is empty".
-  const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  return new Promise((resolve) => {
-    let settled = false
-    let child: ReturnType<typeof execFile> | undefined
-    const settle = (value: string | null): void => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      child?.kill()
-      resolve(value)
+export async function siteConfigMayRestrictHostKeys(
+  files: readonly string[] = SITE_SSH_CONFIG_FILES
+): Promise<boolean> {
+  const seen = new Set<string>()
+  const pending = [...files]
+  // Bounded so an Include cycle cannot spin; OpenSSH allows nesting, we only need "any mention".
+  for (let visited = 0; pending.length > 0 && visited < 32; visited += 1) {
+    const file = pending.shift()
+    if (!file || seen.has(file)) {
+      continue
     }
-    const timer = setTimeout(() => settle(null), SSH_G_TIMEOUT_MS)
+    seen.add(file)
+    let contents: string
     try {
-      child = execFile(
-        'ssh',
-        ['-F', nullDevice, '-G', '--', host],
-        { timeout: SSH_G_TIMEOUT_MS },
-        (err, stdout) => {
-          settle(err ? null : (parseSshGOutput(stdout).strictHostKeyChecking ?? null))
-        }
-      )
-    } catch {
-      settle(null)
+      contents = await readFile(file, 'utf-8')
+    } catch (error) {
+      // Absent is a real answer: no file, no site policy. Anything else is doubt, so stay strict.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        continue
+      }
+      return true
     }
-  })
+    for (const line of contents.split(/\r?\n/)) {
+      if (STRICT_HOST_KEY_DIRECTIVE.test(line)) {
+        return true
+      }
+      const include = INCLUDE_DIRECTIVE.exec(line)
+      if (include) {
+        const expanded = await expandSiteInclude(include[1], dirname(file))
+        if (expanded === null) {
+          return true
+        }
+        pending.push(...expanded)
+      }
+    }
+  }
+  // Ran out of budget with files still queued: unresolved, so doubt wins.
+  return pending.length > 0
+}
+
+/** Resolves one Include's globs, or null when it cannot be resolved and doubt must win. */
+async function expandSiteInclude(pattern: string, baseDir: string): Promise<string[] | null> {
+  const resolved: string[] = []
+  for (const raw of pattern.split(/\s+/).filter(Boolean)) {
+    const token = raw.replace(/^"(.*)"$/, '$1')
+    const absolute = isAbsolute(token) ? token : join(baseDir, token)
+    const star = absolute.indexOf('*')
+    if (star === -1) {
+      resolved.push(absolute)
+      continue
+    }
+    // Only the trailing `dir/*` form OpenSSH ships by default is expanded; anything fancier is doubt.
+    const dir = dirname(absolute.slice(0, star + 1))
+    if (absolute.slice(star + 1).includes('/')) {
+      return null
+    }
+    try {
+      const entries = await readdir(dir)
+      resolved.push(...entries.map((entry) => join(dir, entry)))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return null
+      }
+    }
+  }
+  return resolved
 }
 
 // Why: `ssh -G <host>` asks OpenSSH for the effective config, including

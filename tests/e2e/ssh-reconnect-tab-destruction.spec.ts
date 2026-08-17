@@ -76,7 +76,9 @@ test.describe('SSH reconnect tab destruction', () => {
       const remote = await connectDockerSshRelayTarget(orcaPage, target)
       await ensureTerminalVisible(orcaPage, 45_000)
       await waitForActiveTerminalManager(orcaPage, 60_000)
-      const ptyId = await waitForActivePanePtyId(orcaPage, 60_000)
+      // Awaited, not captured: the pane must be bound before the first reconnect, but the id itself
+      // is not what this spec asserts on — tab survival is.
+      await waitForActivePanePtyId(orcaPage, 60_000)
 
       await reconnectDockerSshRelayTarget(orcaPage, remote.targetId)
       await waitForActiveTerminalManager(orcaPage, 60_000)
