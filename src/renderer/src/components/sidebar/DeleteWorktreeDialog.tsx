@@ -28,6 +28,7 @@ import {
 } from './delete-worktree-dialog-copy'
 import { translate } from '@/i18n/i18n'
 import { toWorktreeRemovalTarget } from '../../../../shared/worktree/removal'
+import { showWorkspaceListChangedToast } from './stale-workspace-list-toast'
 import { useDeleteWorktreeStatusHydration } from './use-delete-worktree-status-hydration'
 import { useConfirmedWorktreeDeleteTargets } from './use-confirmed-worktree-delete-targets'
 
@@ -239,6 +240,10 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
         // checkout at the same path.
         const forceTarget = currentWorktrees.find((entry) => entry.id === worktreeId)
         if (!forceTarget) {
+          // Same recovery as a stale confirmed batch: say so and close, rather
+          // than leaving a destructive button that silently does nothing.
+          showWorkspaceListChangedToast()
+          closeModal()
           return
         }
         const commitFocus = prepareActiveWorktreeFocusAfterDelete(worktreeId)

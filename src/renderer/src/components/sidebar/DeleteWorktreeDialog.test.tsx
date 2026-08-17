@@ -47,7 +47,16 @@ vi.mock('@/store', () => ({
 vi.mock('@/store/selectors', () => ({
   useAllWorktrees: () => mocks.state.allWorktrees(),
   getWorktreeMapFromState: () =>
-    new Map(mocks.state.allWorktrees().map((worktree) => [worktree.id, worktree]))
+    new Map(mocks.state.allWorktrees().map((worktree) => [worktree.id, worktree])),
+  // Host-qualified lookup (STA-4343): resolve on the named host, else first-wins.
+  getWorktreeOnHostFromState: (_state: unknown, worktreeId: string, hostId?: string) => {
+    const rows = mocks.state
+      .allWorktrees()
+      .filter((worktree: { id: string }) => worktree.id === worktreeId)
+    return hostId
+      ? rows.find((worktree: { hostId?: string }) => worktree.hostId === hostId)
+      : rows[0]
+  }
 }))
 
 vi.mock('@/components/ui/dialog', () => ({

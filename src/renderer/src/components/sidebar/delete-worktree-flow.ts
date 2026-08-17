@@ -1,5 +1,5 @@
 import { useAppStore } from '@/store'
-import { getAllWorktreesFromState, getWorktreeMapFromState } from '@/store/selectors'
+import { getAllWorktreesFromState, getWorktreeOnHostFromState } from '@/store/selectors'
 import { toWorktreeRemovalTarget } from '../../../../shared/worktree/removal'
 import { findRepoForHost } from '@/store/slices/repo-host-identity'
 import {
@@ -35,12 +35,9 @@ export function runWorktreeDelete(worktreeId: string, options: WorktreeDeleteOpt
   const state = useAppStore.getState()
   // Why (STA-4343): the id-keyed map keeps one row per `repoId::path`, so a caller
   // acting on a specific sidebar row has to name that row's host — otherwise
-  // deleting the SSH row destroys the local checkout at the same path.
-  const target = options.expectedHostId
-    ? (getAllWorktreesFromState(state).find(
-        (entry) => entry.id === worktreeId && entry.hostId === options.expectedHostId
-      ) ?? null)
-    : (getWorktreeMapFromState(state).get(worktreeId) ?? null)
+  // deleting the SSH row destroys the local checkout at the same path. A caller
+  // that names no host keeps the old first-wins behaviour.
+  const target = getWorktreeOnHostFromState(state, worktreeId, options.expectedHostId) ?? null
   const instanceChanged =
     Object.hasOwn(options, 'expectedInstanceId') &&
     target?.instanceId !== options.expectedInstanceId
@@ -121,9 +118,8 @@ export function runWorktreeBatchDelete(
   options: WorktreeBatchDeleteOptions = {}
 ): boolean {
   const state = useAppStore.getState()
-  const targets = resolveWorktreeBatchDeleteTargets(
-    requestedWorktrees,
-    getWorktreeMapFromState(state)
+  const targets = resolveWorktreeBatchDeleteTargets(requestedWorktrees, (worktreeId, hostId) =>
+    getWorktreeOnHostFromState(state, worktreeId, hostId)
   )
   if (!targets) {
     showWorkspaceListChangedToast()

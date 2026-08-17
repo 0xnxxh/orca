@@ -34,29 +34,35 @@ export function toWorktreeDeleteIdentities(
   return worktrees.map(({ id, instanceId, hostId }) => ({ id, instanceId, hostId }))
 }
 
+/** Resolves one confirmed row: the id ALONE is not enough, so the host rides along. */
+export type WorktreeDeleteTargetLookup = (
+  worktreeId: string,
+  hostId: ExecutionHostId | undefined
+) => Worktree | undefined
+
 export function resolveWorktreeBatchDeleteTargets(
   requestedWorktrees: readonly string[] | readonly WorktreeDeleteIdentity[],
-  worktreeMap: ReadonlyMap<string, Worktree>
+  lookupTarget: WorktreeDeleteTargetLookup
 ): Worktree[] | null {
+  // Why (STA-4343): dedup on (id, host), not id — two hosts can publish the same
+  // `repoId::path`, and collapsing them here would silently drop one confirmed row.
   const uniqueRequests = Array.from(
     new Map(
-      requestedWorktrees.map(
-        (request) => [typeof request === 'string' ? request : request.id, request] as const
-      )
+      requestedWorktrees.map((request) => {
+        const key = typeof request === 'string' ? request : `${request.hostId ?? ''}|${request.id}`
+        return [key, request] as const
+      })
     ).values()
   )
   const targets: Worktree[] = []
   for (const request of uniqueRequests) {
     const worktreeId = typeof request === 'string' ? request : request.id
-    const target = worktreeMap.get(worktreeId) ?? null
+    // A request that names a host resolves on THAT host, so confirming a remote
+    // row can never fall through to a local checkout at the same path — and the
+    // other host's row stays reachable instead of being masked by the id-keyed map.
+    const target =
+      lookupTarget(worktreeId, typeof request === 'string' ? undefined : request.hostId) ?? null
     if (typeof request !== 'string' && (!target || target.instanceId !== request.instanceId)) {
-      return null
-    }
-    // Why (STA-4343): the id-keyed map holds one row per `repoId::path`, so a
-    // refresh can swap in another host's row for the confirmed id. `instanceId`
-    // misses that whenever either row predates instance ids, and confirming a
-    // remote row must never fall through to a local checkout at the same path.
-    if (typeof request !== 'string' && request.hostId && target?.hostId !== request.hostId) {
       return null
     }
     if (target && !target.isMainWorktree) {
