@@ -573,7 +573,7 @@ type RemoteBrowserStreamBridge = {
   handleFrameBytes: (token: RemoteBrowserStreamToken, bytes: Uint8Array<ArrayBufferLike>) => void
   closeMissingRemotePage: (remotePageId: string | null) => void
   waitForViewportSize: () => Promise<RemoteBrowserViewportSize | null>
-  syncViewport: (pageId: string) => Promise<void>
+  syncViewport: (pageId: string, size: RemoteBrowserViewportSize | null) => Promise<void>
 }
 
 const NO_REMOTE_BROWSER_STREAM_BRIDGE: RemoteBrowserStreamBridge = {
@@ -1111,7 +1111,7 @@ function RemoteBrowserPagePane({
         streamBridgeRef.current.closeMissingRemotePage(remotePageId),
       waitForViewportSize: () => streamBridgeRef.current.waitForViewportSize(),
       readViewportSize: () => remoteViewportSizeRef.current,
-      syncViewport: (pageId) => streamBridgeRef.current.syncViewport(pageId)
+      syncViewport: (pageId, size) => streamBridgeRef.current.syncViewport(pageId, size)
     })
   }
   const lifecycle = lifecycleRef.current
@@ -1238,9 +1238,9 @@ function RemoteBrowserPagePane({
     }, [readCurrentRemoteViewportSize, readRemoteViewportSize, rememberRemoteViewportSize])
 
   const syncRemoteViewport = useCallback(
-    async (pageId: string): Promise<void> => {
+    async (pageId: string, streamSize: RemoteBrowserViewportSize | null = null): Promise<void> => {
       const target = runtimeTarget()
-      const size = readRemoteViewportSize()
+      const size = streamSize ?? readRemoteViewportSize()
       if (!target || !size) {
         return
       }
@@ -1467,6 +1467,9 @@ function RemoteBrowserPagePane({
       }
       const frame = decodeBrowserScreencastFrame(bytes)
       if (!frame) {
+        return
+      }
+      if (lifecycle.recoverLegacyFrame(frame.metadata)) {
         return
       }
       const imageBuffer = frame.image.buffer.slice(
