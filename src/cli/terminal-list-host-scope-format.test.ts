@@ -33,7 +33,7 @@ describe('formatTerminalList host identity', () => {
     expect(output).toContain('host=ssh:box-1')
   })
 
-  it('prints unknown, not local, for a row whose host the runtime could not name', () => {
+  it('prints unverifiable, not local, for a row whose host the runtime could not name', () => {
     const output = formatTerminalList(listResult({ terminals: [terminal()] }))
 
     expect(output).toContain('host=unverifiable')
@@ -67,7 +67,7 @@ describe('formatTerminalList scope declaration', () => {
     expect(output).toContain('not covered: ssh:box-1')
   })
 
-  it('says the scope is unknown when the host predates the field', () => {
+  it('says the scope is unverifiable when the host predates the field', () => {
     const output = formatTerminalList(listResult())
 
     expect(output).toContain('scope: unverifiable')
