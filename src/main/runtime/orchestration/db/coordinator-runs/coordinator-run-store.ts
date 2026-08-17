@@ -65,10 +65,11 @@ export function getIdleTerminals(this: OrchestrationDb, excludeHandles: string[]
   // Return handles from message history that aren't busy
   const allHandles = this.db
     .prepare(
-      'SELECT DISTINCT to_handle FROM messages UNION SELECT DISTINCT from_handle FROM messages'
+      // Why: alias the UNION column — otherwise the row shape depends on the first branch's column name.
+      'SELECT DISTINCT to_handle AS handle FROM messages UNION SELECT DISTINCT from_handle FROM messages'
     )
-    .all() as { to_handle: string }[]
-  return [...new Set(allHandles.map((r) => r.to_handle))].filter((h) => !busyHandles.has(h))
+    .all() as { handle: string }[]
+  return [...new Set(allHandles.map((r) => r.handle))].filter((h) => !busyHandles.has(h))
 }
 
 export type CoordinatorRunStoreMethods = {

@@ -182,6 +182,8 @@ export function getRunMailboxHistory(
   types?: MessageType[]
 ): MessageRow[] {
   const address = `run:${runId}`
+  // Why: SQLite reads a negative LIMIT as unbounded, so an unsanitized caller value dumps the whole mailbox.
+  const rowLimit = Math.max(1, Math.floor(limit))
   if (types && types.length > 0) {
     const placeholders = types.map(() => '?').join(',')
     return exposeMessageListTimestamps(
@@ -190,7 +192,7 @@ export function getRunMailboxHistory(
           `SELECT * FROM messages WHERE run_id = ? AND to_handle = ?
            AND type IN (${placeholders}) ORDER BY sequence DESC LIMIT ?`
         )
-        .all(runId, address, ...types, limit) as MessageRow[]
+        .all(runId, address, ...types, rowLimit) as MessageRow[]
     )
   }
   return exposeMessageListTimestamps(
@@ -199,7 +201,7 @@ export function getRunMailboxHistory(
         `SELECT * FROM messages WHERE run_id = ? AND to_handle = ?
          ORDER BY sequence DESC LIMIT ?`
       )
-      .all(runId, address, limit) as MessageRow[]
+      .all(runId, address, rowLimit) as MessageRow[]
   )
 }
 

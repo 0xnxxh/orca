@@ -6,8 +6,12 @@ export function hardenOrchestrationDatabaseFiles(dbPath: (string & {}) | ':memor
     return
   }
   for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-    if (existsSync(path)) {
-      chmodSync(path, 0o600)
+    try {
+      if (existsSync(path)) {
+        chmodSync(path, 0o600)
+      }
+    } catch {
+      // Why: best-effort — a mount that rejects chmod (SSHFS, some network shares) must not fail DB startup.
     }
   }
 }

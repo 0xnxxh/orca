@@ -123,11 +123,11 @@ export function getMessageById(this: OrchestrationDb, id: string): MessageRow | 
 }
 
 export function markAsRead(this: OrchestrationDb, ids: string[]): void {
-  if (ids.length === 0) {
-    return
+  for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
+    const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
+    const placeholders = batch.map(() => '?').join(',')
+    this.db.prepare(`UPDATE messages SET read = 1 WHERE id IN (${placeholders})`).run(...batch)
   }
-  const placeholders = ids.map(() => '?').join(',')
-  this.db.prepare(`UPDATE messages SET read = 1 WHERE id IN (${placeholders})`).run(...ids)
 }
 
 // Why: use datetime('now') so delivered_at matches the space-format UTC shape of the table's other timestamps for correct ordering (§3.2).
@@ -171,17 +171,17 @@ export function areUnreadMessages(this: OrchestrationDb, toHandle: string, ids: 
   return matched === ids.length
 }
 
+// Why: superseded lifecycle messages stay in history but must not be consumed or injected after their dispatch finished.
 export function markAsReadAndDelivered(this: OrchestrationDb, ids: string[]): void {
-  if (ids.length === 0) {
-    return
+  for (let offset = 0; offset < ids.length; offset += MESSAGE_ID_UPDATE_BATCH_SIZE) {
+    const batch = ids.slice(offset, offset + MESSAGE_ID_UPDATE_BATCH_SIZE)
+    const placeholders = batch.map(() => '?').join(',')
+    this.db
+      .prepare(
+        `UPDATE messages SET read = 1, delivered_at = COALESCE(delivered_at, datetime('now')) WHERE id IN (${placeholders})`
+      )
+      .run(...batch)
   }
-  const placeholders = ids.map(() => '?').join(',')
-  // Why: superseded lifecycle messages stay in history but must not be consumed or injected after their dispatch finished.
-  this.db
-    .prepare(
-      `UPDATE messages SET read = 1, delivered_at = COALESCE(delivered_at, datetime('now')) WHERE id IN (${placeholders})`
-    )
-    .run(...ids)
 }
 
 export function getInbox(this: OrchestrationDb, limit = 20): MessageRow[] {

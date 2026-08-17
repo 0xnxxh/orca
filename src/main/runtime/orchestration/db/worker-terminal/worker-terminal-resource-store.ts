@@ -52,8 +52,6 @@ export function backfillWorkerTerminalResources(this: OrchestrationDb): void {
 }
 
 // No transaction: composes inside worker-start's authority transaction.
-
-// No transaction: composes inside worker-start's authority transaction.
 export function createWorkerTerminalResourceStatement(
   this: OrchestrationDb,
   params: {
@@ -120,9 +118,6 @@ export function getWorkerTerminalResourceFormerlyOwnedBy(
     )
     .get(`%"${dispatchId}"%`) as WorkerTerminalResourceRow | undefined
 }
-
-// Reusable exact settled terminal: transfers cleanup ownership to the new Dispatch and fences
-// release through the old owner. No transaction: composes inside the authority transaction.
 
 // Reusable exact settled terminal: transfers cleanup ownership to the new Dispatch and fences
 // release through the old owner. No transaction: composes inside the authority transaction.

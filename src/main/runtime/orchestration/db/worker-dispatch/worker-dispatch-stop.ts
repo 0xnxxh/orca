@@ -202,6 +202,10 @@ export function markWorkerStopUnknown(
   dispatchId: string,
   reason: string
 ): WorkerDispatchRow {
+  const worker = this.getWorkerDispatch(dispatchId)
+  if (!worker || worker.state !== 'stopping') {
+    throw new OrchestrationError('dispatch_inactive', `Dispatch ${dispatchId} is not stopping.`)
+  }
   this.db
     .prepare(
       `UPDATE worker_dispatches

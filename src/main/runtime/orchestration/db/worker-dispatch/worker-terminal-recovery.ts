@@ -5,6 +5,7 @@ import type {
   LegacyWorkerTerminalRecoveryRow
 } from '../../types'
 import { OrchestrationError } from '../../orchestration-error'
+import { DISPATCH_CIRCUIT_BREAK_FAILURES } from '../dispatch-context/dispatch-circuit-breaker'
 import type { OrchestrationDb } from '../orchestration-db'
 
 export function listLegacyWorkerTerminalRecoveryRows(
@@ -45,7 +46,8 @@ export function reconcileMissingWorkerTerminal(
     const stopWasPending = worker.state === 'stopping' || worker.state === 'stop_unknown'
     if (activeDispatch) {
       const failureCount = dispatch.failure_count + 1
-      const dispatchStatus: DispatchStatus = failureCount >= 3 ? 'circuit_broken' : 'failed'
+      const dispatchStatus: DispatchStatus =
+        failureCount >= DISPATCH_CIRCUIT_BREAK_FAILURES ? 'circuit_broken' : 'failed'
       this.db
         .prepare(
           `UPDATE dispatch_contexts
@@ -71,7 +73,8 @@ export function reconcileMissingWorkerTerminal(
       .prepare(
         `UPDATE worker_dispatches
          SET state = ?, stage = 'terminal_missing', last_error = ?, updated_at = datetime('now')
-         WHERE dispatch_id = ?`
+         WHERE dispatch_id = ?
+           AND state IN ('starting', 'ready', 'start_unknown', 'stopping', 'stop_unknown')`
       )
       .run(stopWasPending ? 'stopped' : 'abandoned', reason, dispatchId)
     this.db.exec('COMMIT')

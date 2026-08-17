@@ -52,6 +52,13 @@ export function answerRemoteQuestion(
     }
     return
   }
+  // Why: the guarded UPDATE below is a silent no-op for a closed question, which the caller would read as stored.
+  if (question.status === 'closed') {
+    throw new OrchestrationError(
+      'question_not_found',
+      `Remote Question ${params.messageId} is closed.`
+    )
+  }
   this.db
     .prepare(
       `UPDATE remote_questions

@@ -1,10 +1,12 @@
 import type { TaskStatus, DispatchStatus, DispatchContextRow } from '../../types'
+import { DISPATCH_CIRCUIT_BREAK_FAILURES } from './dispatch-circuit-breaker'
 import type { OrchestrationDb } from '../orchestration-db'
 
 export function completeDispatch(this: OrchestrationDb, ctxId: string): void {
   this.db
     .prepare(
-      "UPDATE dispatch_contexts SET status = 'completed', completed_at = datetime('now'), capability_revoked_at = COALESCE(capability_revoked_at, datetime('now')) WHERE id = ?"
+      // Why: the status guard keeps a late completion from reviving a dispatch already failed or circuit-broken.
+      "UPDATE dispatch_contexts SET status = 'completed', completed_at = datetime('now'), capability_revoked_at = COALESCE(capability_revoked_at, datetime('now')) WHERE id = ? AND status IN ('pending', 'dispatched')"
     )
     .run(ctxId)
 }
@@ -71,7 +73,8 @@ export function failDispatch(
   }
 
   const newFailureCount = ctx.failure_count + 1
-  const newStatus: DispatchStatus = newFailureCount >= 3 ? 'circuit_broken' : 'failed'
+  const newStatus: DispatchStatus =
+    newFailureCount >= DISPATCH_CIRCUIT_BREAK_FAILURES ? 'circuit_broken' : 'failed'
 
   this.db
     .prepare(
@@ -85,7 +88,10 @@ export function failDispatch(
 
   // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
   const taskStatus: TaskStatus = newStatus === 'circuit_broken' ? 'failed' : 'ready'
-  this.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(taskStatus, ctx.task_id)
+  // Why: the status guard keeps a late failure from reopening a task that already completed or was retried elsewhere.
+  this.db
+    .prepare("UPDATE tasks SET status = ? WHERE id = ? AND status IN ('dispatched', 'blocked')")
+    .run(taskStatus, ctx.task_id)
 
   return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
     | DispatchContextRow

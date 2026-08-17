@@ -37,7 +37,8 @@ export function reconcileFederatedWorkerStart(
           `UPDATE worker_dispatches
            SET state = 'ready', stage = ?, worktree_id = COALESCE(?, worktree_id),
                agent_terminal_handle = COALESCE(?, agent_terminal_handle), setup_state = ?,
-               effects = ?, residual_resources = ?, last_error = NULL,
+               effects = COALESCE(?, effects),
+               residual_resources = COALESCE(?, residual_resources), last_error = NULL,
                updated_at = datetime('now')
            WHERE dispatch_id = ? AND state IN ('starting', 'start_unknown')`
         )
@@ -46,8 +47,9 @@ export function reconcileFederatedWorkerStart(
           params.worktreeId ?? null,
           params.terminalHandle ?? null,
           params.setupState ?? worker.setup_state,
-          JSON.stringify(params.effects ?? JSON.parse(worker.effects)),
-          JSON.stringify(params.residualResources ?? JSON.parse(worker.residual_resources)),
+          // Why: keep the stored JSON as-is when the peer omits it — re-parsing it here throws on any malformed legacy row.
+          params.effects ? JSON.stringify(params.effects) : null,
+          params.residualResources ? JSON.stringify(params.residualResources) : null,
           params.dispatchId
         )
       this.db

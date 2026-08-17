@@ -40,8 +40,14 @@ export function commitWorkerTerminalArchiveForRelease(
   this.db.exec('BEGIN IMMEDIATE')
   try {
     const resource = this.getWorkerTerminalResource(params.resourceId)
+    if (!resource) {
+      throw new OrchestrationError(
+        'dispatch_not_found',
+        `Worker terminal resource ${params.resourceId} was not found.`
+      )
+    }
     if (
-      resource?.owner_dispatch_id === params.dispatchId &&
+      resource.owner_dispatch_id === params.dispatchId &&
       resource.ownership_state === 'owned' &&
       resource.release_state === 'requested'
     ) {

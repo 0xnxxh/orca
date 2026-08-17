@@ -58,7 +58,8 @@ export function resolveGate(
 export function timeoutGate(this: OrchestrationDb, gateId: string): DecisionGateRow | undefined {
   this.db
     .prepare(
-      "UPDATE decision_gates SET status = 'timeout', resolved_at = datetime('now') WHERE id = ?"
+      // Why: without the status guard a late timeout overwrites a gate the user already resolved.
+      "UPDATE decision_gates SET status = 'timeout', resolved_at = datetime('now') WHERE id = ? AND status = 'pending'"
     )
     .run(gateId)
   return this.db.prepare('SELECT * FROM decision_gates WHERE id = ?').get(gateId) as

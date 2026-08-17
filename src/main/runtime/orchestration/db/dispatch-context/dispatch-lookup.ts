@@ -40,7 +40,10 @@ export function findActiveDispatchForAssignee(
 ): DispatchContextRow | undefined {
   const byHandle = this.db
     .prepare(
-      "SELECT * FROM dispatch_contexts WHERE assignee_handle = ? AND status IN ('pending', 'dispatched') LIMIT 1"
+      // Why: newest-first like the pane lookups below — an unordered LIMIT 1 could pin a stale row if a handle ever has two active dispatches.
+      `SELECT * FROM dispatch_contexts
+       WHERE assignee_handle = ? AND status IN ('pending', 'dispatched')
+       ORDER BY rowid DESC LIMIT 1`
     )
     .get(assigneeHandle) as DispatchContextRow | undefined
   if (byHandle) {

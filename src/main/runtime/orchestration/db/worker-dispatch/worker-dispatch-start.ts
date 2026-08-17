@@ -130,6 +130,7 @@ export function createStartingWorkerDispatch(
       )
       .run(task.id)
     this.db.exec('COMMIT')
+    this.hasAnyDispatchContextsCache = true
     return {
       dispatch: this.getDispatchContextById(id) as DispatchContextRow,
       worker: this.getWorkerDispatch(id) as WorkerDispatchRow

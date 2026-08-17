@@ -25,7 +25,7 @@ export function prepareRemoteAttachmentAuthority(
     )
   }
   const capability = `dcap_${randomBytes(32).toString('base64url')}`
-  this.db
+  const result = this.db
     .prepare(
       `UPDATE remote_dispatch_attachments
        SET stage = 'authority_attached', capability_hash = ?, pane_key = ?,
@@ -53,6 +53,13 @@ export function prepareRemoteAttachmentAuthority(
       ),
       params.dispatchId
     )
+  // Why: without this the caller keeps a capability whose hash was never stored, surfacing later as an authority mismatch.
+  if (result.changes !== 1) {
+    throw new OrchestrationError(
+      'dispatch_inactive',
+      `Remote Dispatch ${params.dispatchId} is not starting.`
+    )
+  }
   return capability
 }
 

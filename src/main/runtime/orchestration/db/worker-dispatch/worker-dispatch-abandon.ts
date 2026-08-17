@@ -78,10 +78,6 @@ export function abandonWorkerDispatch(
   }
 }
 
-// --- Worker terminal resources (schema v23) ---------------------------------------------------
-
-// Historical renderer input and reuse cannot be proven, so pre-v23 terminals stay external.
-
 export type WorkerDispatchAbandonMethods = {
   abandonWorkerDispatch: typeof abandonWorkerDispatch
 }

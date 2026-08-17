@@ -2,7 +2,7 @@ import { migrateMutationReceiptCapacity } from '../../mutation-receipt-capacity'
 import { DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL } from '../pane-key-match'
 import type { OrchestrationDb } from '../orchestration-db'
 
-export function applySchemaMigrationsV13ToV27(this: OrchestrationDb, current: number): void {
+export function applySchemaMigrationsV13ToV28(this: OrchestrationDb, current: number): void {
   if (current < 13 && !this.hasColumn('worker_dispatches', 'runtime_epoch')) {
     this.db.exec('ALTER TABLE worker_dispatches ADD COLUMN runtime_epoch TEXT')
   }

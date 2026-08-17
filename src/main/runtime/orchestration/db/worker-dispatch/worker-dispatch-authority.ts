@@ -21,28 +21,29 @@ export function prepareStartingWorkerAuthority(
     terminalOwnership?: 'created' | 'external'
   }
 ): string {
-  const dispatch = this.getDispatchContextById(params.dispatchId)
-  const worker = this.getWorkerDispatch(params.dispatchId)
-  if (!dispatch || dispatch.status !== 'pending' || worker?.state !== 'starting') {
-    throw new OrchestrationError(
-      'dispatch_inactive',
-      `Dispatch ${params.dispatchId} is not starting.`
-    )
-  }
-  if (
-    dispatch.launch_token_hash &&
-    params.launchTokenHash &&
-    dispatch.launch_token_hash !== params.launchTokenHash
-  ) {
-    throw new OrchestrationError(
-      'request_mismatch',
-      `Dispatch ${params.dispatchId} already has a different launch-token commitment.`
-    )
-  }
   const capability = `dcap_${randomBytes(32).toString('base64url')}`
   this.db.exec('BEGIN IMMEDIATE')
   try {
-    this.db
+    // Why: read inside the transaction so the guarded UPDATEs below cannot lose a race with a concurrent state change.
+    const dispatch = this.getDispatchContextById(params.dispatchId)
+    const worker = this.getWorkerDispatch(params.dispatchId)
+    if (!dispatch || dispatch.status !== 'pending' || worker?.state !== 'starting') {
+      throw new OrchestrationError(
+        'dispatch_inactive',
+        `Dispatch ${params.dispatchId} is not starting.`
+      )
+    }
+    if (
+      dispatch.launch_token_hash &&
+      params.launchTokenHash &&
+      dispatch.launch_token_hash !== params.launchTokenHash
+    ) {
+      throw new OrchestrationError(
+        'request_mismatch',
+        `Dispatch ${params.dispatchId} already has a different launch-token commitment.`
+      )
+    }
+    const contextUpdate = this.db
       .prepare(
         `UPDATE dispatch_contexts
          SET assignee_handle = ?, assignee_pane_key = ?, process_incarnation = ?,
@@ -58,7 +59,13 @@ export function prepareStartingWorkerAuthority(
         params.launchTokenHash ?? null,
         params.dispatchId
       )
-    this.db
+    if (contextUpdate.changes !== 1) {
+      throw new OrchestrationError(
+        'dispatch_inactive',
+        `Dispatch ${params.dispatchId} is not starting.`
+      )
+    }
+    const workerUpdate = this.db
       .prepare(
         `UPDATE worker_dispatches
          SET stage = 'authority_attached', worktree_id = ?, agent_terminal_handle = ?,
@@ -82,6 +89,12 @@ export function prepareStartingWorkerAuthority(
         ),
         params.dispatchId
       )
+    if (workerUpdate.changes !== 1) {
+      throw new OrchestrationError(
+        'dispatch_inactive',
+        `Dispatch ${params.dispatchId} is not starting.`
+      )
+    }
     if (params.terminalOwnership && !this.getWorkerTerminalResourceByOwner(params.dispatchId)) {
       if (params.terminalOwnership === 'created') {
         this.createWorkerTerminalResourceStatement({
