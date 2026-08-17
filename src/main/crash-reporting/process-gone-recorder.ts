@@ -41,8 +41,10 @@ export type ProcessGoneCrashEvent = {
   exitCode: number | null
   expectedTeardown: ExpectedTeardownScope
   details: Record<string, unknown>
-  /** Identifies which renderer died so concurrent deaths dedupe apart (#15052). */
+  /** Which webContents observed the death — evidence for attribution, never dedupe identity (#15063). */
   webContentsId?: number
+  /** Render-process-host id of the process that died, so concurrent deaths dedupe apart (#15052) while shared-process observers coalesce (#15063). */
+  rendererProcessId?: number
 }
 
 type CrashReportRecorderStore = Pick<CrashReportStore, 'record' | 'attachDetails'>
@@ -203,7 +205,7 @@ export function recordProcessGoneCrash(
     event.processType,
     event.reason,
     event.exitCode,
-    event.webContentsId ?? null
+    event.rendererProcessId ?? null
   )
   const claim = dedupe.tryClaim(key)
   if (!claim) {
@@ -235,6 +237,9 @@ export function recordProcessGoneCrash(
       'crash.reason': event.reason,
       ...(event.webContentsId !== undefined
         ? { 'crash.web_contents_id': event.webContentsId }
+        : {}),
+      ...(event.rendererProcessId !== undefined
+        ? { 'crash.renderer_process_id': event.rendererProcessId }
         : {}),
       ...(event.exitCode !== null ? { 'crash.exit_code': event.exitCode } : {}),
       ...decodedExitCodeAttribute(event),

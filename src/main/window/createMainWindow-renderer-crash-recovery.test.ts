@@ -171,6 +171,8 @@ describe('createMainWindow', () => {
     const windowHandlers: Record<string, (...args: any[]) => void> = {}
     const webContents = {
       id: 142,
+      isDestroyed: vi.fn(() => false),
+      getProcessId: vi.fn(() => 7),
       on: vi.fn((event, handler) => {
         windowHandlers[event] = handler
       }),
@@ -203,7 +205,9 @@ describe('createMainWindow', () => {
     const details = { reason: 'crashed', exitCode: 5 } as Electron.RenderProcessGoneDetails
     windowHandlers['render-process-gone']?.({} as never, details)
 
-    expect(onRendererProcessGone).toHaveBeenCalledWith(details, 142)
+    // Why: the render-process-host id read at event time is the dedupe
+    // identity for shared-process deaths (#15063).
+    expect(onRendererProcessGone).toHaveBeenCalledWith(details, 142, 7)
   })
 
   it('passes the renderer webContents id through crash recording and recovery callbacks', () => {
@@ -212,6 +216,8 @@ describe('createMainWindow', () => {
     const windowHandlers: Record<string, (...args: any[]) => void> = {}
     const webContents = {
       id: 424,
+      isDestroyed: vi.fn(() => false),
+      getProcessId: vi.fn(() => 9),
       on: vi.fn((event, handler) => {
         windowHandlers[event] = handler
       }),
@@ -251,7 +257,7 @@ describe('createMainWindow', () => {
       windowHandlers['render-process-gone']?.({} as never, details)
       vi.advanceTimersByTime(250)
 
-      expect(onRendererProcessGone).toHaveBeenCalledWith(details, 424)
+      expect(onRendererProcessGone).toHaveBeenCalledWith(details, 424, 9)
       expect(shouldRecoverRenderer).toHaveBeenCalledWith(details, 424)
     } finally {
       consoleError.mockRestore()
@@ -300,9 +306,12 @@ describe('createMainWindow', () => {
       } as Electron.RenderProcessGoneDetails
     )
 
+    // Why: this mock webContents cannot answer getProcessId; the death must
+    // still be forwarded with an unreadable (undefined) process identity.
     expect(onRendererProcessGone).toHaveBeenCalledWith(
       expect.objectContaining({ reason: 'killed', exitCode: 15 }),
-      expect.any(Number)
+      expect.any(Number),
+      undefined
     )
 
     consoleError.mockRestore()

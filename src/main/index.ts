@@ -1354,7 +1354,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
       isQuitting = false
       clearExpectedRendererReload()
     },
-    onRendererProcessGone: (details, webContentsId) => {
+    onRendererProcessGone: (details, webContentsId, rendererProcessId) => {
       recordProcessGoneCrash(
         'renderer',
         'renderer',
@@ -1363,9 +1363,11 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
         {
           processType: 'renderer',
           rendererKind: 'main-window',
-          webContentsId
+          webContentsId,
+          ...(rendererProcessId !== undefined ? { rendererProcessId } : {})
         },
-        webContentsId
+        webContentsId,
+        rendererProcessId
       )
     },
     shouldRecoverRenderer: (details, webContentsId) =>
@@ -1794,7 +1796,8 @@ function recordProcessGoneCrash(
   reason: string,
   exitCode: number | null,
   details: Record<string, unknown>,
-  webContentsId?: number
+  webContentsId?: number,
+  rendererProcessId?: number
 ): void {
   recordProcessGoneCrashEvent(crashReports, {
     source,
@@ -1803,7 +1806,8 @@ function recordProcessGoneCrash(
     exitCode,
     expectedTeardown: getExpectedTeardownScope(webContentsId),
     details,
-    ...(webContentsId !== undefined ? { webContentsId } : {})
+    ...(webContentsId !== undefined ? { webContentsId } : {}),
+    ...(rendererProcessId !== undefined ? { rendererProcessId } : {})
   })
 }
 
@@ -2897,20 +2901,26 @@ void app.whenReady().then(async () => {
   startPreGoneProcessMetricsSampling()
   // Why: only the main window's render-process-gone was wired to the recorder,
   // so embedded-browser guest renderer deaths left zero trace (#15052).
-  browserManager.setGuestRendererGoneReporter((details, guestWebContentsId, guestKind) => {
-    recordProcessGoneCrash(
-      'renderer',
-      'renderer',
-      details.reason,
-      details.exitCode ?? null,
-      {
-        processType: 'renderer',
-        rendererKind: guestKind,
-        webContentsId: guestWebContentsId
-      },
-      guestWebContentsId
-    )
-  })
+  browserManager.setGuestRendererGoneReporter(
+    (details, guestWebContentsId, guestKind, guestRendererProcessId) => {
+      recordProcessGoneCrash(
+        'renderer',
+        'renderer',
+        details.reason,
+        details.exitCode ?? null,
+        {
+          processType: 'renderer',
+          rendererKind: guestKind,
+          webContentsId: guestWebContentsId,
+          ...(guestRendererProcessId !== undefined
+            ? { rendererProcessId: guestRendererProcessId }
+            : {})
+        },
+        guestWebContentsId,
+        guestRendererProcessId
+      )
+    }
+  )
   app.on('child-process-gone', (_event, details) => {
     recordProcessGoneCrash('child', details.type, details.reason, details.exitCode ?? null, {
       name: details.name,

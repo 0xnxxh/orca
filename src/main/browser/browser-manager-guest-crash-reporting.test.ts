@@ -55,10 +55,16 @@ type RenderProcessGoneHandler = (
   details: { reason: string; exitCode: number }
 ) => void
 
-function makeGuest(id: number) {
+function makeGuest(id: number, rendererProcessId?: number) {
   return {
     id,
     isDestroyed: vi.fn(() => false),
+    getProcessId: vi.fn(() => {
+      if (rendererProcessId === undefined) {
+        throw new Error('Object has been destroyed')
+      }
+      return rendererProcessId
+    }),
     getType: vi.fn(() => 'webview'),
     setBackgroundThrottling: guestSetBackgroundThrottlingMock,
     setWindowOpenHandler: guestSetWindowOpenHandlerMock,
@@ -81,7 +87,7 @@ describe('browserManager guest crash reporting (#15052)', () => {
   })
 
   it('reports a guest renderer death instead of leaving zero trace', () => {
-    browserManager.attachGuestPolicies(makeGuest(104) as never)
+    browserManager.attachGuestPolicies(makeGuest(104, 4) as never)
 
     const handler = attachedRenderProcessGoneHandler()
     // Pre-fix: every render-process-gone listener on a guest is cleanup-only,
@@ -92,14 +98,14 @@ describe('browserManager guest crash reporting (#15052)', () => {
     browserManager.setGuestRendererGoneReporter(reporter)
     const details = { reason: 'killed', exitCode: 1 }
     handler?.({}, details)
-    expect(reporter).toHaveBeenCalledExactlyOnceWith(details, 104, 'browser-guest')
+    expect(reporter).toHaveBeenCalledExactlyOnceWith(details, 104, 'browser-guest', 4)
   })
 
   it('labels popup child windows distinctly from the primary guest', () => {
     const reporter = vi.fn()
     browserManager.setGuestRendererGoneReporter(reporter)
     browserManager.attachGuestPolicies(
-      makeGuest(205) as never,
+      makeGuest(205, 4) as never,
       { browserTabId: 'browser-1', rootGuestWebContentsId: 104 } as never
     )
 
@@ -109,8 +115,22 @@ describe('browserManager guest crash reporting (#15052)', () => {
     expect(reporter).toHaveBeenCalledExactlyOnceWith(
       { reason: 'crashed', exitCode: 5 },
       205,
-      'browser-popup'
+      'browser-popup',
+      4
     )
+  })
+
+  it('still reports when the renderer process identity is unreadable', () => {
+    // makeGuest with no process id throws from getProcessId, modeling a guest
+    // torn down mid-event; the death must reach the reporter with an unknown
+    // identity instead of being dropped.
+    browserManager.attachGuestPolicies(makeGuest(104) as never)
+
+    const reporter = vi.fn()
+    browserManager.setGuestRendererGoneReporter(reporter)
+    const details = { reason: 'killed', exitCode: 1 }
+    attachedRenderProcessGoneHandler()?.({}, details)
+    expect(reporter).toHaveBeenCalledExactlyOnceWith(details, 104, 'browser-guest', undefined)
   })
 
   it('stops reporting after guest teardown removes the policy listeners', () => {

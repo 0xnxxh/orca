@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
 
 import { clearCrashBreadcrumbsForTest, getCrashBreadcrumbSnapshot } from './crash-breadcrumb-store'
 import { getProcessGoneDedupeKey, ProcessGoneDedupe } from './process-gone-dedupe'
+import { readGoneRendererProcessId } from './process-gone-renderer-identity'
 import { recordProcessGoneCrash, type ProcessGoneCrashEvent } from './process-gone-recorder'
 import { _resetTracerForTests, setActiveSink, type TracerSink } from '../observability/tracer'
 
@@ -69,13 +70,13 @@ describe('renderer process identity in process-gone dedupe', () => {
 
     recordProcessGoneCrash(
       { record, attachDetails } as never,
-      rendererGone({ webContentsId: 1 }),
+      rendererGone({ webContentsId: 1, rendererProcessId: 1 }),
       dedupe,
       noMinidump
     )
     recordProcessGoneCrash(
       { record, attachDetails } as never,
-      rendererGone({ webContentsId: 42 }),
+      rendererGone({ webContentsId: 42, rendererProcessId: 42 }),
       dedupe,
       noMinidump
     )
@@ -94,19 +95,57 @@ describe('renderer process identity in process-gone dedupe', () => {
     ])
   })
 
+  // Live-verified on macOS (#15063): a same-site popup shares its opener's OS
+  // renderer process, so kill -9 of that one process emits render-process-gone
+  // on both webContents. One death must file one report.
+  it('records one report when two webContents share one dying renderer process', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    const dedupe = new ProcessGoneDedupe()
+
+    recordProcessGoneCrash(
+      { record, attachDetails } as never,
+      rendererGone({ reason: 'killed', exitCode: 9, webContentsId: 9, rendererProcessId: 4 }),
+      dedupe,
+      noMinidump
+    )
+    recordProcessGoneCrash(
+      { record, attachDetails } as never,
+      rendererGone({ reason: 'killed', exitCode: 9, webContentsId: 10, rendererProcessId: 4 }),
+      dedupe,
+      noMinidump
+    )
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalledOnce())
+    expect(record).toHaveBeenCalledTimes(1)
+    // Why: the surviving span must name both identities — the process for
+    // dedupe audits, the webContents for attribution. The dropped observer
+    // leaves only its breadcrumb span.
+    const goneSpans = sink.records.filter(
+      (span) => (span as { name?: string }).name === 'electron.process_gone'
+    )
+    expect(goneSpans).toEqual([
+      expect.objectContaining({
+        attributes: expect.objectContaining({
+          'crash.renderer_process_id': 4,
+          'crash.web_contents_id': 9
+        })
+      })
+    ])
+  })
+
   it('still coalesces one renderer death surfacing under multiple reasons', async () => {
     const record = vi.fn().mockResolvedValue({ id: 'report-1' })
     const dedupe = new ProcessGoneDedupe()
 
     recordProcessGoneCrash(
       { record, attachDetails } as never,
-      rendererGone({ reason: 'crashed', exitCode: -36861, webContentsId: 7 }),
+      rendererGone({ reason: 'crashed', exitCode: -36861, webContentsId: 7, rendererProcessId: 3 }),
       dedupe,
       noMinidump
     )
     recordProcessGoneCrash(
       { record, attachDetails } as never,
-      rendererGone({ reason: 'oom', exitCode: -536870904, webContentsId: 7 }),
+      rendererGone({ reason: 'oom', exitCode: -536870904, webContentsId: 7, rendererProcessId: 3 }),
       dedupe,
       noMinidump
     )
@@ -120,13 +159,13 @@ describe('renderer process identity in process-gone dedupe', () => {
 
     recordProcessGoneCrash(
       { record, attachDetails } as never,
-      rendererGone({ reason: 'crashed', exitCode: 5, webContentsId: 7 }),
+      rendererGone({ reason: 'crashed', exitCode: 5, webContentsId: 7, rendererProcessId: 3 }),
       dedupe,
       noMinidump
     )
     recordProcessGoneCrash(
       { record, attachDetails } as never,
-      rendererGone({ reason: 'oom', exitCode: -536870904, webContentsId: 7 }),
+      rendererGone({ reason: 'oom', exitCode: -536870904, webContentsId: 7, rendererProcessId: 3 }),
       dedupe,
       noMinidump
     )
@@ -148,14 +187,14 @@ describe('renderer process identity in process-gone dedupe', () => {
 
     recordProcessGoneCrash(
       { record, attachDetails } as never,
-      rendererGone({ reason: 'crashed', exitCode: 5, webContentsId: 7 }),
+      rendererGone({ reason: 'crashed', exitCode: 5, webContentsId: 7, rendererProcessId: 3 }),
       dedupe,
       noMinidump
     )
     for (let i = 0; i < 40; i++) {
       recordProcessGoneCrash(
         { record, attachDetails } as never,
-        rendererGone({ reason: 'crashed', exitCode: 5, webContentsId: 7 }),
+        rendererGone({ reason: 'crashed', exitCode: 5, webContentsId: 7, rendererProcessId: 3 }),
         dedupe,
         noMinidump
       )
@@ -170,7 +209,7 @@ describe('renderer process identity in process-gone dedupe', () => {
 })
 
 describe('getProcessGoneDedupeKey renderer identity', () => {
-  it('keys distinct renderers apart while coalescing reasons per renderer', () => {
+  it('keys distinct renderer processes apart while coalescing reasons per process', () => {
     const mainWindowCrashed = getProcessGoneDedupeKey('renderer', 'renderer', 'crashed', 5, 1)
     const mainWindowOom = getProcessGoneDedupeKey('renderer', 'renderer', 'oom', -536870904, 1)
     const guestCrashed = getProcessGoneDedupeKey('renderer', 'renderer', 'crashed', 5, 42)
@@ -179,9 +218,52 @@ describe('getProcessGoneDedupeKey renderer identity', () => {
     expect(guestCrashed).not.toBe(mainWindowCrashed)
   })
 
+  // Why: a destroyed webContents makes the identity unreadable; those events
+  // must share one bucket — coalescing beats re-creating #14667's duplicates.
+  it('buckets unreadable renderer identities together', () => {
+    expect(getProcessGoneDedupeKey('renderer', 'renderer', 'crashed', 5, null)).toBe(
+      getProcessGoneDedupeKey('renderer', 'renderer', 'oom', -536870904, null)
+    )
+  })
+
   it('keeps child keys unchanged by renderer identity', () => {
     expect(getProcessGoneDedupeKey('child', 'Utility', 'crashed', 1)).toBe(
       'child:Utility:crashed:1'
     )
+  })
+})
+
+describe('readGoneRendererProcessId', () => {
+  const liveWebContents = (overrides: Record<string, unknown> = {}) =>
+    ({
+      isDestroyed: () => false,
+      getProcessId: () => 4,
+      ...overrides
+    }) as never
+
+  it('reads the render-process-host id from a live webContents', () => {
+    expect(readGoneRendererProcessId(liveWebContents())).toBe(4)
+  })
+
+  it('returns undefined once the webContents is destroyed', () => {
+    expect(readGoneRendererProcessId(liveWebContents({ isDestroyed: () => true }))).toBeUndefined()
+  })
+
+  it('returns undefined when the read throws mid-teardown', () => {
+    expect(
+      readGoneRendererProcessId(
+        liveWebContents({
+          getProcessId: () => {
+            throw new Error('Object has been destroyed')
+          }
+        })
+      )
+    ).toBeUndefined()
+  })
+
+  it('rejects the invalid child-process sentinel', () => {
+    // Why: content::ChildProcessHost::kInvalidUniqueID is -1; a sentinel key
+    // would collapse every sentinel-bearing death into one bucket by accident.
+    expect(readGoneRendererProcessId(liveWebContents({ getProcessId: () => -1 }))).toBeUndefined()
   })
 })

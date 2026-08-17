@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { shell, webContents } from 'electron'
+import { readGoneRendererProcessId } from '../crash-reporting/process-gone-renderer-identity'
 import { ORCA_BROWSER_BLANK_URL } from '../../shared/constants'
 import {
   normalizeBrowserNavigationUrl,
@@ -153,7 +154,8 @@ export type BrowserGuestRendererGoneKind = 'browser-guest' | 'browser-popup'
 export type BrowserGuestRendererGoneReporter = (
   details: Electron.RenderProcessGoneDetails,
   guestWebContentsId: number,
-  guestKind: BrowserGuestRendererGoneKind
+  guestKind: BrowserGuestRendererGoneKind,
+  guestRendererProcessId: number | undefined
 ) => void
 type PendingMainFrameNavigation = {
   currentUrl: string
@@ -919,7 +921,8 @@ export class BrowserManager {
       this.guestRendererGoneReporter?.(
         details,
         guest.id,
-        inheritedOwnerContext ? 'browser-popup' : 'browser-guest'
+        inheritedOwnerContext ? 'browser-popup' : 'browser-guest',
+        readGoneRendererProcessId(guest)
       )
     }
     guest.on('render-process-gone', renderProcessGoneHandler)

@@ -21,6 +21,7 @@ import { ORCA_BROWSER_GUEST_WEB_PREFERENCES } from '../../shared/browser-guest-w
 import { isCrashReportReason } from '../../shared/crash-reporting'
 import { markSystemSessionEnding } from '../crash-reporting/expected-teardown-state'
 import { recordDurableCrashBreadcrumb } from '../crash-reporting/durable-crash-breadcrumb'
+import { readGoneRendererProcessId } from '../crash-reporting/process-gone-renderer-identity'
 import {
   DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES,
   DEFAULT_RENDERER_RECOVERY_WINDOW_MS,
@@ -193,7 +194,8 @@ type CreateMainWindowOptions = {
   onQuitAborted?: () => void
   onRendererProcessGone?: (
     details: Electron.RenderProcessGoneDetails,
-    webContentsId: number
+    webContentsId: number,
+    rendererProcessId: number | undefined
   ) => void
   /** Returns true when Orca should reload after renderer loss; update-relaunch/quit tear down children intentionally, so don't fight shutdown. */
   shouldRecoverRenderer?: (
@@ -658,7 +660,13 @@ export function createMainWindow(
     // Why: macOS reports BrowserWindow teardown as renderer killed/SIGKILL after close — window noise, not a crash.
     if (!windowClosing) {
       // Why: the recorder owns crash classification; filtering here made expected-teardown evidence unreachable.
-      opts?.onRendererProcessGone?.(details, rendererWebContentsId)
+      // Why: read the process identity here, at event time — the host id is
+      // still readable while the caller may run after teardown races.
+      opts?.onRendererProcessGone?.(
+        details,
+        rendererWebContentsId,
+        readGoneRendererProcessId(mainWindow.webContents)
+      )
     }
     if (!windowClosing) {
       console.error('[window] Renderer process gone; close confirmation will be bypassed', details)
