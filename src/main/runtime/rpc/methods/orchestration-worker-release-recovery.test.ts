@@ -80,8 +80,9 @@ describe('orchestration worker release recovery', () => {
     })
     vi.spyOn(runtime, 'closeTerminal').mockResolvedValue({
       handle: 'term_worker',
-      closed: true
-    } as never)
+      tabId: 'tab-worker',
+      ptyKilled: true
+    })
     vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
     activeRunId = db.createRun({
       objective: 'Release recovery test Run',
