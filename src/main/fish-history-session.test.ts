@@ -6,6 +6,7 @@ import {
   deleteFishHistoryFile,
   fishHistorySessionName,
   isSafeFishHistorySession,
+  relayFishHistorySessionName,
   resolveFishHistoryDir,
   sweepOrphanedFishHistoryFiles
 } from './fish-history-session'
@@ -193,5 +194,45 @@ describe('orphaned fish history sweep', () => {
     }
 
     expect(sweepOrphanedFishHistoryFiles(new Set([HASH_A]), [fishDir, other, fishDir])).toBe(2)
+  })
+})
+
+/**
+ * A relay host keyed by its CLIENT's worktree ids shares one fish data dir with
+ * any desktop Orca on the same machine, whose live set knows nothing of those
+ * ids. The name is the only thing that keeps that sweep off remote history.
+ */
+describe('relay fish history naming', () => {
+  let relayRoot: string
+
+  beforeEach(() => {
+    relayRoot = mkdtempSync(join(tmpdir(), 'orca-fish-relay-'))
+  })
+
+  afterEach(() => {
+    rmSync(relayRoot, { recursive: true, force: true })
+  })
+
+  it('is namespaced apart from desktop session names', () => {
+    expect(relayFishHistorySessionName(HASH_A)).not.toBe(fishHistorySessionName(HASH_A))
+  })
+
+  it('is still a safe session name, so the relay can delete it by name', () => {
+    expect(isSafeFishHistorySession(relayFishHistorySessionName(HASH_A))).toBe(true)
+  })
+
+  it('survives a desktop sweep that knows none of the relay worktree ids', () => {
+    const dir = relayRoot
+    const relayFile = join(dir, `${relayFishHistorySessionName(HASH_A)}_history`)
+    const desktopFile = join(dir, `${fishHistorySessionName(HASH_B)}_history`)
+    writeFileSync(relayFile, 'relay')
+    writeFileSync(desktopFile, 'desktop')
+
+    // A live set with neither hash in it: everything attributable is orphaned.
+    const removed = sweepOrphanedFishHistoryFiles(new Set(['deadbeef']), [dir])
+
+    expect(removed).toBe(1)
+    expect(existsSync(desktopFile)).toBe(false)
+    expect(existsSync(relayFile)).toBe(true)
   })
 })

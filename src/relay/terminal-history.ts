@@ -12,7 +12,7 @@ import { basename, join } from 'node:path'
 import { hashWorktreeId } from '../main/terminal-history-id'
 import {
   deleteFishHistoryFile,
-  fishHistorySessionName,
+  relayFishHistorySessionName,
   resolveFishHistoryDir
 } from '../main/fish-history-session'
 
@@ -124,11 +124,11 @@ export function injectRelayFishHistoryEnv(env: Record<string, string>, worktreeI
   if (env.fish_history) {
     return
   }
-  env.fish_history = fishHistorySessionName(hashWorktreeId(worktreeId))
+  env.fish_history = relayFishHistorySessionName(hashWorktreeId(worktreeId))
 }
 
 export function deleteRelayFishHistory(worktreeId: string, env?: NodeJS.ProcessEnv): void {
-  deleteFishHistoryFile(fishHistorySessionName(hashWorktreeId(worktreeId)), [
+  deleteFishHistoryFile(relayFishHistorySessionName(hashWorktreeId(worktreeId)), [
     resolveFishHistoryDir(env)
   ])
 }

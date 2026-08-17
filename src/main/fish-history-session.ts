@@ -16,7 +16,13 @@ import { isAbsolute, join } from 'node:path'
  * tool's data for the session, not just fish's history.
  */
 const SESSION_PREFIX = 'orca_'
-const SAFE_SESSION_NAME = /^orca_[0-9a-f]{1,64}$/
+const RELAY_SESSION_PREFIX = 'orca_relay_'
+const SAFE_SESSION_NAME = /^orca_(?:relay_)?[0-9a-f]{1,64}$/
+/** Deliberately does NOT match the relay prefix. A relay host keyed by its
+ *  CLIENT's worktree ids shares the one fish data dir with any desktop Orca on
+ *  the same machine, whose live set knows nothing of those ids — so an
+ *  attributable name is the only thing keeping that sweep off remote history.
+ *  Relay files are removed by exact name when their worktree goes away. */
 const ORCA_HISTORY_FILE = /^orca_([0-9a-f]{1,64})_history$/
 
 export function isSafeFishHistorySession(session: unknown): session is string {
@@ -25,6 +31,11 @@ export function isSafeFishHistorySession(session: unknown): session is string {
 
 export function fishHistorySessionName(worktreeHash: string): string {
   return `${SESSION_PREFIX}${worktreeHash}`
+}
+
+/** Relay-owned counterpart, namespaced out of the desktop sweep's reach. */
+export function relayFishHistorySessionName(worktreeHash: string): string {
+  return `${RELAY_SESSION_PREFIX}${worktreeHash}`
 }
 
 /** The directory fish will write history into, for a given environment.

@@ -116,7 +116,20 @@ function gcScanRoot(
 export function runHistoryGc(liveWorktreeIds: Set<string>): void {
   try {
     // Why: finish tombstones left by quit mid-rm before scanning live worktree hashes.
+    // Safe ahead of the guard below: these entries were already condemned by a
+    // completed GC, and leaving them renamed-but-present strands disk forever.
     schedulePendingHistoryTreeRemovals(getHistoryRoot())
+    // Why refuse rather than treat every entry as orphaned: an empty live set is
+    // what a store that fell back to default state looks like, and it cannot be
+    // told apart from a user who genuinely has no worktrees — who also has no
+    // history to collect. So refusing costs nothing, and it is the difference
+    // between a recoverable bad load and every worktree's shell history being
+    // deleted. `sweepOrphanedFishHistoryFiles` refuses it for the same reason;
+    // this is the path that deletes more.
+    if (liveWorktreeIds.size === 0) {
+      console.log('[pty:history:gc] Skipped: live worktree set is empty')
+      return
+    }
     const main = gcScanRoot(getHistoryRoot(), liveWorktreeIds)
 
     // Also scan WSL history directories (each distro has its own subdirectory).
