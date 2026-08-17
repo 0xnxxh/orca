@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { SSH_PROVIDER_UNREGISTERED_REASON } from '../../shared/pty-liveness-verdict'
 import { setupPtyIpcSuite } from './pty-ipc-test-harness'
 import {
   registerPtyHandlers,
@@ -111,6 +112,23 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
     deletePtyOwnership('ssh-detached-stop')
   })
 
+  it('preserves lost-contact evidence for renderer IPC teardown', async () => {
+    const ptyId = 'ssh-renderer-detached'
+    setPtyOwnership(ptyId, 'ssh-dropped')
+    const { runtime } = installController()
+    try {
+      await handlers.get('pty:kill')!(null, { id: ptyId })
+
+      expect(runtime.markPtyLivenessUnverifiable).toHaveBeenCalledWith(
+        ptyId,
+        SSH_PROVIDER_UNREGISTERED_REASON
+      )
+      expect(runtime.onPtyExit).toHaveBeenCalledWith(ptyId, -1, undefined)
+    } finally {
+      deletePtyOwnership(ptyId)
+    }
+  })
+
   it('still confirms a stop the owning provider actually performed', async () => {
     const daemon = installObservableDaemonTestProvider()
     vi.spyOn(getLocalPtyProvider(), 'listProcesses').mockResolvedValue([])
@@ -143,6 +161,34 @@ describe('stopping a PTY whose SSH provider is unregistered', () => {
         ptyId,
         'relay disconnected during stop'
       )
+    } finally {
+      deletePtyOwnership(ptyId)
+      unregisterSshPtyProvider(connectionId)
+    }
+  })
+
+  it('preserves lost-contact evidence when fire-and-forget shutdown rejects', async () => {
+    const connectionId = 'ssh-async-kill-drop'
+    const ptyId = 'ssh-async-kill-pty'
+    const provider = {
+      onExit: vi.fn(() => () => {}),
+      shutdown: vi.fn(async () => {
+        throw new Error('relay disconnected during kill')
+      })
+    }
+    registerSshPtyProvider(connectionId, provider as never)
+    setPtyOwnership(ptyId, connectionId)
+    try {
+      const { controller, runtime } = installController()
+
+      expect(controller.kill(ptyId)).toBe(true)
+      await vi.waitFor(() =>
+        expect(runtime.markPtyLivenessUnverifiable).toHaveBeenCalledWith(
+          ptyId,
+          'relay disconnected during kill'
+        )
+      )
+      expect(runtime.onPtyExit).toHaveBeenCalledWith(ptyId, -1, undefined)
     } finally {
       deletePtyOwnership(ptyId)
       unregisterSshPtyProvider(connectionId)

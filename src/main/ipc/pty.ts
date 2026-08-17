@@ -5559,6 +5559,12 @@ export function registerPtyHandlers(
             // Why: close runtime tails without clearing provider ownership, so
             // a retry can still target a PTY that survived the failed shutdown.
             if (!retired) {
+              if (connectionId) {
+                runtime?.markPtyLivenessUnverifiable?.(
+                  ptyId,
+                  err instanceof Error ? err.message : String(err)
+                )
+              }
               runtime?.onPtyExit(ptyId, -1, ptyIncarnationById.get(ptyId))
             }
           })
@@ -5572,6 +5578,12 @@ export function registerPtyHandlers(
             `[pty] Failed to stop PTY ${ptyId}: ${err instanceof Error ? err.message : String(err)}`
           )
           if (!retiredRejectedPtyIds.has(ptyId)) {
+            if (connectionId) {
+              runtime?.markPtyLivenessUnverifiable?.(
+                ptyId,
+                err instanceof Error ? err.message : String(err)
+              )
+            }
             runtime?.onPtyExit(ptyId, -1, ptyIncarnationById.get(ptyId))
           }
         })
@@ -7604,6 +7616,7 @@ export function registerPtyHandlers(
       // provider is unregistered; hydrated app-scoped ids can also arrive
       // before ownership is rebuilt. Tombstone instead of falling back local.
       const incarnationId = finishPtyShutdown(args.id, connectionId, store)
+      runtime?.markPtyLivenessUnverifiable?.(args.id, SSH_PROVIDER_UNREGISTERED_REASON)
       runtime?.onPtyExit(args.id, -1, incarnationId)
       rememberSyntheticKillExit(args.id)
       sendPtyExitToRenderer({ id: args.id, code: -1 })
