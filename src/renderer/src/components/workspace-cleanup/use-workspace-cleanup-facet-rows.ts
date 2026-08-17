@@ -141,7 +141,9 @@ export function useWorkspaceCleanupFacetRows({
     () => getLiveAgentStatusByWorktreeId(sources.agentStatusByPaneKey, sources.tabsByWorktree, now),
     [now, sources.agentStatusByPaneKey, sources.tabsByWorktree]
   )
-  const dismissedWorktreeIds = useMemo(
+  // Why (STA-4343): dismissals are keyed by host-qualified identity, so the keys
+  // ARE identities — comparing them to a bare worktreeId never matched.
+  const dismissedIdentities = useMemo(
     () => new Set(Object.keys(sources.dismissals)),
     [sources.dismissals]
   )
@@ -183,13 +185,13 @@ export function useWorkspaceCleanupFacetRows({
           lastVisitedAtByWorktreeId: sources.lastVisitedAtByWorktreeId,
           liveAgentStatusByWorktreeId,
           reviewInfoByWorktreeId,
-          dismissedWorktreeIds
+          dismissedIdentities
         },
         cache: facetContext.cache
       }),
     [
       candidates,
-      dismissedWorktreeIds,
+      dismissedIdentities,
       facetContext,
       liveAgentStatusByWorktreeId,
       reviewInfoByWorktreeId,

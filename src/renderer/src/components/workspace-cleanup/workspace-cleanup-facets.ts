@@ -1,6 +1,7 @@
 import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type { WorkspaceStatusDefinition } from '../../../../shared/worktree/types'
+import { getWorkspaceCleanupCandidateIdentity } from '../../../../shared/workspace-cleanup-host-identity'
 import { getWorkspaceStatus } from '../../../../shared/workspace-statuses'
 import {
   canSelectWorkspaceCleanupCandidate,
@@ -31,7 +32,8 @@ export type WorkspaceCleanupFacetSources = {
   lastVisitedAtByWorktreeId?: Readonly<Record<string, number>>
   liveAgentStatusByWorktreeId?: ReadonlyMap<string, LiveAgentWorktreeStatus>
   reviewInfoByWorktreeId?: ReadonlyMap<string, WorkspaceCleanupReviewInfo>
-  dismissedWorktreeIds?: ReadonlySet<string>
+  /** Host-qualified identities, matching how dismissals are stored (STA-4343). */
+  dismissedIdentities?: ReadonlySet<string>
 }
 
 export type WorkspaceCleanupFacets = {
@@ -120,7 +122,8 @@ export function buildWorkspaceCleanupFacets(
     blockers: candidate.blockers,
     blockerCount: candidate.blockers.length,
     isDismissed:
-      (sources.dismissedWorktreeIds?.has(candidate.worktreeId) ?? false) ||
+      (sources.dismissedIdentities?.has(getWorkspaceCleanupCandidateIdentity(candidate)) ??
+        false) ||
       candidate.blockers.includes('dismissed'),
     isSelectable: canSelectWorkspaceCleanupCandidate(candidate),
     lastActivityAt: candidate.lastActivityAt,
