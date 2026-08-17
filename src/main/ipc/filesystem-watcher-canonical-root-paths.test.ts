@@ -5,6 +5,7 @@
  * consumer that derives a worktree-relative path silently dropped them — an
  * agent's edit never reloaded the open editor tab.
  */
+import type * as NodeFs from 'node:fs'
 import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,9 +17,15 @@ const { handleMock, realpathMock } = vi.hoisted(() => ({
 vi.mock('electron', () => ({ ipcMain: { handle: handleMock } }))
 
 vi.mock('fs/promises', () => ({
-  stat: vi.fn(),
-  realpath: realpathMock
+  stat: vi.fn()
 }))
+
+vi.mock('node:fs', async (importOriginal) => {
+  // Why: the supervisor resolves the watched root synchronously, so the fake
+  // symlink target has to come from realpathSync rather than fs/promises.
+  const actual = await importOriginal<typeof NodeFs>()
+  return { ...actual, realpathSync: Object.assign(realpathMock, { native: realpathMock }) }
+})
 
 vi.mock('@parcel/watcher', () => ({ subscribe: vi.fn() }))
 
@@ -66,7 +73,7 @@ describe('local filesystem watcher canonical root paths', () => {
     vi.mocked(stat).mockImplementation(
       (candidate) => Promise.resolve({ isDirectory: () => candidate === worktreePath }) as never
     )
-    realpathMock.mockResolvedValue(canonicalRoot)
+    realpathMock.mockReturnValue(canonicalRoot)
     let watcherCallback: ((err: Error | null, events: WatcherEvent[]) => void) | undefined
     vi.mocked(subscribeParcelWatcher).mockImplementation(async (_root, callback) => {
       watcherCallback = callback as typeof watcherCallback

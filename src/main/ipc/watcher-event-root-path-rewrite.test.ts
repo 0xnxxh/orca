@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyWatcherEventRootPathRewrite,
   createWatcherEventRootPathRewrite,
-  resolveWatcherEventRootPathRewrite
+  resolveWatcherRootPaths
 } from './watcher-event-root-path-rewrite'
 
 describe('createWatcherEventRootPathRewrite', () => {
@@ -60,21 +60,27 @@ describe('createWatcherEventRootPathRewrite', () => {
   })
 })
 
-describe('resolveWatcherEventRootPathRewrite', () => {
-  it('falls back to the literal root when realpath fails', async () => {
-    const rewrite = await resolveWatcherEventRootPathRewrite('/tmp/gone', {
-      realpath: () => Promise.reject(new Error('ENOENT')),
+describe('resolveWatcherRootPaths', () => {
+  it('falls back to the literal root when realpath fails', () => {
+    const { watchRoot, rewriteEventPath } = resolveWatcherRootPaths('/tmp/gone', {
+      realpath: () => {
+        throw new Error('ENOENT')
+      },
       platform: 'linux'
     })
-    expect(rewrite('/tmp/gone/a.ts')).toBe('/tmp/gone/a.ts')
+    expect(watchRoot).toBe('/tmp/gone')
+    expect(rewriteEventPath('/tmp/gone/a.ts')).toBe('/tmp/gone/a.ts')
   })
 
-  it('uses the resolved root when realpath succeeds', async () => {
-    const rewrite = await resolveWatcherEventRootPathRewrite('/tmp/link', {
-      realpath: () => Promise.resolve('/private/tmp/real'),
+  // Why: Linux cannot inotify-watch a symlink at all (IN_ONLYDIR), so the
+  // resolved directory — not the caller's spelling — is what gets watched.
+  it('watches the resolved root and restores the caller spelling', () => {
+    const { watchRoot, rewriteEventPath } = resolveWatcherRootPaths('/tmp/link', {
+      realpath: () => '/private/tmp/real',
       platform: 'darwin'
     })
-    expect(rewrite('/private/tmp/real/a.ts')).toBe('/tmp/link/a.ts')
+    expect(watchRoot).toBe('/private/tmp/real')
+    expect(rewriteEventPath('/private/tmp/real/a.ts')).toBe('/tmp/link/a.ts')
   })
 })
 

@@ -8,6 +8,7 @@
  * The rewrite lives in the supervisor, the one boundary every desktop, runtime,
  * and relay watch passes, so assert it there for both subscription entry points.
  */
+import type * as NodeFs from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,11 +30,17 @@ const { forkMock, existsSyncMock, mkdtempSyncMock, parcelSubscribeMock, rmSyncMo
 )
 
 vi.mock('node:child_process', () => ({ fork: forkMock }))
-vi.mock('node:fs', () => ({
-  existsSync: existsSyncMock,
-  mkdtempSync: mkdtempSyncMock,
-  rmSync: rmSyncMock
-}))
+vi.mock('node:fs', async (importOriginal) => {
+  // Why: the supervisor resolves the watched root with realpathSync.native, so
+  // keep the real implementation while stubbing the child-launch surface.
+  const actual = await importOriginal<typeof NodeFs>()
+  return {
+    existsSync: existsSyncMock,
+    mkdtempSync: mkdtempSyncMock,
+    rmSync: rmSyncMock,
+    realpathSync: actual.realpathSync
+  }
+})
 vi.mock('@parcel/watcher', () => ({ subscribe: parcelSubscribeMock }))
 
 import {

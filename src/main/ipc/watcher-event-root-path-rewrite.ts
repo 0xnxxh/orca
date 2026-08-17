@@ -1,18 +1,29 @@
 /**
- * macOS FSEvents reports OS-canonical paths: symlinks resolved and each
- * directory in its on-disk spelling. A worktree reached through a symlink
- * (`~/code` -> `/Volumes/…`, anything under `/tmp` or `/var`) or opened with
- * different casing on a case-insensitive volume therefore emits events that no
- * longer sit under the root the renderer subscribed with. Every consumer
- * derives a worktree-relative path from that root, so those events are dropped
- * outright — the editor never reloads an agent's edit, the File Explorer never
- * refreshes, and Source Control never re-runs status.
+ * A worktree reached through a symlink (`~/code` -> `/Volumes/…`, anything under
+ * `/tmp` or `/var`) or spelled with different casing than disk on a
+ * case-insensitive volume breaks recursive watching, differently per platform:
  *
- * Linux (inotify) and Windows both rebuild paths from the requested root, so
- * only macOS observes the mismatch. Rewrite at the watcher boundary anyway so
- * the "event paths live under worktreePath" contract is platform-independent.
+ * - Linux: `@parcel/watcher` passes `IN_DONT_FOLLOW | IN_ONLYDIR` to
+ *   `inotify_add_watch`, so a symlinked root fails outright with ENOTDIR
+ *   ("Not a directory"). The watch never installs, and Orca caches the root in
+ *   `unwatchableRoots`, so it is not retried for the rest of the session.
+ * - macOS: FSEvents installs the watch but reports OS-canonical paths —
+ *   symlinks resolved, each directory in its on-disk spelling — so events land
+ *   outside the root the caller subscribed with.
+ * - Windows: `GetFinalPathNameByHandle` behind `realpath` resolves junctions
+ *   and substituted drives the same way.
+ *
+ * Both failures have the same visible symptom, because every consumer derives a
+ * worktree-relative path from the subscribed root and silently drops whatever
+ * falls outside it: the editor never reloads an agent's edit, the File Explorer
+ * never refreshes, and Source Control never re-runs status.
+ *
+ * So hand the backend the resolved directory (which is watchable everywhere and
+ * lets @parcel/watcher's own ignore paths match), then map delivered paths back
+ * to the caller's spelling so the "event paths live under worktreePath"
+ * contract holds on every platform.
  */
-import { realpath } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 
 export type WatcherEventRootPathRewrite = (eventPath: string) => string
 
@@ -90,53 +101,40 @@ export function createWatcherEventRootPathRewrite(
   }
 }
 
-export async function resolveWatcherEventRootPathRewrite(
-  requestedRoot: string,
-  deps: {
-    realpath?: (candidate: string) => Promise<string>
-    platform?: NodeJS.Platform
-  } = {}
-): Promise<WatcherEventRootPathRewrite> {
-  let canonicalRoot = requestedRoot
-  try {
-    canonicalRoot = await (deps.realpath ?? realpath)(requestedRoot)
-  } catch {
-    // Why: a vanished or unreadable root still gets a watcher attempt (and its
-    // own failure path); fall back to the literal spelling rather than fail
-    // here. Resolving the binding inside the try also keeps suites that mock a
-    // partial node:fs/promises from turning this into a watcher install failure.
-  }
-  return createWatcherEventRootPathRewrite(requestedRoot, canonicalRoot, deps.platform)
-}
-
-export type RootPathRewritingWatcherCallback<E> = {
-  /** Drop-in replacement for the caller's watcher callback. */
-  callback: (error: Error | null, events: E[]) => void
-  /**
-   * Resolves once the rewrite is installed. Await it before settling a
-   * subscribe so callers never observe an un-rewritten batch — but only after
-   * the subscription itself is recorded, so teardown never waits on a realpath.
-   */
-  ready: Promise<void>
+export type WatcherRootPaths = {
+  /** Directory to hand the watcher backend — symlinks resolved. */
+  watchRoot: string
+  /** Maps a delivered event path back onto the caller's spelling. */
+  rewriteEventPath: WatcherEventRootPathRewrite
 }
 
 /**
- * Wraps a watcher callback so every delivered event path is spelled the way
- * `dir` was subscribed. Resolution runs alongside the subscribe rather than
- * before it: an await ahead of the subscribe would let an abort land in a gap
- * where no watcher subscription exists to cancel.
+ * Deliberately synchronous. Every caller reserves and forks its watcher child
+ * in the same tick as the subscribe call — capacity accounting and cancellation
+ * ordering both depend on it — so an await here would open a window in which a
+ * subscribe has been issued but no cancellable child exists. This is one
+ * `realpath` per subscribe (not per event), on a directory the caller has
+ * usually just stat'd, in a function that already calls `existsSync`.
  */
-export function createRootPathRewritingWatcherCallback<E extends { path: string }>(
-  dir: string,
-  callback: (error: Error | null, events: E[]) => void
-): RootPathRewritingWatcherCallback<E> {
-  let rewrite = identityWatcherEventRootPathRewrite
-  const ready = resolveWatcherEventRootPathRewrite(dir).then((resolved) => {
-    rewrite = resolved
-  })
+export function resolveWatcherRootPaths(
+  requestedRoot: string,
+  deps: {
+    realpath?: (candidate: string) => string
+    platform?: NodeJS.Platform
+  } = {}
+): WatcherRootPaths {
+  let watchRoot = requestedRoot
+  try {
+    watchRoot = (deps.realpath ?? realpathSync.native)(requestedRoot)
+  } catch {
+    // Why: a vanished or unreadable root still gets a watcher attempt, which
+    // owns its own failure reporting; fall back to the literal spelling rather
+    // than fail here. Resolving the binding inside the try also keeps suites
+    // that mock a partial node:fs from failing every watcher install.
+  }
   return {
-    callback: (error, events) => callback(error, applyWatcherEventRootPathRewrite(events, rewrite)),
-    ready
+    watchRoot,
+    rewriteEventPath: createWatcherEventRootPathRewrite(requestedRoot, watchRoot, deps.platform)
   }
 }
 

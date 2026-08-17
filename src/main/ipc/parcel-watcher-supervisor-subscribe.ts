@@ -9,7 +9,10 @@ import {
   resetPendingSubscribeAttempt
 } from './parcel-watcher-pending-subscribe'
 import { WatcherProcessFailure } from './parcel-watcher-process-failure'
-import { createRootPathRewritingWatcherCallback } from './watcher-event-root-path-rewrite'
+import {
+  applyWatcherEventRootPathRewrite,
+  resolveWatcherRootPaths
+} from './watcher-event-root-path-rewrite'
 import type {
   HostToWatcherMessage,
   WatcherProcessSubscribeOptions
@@ -97,18 +100,17 @@ export function subscribeThroughWatcherSupervisor({
       )
     )
   }
-  // Why: macOS reports OS-canonical paths (symlinks resolved, on-disk casing),
-  // which land outside the root the caller watched. Every consumer derives a
-  // relative path from that root and drops what falls outside it, so normalize
-  // here — the one boundary every desktop, runtime, and relay watch passes.
-  const { callback, ready: rewriteReady } = createRootPathRewritingWatcherCallback(dir, rawCallback)
+  // Why: a symlinked or differently-cased root is unwatchable on Linux
+  // (IN_ONLYDIR) and misreported on macOS (FSEvents canonicalizes). Watch the
+  // resolved directory, then restore the caller's spelling on the way out --
+  // this is the one boundary every desktop, runtime, and relay watch passes.
+  const { watchRoot, rewriteEventPath } = resolveWatcherRootPaths(dir)
+  const callback: WatcherProcessCallback = (error, events) =>
+    rawCallback(error, applyWatcherEventRootPathRewrite(events, rewriteEventPath))
   // Why: under Vitest we cannot fork a real watcher child, so exercise the
   // subscription path in-process (against mocked @parcel/watcher) instead.
   if (process.env.VITEST && useInProcessVitestFallback) {
-    return subscribeWithInProcessWatcher(dir, callback, opts, hooks).then(async (subscription) => {
-      await rewriteReady
-      return subscription
-    })
+    return subscribeWithInProcessWatcher(watchRoot, callback, opts, hooks)
   }
   if (!existsSync(entryPath)) {
     return Promise.reject(
@@ -121,14 +123,14 @@ export function subscribeThroughWatcherSupervisor({
   }
   const record: WatcherProcessSubscriptionRecord = {
     id: allocateId(),
-    dir,
+    dir: watchRoot,
     opts,
     callback,
     hooks,
     interrupted: false,
     crawlStarted: false
   }
-  const installed = new Promise<WatcherProcessSubscription>((resolve, reject) => {
+  return new Promise<WatcherProcessSubscription>((resolve, reject) => {
     const child = ensureWatcherProcess(entryPath)
     if (!child) {
       reject(
@@ -159,9 +161,5 @@ export function subscribeThroughWatcherSupervisor({
     }
     installPendingSubscribeControls(record, (error) => cancelPendingSubscribe(record, error))
     sendSubscribe(child, record)
-  })
-  return installed.then(async (subscription) => {
-    await rewriteReady
-    return subscription
   })
 }
