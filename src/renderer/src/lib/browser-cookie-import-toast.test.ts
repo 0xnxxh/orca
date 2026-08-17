@@ -101,6 +101,46 @@ describe('emitBrowserCookieImportToast', () => {
     expect(warningToastMock).not.toHaveBeenCalled()
   })
 
+  // Why: the summary crosses the runtime RPC wire and is cast, not decoded, so a newer host can
+  // publish a reason/code this client build has never heard of (#14683 follow-up).
+  it('still warns when a newer host sends an undeclared undecryptable reason', () => {
+    emitBrowserCookieImportToast(
+      {
+        ...summary,
+        warning: {
+          code: 'cookies-undecryptable',
+          failedCookies: 3,
+          reason: 'hardware-token-required'
+        } as unknown as BrowserCookieImportSummary['warning']
+      },
+      'Imported 0 cookies.',
+      'Remote Linux'
+    )
+
+    const message = warningToastMock.mock.calls[0]?.[0]
+    expect(typeof message).toBe('string')
+    expect(message).not.toBe('')
+    expect(message).toContain('3')
+  })
+
+  it('still warns when a newer host sends an undeclared warning code', () => {
+    emitBrowserCookieImportToast(
+      {
+        ...summary,
+        warning: {
+          code: 'profile-locked',
+          failedCookies: 3
+        } as unknown as BrowserCookieImportSummary['warning']
+      },
+      'Imported 0 cookies.',
+      'Remote Linux'
+    )
+
+    const message = warningToastMock.mock.calls[0]?.[0]
+    expect(typeof message).toBe('string')
+    expect(message).not.toBe('')
+  })
+
   it('keeps both applicable warnings when restart fallback is unavailable', () => {
     emitBrowserCookieImportToast(
       {
