@@ -98,6 +98,8 @@ export async function siteConfigMayRestrictHostKeys(
   // OpenSSH resolves a relative Include against a FIXED directory — SSHDIR for the system config —
   // not against the including file's own directory. Those agree at depth 1 and diverge below it, so
   // passing dirname(file) silently missed a directive one level down. Verified against 10.2p1.
+  // One base for the whole walk, which holds only while SITE_SSH_CONFIG_FILES names a single
+  // directory. A second entry elsewhere would need its own base tracked per queued file.
   const siteConfigDir = dirname(files[0] ?? SITE_SSH_CONFIG_FILES[0])
   // Bounded so an Include cycle cannot spin; OpenSSH allows nesting, we only need "any mention".
   for (let visited = 0; pending.length > 0 && visited < 32; visited += 1) {
@@ -134,11 +136,52 @@ export async function siteConfigMayRestrictHostKeys(
   return pending.length > 0
 }
 
+/**
+ * One Include's arguments, honouring double quotes, or null when a quote never closes.
+ *
+ * Splitting on whitespace first and unquoting after cannot see a quoted path that CONTAINS a space:
+ * `Include "/etc/ssh/my confs/site.conf"` became two tokens, neither of which resolved, and two
+ * missing paths read as "no site policy". OpenSSH honours that form (verified against 10.2p1), and
+ * it is likelier on Windows, where `C:\Program Files\…` is ordinary. Unquoted spaces still split —
+ * that also matches OpenSSH, which treats them as two separate paths.
+ */
+function splitIncludeArguments(pattern: string): string[] | null {
+  const tokens: string[] = []
+  let current = ''
+  let quoted = false
+  let started = false
+  for (const char of pattern) {
+    if (char === '"') {
+      quoted = !quoted
+      started = true
+    } else if (!quoted && /\s/.test(char)) {
+      if (started) {
+        tokens.push(current)
+      }
+      current = ''
+      started = false
+    } else {
+      current += char
+      started = true
+    }
+  }
+  if (quoted) {
+    return null
+  }
+  if (started) {
+    tokens.push(current)
+  }
+  return tokens
+}
+
 /** Resolves one Include's globs, or null when it cannot be resolved and doubt must win. */
 async function expandSiteInclude(pattern: string, baseDir: string): Promise<string[] | null> {
   const resolved: string[] = []
-  for (const raw of pattern.split(/\s+/).filter(Boolean)) {
-    const token = raw.replace(/^"(.*)"$/, '$1')
+  const tokens = splitIncludeArguments(pattern)
+  if (tokens === null) {
+    return null
+  }
+  for (const token of tokens) {
     // `~` and OpenSSH's `%d`/`%u`-style tokens both expand before the path is used. Resolving them
     // is not worth it for a question this coarse, but treating them as ordinary characters is what
     // made this fail OPEN: the join produced a path that does not exist, and a nonexistent Include

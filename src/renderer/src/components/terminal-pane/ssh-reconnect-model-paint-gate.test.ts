@@ -52,12 +52,24 @@ describe('lastAlternateScreenTransition', () => {
 })
 
 describe('sshReconnectPaintsFromModel', () => {
-  const args = (overrides: Partial<Parameters<typeof sshReconnectPaintsFromModel>[0]> = {}) => ({
-    snapshot: { alternateScreen: true },
-    replay: 'some output',
-    altFrameWouldBeSkipped: false,
-    ...overrides
-  })
+  // Takes the replay as a string and derives what the gate now wants, so these cases still read as
+  // "this is what the host sent" AND still run the real transition parser end to end.
+  const args = (
+    overrides: Partial<Omit<Parameters<typeof sshReconnectPaintsFromModel>[0], 'hasReplay'>> & {
+      replay?: string
+    } = {}
+  ) => {
+    // Key presence, not a default parameter: `replay: undefined` is a case under test — "no tail to
+    // degrade to" — and a default would silently turn it back into a replay.
+    const replay = 'replay' in overrides ? overrides.replay : 'some output'
+    return {
+      snapshot: { alternateScreen: true } as { alternateScreen?: boolean } | null,
+      altFrameWouldBeSkipped: false,
+      ...overrides,
+      hasReplay: Boolean(replay),
+      replayTransition: lastAlternateScreenTransition(replay)
+    }
+  }
 
   it('paints a full-screen app from the grid', () => {
     // The reported bug: a tail cannot rebuild a frame whose start it no longer contains.

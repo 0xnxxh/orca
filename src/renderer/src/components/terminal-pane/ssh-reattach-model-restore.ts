@@ -109,19 +109,26 @@ export function lastAlternateScreenTransition(
  */
 export function sshReconnectPaintsFromModel(args: {
   snapshot: { alternateScreen?: boolean } | null
-  replay: string | undefined
+  /**
+   * Taken already-computed rather than as the replay itself: the caller has to ask the same question
+   * earlier, to decide whether fetching a snapshot is worth its timeout at all. Scanning again here
+   * meant splitting up to 100 KB per pane twice on every reconnect. `hasReplay` cannot be inferred
+   * from the transition — a replay carrying no mode change and no replay at all are both null.
+   */
+  hasReplay: boolean
+  replayTransition: 'entered' | 'exited' | null
   altFrameWouldBeSkipped: boolean
 }): boolean {
   if (!args.snapshot?.alternateScreen) {
     return false
   }
-  if (!args.replay) {
+  if (!args.hasReplay) {
     // Nothing to degrade to, so the vetoes below would only trade a stale frame for a blank one.
     return true
   }
   // The alt frame is dropped for a width mismatch, leaving a cleared screen the app must repaint.
   // A park could afford that with no tail to lose; here it would mean discarding a usable one.
-  return !args.altFrameWouldBeSkipped && lastAlternateScreenTransition(args.replay) !== 'exited'
+  return !args.altFrameWouldBeSkipped && args.replayTransition !== 'exited'
 }
 
 /**

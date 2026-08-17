@@ -8360,15 +8360,16 @@ export function connectPanePty(
           // screen, no snapshot can be used no matter what it says, so fetching one only spends the
           // 750ms timeout to throw the answer away — and spends it inside the coordinator, with live
           // PTY bytes deferred and the payload still able to be superseded.
-          const replayVetoesModel =
-            lastAlternateScreenTransition(connectResult?.replay) === 'exited'
+          const replayTransition = lastAlternateScreenTransition(connectResult?.replay)
+          const replayVetoesModel = replayTransition === 'exited'
           const reconnectSnapshot =
             !revealSnapshot && reconnectMayUseModel && !replayVetoesModel
               ? await fetchSshMainModelReattachSnapshot()
               : null
           const paintsReconnectFromModel = sshReconnectPaintsFromModel({
             snapshot: reconnectSnapshot,
-            replay: connectResult?.replay,
+            hasReplay: Boolean(connectResult?.replay),
+            replayTransition,
             altFrameWouldBeSkipped: shouldSkipAltFrameForWidthMismatch(
               reconnectSnapshot?.cols,
               readProposedTerminalCols(pane)

@@ -37,6 +37,24 @@ export function mergeDirectSshRemoteWorkspaceSession(
     ...Object.keys(remote.tabsByWorktree),
     ...[...replaceWorktreeIds].filter((worktreeId) => localTabsFor(worktreeId).length > 0)
   ])
+  // The active worktree is walked FIRST so that when one tab id is held locally under two of them,
+  // the copy that survives below is the one the user is looking at. That matches what
+  // resolveActiveTabOwnerWorktreeId already prefers when it has to pick an owner, so the merge and
+  // the repair agree instead of each choosing differently.
+  const orderedWorktreeIds = [...mergedWorktreeIds].sort(
+    (a, b) =>
+      Number(b === current.activeWorktreeId) - Number(a === current.activeWorktreeId)
+  )
+  // Every id already emitted by an earlier worktree in THIS merge. Without it the host-unknown
+  // branch below only excludes ids the host knows, so a tab id that local state already holds under
+  // two worktrees is re-added under both — two panes sharing one entry in terminalLayoutsByTabId and
+  // one in remoteSessionIdsByTabId, which means one remote PTY, plus the unconvergeable activeTabId
+  // that active-tab-owner-worktree.ts exists to mitigate (React #185).
+  //
+  // The merge does not create that state; it used to destroy it, by deleting every local tab under a
+  // replaced worktree. Keeping live panes cost that accidental cure, so the guarantee is made
+  // explicit here instead: this function never emits one tab id twice, whatever it was handed.
+  const emittedTabIds = new Set<string>()
   const remoteKnownTabIds = new Set(
     Object.values(remote.tabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.id))
   )
@@ -50,7 +68,7 @@ export function mergeDirectSshRemoteWorkspaceSession(
       .map(([, sessionId]) => sessionId)
   )
   const tabsByWorktree = Object.fromEntries(
-    [...mergedWorktreeIds].map((worktreeId) => {
+    orderedWorktreeIds.map((worktreeId) => {
       const remoteTabs = remote.tabsByWorktree[worktreeId] ?? []
       const reconciled = remoteTabs.map((tab) => {
         const local = currentTabsById.get(tab.id)
@@ -65,6 +83,9 @@ export function mergeDirectSshRemoteWorkspaceSession(
         locallyPreservedTabIds.add(tab.id)
         return preserveNewerLocalTerminalFields(tab, local)
       })
+      for (const tab of reconciled) {
+        emittedTabIds.add(tab.id)
+      }
       if (!replaceWorktreeIds.has(worktreeId)) {
         return [worktreeId, reconciled]
       }
@@ -82,7 +103,7 @@ export function mergeDirectSshRemoteWorkspaceSession(
       // the duplicate the repair pass is trying to converge. A host that knows the id anywhere has
       // been told about the tab, so it is not host-unknown.
       const hostUnknown = localTabsFor(worktreeId).filter((tab) => {
-        if (remoteKnownTabIds.has(tab.id)) {
+        if (remoteKnownTabIds.has(tab.id) || emittedTabIds.has(tab.id)) {
           return false
         }
         const localSessionId = current.remoteSessionIdsByTabId?.[tab.id]
@@ -91,6 +112,7 @@ export function mergeDirectSshRemoteWorkspaceSession(
       for (const tab of hostUnknown) {
         // Keeps the tab's layout and remote session id from being swept with the replaced ids below.
         locallyPreservedTabIds.add(tab.id)
+        emittedTabIds.add(tab.id)
       }
       return [worktreeId, [...reconciled, ...hostUnknown]]
     })

@@ -280,3 +280,61 @@ describe('direct-SSH reconnect merge: local state the host has not seen', () => 
     expect(merged.activeTabIdByWorktree?.[WORKTREE]).toBe('setup')
   })
 })
+
+describe('a tab id local state already holds under two worktrees', () => {
+  it('is emitted once, not preserved into both', () => {
+    // Local-local duplication, which the host-unknown branch did not exclude: it filtered against
+    // ids the HOST knows, never against ids this same merge had already emitted. Two panes then
+    // share one entry in terminalLayoutsByTabId and one in remoteSessionIdsByTabId — so one remote
+    // PTY — and activeTabId can never converge, which strands the active-terminal repair in the
+    // self-retriggering loop active-tab-owner-worktree.ts exists to mitigate (React #185).
+    //
+    // The merge does not create this state. It used to DESTROY it, by deleting every local tab under
+    // a replaced worktree; keeping live panes cost that accidental cure, so it is made explicit.
+    const current = sessionState({
+      tabsByWorktree: {
+        [WORKTREE]: [terminalTab('setup')],
+        [OTHER_WORKTREE]: [terminalTab('setup', { worktreeId: OTHER_WORKTREE })]
+      }
+    })
+    const remote = sessionState({ activeWorktreeId: null, tabsByWorktree: {} })
+
+    const merged = mergeDirectSshRemoteWorkspaceSession(
+      current,
+      remote,
+      new Set([WORKTREE, OTHER_WORKTREE]),
+      current.tabsByWorktree,
+      new Set()
+    )
+
+    const owners = Object.entries(merged.tabsByWorktree)
+      .filter(([, tabs]) => tabs.some((tab) => tab.id === 'setup'))
+      .map(([worktreeId]) => worktreeId)
+    expect(owners, 'one tab id survived under two worktrees').toHaveLength(1)
+    // The survivor is the worktree the user is standing in, which is the owner
+    // resolveActiveTabOwnerWorktreeId prefers — so the merge and the repair agree.
+    expect(owners[0]).toBe(WORKTREE)
+  })
+
+  it('still keeps a host-unknown tab in a worktree that shares no ids', () => {
+    // Guards the obvious over-correction: deduping by id must not swallow distinct tabs.
+    const current = sessionState({
+      tabsByWorktree: {
+        [WORKTREE]: [terminalTab('setup')],
+        [OTHER_WORKTREE]: [terminalTab('build', { worktreeId: OTHER_WORKTREE })]
+      }
+    })
+    const remote = sessionState({ activeWorktreeId: null, tabsByWorktree: {} })
+
+    const merged = mergeDirectSshRemoteWorkspaceSession(
+      current,
+      remote,
+      new Set([WORKTREE, OTHER_WORKTREE]),
+      current.tabsByWorktree,
+      new Set()
+    )
+
+    expect(merged.tabsByWorktree[WORKTREE]?.map((tab) => tab.id)).toEqual(['setup'])
+    expect(merged.tabsByWorktree[OTHER_WORKTREE]?.map((tab) => tab.id)).toEqual(['build'])
+  })
+})

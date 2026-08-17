@@ -168,6 +168,38 @@ describe('siteConfigMayRestrictHostKeys', () => {
     await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
   })
 
+  it('follows a quoted Include path that contains a space', async () => {
+    // OpenSSH honours the quoted form — 10.2p1 applies `Include "<dir>/sp ace/x.conf"`. Splitting on
+    // whitespace before unquoting shredded it into two tokens that resolved to nothing, and two
+    // missing paths read as "no site policy". Likelier on Windows, where `C:\\Program Files` is
+    // ordinary. The unquoted form still splits, which is also what OpenSSH does.
+    const spaced = join(dir, 'my confs')
+    await mkdir(spaced, { recursive: true })
+    await writeFile(join(spaced, 'site.conf'), 'StrictHostKeyChecking accept-new\n', 'utf-8')
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, `Include "${join(spaced, 'site.conf')}"\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('stays strict when an Include quote never closes', async () => {
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, `Include "${join(dir, 'unterminated.conf')}\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(true)
+  })
+
+  it('still reads a quoted path with no space, rather than calling every quote doubt', async () => {
+    // The lockout this scanner exists to avoid: answering "doubt" for `Include "/etc/ssh/x.conf"`
+    // would punish an ordinary quoted config that plainly says nothing about host keys.
+    const included = join(dir, 'plain.conf')
+    await writeFile(included, 'Compression yes\n', 'utf-8')
+    const file = join(dir, 'ssh_config')
+    await writeFile(file, `Include "${included}"\n`, 'utf-8')
+
+    await expect(siteConfigMayRestrictHostKeys([file])).resolves.toBe(false)
+  })
+
   it('ignores a commented-out directive', async () => {
     // A commented directive is not a policy. Reading it as one would reinstate the lockout for
     // anyone whose distro ships the line commented, which is the common shape.
