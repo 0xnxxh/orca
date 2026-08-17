@@ -200,7 +200,6 @@ export async function reattachSshPtySession(args: {
         // the pane's React key, so TerminalPane remounts and the old xterm is disposed with its
         // buffer. Without this the relay sees a delivery still open under our unchanged client id,
         // answers "you already have this", and the pane stays blank until new output arrives.
-        // Optional on the wire, so an older relay simply ignores it and behaves as it does today.
         requireReplay: true,
         ...(expectedPaneKey ? { expectedPaneKey } : {}),
         ...(expectedTabId ? { expectedTabId } : {})
