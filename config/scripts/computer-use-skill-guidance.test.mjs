@@ -51,6 +51,11 @@ describe('computer-use skill guidance', () => {
     expect(bundledGuide).toBeDefined()
 
     for (const skill of [readFileSync(guidePath, 'utf8'), bundledGuide]) {
+      expect(skill).toContain('Captures normally use a temporary `result.screenshot.path`')
+      expect(skill).toContain('read inline `result.screenshot.data`')
+      expect(skill).not.toContain(
+        'Screenshot bytes are omitted from JSON and written to `screenshot.path`'
+      )
       expect(skill).toContain('a successful capture is normally written to disk')
       expect(skill).toContain('`result.screenshot.path`')
       expect(skill).toContain('base64 bytes at')

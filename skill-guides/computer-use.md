@@ -25,7 +25,8 @@ Use this skill for desktop UI through `orca computer`. When the requested target
   name a specific shell. Replace it with that chosen executable before running the command;
   do not create a shell variable or run `ORCA` literally. Blocks that name no shell are
   intentionally shell-neutral for POSIX shells, PowerShell, and cmd.exe.
-- Prefer `--json`. Screenshot bytes are omitted from JSON and written to `screenshot.path`.
+- Prefer `--json`. Captures normally use a temporary `result.screenshot.path`; if export
+  fails, read inline `result.screenshot.data`. See Screenshots below.
 - Do not push, submit forms, send messages, buy items, delete data, change account settings, or expose secrets unless the user explicitly asked for that action.
 - If an app contains sensitive content, read only what the user requested.
 
