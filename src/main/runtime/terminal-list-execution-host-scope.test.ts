@@ -76,7 +76,7 @@ function makeRuntimeFolderWorkspace() {
     ...makeSshFolderWorkspace(),
     id: 'folder-runtime',
     name: 'Runtime folder',
-    connectionId: null,
+    connectionId: 'stale-box',
     executionHostId: 'runtime:env-9' as const
   }
 }
@@ -315,6 +315,23 @@ describe('listTerminals scope declaration', () => {
 
     expect(result.hostScope?.hostIds).toEqual([])
     expect(result.hostScope?.omittedHostIds).toEqual(['local', 'runtime:env-9'])
+  })
+
+  it('keeps a paired-runtime folder owner omitted in an unscoped listing', async () => {
+    const baseStore = makeStore()
+    const folderWorkspace = makeRuntimeFolderWorkspace()
+    const runtime = makeRuntime([], {
+      ...baseStore,
+      getRepos: vi.fn(() => [REPOS[0]!]),
+      getRepo: vi.fn((id: string) => (id === REPOS[0]!.id ? REPOS[0] : undefined)),
+      getWorkspaceSessionHostIds: vi.fn(() => ['local']),
+      getFolderWorkspaces: vi.fn(() => [folderWorkspace])
+    })
+
+    const result = await runtime.listTerminals()
+
+    expect(result.hostScope?.hostIds).toEqual(['local'])
+    expect(result.hostScope?.omittedHostIds).toEqual(['runtime:env-9'])
   })
 
   it('keeps a disconnected SSH host omitted when only local inventory answered', async () => {

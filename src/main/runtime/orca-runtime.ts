@@ -5776,6 +5776,9 @@ export class OrcaRuntimeService {
       if (!workspace) {
         return null
       }
+      if (workspace.executionHostId != null) {
+        return parseExecutionHostId(workspace.executionHostId)?.id ?? null
+      }
       const connectionId = this.resolveFolderWorkspaceConnectionId(workspace)
       return connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
     }
@@ -5844,6 +5847,13 @@ export class OrcaRuntimeService {
     }
     const projectGroups = this.store?.getProjectGroups?.() ?? []
     for (const workspace of this.store?.getFolderWorkspaces?.() ?? []) {
+      if (workspace.executionHostId != null) {
+        const explicitHostId = parseExecutionHostId(workspace.executionHostId)?.id
+        if (explicitHostId) {
+          hostIds.add(explicitHostId)
+        }
+        continue
+      }
       const connection = inferFolderWorkspacePathConnection({
         folderPath: workspace.folderPath,
         projectGroupId: workspace.projectGroupId,
@@ -16733,6 +16743,9 @@ export class OrcaRuntimeService {
     const scopedHostId = targetWorktreeId
       ? (resolvedTargetHostId ?? this.tryGetWorkspaceSessionHostIdForWorktree(targetWorktreeId))
       : null
+    if (scopedHostId) {
+      knownHostIds.add(scopedHostId)
+    }
     const candidates = targetWorktreeId ? (scopedHostId ? [scopedHostId] : []) : knownHostIds
     // Paired runtimes own a separate control plane. Mirrored rows are evidence
     // for those rows only; this runtime cannot claim their complete inventory.
