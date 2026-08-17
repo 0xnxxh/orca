@@ -2,6 +2,7 @@ import type { RpcClient } from '../transport/rpc-client'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
+import { typeAgentTuiCommand } from '../../../src/shared/agent-tui-command-typing'
 import {
   sanitizeBracketedPasteText,
   wrapTerminalBracketedPasteText
@@ -106,6 +107,36 @@ export async function sendMobileNativeChatMessage(
   args: MobileNativeChatSendArgs
 ): Promise<boolean> {
   return (await sendMobileNativeChatMessageWithOutcome(args)) === 'accepted'
+}
+
+export async function typeMobileNativeChatCommandWithOutcome(args: {
+  client: RpcClient
+  terminal: string
+  command: string
+  resolvedLaunchDraft?: { text: string; createdAt: number }
+  mobileClient?: MobileTerminalClient
+  deadline?: number
+}): Promise<MobileNativeChatSendOutcome> {
+  let writeIndex = 0
+  return typeAgentTuiCommand({
+    command: args.command,
+    write: (key) => {
+      const isSubmit = writeIndex === args.command.length + 1
+      writeIndex += 1
+      return sendMobileNativeChatMessageWithOutcome({
+        client: args.client,
+        terminal: args.terminal,
+        text: key,
+        enter: false,
+        rawTerminalInput: true,
+        ...(isSubmit && args.resolvedLaunchDraft
+          ? { resolvedLaunchDraft: args.resolvedLaunchDraft }
+          : {}),
+        ...(args.mobileClient ? { mobileClient: args.mobileClient } : {}),
+        ...(args.deadline === undefined ? {} : { deadline: args.deadline })
+      })
+    }
+  })
 }
 
 /**

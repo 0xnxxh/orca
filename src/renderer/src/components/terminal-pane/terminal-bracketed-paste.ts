@@ -3,6 +3,7 @@ import {
   sanitizeBracketedPasteText,
   wrapTerminalBracketedPasteText
 } from '../../../../shared/terminal-bracketed-paste-text'
+import type { WindowsInputRecordNewline } from './terminal-paste-model'
 
 export {
   BRACKETED_PASTE_END,
@@ -26,6 +27,7 @@ type PasteTerminal = BracketedPasteTerminal & {
 
 type PasteTerminalTextOptions = {
   forceBracketedPaste?: boolean
+  windowsInputRecordNewline?: WindowsInputRecordNewline
 }
 
 const interruptedBracketedPasteTerminals = new WeakSet<object>()
@@ -55,6 +57,28 @@ function hasBracketedPasteModeSequence(data: string): boolean {
 
 export function sanitizeTerminalPasteText(text: string): string {
   return sanitizeBracketedPasteText(text)
+}
+
+export function encodeWindowsInputRecordPasteText(
+  text: string,
+  newline: WindowsInputRecordNewline
+): string {
+  const newlineSequence = newline === 'csi-u' ? '\x1b[13;2u' : '\x1b\r'
+  let encoded = ''
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (char === '\r') {
+      encoded += newlineSequence
+      if (text[index + 1] === '\n') {
+        index += 1
+      }
+    } else if (char === '\n') {
+      encoded += newlineSequence
+    } else {
+      encoded += char === ESCAPE ? '\u241b' : char
+    }
+  }
+  return encoded
 }
 
 function forceBracketedPaste(terminal: PasteTerminal, text: string): void {
@@ -90,6 +114,12 @@ export function pasteTerminalText(
   text: string,
   options?: PasteTerminalTextOptions
 ): void {
+  if (options?.windowsInputRecordNewline) {
+    // Why: input-record TUIs see bracket markers as keys; modified Enter preserves
+    // pasted newlines without turning the first one into submit.
+    terminal.input(encodeWindowsInputRecordPasteText(text, options.windowsInputRecordNewline))
+    return
+  }
   if (options?.forceBracketedPaste) {
     // Why: generated image paths are paste payloads, even when they are a
     // single line, so they must bypass stale Ctrl+C plain-text suppression.
