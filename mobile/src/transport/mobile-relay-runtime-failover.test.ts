@@ -90,6 +90,8 @@ class FakeRelaySession extends FakeSession implements MobileRelayRpcSession {
 
 class FakeLogicalClient extends FakeSession implements StableLogicalRpcClient {
   private path: MobileConnectionPath
+  private recoveryPath: MobileConnectionPath | null = null
+  private generation = 1
 
   constructor(state: ConnectionState, path: MobileConnectionPath) {
     super(state)
@@ -102,10 +104,18 @@ class FakeLogicalClient extends FakeSession implements StableLogicalRpcClient {
       throw new Error(`replacement session ${session.getState()}`)
     }
     this.path = path
+    this.recoveryPath = null
+    this.generation += 1
     this.publishState('connected')
   })
   suspendActiveSession = vi.fn(() => this.publishState('disconnected'))
   getActivePath = () => this.path
+  getPendingPath = () => this.recoveryPath
+  setRecoveryPath = vi.fn((path: MobileConnectionPath | null) => {
+    this.recoveryPath = path
+  })
+  onConnectionPathChange = vi.fn(() => () => {})
+  getGeneration = () => this.generation
 }
 
 const relay = {
@@ -237,12 +247,15 @@ describe('relay runtime recovery without direct connectivity', () => {
     await supervisor.start()
     await vi.advanceTimersByTimeAsync(0)
     expect(deps.openRelay).not.toHaveBeenCalled()
+    expect(logical.setRecoveryPath).not.toHaveBeenCalledWith('relay')
+    expect(logical.getPendingPath()).toBeNull()
 
     readBundle.mockImplementation(async () => bundleWith(3, Number.MAX_SAFE_INTEGER))
     // Pre-fix, an expired bundle produced a silent no-op with nothing scheduled.
     await vi.advanceTimersByTimeAsync(60_000)
 
     expect(deps.openRelay).toHaveBeenCalledOnce()
+    expect(logical.setRecoveryPath).toHaveBeenCalledWith('relay')
     expect(logical.getActivePath()).toBe('relay')
     supervisor.stop()
   })
