@@ -1354,7 +1354,7 @@ function RemoteBrowserPagePane({
         if (!pageId || !isActiveRef.current) {
           return
         }
-        void syncRemoteViewport(pageId)
+        void syncRemoteViewport(pageId, lifecycle.viewportForSync())
           .then(() => lifecycle.restartForViewport(pageId))
           .catch(() => {})
       }, 150)
