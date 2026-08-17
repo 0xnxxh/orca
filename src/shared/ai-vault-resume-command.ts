@@ -71,7 +71,9 @@ export function buildAiVaultResumeShellCommand(args: {
 
   // Why: shell-aware commands are parsed by a known running shell, while
   // shell-less persisted commands keep the legacy self-contained cmd wrapper.
-  if (platform === 'win32' && shell && shell !== 'cmd') {
+  // PowerShell routes here whatever the platform: it is the shell, not the
+  // host, that decides which grammar the line has to be written in.
+  if (shell === 'powershell' || (platform === 'win32' && shell && shell !== 'cmd')) {
     return buildResumeShellCommandForShell({
       resumeCommand: args.resumeCommand,
       cwd,
@@ -81,20 +83,28 @@ export function buildAiVaultResumeShellCommand(args: {
     })
   }
 
+  const resolvedCodexHome = codexHome?.trim() || null
+  // Why filter: the prefix and the removal name the same variable, and `env -u`
+  // strips what the assignment just set, so an unfiltered list would silently
+  // resume against the real home. Keeping the assignment authoritative matches
+  // the old `clear…; CODEX_HOME=x agent` ordering.
+  const clearNames = resolvedCodexHome
+    ? clearEnvNames?.filter((name) => name !== 'CODEX_HOME')
+    : clearEnvNames
   // Why the two placements differ: `set -u` aborts on the unbound `$fish_pid`
   // the POSIX clear statement has to test, so there it must not precede the
   // agent — `env -u` carries the removal on the agent itself. cmd has no such
   // hazard, and keeping its clear ahead of the `cd` preserves `cd … && agent`,
   // so a failed `cd` still cannot run the agent in the wrong directory.
-  const clearsOnAgent = clearEnvNames?.length && platform !== 'win32'
-  const resumeCommand = `${codexHomeEnvPrefix(codexHome?.trim() || null, platform, shell)}${
-    clearsOnAgent
-      ? withoutEnvCommand(clearEnvNames, args.resumeCommand, 'posix')
-      : args.resumeCommand
+  // Keyed on the shell, not the platform: the shell is what picks the grammar.
+  const dialect = shell ?? (platform === 'win32' ? 'cmd' : 'posix')
+  const clearsOnAgent = clearNames?.length && isPosixStartupShell(dialect)
+  const resumeCommand = `${codexHomeEnvPrefix(resolvedCodexHome, platform, shell)}${
+    clearsOnAgent ? withoutEnvCommand(clearNames, args.resumeCommand, dialect) : args.resumeCommand
   }`
   const clearPrefix =
-    clearEnvNames?.length && !clearsOnAgent
-      ? `${clearEnvCommand(clearEnvNames, 'cmd')}${commandSeparator('cmd')}`
+    clearNames?.length && !clearsOnAgent
+      ? `${clearEnvCommand(clearNames, dialect)}${commandSeparator(dialect)}`
       : ''
   if (platform === 'win32' && shell === 'cmd') {
     // Why: an interactive cmd splits the doubled quotes required by a nested
@@ -125,9 +135,14 @@ function buildResumeShellCommandForShell(args: {
     // Why: git-bash on a Windows host runs a POSIX shell, so reuse the same
     // inline-env + `cd '<cwd>'` prefix as the non-Windows path.
     const envPrefix = codexHome ? `CODEX_HOME=${quoteStartupArg(codexHome, shell)} ` : ''
+    // Why filter: see the twin in buildAiVaultResumeShellCommand — `env -u`
+    // would strip the home the prefix just set.
+    const clearNames = codexHome
+      ? clearEnvNames?.filter((name) => name !== 'CODEX_HOME')
+      : clearEnvNames
     const command = `${envPrefix}${
-      clearEnvNames?.length
-        ? withoutEnvCommand(clearEnvNames, args.resumeCommand, shell)
+      clearNames?.length
+        ? withoutEnvCommand(clearNames, args.resumeCommand, shell)
         : args.resumeCommand
     }`
     return cwd ? `cd ${quoteStartupArg(cwd, shell)} && ${command}` : command
