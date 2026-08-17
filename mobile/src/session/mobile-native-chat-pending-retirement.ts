@@ -8,6 +8,10 @@ import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pendin
 
 const SPACE = ' '
 const NO_PENDING_IDS: ReadonlySet<string> = new Set()
+// The host shares one input line, not an unbounded one: real glue is two or
+// three sends. Capping the span keeps the cursor slide below linear-per-turn
+// instead of quadratic when a long run of identical sends is outstanding.
+export const MAX_GLUE_SPAN = 8
 
 type UserTurn = { index: number; text: string }
 type GlueSegment = { text: string; tail: number } | null
@@ -61,14 +65,27 @@ export function selectGluedPendingIds(
       if (cursor >= runEnd - 1) {
         break
       }
-      const matched = matchGluedRun(turn, segments, cursor, runEnd)
+      // A send that can never match must not freeze the run behind it. One
+      // permanently unretirable head — a pair whose own glued row arrived with
+      // the read, or a send the count pass claimed against an older row — would
+      // otherwise disable glue retirement for every later pair, for the rest of
+      // the session. Slide past it; the cursor stays monotonic, so a later turn
+      // can never claim a send an earlier one already took.
+      let start = cursor
+      let matched = 0
+      for (; start <= runEnd - 2; start++) {
+        matched = matchGluedRun(turn, segments, start, runEnd)
+        if (matched > 0) {
+          break
+        }
+      }
       if (matched === 0) {
         continue
       }
-      for (let index = cursor; index < cursor + matched; index++) {
+      for (let index = start; index < start + matched; index++) {
         retired.add(pending[index]!.id)
       }
-      cursor += matched
+      cursor = start + matched
     }
     runStart = runEnd + 1
   }
@@ -84,7 +101,8 @@ function matchGluedRun(
 ): number {
   let at = 0
   let matched = 0
-  for (let index = start; index < end; index++) {
+  const limit = Math.min(end, start + MAX_GLUE_SPAN)
+  for (let index = start; index < limit; index++) {
     const segment = segments[index]!
     // Every send carries its OWN boundary: a row that already existed when this
     // send was issued can never be part of its echo, however well it reads.

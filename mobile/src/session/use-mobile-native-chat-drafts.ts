@@ -291,9 +291,12 @@ export function useMobileNativeChatDrafts(args: {
     if (pending.length === 0) {
       return
     }
-    // This pass runs before the rebase below, so a send captured with no
-    // boundary would claim any image turn in the read — binding the user's fresh
-    // photo to an old one. It waits a tick and claims against a real tail.
+    // Only judge a send against a read known to be this session's. Note this
+    // does NOT give an image echo a boundary — the rebase deliberately leaves
+    // those on whatever they captured — so a caption-less photo sent before any
+    // read settled can still claim an older photo turn, exactly as it does on
+    // main. Fixing that needs a tail that excludes older image turns without
+    // excluding the send's own echo, which is a separate change.
     const landedImagePreviews = findLandedImagePreviewEchoes(
       messages,
       pending.filter((item) => item.baselineResolved)

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pending-echo'
 import {
+  MAX_GLUE_SPAN,
   retireLandedMobileNativeChatPending,
   selectGluedPendingIds
 } from './mobile-native-chat-pending-retirement'
@@ -187,6 +188,19 @@ describe('selectGluedPendingIds', () => {
     expect(retiredIds(messages, pending)).toEqual([])
   })
 
+  // A head that can never match must not freeze the run behind it: one stuck
+  // bubble would otherwise disable glue retirement for the rest of the session.
+  it('glues a later pair even when the head of the run can never match', () => {
+    const messages = [
+      userTurn('m0', 'unrelated', 1000),
+      userTurn('m1', 'fix the bug', 5000),
+      userTurn('m2', 'ship the fix', 6000)
+    ]
+    const stuckHead = pendingSend('p0', 'bug', 'm0')
+    const pair = [pendingSend('p1', 'ship the', 'm0'), pendingSend('p2', 'fix', 'm0')]
+    expect(retiredIds(messages, [stuckHead, ...pair])).toEqual(['p1', 'p2'])
+  })
+
   it('skips a caption-less image echo instead of gluing it', () => {
     const messages = [assistantTurn('m1', 'ready', 1000), userTurn('m2', 'one two', 5000)]
     const pending = [
@@ -214,7 +228,10 @@ describe('selectGluedPendingIds', () => {
     expect(retiredIds(messages, [pendingSend('p1', 'one', 'm1')])).toEqual([])
   })
 
-  it('inspects each pending segment at most once per transcript turn', () => {
+  // The cursor slides past a head that cannot match, so a turn may try several
+  // start positions — but each try is capped at MAX_GLUE_SPAN segments, which
+  // keeps the work linear in the run length rather than quadratic.
+  it('keeps segment inspection linear in the run length per transcript turn', () => {
     const pendingCount = 96
     const turnCount = 12
     const text = `${'a '.repeat(pendingCount)}x`
@@ -233,7 +250,7 @@ describe('selectGluedPendingIds', () => {
     } finally {
       startsWith.mockRestore()
     }
-    expect(segmentChecks).toBeLessThanOrEqual(turnCount * pendingCount)
+    expect(segmentChecks).toBeLessThanOrEqual(turnCount * pendingCount * MAX_GLUE_SPAN)
   })
 })
 
