@@ -46,7 +46,10 @@ describe('mobile literal image-marker turns', () => {
       worktreeId: 'worktree',
       tabId: 'a',
       sessionId: 'session-a',
-      messages
+      messages,
+      // These cases all model a settled read: the sends below own real
+      // boundaries, so retirement may judge transcript rows against them.
+      transcriptSettled: true
     })
     return null
   }
