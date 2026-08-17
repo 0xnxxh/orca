@@ -22,6 +22,9 @@ import {
   type NativeChatPendingSendScope
 } from './native-chat-pending'
 
+// Why: LRU-bounded like the other per-pane caches in this folder. Shedding the
+// oldest binding is safe — the claim empties the bucket, and nothing writes to
+// it again once the pane has an identity, so a re-bound pane finds it empty.
 const boundPanes = new Map<string, true>()
 
 function panePendingKey(scope: NativeChatPendingSendScope): string {
@@ -74,7 +77,14 @@ export function claimBootstrapPendingSends(
   const claimed = selectClaimableBootstrapSends(readPendingSendCache(bootstrap), markers)
   writePendingSendCache(bootstrap, [])
   if (claimed.length > 0) {
-    writePendingSendCache(scope, [...readPendingSendCache(scope), ...claimed])
+    // Why: claimed echoes predate anything already under the conversation, and
+    // occurrence assignment reads the list in order — merge by send time rather
+    // than appending older entries after newer ones.
+    const merged = [...readPendingSendCache(scope), ...claimed]
+    writePendingSendCache(
+      scope,
+      merged.sort((left, right) => left.sentAt - right.sentAt)
+    )
   }
 }
 

@@ -79,13 +79,13 @@ describe('claimBootstrapPendingSends', () => {
     expect(readPendingSendCache(bootstrapScope)).toEqual([])
   })
 
-  it('appends to the claiming conversation rather than replacing its own echoes', () => {
+  it('merges into the claiming conversation by send time, keeping its own echoes', () => {
     appendPendingSendCache(bootstrapScope, send('p1', 'pre-identity prompt', 10))
     appendPendingSendCache(scopeOf('session-a'), send('p2', 'already scoped prompt', 20))
 
     claimBootstrapPendingSends(scopeOf('session-a'), [])
 
-    expect(textsIn(scopeOf('session-a'))).toEqual(['already scoped prompt', 'pre-identity prompt'])
+    expect(textsIn(scopeOf('session-a'))).toEqual(['pre-identity prompt', 'already scoped prompt'])
   })
 
   it('closes the bucket for good, so a refill cannot be claimed by a replacement', () => {
