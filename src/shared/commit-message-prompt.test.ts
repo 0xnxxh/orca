@@ -454,8 +454,29 @@ describe('literal mode still unescapes \\" so existing recipes keep their inner 
     expect(r.ok && r.tokens).toEqual(['C:\\tools\\a.exe', '--msg', 'say "hi"'])
   })
 
-  it("escapes only the double quote — `\\'` stays two literal bytes", () => {
-    // A single-quoted region is already verbatim, so nothing needs escaping there.
+  it('halves an even backslash run before a quote so a quoted path can end in a separator', () => {
+    // `"C:\dir\\"` is the CommandLineToArgvW spelling for a trailing separator.
+    const r = tokenizeCustomCommandTemplate('agent "C:\\dir\\\\" --flag', 'literal')
+
+    expect(r.ok && r.tokens).toEqual(['agent', 'C:\\dir\\', '--flag'])
+  })
+
+  it('keeps an odd backslash run before a quote as separators plus a literal quote', () => {
+    const r = tokenizeCustomCommandTemplate('agent "a\\\\\\"b"', 'literal')
+
+    expect(r.ok && r.tokens).toEqual(['agent', 'a\\"b'])
+  })
+
+  it('leaves a backslash run alone when no quote follows it', () => {
+    const r = tokenizeCustomCommandTemplate('agent C:\\\\server\\share\\x.exe', 'literal')
+
+    expect(r.ok && r.tokens).toEqual(['agent', 'C:\\\\server\\share\\x.exe'])
+  })
+
+  it("unescapes only the double quote, so `\\'` keeps the backslash and still opens a group", () => {
+    // Why: `'` groups in both modes. Letting a preceding `\` cancel that would
+    // put backslash back in the business of escaping, which is what literal
+    // mode exists to stop — so `\` stays a byte and `'` keeps its usual job.
     const r = tokenizeCustomCommandTemplate("agent \\'hi\\' --flag", 'literal')
 
     expect(r.ok && r.tokens).toEqual(['agent', '\\hi\\', '--flag'])

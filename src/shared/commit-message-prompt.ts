@@ -154,14 +154,40 @@ export type TokenizeCustomCommandResult =
  * is one token. `'literal'` is for a command that will run on native Windows,
  * where `\` is the path separator — eating it turns
  * `C:\Windows\System32\powershell.exe` into `C:WindowsSystem32powershell.exe`,
- * a path that then "cannot be found" (#11375). `\"` stays an escaped quote in
- * both modes: it is the only spelling for a quote inside a quoted argument, and
- * it is how `CommandLineToArgvW` reads it too.
+ * a path that then "cannot be found" (#11375). A backslash run immediately
+ * before a `"` is still special in literal mode, following the same rule
+ * `CommandLineToArgvW` uses, so a quote inside a quoted argument and a path
+ * ending in a separator both stay expressible.
  *
  * Opt-in rather than sniffed from `process.platform` here, because the same
  * template can be parsed on one host and executed on another.
  */
 export type CommandTemplateBackslash = 'escape' | 'literal'
+
+/**
+ * Literal-mode backslashes are ordinary bytes unless a run of them sits
+ * immediately before a `"`, which is the one case `CommandLineToArgvW` treats
+ * specially: the run halves, and an odd run additionally escapes the quote into
+ * a literal byte. Returns null when the run is not followed by a quote, which
+ * is every path separator.
+ */
+function readLiteralBackslashRun(
+  template: string,
+  start: number
+): { emit: string; next: number } | null {
+  let run = 0
+  while (template[start + run] === '\\') {
+    run += 1
+  }
+  if (template[start + run] !== '"') {
+    return null
+  }
+  const collapsed = '\\'.repeat(run >> 1)
+  // Odd: consume the quote as a literal byte. Even: leave it as a delimiter.
+  return run % 2 === 1
+    ? { emit: `${collapsed}"`, next: start + run + 1 }
+    : { emit: collapsed, next: start + run }
+}
 
 export function tokenizeCustomCommandTemplate(
   template: string,
@@ -180,21 +206,21 @@ export function tokenizeCustomCommandTemplate(
   while (i < template.length) {
     const ch = template[i]
     if (quote) {
-      // Why: literal mode still unescapes `\"` — a quoted argument has no other
-      // way to carry a quote — but leaves every other `\` alone so that path
-      // separators survive.
-      if (
-        ch === '\\' &&
-        quote === '"' &&
-        i + 1 < template.length &&
-        (backslashEscapes || template[i + 1] === '"')
-      ) {
+      if (backslashEscapes && ch === '\\' && quote === '"' && i + 1 < template.length) {
         // Why: inside double quotes the shell only consumes the backslash
         // before these; elsewhere it stays a literal byte this tokenizer drops.
         divergesFromShell ||= !'$`"\\'.includes(template[i + 1])
         current += template[i + 1]
         i += 2
         continue
+      }
+      if (!backslashEscapes && ch === '\\' && quote === '"') {
+        const run = readLiteralBackslashRun(template, i)
+        if (run) {
+          current += run.emit
+          i = run.next
+          continue
+        }
       }
       // Why: a `"` inside $(…) or `…` re-opens a nested quoting context in the
       // real shell, so this tokenizer's word boundaries stop matching it.
@@ -223,7 +249,7 @@ export function tokenizeCustomCommandTemplate(
       continue
     }
 
-    if (ch === '\\' && i + 1 < template.length && (backslashEscapes || template[i + 1] === '"')) {
+    if (backslashEscapes && ch === '\\' && i + 1 < template.length) {
       // Why: an unquoted line continuation joins words the shell splits, so a
       // selector can hide inside the joined token and skip the gap check.
       divergesFromShell ||= template[i + 1] === '\n'
@@ -234,6 +260,19 @@ export function tokenizeCustomCommandTemplate(
       inToken = true
       i += 2
       continue
+    }
+
+    if (!backslashEscapes && ch === '\\') {
+      const run = readLiteralBackslashRun(template, i)
+      if (run) {
+        current += run.emit
+        if (!inToken) {
+          tokenStart = i
+        }
+        inToken = true
+        i = run.next
+        continue
+      }
     }
 
     if (/\s/.test(ch)) {
