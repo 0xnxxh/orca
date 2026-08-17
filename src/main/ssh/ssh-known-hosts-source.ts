@@ -44,16 +44,37 @@ export function resolveKnownHostsFiles(resolved: SshResolvedConfig | null): stri
  * "unreadable" — so the user appears to know no hosts at all, and a changed key that known_hosts
  * would have refused is accepted as first contact instead.
  *
- * The filesystem is the only thing that can disambiguate, so it decides: if no fragment exists but
- * the rejoined path does, it was one path. A list where any fragment exists is left alone, since
- * that is a genuine multi-file configuration.
+ * The filesystem is the only thing that can disambiguate, so it decides: the longest run of tokens
+ * that resolves to a real file is taken as one path, then the scan continues after it. That handles
+ * a spaced path sitting alongside ordinary ones, which a whole-list check could not — it would see
+ * the ordinary path exist and leave the spaced one in fragments.
  */
 function rejoinSpaceSplitPaths(paths: readonly string[]): string[] {
-  if (paths.length < 2 || paths.some((path) => existsSync(path))) {
+  if (paths.length < 2) {
     return [...paths]
   }
-  const rejoined = paths.join(' ')
-  return existsSync(rejoined) ? [rejoined] : [...paths]
+  const rejoined: string[] = []
+  let index = 0
+  while (index < paths.length) {
+    // Longest run first, so a spaced path wins over its own first fragment when both happen to
+    // exist. Falls back to the single token when no run resolves, which leaves a genuinely absent
+    // path reported as-is rather than inventing one.
+    let consumed = 0
+    for (let end = paths.length; end > index; end -= 1) {
+      const candidate = paths.slice(index, end).join(' ')
+      if (existsSync(candidate)) {
+        rejoined.push(candidate)
+        consumed = end - index
+        break
+      }
+    }
+    if (consumed === 0) {
+      rejoined.push(paths[index])
+      consumed = 1
+    }
+    index += consumed
+  }
+  return rejoined
 }
 
 /**

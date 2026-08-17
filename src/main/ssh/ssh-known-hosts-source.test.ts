@@ -410,6 +410,22 @@ describe('a known_hosts path containing a space', () => {
     expect(resolved).toEqual([spaced])
   })
 
+  it('rejoins a spaced path sitting alongside an ordinary one', async () => {
+    // The mixed case a whole-list check cannot handle: it sees the ordinary path exist and leaves
+    // the spaced one in fragments, so the file the user actually verified hosts in is never read.
+    const spaced = join(dir, 'known_hosts')
+    const ordinary = join(dir, 'other')
+    await writeFile(spaced, '', 'utf-8')
+    await writeFile(ordinary, '', 'utf-8')
+
+    const resolved = resolveKnownHostsFiles({
+      userKnownHostsFiles: [...spaced.split(' '), ordinary],
+      globalKnownHostsFiles: []
+    } as never)
+
+    expect(resolved).toEqual([spaced, ordinary])
+  })
+
   it('leaves a genuine multi-file list alone', async () => {
     // Any fragment existing means these really are separate paths, not one shredded one.
     const real = join(dir, 'first')
