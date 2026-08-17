@@ -141,22 +141,28 @@ function gluedCandidateRows(
   open: readonly NativeChatPendingSend[],
   rowsOf: (messages: readonly NativeChatMessage[]) => readonly NativeChatUserRow[]
 ): readonly NativeChatGluedUserRow[] {
-  const anchored = open.map((entry) =>
+  const [oldest, ...newer] = open.map((entry) =>
     entry.afterMessageId === undefined ? { ...entry, afterMessageId: null } : entry
   )
-  const oldest = anchored[0]
-  if (!oldest) {
+  // Glue needs a run of 2+ sends, so a lone queued echo — by far the common
+  // case while an agent streams — skips the per-send boundary scans entirely.
+  if (!oldest || newer.length === 0) {
     return []
   }
-  const rowIdsAfterOwnBoundary = anchored.map(
+  const newerRowIds = newer.map(
     (entry) => new Set(rowsOf(messagesAfterPendingBoundary(messages, entry)).map((row) => row.id))
   )
-  return rowsOf(messagesAfterPendingBoundary(messages, oldest)).map((row) => ({
-    text: row.text,
-    representablePendingIndices: new Set(
-      rowIdsAfterOwnBoundary.flatMap((ids, index) => (ids.has(row.id) ? [index] : []))
-    )
-  }))
+  // The run always starts at the oldest open send, so its rows are the whole
+  // candidate set and index 0 is representable in every one of them.
+  return rowsOf(messagesAfterPendingBoundary(messages, oldest)).map((row) => {
+    const representablePendingIndices = new Set([0])
+    newerRowIds.forEach((ids, index) => {
+      if (ids.has(row.id)) {
+        representablePendingIndices.add(index + 1)
+      }
+    })
+    return { text: row.text, representablePendingIndices }
+  })
 }
 
 /**
