@@ -325,6 +325,14 @@ describe('AgentHookServer listener replay', () => {
       server.retirePaneAuthority(PANE)
       expect(server.restorePaneAuthority(PANE)).toBe(true)
 
+      // Why: prove the fence is already down before any turn event arrives. Asserting
+      // only on before_agent_start would also pass if a turn boundary lifted the fence,
+      // so it cannot distinguish re-attach revival from turn-triggered revival (#14626).
+      await postHook({ hook_event_name: 'agent_end' })
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({ paneKey: PANE, state: 'done' })
+      ])
+
       await postHook({ hook_event_name: 'before_agent_start', prompt: 'much later turn' })
       expect(server.getStatusSnapshot()).toEqual([
         expect.objectContaining({ paneKey: PANE, state: 'working', prompt: 'much later turn' })
