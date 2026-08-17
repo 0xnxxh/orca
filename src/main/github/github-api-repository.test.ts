@@ -183,6 +183,22 @@ describe('resolveGitHubRepoExecution', () => {
 })
 
 describe('origin repository cache', () => {
+  it('keeps an indeterminate auth inventory unverifiable during candidate discovery', async () => {
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(undefined)
+
+    await expect(
+      getGitHubApiRepositoryForRemote(
+        '/remote/repo',
+        'origin',
+        'ssh-1',
+        {},
+        {
+          requireVerifiedSshProbe: true
+        }
+      )
+    ).rejects.toThrow('GitHub repository identity is unverifiable.')
+  })
+
   it('does not reuse a tolerant SSH miss for verified candidate discovery', async () => {
     const enterprise = {
       owner: 'acme',

@@ -21,6 +21,10 @@ import {
   isValidGitHubApiRepository,
   type GitHubApiRepositoryResolution
 } from './github-api-repository-validation'
+import {
+  githubApiRepositoryProbeCacheKey,
+  resolveGitHubApiRepositoryProbe
+} from './github-api-repository-probe'
 
 export {
   githubHostExecOptions,
@@ -39,16 +43,6 @@ const ORIGIN_REPO_CACHE_TTL_MS = 30_000
 const ORIGIN_REPO_CACHE_MAX_ENTRIES = 512
 const originRepoCache = new Map<string, { value: GitHubApiRepository | null; expiresAt: number }>()
 const originRepoInFlight = new Map<string, Promise<GitHubApiRepository | null>>()
-
-function originRepoCacheKey(
-  repoPath: string,
-  remoteName: string,
-  connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {},
-  requireVerifiedSshProbe = false
-): string {
-  return `${connectionId ?? 'local'}\0${localGitOptions.wslDistro ?? ''}\0${repoPath}\0${remoteName}\0${requireVerifiedSshProbe ? 'verified' : 'tolerant'}`
-}
 
 /** @internal - exposed for tests only */
 export function _resetOriginGitHubApiRepositoryCache(): void {
@@ -97,7 +91,7 @@ export async function getGitHubApiRepositoryForRemote(
   if (ownerRepo) {
     return { ...ownerRepo, host: 'github.com' }
   }
-  const cacheKey = originRepoCacheKey(
+  const cacheKey = githubApiRepositoryProbeCacheKey(
     repoPath,
     remoteName,
     connectionId,
@@ -142,7 +136,7 @@ export async function getGitHubApiRepositoryForRemote(
       })
       pruneOriginRepoCache(Date.now())
     }
-    return slug ?? null
+    return resolveGitHubApiRepositoryProbe(slug, requireVerifiedSshProbe)
   })()
   originRepoInFlight.set(cacheKey, probe)
   try {
