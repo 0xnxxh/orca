@@ -25,6 +25,17 @@ type PRFileContentCacheEntry = {
 const prFileContentCache = new Map<string, PRFileContentCacheEntry>()
 let prFileContentCacheBytes = 0
 
+type PRFileContentRequestArgs = {
+  repoPath: string
+  repoId: string
+  sourceContext?: TaskSourceContext | null
+  prNumber: number
+  prRepo?: GitHubOwnerRepo | null
+  file: GitHubPRFile
+  headSha: string
+  baseSha: string
+}
+
 function touchPRFileContentCache(
   key: string,
   value: Promise<GitHubPRFileContents> | GitHubPRFileContents
@@ -58,16 +69,7 @@ function touchPRFileContentCache(
   }
 }
 
-export function getPRFileContentCacheKey(args: {
-  repoPath: string
-  repoId: string
-  sourceContext?: TaskSourceContext | null
-  prNumber: number
-  prRepo?: GitHubOwnerRepo | null
-  file: GitHubPRFile
-  headSha: string
-  baseSha: string
-}): string {
+export function getPRFileContentCacheKey(args: PRFileContentRequestArgs): string {
   const repositoryKey = args.repoId ? `repo:${args.repoId}` : `path:${args.repoPath}`
   const sourceKey =
     args.sourceContext?.provider === 'github'
@@ -86,16 +88,20 @@ export function getPRFileContentCacheKey(args: {
   ].join('\0')
 }
 
-export function loadPRFileContents(args: {
-  repoPath: string
-  repoId: string
-  sourceContext?: TaskSourceContext | null
-  prNumber: number
-  prRepo?: GitHubOwnerRepo | null
-  file: GitHubPRFile
-  headSha: string
-  baseSha: string
-}): Promise<GitHubPRFileContents> {
+export function evictPRFileContentRequest(
+  args: PRFileContentRequestArgs,
+  request: Promise<GitHubPRFileContents>
+): void {
+  const cacheKey = getPRFileContentCacheKey(args)
+  const cachedRequest = prFileContentCache.get(cacheKey)
+  if (cachedRequest?.value !== request) {
+    return
+  }
+  prFileContentCacheBytes -= cachedRequest.byteCount
+  prFileContentCache.delete(cacheKey)
+}
+
+export function loadPRFileContents(args: PRFileContentRequestArgs): Promise<GitHubPRFileContents> {
   const cacheKey = getPRFileContentCacheKey(args)
   const cached = prFileContentCache.get(cacheKey)
   if (cached) {
@@ -141,11 +147,7 @@ export function loadPRFileContents(args: {
       return contents
     })
     .catch((err) => {
-      const cachedRequest = prFileContentCache.get(cacheKey)
-      if (cachedRequest?.value === request) {
-        prFileContentCacheBytes -= cachedRequest.byteCount
-        prFileContentCache.delete(cacheKey)
-      }
+      evictPRFileContentRequest(args, request)
       throw err
     })
   touchPRFileContentCache(cacheKey, request)

@@ -17,28 +17,27 @@ import type {
   GitHubPRFileContents
 } from '../../../../../shared/github/pull-request-types'
 import type { TaskSourceContext } from '../../../../../shared/task-source-context'
-import { loadPRFileContents } from '../cache/file-content'
+import { evictPRFileContentRequest, loadPRFileContents } from '../cache/file-content'
 
 // Why: the local IPC path carries no timeout, so a wedged host would leave the section spinning
 // forever with no error and therefore no retry button. Above the 30s remote RPC timeout so a
 // remote failure still surfaces its own message.
 const PR_FILE_DIFF_LOAD_TIMEOUT_MS = 45_000
 
-function rejectAfterLoadTimeout<T>(promise: Promise<T>): Promise<T> {
+function rejectAfterLoadTimeout<T>(promise: Promise<T>, onTimeout: () => void): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | null = null
   return new Promise<T>((resolve, reject) => {
-    timeout = setTimeout(
-      () =>
-        reject(
-          new Error(
-            translate(
-              'auto.components.PullRequestPage.diffLoadTimedOut',
-              'Timed out loading this diff.'
-            )
+    timeout = setTimeout(() => {
+      onTimeout()
+      reject(
+        new Error(
+          translate(
+            'auto.components.PullRequestPage.diffLoadTimedOut',
+            'Timed out loading this diff.'
           )
-        ),
-      PR_FILE_DIFF_LOAD_TIMEOUT_MS
-    )
+        )
+      )
+    }, PR_FILE_DIFF_LOAD_TIMEOUT_MS)
     promise.then(resolve, reject)
   }).finally(() => {
     if (timeout) {
@@ -131,17 +130,19 @@ export function usePRFileSectionLoader(args: {
             )
           }
         }
-        const contents = await rejectAfterLoadTimeout(
-          loadPRFileContents({
-            repoPath,
-            repoId,
-            sourceContext,
-            prNumber,
-            prRepo,
-            file,
-            headSha,
-            baseSha
-          })
+        const requestArgs = {
+          repoPath,
+          repoId,
+          sourceContext,
+          prNumber,
+          prRepo,
+          file,
+          headSha,
+          baseSha
+        }
+        const contentsRequest = loadPRFileContents(requestArgs)
+        const contents = await rejectAfterLoadTimeout(contentsRequest, () =>
+          evictPRFileContentRequest(requestArgs, contentsRequest)
         )
         return { result: getPRFileDiffResult(contents), resultContents: contents }
       }
