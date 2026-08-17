@@ -841,8 +841,11 @@ function runLocalPlan(
  * the distro, and a remote target runs on a host whose platform this process
  * cannot see — POSIX escaping stays the default for both.
  */
-function commandBackslashMode(target: CommitMessageGenerationTarget): CommandTemplateBackslash {
-  return process.platform === 'win32' && target.kind === 'local' && !target.wslDistro
+export function commandBackslashMode(
+  target: CommitMessageGenerationTarget,
+  platform: NodeJS.Platform = process.platform
+): CommandTemplateBackslash {
+  return platform === 'win32' && target.kind === 'local' && !target.wslDistro
     ? 'literal'
     : 'escape'
 }
