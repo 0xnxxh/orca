@@ -87,7 +87,7 @@ export async function spawnFreshSshPty(args: {
   ) => SshPtyReceivingActivationLease
   rememberPtyIncarnation: (relayPtyId: string, incarnationId: unknown) => void
   acceptLivePty: (appPtyId: string) => void
-  acceptUnverifiablePty: (appPtyId: string) => void
+  acceptAmbiguousExitPty: (appPtyId: string) => void
   toAppPtyId: (relayPtyId: string) => string
 }): Promise<PtySpawnResult> {
   const operation = args.exitRaceTracker.begin()
@@ -118,7 +118,7 @@ export async function spawnFreshSshPty(args: {
     }
     if (exitOutcome === 'unverifiable') {
       const id = args.toAppPtyId(spawnResult.id)
-      args.acceptUnverifiablePty(id)
+      args.acceptAmbiguousExitPty(id)
       throw Object.assign(new Error(`${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${spawnResult.id}`), {
         agentSessionOperationOutcome: 'unknown' as const
       })

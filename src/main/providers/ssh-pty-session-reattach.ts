@@ -23,6 +23,7 @@ import {
   type PtySourceReceivingActivation
 } from '../../shared/pty-source-receiving-activation'
 import type { SshPtyReceivingActivationLease } from './ssh-pty-notification-routing'
+import { parseSshPtySourceRecoveryResult } from './ssh-pty-source-recovery-result'
 
 export type SshPtyAttachResult = {
   replay?: string
@@ -57,7 +58,7 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
     // Why: a present-but-invalid identity cannot safely fence delayed exits from a reused relay id.
     throw new Error('Invalid SSH PTY attach incarnation')
   }
-  const sourceRecovery = parseSourceRecoveryResult(result.sourceRecovery)
+  const sourceRecovery = parseSshPtySourceRecoveryResult(result.sourceRecovery)
   const sourceActivation = parsePtySourceReceivingActivation(result.sourceActivation)
   const activation =
     sourceActivation ?? (sourceRecovery?.status === 'pending' ? sourceRecovery : undefined)
@@ -117,50 +118,6 @@ export async function requestSshPtyAttach(args: {
     activationLease?.rollback()
     throw error
   }
-}
-
-function parseSourceRecoveryResult(value: unknown): PtySourceRecoveryResult | undefined {
-  if (value === undefined) {
-    return undefined
-  }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('Invalid SSH PTY source recovery response')
-  }
-  const input = value as Record<string, unknown>
-  if (input.status === 'restoreRequired' && typeof input.reason === 'string') {
-    return Object.freeze({ status: 'restoreRequired', reason: input.reason })
-  }
-  if (
-    input.status !== 'pending' ||
-    typeof input.deliveryToken !== 'string' ||
-    input.deliveryToken.length === 0 ||
-    typeof input.ptyIncarnation !== 'string' ||
-    input.ptyIncarnation.length === 0 ||
-    !positiveInteger(input.clientGeneration) ||
-    !positiveInteger(input.ownerGeneration) ||
-    !nonNegativeInteger(input.checkpointSourceEndSu) ||
-    !nonNegativeInteger(input.recoveryEndSu) ||
-    Number(input.recoveryEndSu) < Number(input.checkpointSourceEndSu)
-  ) {
-    throw new Error('Invalid SSH PTY source recovery response')
-  }
-  return Object.freeze({
-    status: 'pending',
-    deliveryToken: input.deliveryToken,
-    ptyIncarnation: input.ptyIncarnation,
-    clientGeneration: Number(input.clientGeneration),
-    ownerGeneration: Number(input.ownerGeneration),
-    checkpointSourceEndSu: Number(input.checkpointSourceEndSu),
-    recoveryEndSu: Number(input.recoveryEndSu)
-  })
-}
-
-function positiveInteger(value: unknown): boolean {
-  return Number.isSafeInteger(value) && Number(value) > 0
-}
-
-function nonNegativeInteger(value: unknown): boolean {
-  return Number.isSafeInteger(value) && Number(value) >= 0
 }
 
 function sameSourceActivation(
@@ -270,6 +227,7 @@ export async function reattachSshPtySessionForSpawn(
   args: Parameters<typeof reattachSshPtySessionWithExitFence>[0] & {
     acceptLivePty: (relayPtyId: string) => void
     acceptUnverifiablePty: (relayPtyId: string) => void
+    acceptAmbiguousExitPty: (relayPtyId: string) => void
     acceptExitedPty: (relayPtyId: string) => void
   }
 ): Promise<PtySpawnResult> {
@@ -301,8 +259,13 @@ export async function reattachSshPtySessionForSpawn(
       args.acceptExitedPty(result?.id ?? toAppSshPtyId(args.connectionId, args.sessionId))
     } else if (!isSshPtyIdentityMismatchError(error) && !isSshPtyRestoreRequiredError(error)) {
       const id = result?.id ?? toAppSshPtyId(args.connectionId, args.sessionId)
-      args.acceptUnverifiablePty(id)
-      if (!isSshPtyLivenessUnverifiableError(error)) {
+      const ambiguousExit = isSshPtyLivenessUnverifiableError(error)
+      if (ambiguousExit) {
+        args.acceptAmbiguousExitPty(id)
+      } else {
+        args.acceptUnverifiablePty(id)
+      }
+      if (!ambiguousExit) {
         throw new Error(
           `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${toRelaySshPtyId(args.connectionId, id)}`,
           { cause: error }

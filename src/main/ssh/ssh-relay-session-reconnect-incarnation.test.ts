@@ -108,12 +108,13 @@ vi.mock('../providers/ssh-pty-provider', () => ({
         }
       }
     )
-    acceptUnverifiablePty = vi.fn(() => {
+    acceptUnverifiablePty = vi.fn((_id: string) => {
       for (const evidence of this.pendingLiveEvidence) {
         evidence.valid = false
       }
       this.pendingLiveEvidence.clear()
     })
+    acceptAmbiguousExitPty = vi.fn((id: string) => this.acceptUnverifiablePty(id))
     acceptExitedPty = vi.fn()
     dispose = vi.fn()
 
@@ -636,6 +637,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn() }
     const acceptUnverifiablePty = vi.fn()
+    const acceptAmbiguousExitPty = vi.fn()
     const acceptExitedPty = vi.fn()
     vi.mocked(getSshPtyProvider).mockReturnValue({
       attachForReconnect: vi.fn().mockImplementation(async () => {
@@ -643,6 +645,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
         return { sourceActivationLease }
       }),
       acceptUnverifiablePty,
+      acceptAmbiguousExitPty,
       acceptExitedPty,
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
@@ -653,8 +656,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
     await session.establish(mockConn)
 
-    expect(acceptUnverifiablePty).toHaveBeenCalledOnce()
-    expect(acceptUnverifiablePty).toHaveBeenCalledWith(APP_PTY_ID)
+    expect(acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith(APP_PTY_ID)
+    expect(acceptUnverifiablePty).not.toHaveBeenCalled()
     expect(acceptExitedPty).not.toHaveBeenCalled()
     expect(acceptOutputExitMock).not.toHaveBeenCalled()
     expect(setPtyOwnership).not.toHaveBeenCalled()
@@ -720,6 +723,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
     const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn() }
     const acceptUnverifiablePty = vi.fn()
+    const acceptAmbiguousExitPty = vi.fn()
     const acceptExitedPty = vi.fn()
     vi.mocked(getSshPtyProvider).mockReturnValue({
       attachForReconnect: vi.fn().mockImplementation(async () => {
@@ -731,6 +735,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
         }
       }),
       acceptUnverifiablePty,
+      acceptAmbiguousExitPty,
       acceptExitedPty,
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
@@ -741,7 +746,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
     await session.establish(mockConn)
 
-    expect(acceptUnverifiablePty).toHaveBeenCalledExactlyOnceWith(APP_PTY_ID)
+    expect(acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith(APP_PTY_ID)
+    expect(acceptUnverifiablePty).not.toHaveBeenCalled()
     expect(acceptExitedPty).not.toHaveBeenCalled()
     expect(acceptOutputExitMock).not.toHaveBeenCalled()
     expect(setPtyOwnership).not.toHaveBeenCalled()

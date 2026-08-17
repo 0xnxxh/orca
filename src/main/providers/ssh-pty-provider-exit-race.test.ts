@@ -93,6 +93,7 @@ it('keeps a fresh spawn with a legacy exit unverifiable', async () => {
     isDisposed: vi.fn().mockReturnValue(false)
   }
   const provider = new SshPtyProvider('conn-1', mux as never)
+  const acceptAmbiguousExitPty = vi.spyOn(provider, 'acceptAmbiguousExitPty')
   const exitListener = vi.fn()
   provider.onExit(exitListener)
   mux.request.mockImplementation(async (method: string, _params, options) => {
@@ -110,6 +111,7 @@ it('keeps a fresh spawn with a legacy exit unverifiable', async () => {
     SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR
   )
   expect(exitListener).not.toHaveBeenCalled()
+  expect(acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith('ssh:conn-1@@pty-raced')
   await expect(provider.probePtyLiveness('ssh:conn-1@@pty-raced')).resolves.toBeNull()
 })
 
@@ -169,6 +171,7 @@ it('keeps a legacy exit unverifiable while reattach resolves its incarnation', a
     isDisposed: vi.fn().mockReturnValue(false)
   }
   const provider = new SshPtyProvider('conn-1', mux as never)
+  const acceptAmbiguousExitPty = vi.spyOn(provider, 'acceptAmbiguousExitPty')
   const exitListener = vi.fn()
   provider.onExit(exitListener)
   let resolveAttach: (() => void) | undefined
@@ -198,6 +201,7 @@ it('keeps a legacy exit unverifiable while reattach resolves its incarnation', a
 
   await expect(spawn).rejects.toThrow(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
   expect(exitListener).not.toHaveBeenCalled()
+  expect(acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith('ssh:conn-1@@pty-existing')
   await expect(provider.probePtyLiveness('ssh:conn-1@@pty-existing')).resolves.toBeNull()
 
   notify?.('pty.exit', {
@@ -223,6 +227,7 @@ it('keeps an incarnation-less attach and exit race unverifiable', async () => {
     isDisposed: vi.fn().mockReturnValue(false)
   }
   const provider = new SshPtyProvider('conn-1', mux as never)
+  const acceptAmbiguousExitPty = vi.spyOn(provider, 'acceptAmbiguousExitPty')
   const exitListener = vi.fn()
   provider.onExit(exitListener)
   mux.request.mockImplementation(async (method: string, _params, options) => {
@@ -239,6 +244,7 @@ it('keeps an incarnation-less attach and exit race unverifiable', async () => {
     provider.spawn({ cols: 80, rows: 24, sessionId: 'ssh:conn-1@@pty-existing' })
   ).rejects.toThrow(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
   expect(exitListener).not.toHaveBeenCalled()
+  expect(acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith('ssh:conn-1@@pty-existing')
   await expect(provider.probePtyLiveness('ssh:conn-1@@pty-existing')).resolves.toBeNull()
 })
 

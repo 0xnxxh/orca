@@ -307,7 +307,7 @@ describe('SSH relay PTY incarnation exits', () => {
       onData: ReturnType<typeof vi.fn>
       onExit: ReturnType<typeof vi.fn>
       acceptLivePty: ReturnType<typeof vi.fn>
-      acceptUnverifiablePty: ReturnType<typeof vi.fn>
+      acceptAmbiguousExitPty: ReturnType<typeof vi.fn>
       settleLivePtyEvidence: ReturnType<typeof vi.fn>
     }
     vi.mocked(getSshPtyProvider).mockReturnValue(provider as never)
@@ -340,7 +340,7 @@ describe('SSH relay PTY incarnation exits', () => {
     settleOutput()
 
     await vi.waitFor(() => expect(provider.settleLivePtyEvidence).toHaveBeenCalledOnce())
-    expect(provider.acceptUnverifiablePty).toHaveBeenCalledExactlyOnceWith(id)
+    expect(provider.acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith(id)
     expect(provider.acceptLivePty).not.toHaveBeenCalled()
   })
 
@@ -350,7 +350,7 @@ describe('SSH relay PTY incarnation exits', () => {
     await session.establish(mockConn)
     const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
       onExit: ReturnType<typeof vi.fn>
-      acceptUnverifiablePty: ReturnType<typeof vi.fn>
+      acceptAmbiguousExitPty: ReturnType<typeof vi.fn>
     }
     const onExit = provider.onExit.mock.calls[0]?.[0] as (payload: {
       id: string
@@ -367,7 +367,7 @@ describe('SSH relay PTY incarnation exits', () => {
       ptyIncarnation: 'incarnation-current'
     })
 
-    expect(provider.acceptUnverifiablePty).toHaveBeenCalledExactlyOnceWith(
+    expect(provider.acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith(
       'ssh:target-1@@pty-current'
     )
     expect(acceptOutputExitMock).not.toHaveBeenCalled()
@@ -379,7 +379,7 @@ describe('SSH relay PTY incarnation exits', () => {
     await session.establish(mockConn)
     const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
       onExit: ReturnType<typeof vi.fn>
-      acceptUnverifiablePty: ReturnType<typeof vi.fn>
+      acceptAmbiguousExitPty: ReturnType<typeof vi.fn>
     }
     const onExit = provider.onExit.mock.calls[0]?.[0] as (payload: {
       id: string
@@ -395,7 +395,7 @@ describe('SSH relay PTY incarnation exits', () => {
       ptyIncarnation: 'legacy:31:1:pty-legacy'
     })
 
-    expect(provider.acceptUnverifiablePty).toHaveBeenCalledExactlyOnceWith(
+    expect(provider.acceptAmbiguousExitPty).toHaveBeenCalledExactlyOnceWith(
       'ssh:target-1@@pty-legacy'
     )
     expect(acceptOutputExitMock).not.toHaveBeenCalled()

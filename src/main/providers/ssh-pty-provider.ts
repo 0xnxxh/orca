@@ -102,6 +102,7 @@ export class SshPtyProvider implements IPtyProvider {
           this.outputState.acceptPtyIncarnation(relayPtyId, incarnationId),
         acceptLivePty: (relayPtyId) => this.acceptLivePty(relayPtyId),
         acceptUnverifiablePty: (relayPtyId) => this.acceptUnverifiablePty(relayPtyId),
+        acceptAmbiguousExitPty: (relayPtyId) => this.acceptAmbiguousExitPty(relayPtyId),
         acceptExitedPty: (relayPtyId) => this.acceptExitedPty(relayPtyId)
       })
     }
@@ -130,7 +131,7 @@ export class SshPtyProvider implements IPtyProvider {
       rememberPtyIncarnation: (id, incarnation) =>
         this.outputState.rememberPtyIncarnation(id, incarnation),
       acceptLivePty: (id) => this.acceptLivePty(id),
-      acceptUnverifiablePty: (id) => this.acceptUnverifiablePty(id),
+      acceptAmbiguousExitPty: (id) => this.acceptAmbiguousExitPty(id),
       toAppPtyId: this.toAppPtyId
     })
   }

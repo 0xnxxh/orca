@@ -2382,6 +2382,7 @@ export class SshRelaySession {
       targetedDeliveryRecovery
     } = args
     const appPtyId = toAppSshPtyId(this.targetId, ptyId)
+    const acceptAmbiguousExit = (): void => ptyProvider.acceptAmbiguousExitPty?.(appPtyId)
     const pendingReattach: PendingPtyReattach = {
       mux,
       providerGeneration,
@@ -2415,7 +2416,7 @@ export class SshRelaySession {
       }
       const exitDuringAttach = this.classifyPendingExit(pendingReattach, attachResult.incarnationId)
       if (exitDuringAttach?.status === 'unverifiable') {
-        ptyProvider.acceptUnverifiablePty?.(appPtyId)
+        acceptAmbiguousExit()
         return
       }
       if (exitDuringAttach?.status === 'exited' && !recoveryRequest) {
@@ -2485,17 +2486,23 @@ export class SshRelaySession {
               }
             }
             if (recoveryExit.status === 'unverifiable') {
-              ptyProvider.acceptUnverifiablePty?.(appPtyId)
+              acceptAmbiguousExit()
             } else {
               this.preparePtyIncarnationForExit(appPtyId, attachResult.incarnationId)
               await this.acceptPtyExit(recoveryExit.exit)
             }
+          } else if (
+            attachResult.sourceRecovery?.status === 'restoreRequired' &&
+            shouldContinue() &&
+            this.ownsPtyRecoveryAttempt(appPtyId, pendingReattach)
+          ) {
+            ptyProvider.acceptLivePty?.(appPtyId)
           }
           return
         }
         const recoveryExit = this.classifyPendingExit(pendingReattach, attachResult.incarnationId)
         if (recoveryExit?.status === 'unverifiable') {
-          ptyProvider.acceptUnverifiablePty?.(appPtyId)
+          acceptAmbiguousExit()
           return
         }
         if (recoveryExit?.status === 'exited') {
@@ -2535,7 +2542,7 @@ export class SshRelaySession {
         attachResult.incarnationId
       )
       if (exitAfterActivation?.status === 'unverifiable') {
-        ptyProvider.acceptUnverifiablePty?.(appPtyId)
+        acceptAmbiguousExit()
         return
       }
       pendingReattach.activated = true
