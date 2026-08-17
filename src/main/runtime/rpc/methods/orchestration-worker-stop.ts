@@ -3,6 +3,8 @@ import { OrchestrationError } from '../../orchestration/orchestration-error'
 import { defineMethod, type RpcMethod } from '../core'
 import { requiredString } from '../schemas'
 import { describeUnconfirmedAgentStop } from '../../../../shared/pty-liveness-verdict'
+import { ORCHESTRATION_WORKER_STOP_VERDICT_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
+import type { RuntimeStatus } from '../../../../shared/runtime-types'
 import {
   inspectWorkerTerminal,
   resolvePinnedFederatedServer
@@ -30,6 +32,24 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
           return settledReceipt(params.dispatch, begun.worker.state)
         }
         try {
+          const status = (await runtime.callOrchestrationWorkerServer(
+            server.environmentId,
+            'status.get',
+            undefined,
+            30_000
+          )) as RuntimeStatus
+          if (
+            !status.capabilities?.includes(ORCHESTRATION_WORKER_STOP_VERDICT_RUNTIME_CAPABILITY)
+          ) {
+            return unknownReceipt(
+              params.dispatch,
+              db.markWorkerStopUnknown(
+                params.dispatch,
+                `Connected server ${server.name} cannot prove the worker stop outcome.`
+              ),
+              'none'
+            )
+          }
           const remote = (await runtime.callOrchestrationWorkerServer(
             server.environmentId,
             'orchestration.federationStop',
