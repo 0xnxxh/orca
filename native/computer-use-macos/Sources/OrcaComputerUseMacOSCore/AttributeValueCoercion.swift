@@ -54,13 +54,7 @@ public struct AttributeValueCoercion: Equatable {
         case .string:
             return .string(requested)
         case .integer:
-            if let value = Int64(trimmed) {
-                return .integer(value)
-            }
-            guard let value = Double(trimmed), value.isFinite, let integer = Int64(exactly: value) else {
-                return nil
-            }
-            return .integer(integer)
+            return parseInteger(trimmed).map(Value.integer)
         case .double:
             guard let value = Double(trimmed), value.isFinite else { return nil }
             return .double(value)
@@ -76,6 +70,26 @@ public struct AttributeValueCoercion: Equatable {
         }
     }
 
+    private static func parseInteger(_ value: String) -> Int64? {
+        if let integer = Int64(value) {
+            return integer
+        }
+
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+        let whole = parts[0]
+        let fraction = parts[1]
+        let unsignedWhole = whole.first == "+" || whole.first == "-" ? whole.dropFirst() : whole[...]
+        guard !unsignedWhole.isEmpty || !fraction.isEmpty,
+              fraction.allSatisfy({ $0 == "0" })
+        else {
+            return nil
+        }
+
+        let normalized = unsignedWhole.isEmpty ? "\(whole)0" : String(whole)
+        return Int64(normalized)
+    }
+
     private static func decode(_ value: CFTypeRef) -> Value? {
         let typeID = CFGetTypeID(value)
         if typeID == CFStringGetTypeID() {
@@ -86,7 +100,8 @@ public struct AttributeValueCoercion: Equatable {
         }
         guard typeID == CFNumberGetTypeID() else { return nil }
 
-        let number = unsafeDowncast(value, to: CFNumber.self)
+        guard let bridgedNumber = value as? NSNumber else { return nil }
+        let number = bridgedNumber as CFNumber
         if CFNumberIsFloatType(number) {
             var decoded = 0.0
             guard CFNumberGetValue(number, .doubleType, &decoded), decoded.isFinite else { return nil }

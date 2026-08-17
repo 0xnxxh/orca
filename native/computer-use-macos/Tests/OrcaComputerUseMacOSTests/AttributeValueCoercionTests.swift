@@ -16,6 +16,19 @@ final class AttributeValueCoercionTests: XCTestCase {
         XCTAssertEqual(coercion.writeValue, .integer(3))
     }
 
+    func testIntegerDecimalConversionIsExactAboveDoublePrecision() {
+        let coercion = AttributeValueCoercion(
+            existingValue: NSNumber(value: Int64(1)),
+            requested: "9007199254740993.0"
+        )
+
+        XCTAssertEqual(coercion.writeValue, .integer(9_007_199_254_740_993))
+        XCTAssertEqual(
+            coercion.compare(readback: NSNumber(value: Int64(9_007_199_254_740_992))),
+            .mismatch(actualPreview: "9007199254740992")
+        )
+    }
+
     func testDoubleValuePreservesDoubleKindForIntegralInput() {
         let coercion = AttributeValueCoercion(existingValue: NSNumber(value: 2.5), requested: "3")
 
