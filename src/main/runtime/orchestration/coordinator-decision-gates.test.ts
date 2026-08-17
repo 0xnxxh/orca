@@ -23,7 +23,11 @@ describe('coordinator decision-gate authority', () => {
         subject: 'Need approval',
         type: 'decision_gate',
         senderPaneKey: 'tab_owner:leaf_owner',
-        payload: JSON.stringify({ taskId: task.id, question: 'Proceed?' })
+        payload: JSON.stringify({
+          taskId: task.id,
+          dispatchId: dispatch.id,
+          question: 'Proceed?'
+        })
       }),
       (message) => logs.push(message)
     )
@@ -54,7 +58,11 @@ describe('coordinator decision-gate authority', () => {
         subject: 'Block the victim',
         type: 'decision_gate',
         senderPaneKey: 'tab_attacker:leaf_attacker',
-        payload: JSON.stringify({ taskId: victimTask.id, question: 'Stop?' })
+        payload: JSON.stringify({
+          taskId: victimTask.id,
+          dispatchId: attacker.id,
+          question: 'Stop?'
+        })
       }),
       (message) => logs.push(message)
     )
@@ -79,7 +87,11 @@ describe('coordinator decision-gate authority', () => {
         to: 'term_coordinator',
         subject: 'Remote approval required',
         type: 'decision_gate',
-        payload: JSON.stringify({ taskId: task.id, question: 'Proceed remotely?' })
+        payload: JSON.stringify({
+          taskId: task.id,
+          dispatchId: dispatch.id,
+          question: 'Proceed remotely?'
+        })
       }),
       () => {}
     )

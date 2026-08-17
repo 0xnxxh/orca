@@ -9,16 +9,19 @@ export function applyEscalationToDispatch(
   onLog: (msg: string) => void
 ): string | null {
   let taskId: string | undefined
+  let dispatchId: string | undefined
   if (msg.payload) {
     try {
       const payload = JSON.parse(msg.payload)
       taskId = payload.taskId
+      dispatchId = payload.dispatchId
     } catch {
       // Escalation without structured payload — log subject as context
     }
   }
 
-  if (!taskId) {
+  if (!taskId || !dispatchId) {
+    onLog(`Rejected escalation from ${msg.from_handle}: missing exact Dispatch binding`)
     return null
   }
 
@@ -27,8 +30,9 @@ export function applyEscalationToDispatch(
     return null
   }
 
-  const dispatch = db.getDispatchContext(taskId)
-  if (!dispatch) {
+  const dispatch = db.getDispatchContextById(dispatchId)
+  if (!dispatch || dispatch.task_id !== taskId) {
+    onLog(`Rejected escalation from ${msg.from_handle}: Dispatch does not own Task ${taskId}`)
     return null
   }
   if (

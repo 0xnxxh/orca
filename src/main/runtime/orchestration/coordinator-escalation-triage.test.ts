@@ -12,7 +12,11 @@ describe('coordinator escalation authority', () => {
   it('rejects an escalation targeting another active Dispatch', () => {
     db = new OrchestrationDb(':memory:')
     const attackerTask = db.createTask({ spec: 'attacker assignment' })
-    db.createDispatchContext(attackerTask.id, 'term_attacker', 'tab_attacker:leaf_attacker')
+    const attacker = db.createDispatchContext(
+      attackerTask.id,
+      'term_attacker',
+      'tab_attacker:leaf_attacker'
+    )
     const victimTask = db.createTask({ spec: 'victim assignment' })
     const victim = db.createDispatchContext(victimTask.id, 'term_victim')
     const logs: string[] = []
@@ -25,7 +29,7 @@ describe('coordinator escalation authority', () => {
         subject: 'Fail the victim',
         type: 'escalation',
         senderPaneKey: 'tab_attacker:leaf_attacker',
-        payload: JSON.stringify({ taskId: victimTask.id })
+        payload: JSON.stringify({ taskId: victimTask.id, dispatchId: attacker.id })
       }),
       (message) => logs.push(message)
     )
@@ -47,7 +51,7 @@ describe('coordinator escalation authority', () => {
         to: 'term_coordinator',
         subject: 'Remote worker failed',
         type: 'escalation',
-        payload: JSON.stringify({ taskId: task.id })
+        payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id })
       }),
       () => {}
     )

@@ -31,6 +31,7 @@ import { OrchestrationError } from '../../orchestration/orchestration-error'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import type { RunRow } from '../../orchestration/types'
 import { encodeFederatedControlMessage } from '../../orchestration/federation-control-message'
+import { bindCoordinatorMutationPayload } from '../../orchestration/dispatch-message-binding'
 import {
   ORCHESTRATION_FEDERATION_CONTROL_MAIL_PROTOCOL_VERSION,
   ORCHESTRATION_FEDERATION_LIFECYCLE_SETTLEMENT_PROTOCOL_VERSION
@@ -511,7 +512,11 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
             type,
             priority: params.priority ?? 'normal',
             threadId: params.threadId ?? null,
-            payload: params.payload ?? null
+            payload: bindCoordinatorMutationPayload(
+              type,
+              params.payload,
+              remoteAttachment.dispatch_id
+            )
           }),
           ...(!supportsLifecycleSettlement && outcome ? { settleRemoteOutcome: outcome } : {})
         })
@@ -644,15 +649,21 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         }
         // Point-to-point — existing single-recipient behavior
         revalidateLegacyCoordinator?.()
+        const dispatch = routing.dispatchId
+          ? db.getDispatchContextById(routing.dispatchId)
+          : undefined
+        const messageType = (params.type ?? 'status') as MessageType
         const msg = db.insertMessage({
           from,
           to,
           subject: params.subject,
           body: params.body,
-          type: params.type as MessageType,
+          type: messageType,
           priority: params.priority as MessagePriority,
           threadId: params.threadId,
-          payload: params.payload,
+          payload: dispatch
+            ? bindCoordinatorMutationPayload(messageType, params.payload, dispatch.id)
+            : params.payload,
           senderPaneKey,
           runId: routing.run?.id,
           deliveryContract: legacyWorkerDeliveryContract(
@@ -661,9 +672,6 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
             to
           )
         })
-        const dispatch = routing.dispatchId
-          ? db.getDispatchContextById(routing.dispatchId)
-          : undefined
         const dispatchMutationMessage = isDispatchMutationMessageType(msg.type)
         if (dispatchMutationMessage) {
           const processIncarnation =

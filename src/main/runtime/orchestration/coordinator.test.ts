@@ -336,12 +336,13 @@ describe('Coordinator', () => {
         setTimeout(r, 100)
       })
       const dispatch = db.getDispatchContext(task.id)
+      expect(dispatch).toBeDefined()
       db.insertMessage({
         from: dispatch?.assignee_handle ?? 'missing-worker',
         to: 'coord',
         subject: `Failed attempt ${i + 1}`,
         type: 'escalation',
-        payload: JSON.stringify({ taskId: task.id })
+        payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch!.id })
       })
     }
 
@@ -393,6 +394,8 @@ describe('Coordinator', () => {
     })
 
     // Worker sends decision gate
+    const dispatch = db.getDispatchContext(task.id)
+    expect(dispatch).toBeDefined()
     db.insertMessage({
       from: 'term_a',
       to: 'coord',
@@ -400,6 +403,7 @@ describe('Coordinator', () => {
       type: 'decision_gate',
       payload: JSON.stringify({
         taskId: task.id,
+        dispatchId: dispatch!.id,
         question: 'Proceed with destructive migration?',
         options: ['yes', 'no']
       })

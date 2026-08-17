@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcContext } from '../core'
 import type { OrchestrationDb } from '../../orchestration/db'
 import type { OrcaRuntimeService } from '../../orca-runtime'
+import { openDecisionGateFromMessage } from '../../orchestration/coordinator-decision-gates'
+import { applyEscalationToDispatch } from '../../orchestration/coordinator-escalation-triage'
 import { createOrchestrationRpcHarness } from './orchestration-rpc-test-harness'
 
 describe('orchestration.send Dispatch authority', () => {
@@ -113,6 +115,39 @@ describe('orchestration.send Dispatch authority', () => {
       expect(result.message.type).toBe(type)
       expect(result.lifecycle).toBeUndefined()
       expect(db.getTask(task.id)?.status).toBe('dispatched')
+    }
+  )
+
+  it.each(['escalation', 'decision_gate'] as const)(
+    'binds queued legacy %s mail to its exact Dispatch before handle reuse',
+    async (type) => {
+      setup()
+      const task = db.createTask({ spec: 'legacy re-dispatch target' })
+      const first = db.createDispatchContext(task.id, 'term_legacy')
+
+      const sent = (await send({
+        from: 'term_legacy',
+        type,
+        subject: 'Queued legacy control',
+        payload: JSON.stringify({
+          taskId: task.id,
+          ...(type === 'decision_gate' ? { question: 'Proceed?' } : {})
+        })
+      })) as { message: { id: string; payload: string } }
+
+      expect(JSON.parse(sent.message.payload)).toMatchObject({ dispatchId: first.id })
+      db.failDispatch(first.id, 'worker stopped before coordinator read its mail')
+      const second = db.createDispatchContext(task.id, 'term_legacy')
+
+      if (type === 'escalation') {
+        applyEscalationToDispatch(db, db.getMessageById(sent.message.id)!, () => {})
+      } else {
+        openDecisionGateFromMessage(db, db.getMessageById(sent.message.id)!, () => {})
+      }
+
+      expect(db.getTask(task.id)?.status).toBe('dispatched')
+      expect(db.getDispatchContextById(second.id)?.status).toBe('dispatched')
+      expect(db.listGates({ taskId: task.id })).toHaveLength(0)
     }
   )
 })

@@ -7831,7 +7831,7 @@ export class OrchestrationDb {
     taskId: string
     question: string
     options?: string[]
-    requester?: { handle: string; paneKey?: string | null }
+    requester?: { handle: string; paneKey?: string | null; dispatchId: string }
   }): DecisionGateRow {
     this.db.exec('SAVEPOINT create_gate')
     try {
@@ -7845,6 +7845,7 @@ export class OrchestrationDb {
       if (
         gate.requester &&
         (!active ||
+          active.id !== gate.requester.dispatchId ||
           !this.isDispatchMessageSender({
             dispatchId: active.id,
             handle: gate.requester.handle,

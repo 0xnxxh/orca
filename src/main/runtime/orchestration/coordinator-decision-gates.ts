@@ -10,7 +10,7 @@ export function openDecisionGateFromMessage(
 ): void {
   onLog(`Decision gate from ${msg.from_handle}: ${msg.subject}`)
 
-  let payload: { taskId?: string; question?: string; options?: string[] } = {}
+  let payload: { taskId?: string; dispatchId?: string; question?: string; options?: string[] } = {}
   if (msg.payload) {
     try {
       payload = JSON.parse(msg.payload)
@@ -19,8 +19,8 @@ export function openDecisionGateFromMessage(
     }
   }
 
-  if (!payload.taskId || !payload.question) {
-    onLog(`Warning: decision_gate missing taskId or question`)
+  if (!payload.taskId || !payload.dispatchId || !payload.question) {
+    onLog(`Warning: decision_gate missing taskId, dispatchId, or question`)
     return
   }
 
@@ -29,7 +29,11 @@ export function openDecisionGateFromMessage(
       taskId: payload.taskId,
       question: payload.question,
       options: payload.options,
-      requester: { handle: msg.from_handle, paneKey: msg.sender_pane_key }
+      requester: {
+        handle: msg.from_handle,
+        paneKey: msg.sender_pane_key,
+        dispatchId: payload.dispatchId
+      }
     })
   } catch (error) {
     if (
