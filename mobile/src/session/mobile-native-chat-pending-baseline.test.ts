@@ -100,6 +100,22 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
     })
   })
 
+  // An unsettled read still shows this session's own retained history, so a send
+  // made across a reconnect already owns a real boundary. Moving it onto the read
+  // that follows pushes it past the send's own echo and strands the bubble.
+  it('never moves a tail the send actually captured', () => {
+    const captured: MobileNativeChatPendingMessage = {
+      id: 'p1',
+      text: 'run the tests',
+      expectedOccurrence: 1,
+      baselineTailMessageId: 'm1',
+      baselineResolved: false
+    }
+    const rebased = rebaseMobileNativeChatPendingBaselines(history, [captured])
+    expect(rebased[0]?.baselineTailMessageId).toBe('m1')
+    expect(rebased[0]?.baselineResolved).toBe(true)
+  })
+
   // An image echo counts image turns AFTER its tail, so moving a real tail onto
   // this read would discard an echo the read already carries.
   it('keeps a caption-less image echo on the tail it actually captured', () => {
@@ -110,6 +126,17 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
     }
     const rebased = rebaseMobileNativeChatPendingBaselines(history, [images])
     expect(rebased[0]?.baselineTailMessageId).toBe('m1')
+    expect(rebased[0]?.expectedOccurrence).toBe(1)
+    expect(rebased[0]?.baselineResolved).toBe(true)
+  })
+
+  // A captioned image echo binds by an ordinal counted over the whole transcript.
+  // Pinning a tail without recounting leaves it matching nothing, forever.
+  it('leaves a captioned image echo entirely alone', () => {
+    const rebased = rebaseMobileNativeChatPendingBaselines(history, [
+      { ...unresolved('p1', 'here'), images: ['file:///a.png'] }
+    ])
+    expect(rebased[0]?.baselineTailMessageId).toBe(null)
     expect(rebased[0]?.expectedOccurrence).toBe(1)
     expect(rebased[0]?.baselineResolved).toBe(true)
   })

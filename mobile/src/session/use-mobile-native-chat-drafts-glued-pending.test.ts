@@ -273,6 +273,22 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
       expect(state?.pending).toEqual([])
     })
 
+    // A reconnect leaves this session's own retained history on screen, so sends
+    // made across it own a real boundary already. Moving it onto the read that
+    // follows would push it past their own glued row and strand both bubbles.
+    it('retires a pair sent across a reconnect whose glued row arrives with the read', async () => {
+      const retained = [userTurn('m1', 'earlier prompt', 1000), assistantTurn('m2', 'sure', 1100)]
+      await mount(retained)
+      // The read drops; the retained history stays visible and is still ours.
+      await update(retained, true)
+      rapidSend('run the tests', 'again')
+
+      const settled = [...retained, userTurn('m3', 'run the tests again', 5000)]
+      await update(settled)
+      expect(state?.pending).toEqual([])
+      expect(renderedPendingTexts(settled, state)).toEqual([])
+    })
+
     // A send held here would sit as a live segment at the head of its run, so
     // the cursor could never reach a later pair — the stuck bubble would take
     // the whole feature down with it for the rest of the session.
