@@ -3,6 +3,7 @@ const AGENT_PROMPT_EFFECT_POLL_MS = 50
 
 export type AgentPromptActivity = Readonly<{
   generation: number
+  permissionSequence: number
   workingSequence: number
   status: 'working' | 'permission' | 'idle' | null
 }>
@@ -17,16 +18,13 @@ export async function verifyAgentPromptSubmission(
   options: AgentPromptVerificationOptions
 ): Promise<void> {
   throwIfAgentPromptAborted(options.signal)
-  assertPromptNotBlocked(options.baseline)
-  if (options.baseline.status === 'working') {
-    return
-  }
+  assertPromptNotBlocked(options.baseline, options.baseline)
 
   const deadline = Date.now() + AGENT_PROMPT_EFFECT_TIMEOUT_MS
   while (Date.now() < deadline) {
     const current = options.readActivity()
     assertSamePromptGeneration(options.baseline, current)
-    assertPromptNotBlocked(current)
+    assertPromptNotBlocked(options.baseline, current)
     if (agentPromptLifecycleChanged(options.baseline, current)) {
       return
     }
@@ -35,7 +33,7 @@ export async function verifyAgentPromptSubmission(
 
   const current = options.readActivity()
   assertSamePromptGeneration(options.baseline, current)
-  assertPromptNotBlocked(current)
+  assertPromptNotBlocked(options.baseline, current)
   if (agentPromptLifecycleChanged(options.baseline, current)) {
     return
   }
@@ -46,10 +44,7 @@ function agentPromptLifecycleChanged(
   baseline: AgentPromptActivity,
   current: AgentPromptActivity
 ): boolean {
-  if (current.status === 'working') {
-    return true
-  }
-  return current.status === 'idle' && current.workingSequence > baseline.workingSequence
+  return current.workingSequence > baseline.workingSequence
 }
 
 function assertSamePromptGeneration(
@@ -61,8 +56,8 @@ function assertSamePromptGeneration(
   }
 }
 
-function assertPromptNotBlocked(activity: AgentPromptActivity): void {
-  if (activity.status === 'permission') {
+function assertPromptNotBlocked(baseline: AgentPromptActivity, current: AgentPromptActivity): void {
+  if (current.status === 'permission' || current.permissionSequence > baseline.permissionSequence) {
     throw new Error('agent_prompt_blocked')
   }
 }

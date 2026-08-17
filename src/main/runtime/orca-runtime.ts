@@ -1485,6 +1485,14 @@ type RuntimePtyWorktreeRecord = {
   tailWaitState?: TerminalTailWaitState
 }
 
+type TerminalAgentStatusSnapshot = {
+  waitText: string
+  waitBlockedAt: number | null
+  title: string | null
+  titleStatus: AgentStatus | null
+  titleStatusIsLive: boolean
+}
+
 type TerminalCreateOptions = {
   command?: string
   claudeAgentTeamsSourceCommand?: string
@@ -3198,6 +3206,7 @@ export class OrcaRuntimeService {
     string,
     { status: AgentStatus | null; workingSequence: number; updatedAt: number }
   >()
+  private agentPromptPermissionSequenceByPtyId = new Map<string, number>()
   private agentPromptExplicitStatusFloorByPtyId = new Map<string, number>()
   private agentPromptSubmissionTailByPtyId = new Map<string, Promise<void>>()
   private providerSequenceInitializedPtys = new Set<string>()
@@ -11071,6 +11080,7 @@ export class OrcaRuntimeService {
     }
     if (tailGainedNewerBlockedReason(previousWaitState, nextWaitState, state.appended)) {
       pty.waitBlockedAt = at
+      this.recordAgentPromptPermissionObservation(ptyId)
     }
     state.lastAt = at
     state.lastWaitState = nextWaitState
@@ -11654,6 +11664,7 @@ export class OrcaRuntimeService {
     this.osc7ScanTailByPtyId.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
     this.agentPromptLifecycleByPtyId.delete(ptyId)
+    this.agentPromptPermissionSequenceByPtyId.delete(ptyId)
     const pty = this.ptysById.get(ptyId)
     if (pty) {
       pty.lastOscTitle = null
@@ -11900,6 +11911,9 @@ export class OrcaRuntimeService {
   }
 
   private recordAgentPromptLifecycleState(ptyId: string, status: AgentStatus | null): void {
+    if (status === 'permission') {
+      this.recordAgentPromptPermissionObservation(ptyId)
+    }
     const current = this.agentPromptLifecycleByPtyId.get(ptyId)
     const updatedAt = Date.now()
     if (!current) {
@@ -11918,6 +11932,13 @@ export class OrcaRuntimeService {
     })
   }
 
+  private recordAgentPromptPermissionObservation(ptyId: string): void {
+    this.agentPromptPermissionSequenceByPtyId.set(
+      ptyId,
+      (this.agentPromptPermissionSequenceByPtyId.get(ptyId) ?? 0) + 1
+    )
+  }
+
   private getPtyLifecycleGeneration(ptyId: string): number {
     const existing = this.ptyLifecycleGenerationById.get(ptyId)
     if (existing !== undefined) {
@@ -11931,6 +11952,7 @@ export class OrcaRuntimeService {
   private advancePtyLifecycleGeneration(ptyId: string): void {
     this.ptyLifecycleGenerationById.set(ptyId, this.nextPtyLifecycleGeneration++)
     this.agentPromptLifecycleByPtyId.delete(ptyId)
+    this.agentPromptPermissionSequenceByPtyId.delete(ptyId)
     this.agentPromptExplicitStatusFloorByPtyId.set(ptyId, Date.now())
     this.legacyWorkerRecoveredPtys.delete(ptyId)
     // Why: a respawn under the same session id needs its own subscriber-driven attach.
@@ -17997,21 +18019,10 @@ export class OrcaRuntimeService {
     const ptyId = this.getTerminalAgentStatusPtyId(handle)
     const terminal = this.getTerminalAgentStatusSnapshot(handle, ptyId)
     const explicitStatus = this.getFreshExplicitAgentStatusForHandle(handle)
-    const blockedByWaitText = detectTerminalWaitBlockedReason(terminal.waitText)
-    const liveTitleClearsBlockedText =
-      terminal.titleStatusIsLive &&
-      terminal.titleStatus !== null &&
-      terminal.titleStatus !== 'permission' &&
-      !isOpenCodeNativeTitle(terminal.title)
-    if (terminal.titleStatus === 'permission' && terminal.titleStatusIsLive) {
-      return { handle, isRunningAgent: true, status: 'permission' }
-    }
+    const lifecycle = this.agentPromptLifecycleByPtyId.get(ptyId)
     if (
-      blockedByWaitText &&
-      !liveTitleClearsBlockedText &&
-      (!explicitStatus ||
-        explicitStatus.status === 'permission' ||
-        (terminal.waitBlockedAt !== null && terminal.waitBlockedAt >= explicitStatus.updatedAt))
+      (terminal.titleStatus === 'permission' && terminal.titleStatusIsLive) ||
+      this.hasAuthoritativeTerminalWaitPermission(terminal, explicitStatus, lifecycle)
     ) {
       return { handle, isRunningAgent: true, status: 'permission' }
     }
@@ -18081,13 +18092,7 @@ export class OrcaRuntimeService {
   private getTerminalAgentStatusSnapshot(
     handle: string,
     expectedPtyId: string
-  ): {
-    waitText: string
-    waitBlockedAt: number | null
-    title: string | null
-    titleStatus: AgentStatus | null
-    titleStatusIsLive: boolean
-  } {
+  ): TerminalAgentStatusSnapshot {
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
       if (!pty.pty.connected || pty.pty.ptyId !== expectedPtyId) {
@@ -18144,6 +18149,33 @@ export class OrcaRuntimeService {
       titleStatus: title ? detectAgentStatusFromTitle(title.title) : leaf.lastAgentStatus,
       titleStatusIsLive: (title?.updatedAt ?? 0) > 0
     }
+  }
+
+  private hasAuthoritativeTerminalWaitPermission(
+    terminal: TerminalAgentStatusSnapshot,
+    explicitStatus: { status: AgentStatus; updatedAt: number } | null,
+    lifecycle: { status: AgentStatus | null; updatedAt: number } | null | undefined
+  ): boolean {
+    const blockedByWaitText = detectTerminalWaitBlockedReason(terminal.waitText)
+    if (!blockedByWaitText) {
+      return false
+    }
+    if (explicitStatus?.status === 'permission' || lifecycle?.status === 'permission') {
+      return true
+    }
+    const newestClearAt = Math.max(
+      explicitStatus?.updatedAt ?? -1,
+      lifecycle?.status ? lifecycle.updatedAt : -1
+    )
+    if (terminal.waitBlockedAt !== null) {
+      return terminal.waitBlockedAt >= newestClearAt
+    }
+    const liveTitleClearsBlockedText =
+      terminal.titleStatusIsLive &&
+      terminal.titleStatus !== null &&
+      terminal.titleStatus !== 'permission' &&
+      !isOpenCodeNativeTitle(terminal.title)
+    return !liveTitleClearsBlockedText && !explicitStatus
   }
 
   private async terminalHasShellForegroundProcess(handle: string, ptyId: string): Promise<boolean> {
@@ -18557,9 +18589,8 @@ export class OrcaRuntimeService {
   ): Promise<number> {
     assertAgentPromptRequestActive(options.signal)
     this.assertAgentPromptGeneration(ptyId, generation)
-    if (this.getAgentPromptActivity(handle, ptyId).status === 'permission') {
-      throw new Error('agent_prompt_blocked')
-    }
+    const permissionBaseline = this.getAgentPromptActivity(handle, ptyId)
+    this.assertAgentPromptPermissionSafe(permissionBaseline, permissionBaseline)
     const renderGate = this.createAgentPromptRenderGate(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false
@@ -18573,9 +18604,10 @@ export class OrcaRuntimeService {
         await options.beforeWrite?.(ptyId)
         assertAgentPromptRequestActive(options.signal)
         this.assertAgentPromptGeneration(ptyId, generation)
-        if (this.getAgentPromptActivity(handle, ptyId).status === 'permission') {
-          throw new Error('agent_prompt_blocked')
-        }
+        this.assertAgentPromptPermissionSafe(
+          permissionBaseline,
+          this.getAgentPromptActivity(handle, ptyId)
+        )
         if (nextChunk.done) {
           renderGate?.arm()
         }
@@ -18624,9 +18656,7 @@ export class OrcaRuntimeService {
     assertAgentPromptRequestActive(options.signal)
     this.assertAgentPromptGeneration(ptyId, generation)
     const baseline = this.getAgentPromptActivity(handle, ptyId)
-    if (baseline.status === 'permission') {
-      throw new Error('agent_prompt_blocked')
-    }
+    this.assertAgentPromptPermissionSafe(permissionBaseline, baseline)
     const suffixWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
     if (!suffixWrote) {
       throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
@@ -18680,11 +18710,29 @@ export class OrcaRuntimeService {
       (!explicit ||
         lifecycle.updatedAt > explicit.updatedAt ||
         (lifecycle.updatedAt === explicit.updatedAt && lifecycle.status === 'permission'))
-    const status = lifecycleIsNewer ? lifecycle.status : (explicit?.status ?? ptyStatus ?? null)
+    const terminal = this.getTerminalAgentStatusSnapshot(handle, ptyId)
+    const status = this.hasAuthoritativeTerminalWaitPermission(terminal, explicit, lifecycle)
+      ? 'permission'
+      : lifecycleIsNewer
+        ? lifecycle.status
+        : (explicit?.status ?? ptyStatus ?? null)
     return {
       generation: this.getPtyLifecycleGeneration(ptyId),
+      permissionSequence: this.agentPromptPermissionSequenceByPtyId.get(ptyId) ?? 0,
       workingSequence: lifecycle?.workingSequence ?? 0,
       status
+    }
+  }
+
+  private assertAgentPromptPermissionSafe(
+    baseline: AgentPromptActivity,
+    current: AgentPromptActivity
+  ): void {
+    if (
+      current.status === 'permission' ||
+      current.permissionSequence > baseline.permissionSequence
+    ) {
+      throw new Error('agent_prompt_blocked')
     }
   }
 

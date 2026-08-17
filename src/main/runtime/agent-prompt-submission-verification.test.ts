@@ -8,6 +8,7 @@ import {
 function activity(overrides: Partial<AgentPromptActivity> = {}): AgentPromptActivity {
   return {
     generation: 1,
+    permissionSequence: 2,
     workingSequence: 4,
     status: 'idle',
     ...overrides
@@ -89,6 +90,21 @@ describe('agent prompt submission verification', () => {
     await rejected
   })
 
+  it('blocks when permission appears and clears between polls', async () => {
+    vi.useFakeTimers()
+    let current = activity()
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      readActivity: () => current
+    })
+    const rejected = expect(verification).rejects.toThrow('agent_prompt_blocked')
+
+    current = activity({ permissionSequence: 3 })
+    await vi.advanceTimersByTimeAsync(50)
+
+    await rejected
+  })
+
   it('rejects an existing permission state', async () => {
     const current = activity({ status: 'permission' })
 
@@ -97,12 +113,18 @@ describe('agent prompt submission verification', () => {
     ).rejects.toThrow('agent_prompt_blocked')
   })
 
-  it('does not wait when the agent is already working', async () => {
+  it('does not accept an unchanged working baseline', async () => {
+    vi.useFakeTimers()
     const current = activity({ status: 'working' })
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      readActivity: () => current
+    })
+    const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
 
-    await expect(
-      verifyAgentPromptSubmission({ baseline: current, readActivity: () => current })
-    ).resolves.toBeUndefined()
+    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
+
+    await rejected
   })
 
   it('rejects a replaced terminal generation', async () => {

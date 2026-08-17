@@ -143,6 +143,69 @@ describe('agent prompt submission runtime', () => {
     expect(writes).toEqual([])
   })
 
+  it('does not paste into an output-only permission prompt', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
+    runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
+    vi.setSystemTime(2_000)
+    runtime.onPtyData(
+      'pty-prompt',
+      'Permission required\nAllow once\nAllow always\nReject\n',
+      Date.now()
+    )
+
+    await expect(runtime.sendTerminalAgentPrompt(handle, 'review this')).rejects.toThrow(
+      'agent_prompt_blocked'
+    )
+    expect(writes).toEqual([])
+  })
+
+  it('does not send Enter after output-only permission appears during settlement', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+        vi.setSystemTime(2_000)
+        runtime.onPtyData(
+          'pty-prompt',
+          'Permission required\nAllow once\nAllow always\nReject\n',
+          Date.now()
+        )
+      }
+    })
+    runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    const rejected = expect(submission).rejects.toThrow('agent_prompt_blocked')
+
+    await vi.runAllTimersAsync()
+
+    await rejected
+    expect(writes).not.toContain('\r')
+  })
+
+  it.each([
+    '\x1b]0;Codex waiting for permission\x07\x1b]0;Codex idle\x07',
+    '\x1b]9999;{"state":"working","agentType":"aider"}\x07' +
+      '\x1b]0;Codex waiting for permission\x07',
+    '\x1b]0;Codex waiting for permission\x07' +
+      '\x1b]9999;{"state":"working","agentType":"aider"}\x07'
+  ])('does not send Enter after coalesced permission activity', async (output) => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+        runtime.onPtyData('pty-prompt', output, Date.now())
+      }
+    })
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    const rejected = expect(submission).rejects.toThrow('agent_prompt_blocked')
+
+    await vi.runAllTimersAsync()
+
+    await rejected
+    expect(writes).not.toContain('\r')
+  })
+
   it('stops a chunked paste when permission appears between chunks', async () => {
     const { runtime, handle, writes } = await createPromptRuntime(() => undefined)
     let writeChecks = 0
@@ -197,7 +260,7 @@ describe('agent prompt submission runtime', () => {
     expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
-  it('prefers a newer explicit working status over an older permission title', async () => {
+  it('does not treat an unchanged newer working status as submission evidence', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
@@ -218,9 +281,10 @@ describe('agent prompt submission runtime', () => {
     )
 
     const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    const rejected = expect(submission).rejects.toThrow('agent_prompt_stalled')
     await vi.runAllTimersAsync()
 
-    await expect(submission).resolves.toMatchObject({ accepted: true })
+    await rejected
     expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
@@ -293,9 +357,12 @@ describe('agent prompt submission runtime', () => {
 
   it('serializes concurrent prompt submissions within one PTY generation', async () => {
     vi.useFakeTimers()
+    let enterCount = 0
     const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
       if (data === '\r') {
+        enterCount += 1
         runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
       }
     })
 
@@ -312,6 +379,7 @@ describe('agent prompt submission runtime', () => {
     expect(firstEnter).toBeGreaterThan(firstPaste)
     expect(secondPaste).toBeGreaterThan(firstEnter)
     expect(secondEnter).toBeGreaterThan(secondPaste)
+    expect(enterCount).toBe(2)
   })
 
   it('does not queue a replacement generation behind an obsolete submission', async () => {

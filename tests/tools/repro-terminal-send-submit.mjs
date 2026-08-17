@@ -161,7 +161,9 @@ async function parentMain() {
   const marker = argValue('marker', `ORCA_TERMINAL_SEND_${process.pid}_${Date.now()}`)
   const prompt = `${marker} ${'slow composer payload '.repeat(24)}`
   const expectStalled = hasFlag('expect-stalled')
+  const expectBlocked = hasFlag('expect-blocked')
   await mkdir(tempDir, { recursive: true })
+  await rm(reportPath, { force: true })
 
   const command =
     argValue('agent-command') ??
@@ -173,6 +175,7 @@ async function parentMain() {
       shellQuote(marker),
       '--timeout-ms',
       String(timeoutMs),
+      ...(expectBlocked ? ['--permission-before-send'] : []),
       ...(process.platform === 'win32' ? ['--allow-unframed-paste'] : [])
     ]))
   const added = await callOrca(cli, ['repo', 'add', '--path', cwd], cwd)
@@ -201,11 +204,18 @@ async function parentMain() {
   }
 
   try {
-    await callOrca(
-      cli,
-      ['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '10000'],
-      cwd
-    )
+    if (expectBlocked) {
+      const setupReport = await readReport(reportPath, 10_000)
+      if (!setupReport) {
+        throw new Error('terminal permission prompt did not materialize')
+      }
+    } else {
+      await callOrca(
+        cli,
+        ['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '10000'],
+        cwd
+      )
+    }
     let sendErrorCode = null
     try {
       await callOrca(
@@ -214,14 +224,17 @@ async function parentMain() {
         cwd
       )
     } catch (error) {
-      if (!expectStalled || error?.code !== 'agent_prompt_stalled') {
+      const expectedError =
+        (expectStalled && error?.code === 'agent_prompt_stalled') ||
+        (expectBlocked && error?.code === 'agent_prompt_blocked')
+      if (!expectedError) {
         throw error
       }
       sendErrorCode = error.code
     }
     let report = await readReport(reportPath, 1_000)
     let rescueSent = false
-    if (!report && !expectStalled) {
+    if (!report && !expectStalled && !expectBlocked) {
       rescueSent = true
       await callOrca(cli, ['terminal', 'send', '--terminal', handle, '--enter'], cwd)
       report = await readReport(reportPath, timeoutMs)
@@ -242,7 +255,16 @@ async function parentMain() {
       report.submitted === false &&
       report.receivedEnters === 1 &&
       report.swallowedEnters === 1
-    if (!report.contractOk || rescueSent || (expectStalled && !expectedStallObserved)) {
+    const expectedBlockObserved =
+      sendErrorCode === 'agent_prompt_blocked' &&
+      report.receivedBytes === 0 &&
+      report.receivedEnters === 0
+    if (
+      !report.contractOk ||
+      rescueSent ||
+      (expectStalled && !expectedStallObserved) ||
+      (expectBlocked && !expectedBlockObserved)
+    ) {
       process.exitCode = 1
     }
   } finally {
@@ -261,6 +283,7 @@ async function fakeAgentMain() {
   const timeoutMs = parsePositiveInteger('timeout-ms', DEFAULT_TIMEOUT_MS)
   const pasteFramingRequired = !hasFlag('allow-unframed-paste')
   const swallowFirstEnter = hasFlag('swallow-first-enter')
+  const permissionBeforeSend = hasFlag('permission-before-send')
   if (!reportPath || !marker) {
     throw new Error('--fake-agent requires --report and --marker')
   }
@@ -269,6 +292,9 @@ async function fakeAgentMain() {
   }
   process.stdin.resume()
   process.stdout.write('OpenAI Codex\nmodel: fake\ndirectory: fixture\n> ')
+  if (permissionBeforeSend) {
+    process.stdout.write('\nPermission required\nAllow once\nAllow always\nReject\n')
+  }
 
   let input = ''
   let countedCarriages = 0
@@ -282,7 +308,9 @@ async function fakeAgentMain() {
   const writeReport = async (submitted) => {
     const hasBracketedPasteFrame = input.includes(BEGIN) && input.includes(END)
     const report = {
-      contractOk: prematureEnters === 0 && (!pasteFramingRequired || hasBracketedPasteFrame),
+      contractOk:
+        prematureEnters === 0 &&
+        (permissionBeforeSend || !pasteFramingRequired || hasBracketedPasteFrame),
       submitted,
       prematureEnters,
       receivedEnters,
@@ -307,6 +335,9 @@ async function fakeAgentMain() {
   }
 
   const timeout = setTimeout(() => process.exit(8), timeoutMs)
+  if (permissionBeforeSend) {
+    setTimeout(() => void writeReport(false), 250)
+  }
   process.stdin.on('data', (chunk) => {
     input += chunk.toString('utf8')
     if (!renderScheduled && input.includes(marker)) {
