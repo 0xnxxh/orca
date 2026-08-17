@@ -5,7 +5,10 @@ import {
   UNSTOPPED_PTY_LIVE_DETAIL_PREFIX,
   UNSTOPPED_PTY_REMOVAL_PREFIX
 } from '../../shared/worktree/removal'
-import type { PtyLivenessVerdict } from '../../shared/pty-liveness-verdict'
+import {
+  NO_OBSERVING_PROVIDER_REASON,
+  type PtyLivenessVerdict
+} from '../../shared/pty-liveness-verdict'
 import { settleBeforeDeadline } from './settle-before-deadline'
 
 // Floor for the verification window when the sweep ran on a very short budget.
@@ -83,8 +86,15 @@ export async function resolveUnstoppedPtyVerdict(
   if (failedPtyIds.length === 0) {
     return { status: 'exited' }
   }
-  const cached = providerObservesOwningHost ? null : unverifiableStopVerdict(failedPtyIds, runtime)
-  return cached ?? verifyUnstoppedPtys(failedPtyIds, provider, sweepBudgetMs)
+  if (!providerObservesOwningHost) {
+    return (
+      unverifiableStopVerdict(failedPtyIds, runtime) ?? {
+        status: 'unverifiable',
+        reason: NO_OBSERVING_PROVIDER_REASON
+      }
+    )
+  }
+  return verifyUnstoppedPtys(failedPtyIds, provider, sweepBudgetMs)
 }
 
 /** Names the blocking PTYs so a wedged removal is diagnosable, not just refused. */

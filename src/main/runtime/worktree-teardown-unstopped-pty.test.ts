@@ -217,6 +217,38 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
     )
   })
 
+  it('does not infer a remote exit from fallback local inventory without a cached verdict', async () => {
+    const localProvider = createProviderStub(async () => [])
+    listRegisteredPtysMock.mockReturnValue([])
+    const runtime = {
+      stopTerminalsForWorktree: async (
+        _worktreeId: string,
+        opts: {
+          stopPty?: (
+            ptyId: string,
+            stop: () => boolean | Promise<boolean>
+          ) => Promise<{ stopped: boolean; owner: boolean }>
+        }
+      ) => {
+        await opts.stopPty?.('ssh:conn-1@@relay-10', () => false)
+        return { stopped: 0 }
+      },
+      getPtyLivenessVerdict: () => null
+    }
+
+    await expect(
+      killAllProcessesForWorktree('w1', {
+        runtime: runtime as never,
+        localProvider,
+        resolvedConnectionId: 'conn-1',
+        includeProviderInventory: false,
+        includeLocalRegistry: false,
+        requirePhysicalStop: true
+      })
+    ).rejects.toThrow(/could not verify[\s\S]*no registered provider can observe its host/)
+    expect(localProvider.listProcesses).not.toHaveBeenCalled()
+  })
+
   it('reports unverifiable separately from live when the process list fails', async () => {
     const localProvider = createProviderStub(async () => {
       throw new Error('daemon socket closed')
