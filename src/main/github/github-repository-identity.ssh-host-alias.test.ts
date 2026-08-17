@@ -178,9 +178,17 @@ describe('#10284 SSH Host alias → github.com owner/repo', () => {
   it('does not read an SSH repoPath locally when its provider is missing', async () => {
     getSshGitProviderMock.mockReturnValue(undefined)
 
-    await expect(getOwnerRepoForRemote('/remote/repo', 'origin', 'ssh-1')).rejects.toThrow(
-      'Remote connection dropped.'
-    )
+    await expect(
+      getOwnerRepoForRemote(
+        '/remote/repo',
+        'origin',
+        'ssh-1',
+        {},
+        {
+          requireVerifiedSshProbe: true
+        }
+      )
+    ).rejects.toThrow('Remote connection dropped.')
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
@@ -194,7 +202,17 @@ describe('#10284 SSH Host alias → github.com owner/repo', () => {
     }
     getSshGitProviderMock.mockReturnValue(provider)
 
-    await expect(getOwnerRepoForRemote('/remote/repo', 'origin', 'ssh-1')).rejects.toBe(failure)
+    await expect(
+      getOwnerRepoForRemote(
+        '/remote/repo',
+        'origin',
+        'ssh-1',
+        {},
+        {
+          requireVerifiedSshProbe: true
+        }
+      )
+    ).rejects.toBe(failure)
     await expect(getOwnerRepoForRemote('/remote/repo', 'origin', 'ssh-1')).resolves.toEqual({
       owner: 'team',
       repo: 'orca'
@@ -207,9 +225,17 @@ describe('#10284 SSH Host alias → github.com owner/repo', () => {
     const provider = sshProvider('')
     getSshGitProviderMock.mockReturnValue(provider)
 
-    await expect(getOwnerRepoForRemote('/remote/repo', 'origin', 'ssh-1')).rejects.toThrow(
-      'Remote repository identity is unverifiable.'
-    )
+    await expect(
+      getOwnerRepoForRemote(
+        '/remote/repo',
+        'origin',
+        'ssh-1',
+        {},
+        {
+          requireVerifiedSshProbe: true
+        }
+      )
+    ).rejects.toThrow('Remote repository identity is unverifiable.')
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
   })
 

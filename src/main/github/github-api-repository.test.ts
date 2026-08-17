@@ -29,6 +29,7 @@ vi.mock('./github-enterprise-repository', async (importOriginal) => ({
 
 import {
   _resetOriginGitHubApiRepositoryCache,
+  getGitHubApiRepositoryForRemote,
   getOriginGitHubApiRepository,
   githubHostExecOptions,
   resolveGitHubApiRepository,
@@ -182,6 +183,29 @@ describe('resolveGitHubRepoExecution', () => {
 })
 
 describe('origin repository cache', () => {
+  it('does not reuse a tolerant SSH miss for verified candidate discovery', async () => {
+    const enterprise = {
+      owner: 'acme',
+      repo: 'widgets',
+      host: 'github.acme-corp.com'
+    }
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValueOnce(null).mockResolvedValueOnce(enterprise)
+
+    await expect(getOriginGitHubApiRepository('/remote/repo', 'ssh-1')).resolves.toBeNull()
+    await expect(
+      getGitHubApiRepositoryForRemote(
+        '/remote/repo',
+        'origin',
+        'ssh-1',
+        {},
+        {
+          requireVerifiedSshProbe: true
+        }
+      )
+    ).resolves.toEqual(enterprise)
+    expect(getEnterpriseGitHubRepoSlugMock).toHaveBeenCalledTimes(2)
+  })
+
   it('does not cache an indeterminate Enterprise auth probe', async () => {
     const enterprise = {
       owner: 'acme',

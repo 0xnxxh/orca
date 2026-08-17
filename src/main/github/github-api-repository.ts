@@ -15,6 +15,14 @@ import {
   getEnterpriseGitHubRepoSlugForRemote,
   isGitHubHostAuthenticated
 } from './github-enterprise-repository'
+import { githubHostExecOptions } from './github-repository-host'
+import { isValidGitHubApiRepository } from './github-api-repository-validation'
+
+export {
+  githubHostExecOptions,
+  githubRepositorySlugArg,
+  githubRepositoryWebHost
+} from './github-repository-host'
 
 export type GitHubApiRepository = GitHubOwnerRepo
 export type GitHubRepoExecOptions = ReturnType<typeof ghRepoExecOptions> & { host?: string }
@@ -23,25 +31,15 @@ export type GitHubRepoExecution = {
   ghOptions: GitHubRepoExecOptions
 }
 
+type GitHubApiRepositoryProbeOptions = {
+  requireVerifiedSshProbe?: boolean
+}
+
 type GitHubApiRepositoryResolution =
   | GitHubApiRepository
   | null
   | undefined
   | (() => Promise<GitHubApiRepository | null>)
-
-// Why: renderer/RPC repository overrides are interpolated into REST paths.
-// Reject path syntax before an authenticated gh process can target it.
-const GITHUB_OWNER_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/
-const GITHUB_REPO_SLUG_RE = /^[A-Za-z0-9._-]+$/
-
-function isValidGitHubApiRepository(repository: GitHubApiRepository): boolean {
-  return (
-    GITHUB_OWNER_SLUG_RE.test(repository.owner) &&
-    GITHUB_REPO_SLUG_RE.test(repository.repo) &&
-    repository.repo !== '.' &&
-    repository.repo !== '..'
-  )
-}
 
 // Why: the enterprise branch spawns an uncached `git remote get-url` (an SSH
 // round trip on connection-backed repos) — hot paths like per-file contents
@@ -55,9 +53,10 @@ function originRepoCacheKey(
   repoPath: string,
   remoteName: string,
   connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {}
+  localGitOptions: LocalGitExecOptions = {},
+  requireVerifiedSshProbe = false
 ): string {
-  return `${connectionId ?? 'local'}\0${localGitOptions.wslDistro ?? ''}\0${repoPath}\0${remoteName}`
+  return `${connectionId ?? 'local'}\0${localGitOptions.wslDistro ?? ''}\0${repoPath}\0${remoteName}\0${requireVerifiedSshProbe ? 'verified' : 'tolerant'}`
 }
 
 /** @internal - exposed for tests only */
@@ -90,15 +89,28 @@ export async function getGitHubApiRepositoryForRemote(
   repoPath: string,
   remoteName: string,
   connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {}
+  localGitOptions: LocalGitExecOptions = {},
+  probeOptions: GitHubApiRepositoryProbeOptions = {}
 ): Promise<GitHubApiRepository | null> {
   // Why: generic PR resolution prefers upstream, but this API represents the
   // caller-selected remote exactly (#7331).
-  const ownerRepo = await getOwnerRepoForRemote(repoPath, remoteName, connectionId, localGitOptions)
+  const ownerRepo = await getOwnerRepoForRemote(
+    repoPath,
+    remoteName,
+    connectionId,
+    localGitOptions,
+    probeOptions
+  )
   if (ownerRepo) {
     return { ...ownerRepo, host: 'github.com' }
   }
-  const cacheKey = originRepoCacheKey(repoPath, remoteName, connectionId, localGitOptions)
+  const cacheKey = originRepoCacheKey(
+    repoPath,
+    remoteName,
+    connectionId,
+    localGitOptions,
+    probeOptions.requireVerifiedSshProbe === true
+  )
   const now = Date.now()
   pruneOriginRepoCache(now)
   const cached = originRepoCache.get(cacheKey)
@@ -114,12 +126,18 @@ export async function getGitHubApiRepositoryForRemote(
       Object.keys(localGitOptions).length > 0 ? { localGitExecOptions: localGitOptions } : {}
     const slug =
       remoteName === 'origin'
-        ? await getEnterpriseGitHubRepoSlug(repoPath, connectionId, enterpriseOptions)
+        ? await getEnterpriseGitHubRepoSlug(
+            repoPath,
+            connectionId,
+            enterpriseOptions,
+            probeOptions.requireVerifiedSshProbe === true
+          )
         : await getEnterpriseGitHubRepoSlugForRemote(
             repoPath,
             remoteName,
             connectionId,
-            enterpriseOptions
+            enterpriseOptions,
+            probeOptions.requireVerifiedSshProbe === true
           )
     // Why: undefined means the gh auth inventory could not be read. Caching it
     // as a negative would turn a transient spawn failure into a 30-second miss.
@@ -180,8 +198,12 @@ export async function resolveGitHubApiRepositoryCandidates(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubApiRepositoryCandidates> {
   const [upstream, origin] = await Promise.all([
-    getGitHubApiRepositoryForRemote(repoPath, 'upstream', connectionId, localGitOptions),
-    getGitHubApiRepositoryForRemote(repoPath, 'origin', connectionId, localGitOptions)
+    getGitHubApiRepositoryForRemote(repoPath, 'upstream', connectionId, localGitOptions, {
+      requireVerifiedSshProbe: true
+    }),
+    getGitHubApiRepositoryForRemote(repoPath, 'origin', connectionId, localGitOptions, {
+      requireVerifiedSshProbe: true
+    })
   ])
   const seen = new Set<string>()
   const candidates: GitHubApiRepository[] = []
@@ -292,15 +314,6 @@ export async function resolveGitHubApiRepository(
   return null
 }
 
-// Why: the gh runner host-qualifies argv from `options.host`, so every known
-// host must be carried through. Pinning github.com prevents a process-level
-// GH_HOST from silently redirecting an otherwise unambiguous API request.
-export function githubHostExecOptions(repository: GitHubApiRepository | null | undefined): {
-  host?: string
-} {
-  return repository?.host ? { host: repository.host } : {}
-}
-
 export async function resolveGitHubRepoExecution(
   repoPath: string,
   repository?: GitHubApiRepositoryResolution,
@@ -328,20 +341,4 @@ export async function resolveGitHubRepoExecution(
       ...githubHostExecOptions(ownerRepo)
     }
   }
-}
-
-export function githubRepositoryWebHost(repository: GitHubApiRepository): string {
-  return repository.host ?? 'github.com'
-}
-
-/**
- * Positional `HOST/OWNER/REPO` argv value (e.g. `gh repo view <slug>`).
- * Positional slugs bypass the runner's `--repo` qualifier, so they must be
- * qualified here whenever the host is known.
- */
-export function githubRepositorySlugArg(repository: GitHubApiRepository): string {
-  const slug = `${repository.owner}/${repository.repo}`
-  // Why: github.com must be explicit too; otherwise process-level GH_HOST can
-  // redirect positional `gh repo view OWNER/REPO` calls to an Enterprise host.
-  return repository.host ? `${repository.host}/${slug}` : slug
 }
