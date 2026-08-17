@@ -104,11 +104,17 @@ export function emptyImportWritePhase(): ImportWritePhase {
   }
 }
 
-export type ImportWriteSkip = { cookie: SourceCookieToWrite; reason: string }
+/** The only fields planning needs — path B plans over rows that have no resolved `url` yet. */
+export type PlannableCookie = { domain: string; partition: SourcePartitionRead }
 
-export type ImportWritePlanResult = {
-  writes: SourceCookieToWrite[]
-  skips: ImportWriteSkip[]
+export type ImportWriteSkip<T extends PlannableCookie = SourceCookieToWrite> = {
+  cookie: T
+  reason: string
+}
+
+export type ImportWritePlanResult<T extends PlannableCookie = SourceCookieToWrite> = {
+  writes: T[]
+  skips: ImportWriteSkip<T>[]
   /** registrableFamily values whose partition could not be read faithfully. */
   skippedFamilies: Set<string>
   /**
@@ -129,23 +135,26 @@ export type ImportWritePlanResult = {
  *
  * Pure — no I/O — so the caller cannot mutate anything before the plan exists.
  */
-export function planImportWrites(cookies: readonly SourceCookieToWrite[]): ImportWritePlanResult {
-  const provisional: SourceCookieToWrite[] = []
-  const skips: ImportWriteSkip[] = []
+export function planImportWrites<T extends PlannableCookie>(
+  cookies: readonly T[]
+): ImportWritePlanResult<T> {
+  const provisional: T[] = []
+  const skips: ImportWriteSkip<T>[] = []
   const skippedFamilies = new Set<string>()
   let hasUnrepresentableSkip = false
 
   // Pass 1: classify, and learn which families cannot be written faithfully.
   for (const cookie of cookies) {
-    const plan = planImportedCookieWrite(cookie, cookie.partition)
-    if (plan.status === 'skip') {
+    // Why: the skip decision is the partition read itself — the same condition
+    // planImportedCookieWrite uses — so path B can plan before it has resolved a write URL.
+    if (cookie.partition.status === 'unreadable') {
       const family = registrableFamily(cookie.domain)
       if (family === null) {
         hasUnrepresentableSkip = true
       } else {
         skippedFamilies.add(family)
       }
-      skips.push({ cookie, reason: plan.reason })
+      skips.push({ cookie, reason: cookie.partition.reason })
       continue
     }
     provisional.push(cookie)
@@ -153,7 +162,7 @@ export function planImportWrites(cookies: readonly SourceCookieToWrite[]): Impor
 
   // Pass 2: a readable cookie whose family was skipped is suppressed too — otherwise its family's
   // removal scope would be widened by a domain we then decline to write back (STA-4300 §2b).
-  const writes: SourceCookieToWrite[] = []
+  const writes: T[] = []
   for (const cookie of provisional) {
     const family = registrableFamily(cookie.domain)
     if (family !== null && skippedFamilies.has(family)) {

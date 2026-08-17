@@ -1760,6 +1760,9 @@ export async function importCookiesFromBrowser(
     }
 
     const decryptedCookies: DecryptedCookie[] = []
+    // Why: the staging insert needs the RAW source row, so each scanned candidate carries it.
+    // A plan record holding only the derived fields compiles fine and then cannot stage.
+    const scanned: { entry: DecryptedCookie; sourceRow: Record<string, unknown> }[] = []
     const sourceDomainValidity = new Map<string, boolean>()
 
     // Why: staging only backs the cold-restart replay, so any failure writing it disables that
@@ -1859,33 +1862,69 @@ export async function importCookiesFromBrowser(
       // Why: cookie values are raw bytes, not UTF-8; latin1 preserves 0x00–0xFF without lossy replacement.
       const value = decryptedValue.toString('latin1')
 
-      decryptedCookies.push({
-        decryptedValue,
-        value,
-        domain,
-        name,
-        path,
-        secure,
-        httpOnly,
-        sameSite,
-        expirationDate: expiresUtc > 0 ? expiresUtc : undefined,
-        partition
+      // Why (STA-4300 I1): SCAN only. Nothing is emitted here — not decryptedCookies, not
+      // domainSet, not a staging row, not the imported count. bf6dc6fcba pushed the cookie and
+      // THEN applied the unreadable guard, so an unreadable row discovered late could not retract
+      // a sibling already emitted, and the jar-wide clear then removed more than was written back.
+      scanned.push({
+        entry: {
+          decryptedValue,
+          value,
+          domain,
+          name,
+          path,
+          secure,
+          httpOnly,
+          sameSite,
+          expirationDate: expiresUtc > 0 ? expiresUtc : undefined,
+          partition
+        },
+        sourceRow
       })
+    }
 
-      if (partition.status === 'unreadable') {
-        partitionSkipped++
-        skipped++
+    // Why: family-atomic skip is a property of the WHOLE input, so it cannot be decided per row.
+    const nativePlan = planImportWrites(scanned.map((row) => row.entry))
+    const plannedRows = new Set<DecryptedCookie>(nativePlan.writes)
+    partitionSkipped = nativePlan.skips.length
+    skipped += partitionSkipped
+
+    // Why (§4.3c): a family we cannot name is one we cannot exclude from the clear, and clearing a
+    // family we cannot protect is the P0. Refuse before the jar is touched.
+    if (nativePlan.hasUnrepresentableSkip) {
+      closeStagingDb()
+      discardStagingFile()
+      return {
+        ok: false,
+        reason:
+          'Could not import: a cookie with an unreadable site partition has no registrable domain, so its existing session cannot be protected.'
+      }
+    }
+
+    // Why (§4.3b): a staged image is a whole-DB replacement on next start, so it cannot represent
+    // "preserve this family". When anything is preserved, this import gets no cold-start fallback;
+    // main's existing memoryFailed arm then reports restart-fallback-unavailable.
+    if (nativePlan.skippedFamilies.size > 0) {
+      disableStaging(
+        `${nativePlan.skippedFamilies.size} preserved cookie families cannot be represented in a staged image`
+      )
+    }
+
+    // EMIT: everything downstream derives from the plan, so there is no second place a row can
+    // leak in.
+    for (const { entry, sourceRow } of scanned) {
+      if (!plannedRows.has(entry)) {
         continue
       }
-
-      const cleanDomain = domain.startsWith('.') ? domain.slice(1) : domain
+      decryptedCookies.push(entry)
+      const cleanDomain = entry.domain.startsWith('.') ? entry.domain.slice(1) : entry.domain
       domainSet.add(cleanDomain)
       if (insertStmt && targetColumnInfo) {
         try {
           const params = buildChromiumCookieInsertParams(
             targetColumnInfo,
             sourceRow,
-            decryptedValue
+            entry.decryptedValue
           )
           insertStmt.run(...params)
         } catch (err) {
