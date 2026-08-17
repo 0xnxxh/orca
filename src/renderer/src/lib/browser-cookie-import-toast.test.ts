@@ -73,6 +73,26 @@ describe('emitBrowserCookieImportToast', () => {
     expect(message).not.toContain('export')
   })
 
+  it('uses the generic warning for a reason added by a newer runtime host', () => {
+    emitBrowserCookieImportToast(
+      {
+        ...summary,
+        warning: {
+          code: 'cookies-undecryptable',
+          failedCookies: 3,
+          reason: 'newer-runtime-reason'
+        }
+      } as unknown as BrowserCookieImportSummary,
+      'Imported 0 cookies.',
+      'Remote Mac'
+    )
+
+    expect(warningToastMock).toHaveBeenCalledWith(
+      '3 cookies could not be decrypted and were skipped. Close the source browser completely and try the import again.'
+    )
+    expect(successToastMock).not.toHaveBeenCalled()
+  })
+
   it('shows separate host-specific Google guidance after success', () => {
     emitBrowserCookieImportToast(
       { ...summary, importedCookies: 2, skippedCookies: 1, googleCookiesSkipped: 1 },

@@ -4,6 +4,14 @@ import { translate } from '@/i18n/i18n'
 
 type CookieImportWarning = NonNullable<BrowserCookieImportSummary['warning']>
 
+function formatUnknownCookieImportWarning(failedCookies: number): string {
+  return translate(
+    'auto.lib.browser.cookie.import.toast.undecryptableUnknown',
+    '{{value0}} cookies could not be decrypted and were skipped. Close the source browser completely and try the import again.',
+    { value0: failedCookies }
+  )
+}
+
 function formatCookieImportWarning(warning: CookieImportWarning): string {
   switch (warning.code) {
     case 'restart-fallback-unavailable':
@@ -48,12 +56,10 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
                 { value0: warning.failedCookies }
               )
         case 'unknown':
-          return translate(
-            'auto.lib.browser.cookie.import.toast.undecryptableUnknown',
-            '{{value0}} cookies could not be decrypted and were skipped. Close the source browser completely and try the import again.',
-            { value0: warning.failedCookies }
-          )
+          return formatUnknownCookieImportWarning(warning.failedCookies)
       }
+      // Older clients can receive a reason added by a newer runtime host before their types know it.
+      return formatUnknownCookieImportWarning(warning.failedCookies)
   }
 }
 
