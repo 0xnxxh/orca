@@ -556,7 +556,7 @@ describe('launchPromptAsMessage', () => {
 describe('pending send cache', () => {
   it('persists optimistic sends for the same pane and agent', () => {
     clearPendingSendCacheForTests()
-    const scope = { paneKey: 'tab-a:leaf-a', agent: 'codex' }
+    const scope = { paneKey: 'tab-a:leaf-a', agent: 'codex', conversationId: 'session-a' }
 
     const appended = appendPendingSendCache(scope, pendingOf('p1', 'first prompt'))
 
@@ -574,7 +574,7 @@ describe('pending send cache', () => {
 
   it('clears cached pending sends when pruning removes all entries', () => {
     clearPendingSendCacheForTests()
-    const scope = { paneKey: 'tab-a:leaf-a', agent: 'codex' }
+    const scope = { paneKey: 'tab-a:leaf-a', agent: 'codex', conversationId: 'session-a' }
     appendPendingSendCache(scope, pendingOf('p1', 'first prompt'))
 
     writePendingSendCache(scope, [])
@@ -720,11 +720,15 @@ describe('scope-cache key counts stay bounded (memory-leak regression)', () => {
     clearPendingSendCacheForTests()
     const send = (id: string): NativeChatPendingSend => ({ id, text: id, sentAt: 1 })
     for (let i = 0; i < CAP + 5; i++) {
-      writePendingSendCache({ paneKey: `tab-${i}:leaf`, agent: 'claude' }, [send(`m${i}`)])
+      writePendingSendCache({ paneKey: `tab-${i}:leaf`, agent: 'claude', conversationId: 's' }, [
+        send(`m${i}`)
+      ])
     }
-    expect(readPendingSendCache({ paneKey: 'tab-0:leaf', agent: 'claude' })).toEqual([])
-    expect(readPendingSendCache({ paneKey: `tab-${CAP + 4}:leaf`, agent: 'claude' })).toHaveLength(
-      1
-    )
+    expect(
+      readPendingSendCache({ paneKey: 'tab-0:leaf', agent: 'claude', conversationId: 's' })
+    ).toEqual([])
+    expect(
+      readPendingSendCache({ paneKey: `tab-${CAP + 4}:leaf`, agent: 'claude', conversationId: 's' })
+    ).toHaveLength(1)
   })
 })
