@@ -29,9 +29,7 @@ export class SshPtySpawnExitRaceTracker {
     return operation.exits.some(
       (exit) =>
         exit.relayPtyId === result.id &&
-        (!exit.incarnationId ||
-          !result.incarnationId ||
-          exit.incarnationId === result.incarnationId)
+        (!result.incarnationId || exit.incarnationId === result.incarnationId)
     )
   }
 

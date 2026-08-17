@@ -130,6 +130,47 @@ it('rejects an SSH reattach whose matching exit shares the attach reply batch', 
   })
 })
 
+it('does not classify a legacy exit as current while reattach resolves its incarnation', async () => {
+  const mux = {
+    request: vi.fn(),
+    notify: vi.fn(),
+    onNotification: vi.fn(),
+    dispose: vi.fn(),
+    isDisposed: vi.fn().mockReturnValue(false)
+  }
+  const provider = new SshPtyProvider('conn-1', mux as never)
+  let resolveAttach: (() => void) | undefined
+  mux.request.mockImplementation((method: string, _params, options) => {
+    if (method !== 'pty.attach') {
+      return Promise.resolve(undefined)
+    }
+    return new Promise((resolve) => {
+      resolveAttach = () => {
+        const result = { incarnationId: 'incarnation-current' }
+        options?.beforeResolve?.(result)
+        resolve(result)
+      }
+    })
+  })
+
+  const spawn = provider.spawn({
+    cols: 80,
+    rows: 24,
+    sessionId: 'ssh:conn-1@@pty-existing'
+  })
+  await vi.waitFor(() => expect(resolveAttach).toBeTypeOf('function'))
+  const notify = mux.onNotification.mock.calls[0]?.[0]
+  notify?.('pty.exit', { id: 'pty-existing', code: 0 })
+  resolveAttach?.()
+
+  await expect(spawn).resolves.toMatchObject({
+    id: 'ssh:conn-1@@pty-existing',
+    incarnationId: 'incarnation-current',
+    isReattach: true
+  })
+  await expect(provider.probePtyLiveness('ssh:conn-1@@pty-existing')).resolves.toBe(true)
+})
+
 it('returns a provisional source activation lease to reconnect authority', async () => {
   const mux = {
     request: vi.fn(),
