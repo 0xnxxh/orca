@@ -42,7 +42,11 @@ import { installWindowVisibilityInterval } from '@/lib/window-visibility-interva
 import { toast } from 'sonner'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useAppStore } from '../../store'
-import { getRepoMapFromState, getWorktreeMapFromState } from '../../store/selectors'
+import {
+  getRepoMapFromState,
+  getWorktreeMapFromState,
+  getWorktreeOnHostFromState
+} from '../../store/selectors'
 import { getHostedReviewCacheKey } from '../../store/slices/hosted-review'
 import { issueCacheKey as getIssueCacheKey } from '../../store/slices/github'
 import { refreshGitStatusForWorktree } from '../right-sidebar/git-status-refresh'
@@ -53,7 +57,6 @@ import {
 import { runWorktreeBatchDelete } from '../sidebar/delete-worktree-flow'
 import { toWorktreeDeleteIdentities } from '../sidebar/worktree-delete-request'
 import { showWorkspaceListChangedToast } from '../sidebar/stale-workspace-list-toast'
-import { getWorktreeOnHostFromState } from '../../store/selectors'
 import { prepareActiveWorktreeFocusAfterDelete } from '../sidebar/active-worktree-focus-after-delete'
 import { branchDisplayName } from '../sidebar/WorktreeCardHelpers'
 import { Badge } from '../ui/badge'
