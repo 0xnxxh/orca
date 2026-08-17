@@ -63,6 +63,7 @@ import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner
 import { ORCA_BROWSER_BLANK_URL, ORCA_BROWSER_PARTITION } from '../../../../shared/constants'
 import {
   BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY,
+  BROWSER_DIRECT_HISTORY_NAVIGATION_RUNTIME_CAPABILITY,
   BROWSER_DIRECT_RAW_INPUT_RUNTIME_CAPABILITY
 } from '../../../../shared/protocol-version'
 import { getOrcaProfileBrowserDefaultPartition } from '../../../../shared/orca-profiles'
@@ -138,6 +139,7 @@ import BrowserFind from './BrowserFind'
 import { BrowserMobileDriverOverlay } from './BrowserMobileDriverOverlay'
 import { getShortcutPlatform, useShortcutLabel } from '@/hooks/useShortcutLabel'
 import { getRemoteBrowserFrameStyle } from './remote-browser-frame-style'
+import { getRemoteBrowserFramePoint } from './remote-browser-frame-point'
 import { useRemoteBrowserStreamActivation } from './use-remote-browser-stream-activation'
 import {
   getRemoteBrowserKeyboardShortcut,
@@ -201,6 +203,7 @@ import {
   type RemoteBrowserPointerSample
 } from './remote-browser-pointer-gesture'
 import {
+  buildLegacyRemoteBrowserHistoryExpression,
   buildLegacyRemoteBrowserKeypressExpression,
   buildLegacyRemoteBrowserWheelExpression
 } from './remote-browser-legacy-input'
@@ -985,6 +988,13 @@ function RemoteBrowserPagePane({
   const closeBrowserPage = useAppStore((s) => s.closeBrowserPage)
   const closeBrowserTab = useAppStore((s) => s.closeBrowserTab)
   const keybindings = useAppStore((state) => state.keybindings)
+  const remoteDirectHistoryNavigationSupported = useAppStore((state) =>
+    Boolean(
+      state.runtimeStatusByEnvironmentId
+        .get(activeRuntimeEnvironmentId)
+        ?.status?.capabilities?.includes(BROWSER_DIRECT_HISTORY_NAVIGATION_RUNTIME_CAPABILITY)
+    )
+  )
   const remoteRuntimeCompatibilityIdentity = useAppStore((state) => {
     const entry = state.runtimeStatusByEnvironmentId.get(activeRuntimeEnvironmentId)
     const supportsDirectInput = entry?.status?.capabilities?.includes(
@@ -1501,23 +1511,16 @@ function RemoteBrowserPagePane({
         return null
       }
       const rect = viewport.getBoundingClientRect()
-      const viewportWidth =
-        getPositiveFiniteNumber(remoteCssViewportSizeRef.current?.width) ??
-        getPositiveFiniteNumber(remoteViewportSizeRef.current?.width) ??
-        getPositiveFiniteNumber(frameMetadata?.deviceWidth) ??
-        image.naturalWidth
-      const viewportHeight =
-        getPositiveFiniteNumber(remoteCssViewportSizeRef.current?.height) ??
-        getPositiveFiniteNumber(remoteViewportSizeRef.current?.height) ??
-        getPositiveFiniteNumber(frameMetadata?.deviceHeight) ??
-        image.naturalHeight
-      if (rect.width <= 0 || rect.height <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
-        return null
-      }
-      return {
-        x: Math.round(((event.clientX - rect.left) / rect.width) * viewportWidth),
-        y: Math.round(((event.clientY - rect.top) / rect.height) * viewportHeight)
-      }
+      return getRemoteBrowserFramePoint({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        viewportRect: rect,
+        naturalWidth: image.naturalWidth,
+        naturalHeight: image.naturalHeight,
+        metadata: frameMetadata,
+        remoteCssViewportSize: remoteCssViewportSizeRef.current,
+        remoteViewportSize: remoteViewportSizeRef.current
+      })
     },
     [frameMetadata]
   )
@@ -1630,15 +1633,34 @@ function RemoteBrowserPagePane({
       setPaneNotice(null)
       onUpdatePageState(browserTab.id, { loading: true, loadError: null })
       try {
+        const legacyHistoryDirection =
+          !remoteDirectHistoryNavigationSupported && method === 'browser.back'
+            ? 'back'
+            : !remoteDirectHistoryNavigationSupported && method === 'browser.forward'
+              ? 'forward'
+              : null
         const params =
           method === 'browser.goto'
             ? { worktree: runtimeWorktree, page: pageId, url: url ?? 'about:blank' }
-            : { worktree: runtimeWorktree, page: pageId }
+            : legacyHistoryDirection
+              ? {
+                  worktree: runtimeWorktree,
+                  page: pageId,
+                  expression: buildLegacyRemoteBrowserHistoryExpression(legacyHistoryDirection)
+                }
+              : { worktree: runtimeWorktree, page: pageId }
         const result = await callRuntimeRpc<
           BrowserGotoResult | BrowserBackResult | BrowserReloadResult
-        >(target, method, params, { timeoutMs: 30_000, suppressFeatureInteraction: true })
+        >(target, legacyHistoryDirection ? 'browser.eval' : method, params, {
+          timeoutMs: 30_000,
+          suppressFeatureInteraction: true
+        })
         if (isCurrentRemoteOperationToken(pageToken)) {
-          applyRemoteTabInfo(result)
+          if (legacyHistoryDirection) {
+            scheduleRemoteTabInfoRefresh(pageToken, 250)
+          } else {
+            applyRemoteTabInfo(result)
+          }
         }
       } catch (error) {
         if (!isCurrentRemoteOperationToken(pageToken)) {
@@ -1674,8 +1696,10 @@ function RemoteBrowserPagePane({
       closeMissingRemotePage,
       isCurrentRemoteOperationToken,
       onUpdatePageState,
+      remoteDirectHistoryNavigationSupported,
       runtimeTarget,
-      runtimeWorktree
+      runtimeWorktree,
+      scheduleRemoteTabInfoRefresh
     ]
   )
 

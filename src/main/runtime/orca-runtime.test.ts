@@ -2029,6 +2029,7 @@ describe('OrcaRuntimeService', () => {
     expect(status.capabilities).toContain('project-host-setup.v1')
     expect(status.capabilities).toContain('linear.issue-attribute-filter.v1')
     expect(status.capabilities).not.toContain('browser.screencast.v1')
+    expect(status.capabilities).not.toContain('browser.direct-history-navigation.v1')
     expect(status.capabilities).not.toContain('browser.direct-raw-input.v1')
     expect(typeof status.protocolVersion).toBe('number')
     expect(typeof status.minCompatibleMobileVersion).toBe('number')
@@ -2158,6 +2159,7 @@ describe('OrcaRuntimeService', () => {
     runtime.attachWindow(TEST_WINDOW_ID)
 
     expect(runtime.getStatus().capabilities).toContain('browser.screencast.v1')
+    expect(runtime.getStatus().capabilities).toContain('browser.direct-history-navigation.v1')
     expect(runtime.getStatus().capabilities).toContain('browser.direct-raw-input.v1')
   })
 
@@ -2289,6 +2291,7 @@ describe('OrcaRuntimeService', () => {
     // ...and the headless marker tells clients not to fall back to a local tab.
     expect(capabilities).toContain('browser.headless.v1')
     expect(capabilities).toContain('browser.certificate-trust.v1')
+    expect(capabilities).toContain('browser.direct-history-navigation.v1')
     expect(capabilities).toContain('browser.direct-raw-input.v1')
   })
   it('surfaces live offscreen load failures in headless browser snapshots', () => {
@@ -2423,6 +2426,7 @@ describe('OrcaRuntimeService', () => {
 
     expect(runtime.getStatus().capabilities).not.toContain('browser.certificate-trust.v1')
     expect(runtime.getStatus().capabilities).not.toContain('browser.screencast.v1')
+    expect(runtime.getStatus().capabilities).not.toContain('browser.direct-history-navigation.v1')
     expect(runtime.getStatus().capabilities).not.toContain('browser.direct-raw-input.v1')
   })
 
