@@ -20,10 +20,6 @@ export class SshPtyLivenessState {
     this.exitedPtyIds.clear()
   }
 
-  hasRoutingOwnership(id: string): boolean {
-    return this.livePtyIds.has(id) || this.unverifiablePtyIds.has(id)
-  }
-
   probe(id: string): boolean | null {
     return this.livePtyIds.has(id) ? true : this.exitedPtyIds.has(id) ? false : null
   }

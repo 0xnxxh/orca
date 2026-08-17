@@ -27,6 +27,18 @@ function createMockMux(): {
   }
 }
 
+type MockMux = ReturnType<typeof createMockMux>
+
+function notificationHandler(
+  mux: MockMux
+): (method: string, params: Record<string, unknown>) => void {
+  const handler = mux.onNotification.mock.calls[0]?.[0]
+  if (typeof handler !== 'function') {
+    throw new Error('expected notification handler')
+  }
+  return handler
+}
+
 const restoreRequiredAnswer = {
   incarnationId: 'incarnation-reattached',
   sourceRecovery: { status: 'restoreRequired', reason: 'checkpointUnavailable' }
@@ -49,12 +61,31 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(provider.probePtyLiveness('ssh:conn-1@@pty-unprobed')).resolves.toBeNull()
   })
 
-  it('retains routing ownership for a reconnecting PTY without reporting it live', async () => {
+  it('keeps a reconnecting PTY unverifiable after an authoritative empty inventory', async () => {
     const id = 'ssh:conn-1@@pty-reconnecting'
-    const provider = new SshPtyProvider('conn-1', createMockMux() as never, undefined, 1, [id])
+    const mux = createMockMux()
+    mux.request.mockResolvedValueOnce([])
+    const provider = new SshPtyProvider('conn-1', mux as never, undefined, 1, [id])
 
-    expect(provider.hasPty(id)).toBe(true)
+    await provider.listProcesses()
+
+    expect(provider.hasPty(id)).toBe(false)
     await expect(provider.probePtyLiveness(id)).resolves.toBeNull()
+  })
+
+  it('does not classify an exit before the owner validates its incarnation', async () => {
+    const id = 'ssh:conn-1@@pty-live'
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    provider.acceptLivePty(id)
+
+    notificationHandler(mux)('pty.exit', {
+      id: 'pty-live',
+      code: 0,
+      incarnationId: 'stale-incarnation'
+    })
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBe(true)
   })
 
   it('bounds exited PTY evidence and evicts to unverifiable', async () => {
@@ -113,7 +144,7 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
 
     expect(message).toContain(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
     expect(message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
-    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(true)
+    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(false)
     await expect(provider.probePtyLiveness('ssh:conn-1@@pty-old')).resolves.toBeNull()
     expect(mux.request.mock.calls.filter((call) => call[0] === 'pty.attach')).toHaveLength(2)
   })

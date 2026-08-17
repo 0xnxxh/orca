@@ -16,6 +16,7 @@ function createSubscription() {
   const replayListeners = new Set<(payload: { id: string; data: string }) => void>()
   const exitListeners = new Set<(payload: { id: string; code: number }) => void>()
   const livePtyIds = new Set<string>()
+  const acceptLivePty = vi.fn((id: string) => livePtyIds.add(id))
   const recordExit = vi.fn()
   const toAppPtyId = vi.fn((id: string) => `ssh:conn@@${id}`)
   const resolvePtyIncarnation = vi.fn((id: string) => `incarnation:${id}`)
@@ -26,7 +27,7 @@ function createSubscription() {
     dataListeners: dataListeners as never,
     replayListeners: replayListeners as never,
     exitListeners: exitListeners as never,
-    livePtyIds,
+    acceptLivePty,
     recordExit,
     providerGeneration: 7,
     resolvePtyIncarnation,
@@ -49,6 +50,7 @@ function createSubscription() {
     replayListeners,
     exitListeners,
     livePtyIds,
+    acceptLivePty,
     recordExit,
     resolvePtyIncarnation,
     installReceivingActivation: subscription.installReceivingActivation
@@ -102,7 +104,7 @@ describe('subscribeSshPtyNotifications', () => {
     })
   })
 
-  it('records pty.exit with the validated relay id', () => {
+  it('publishes pty.exit without changing liveness before owner validation', () => {
     const { handler, exitListeners, livePtyIds, recordExit } = createSubscription()
     const onExit = vi.fn()
     exitListeners.add(onExit)
@@ -115,7 +117,7 @@ describe('subscribeSshPtyNotifications', () => {
     })
 
     expect(recordExit).toHaveBeenCalledWith('pty-1', 'incarnation-1')
-    expect(livePtyIds.has('ssh:conn@@pty-1')).toBe(false)
+    expect(livePtyIds.has('ssh:conn@@pty-1')).toBe(true)
     expect(onExit).toHaveBeenCalledWith({
       id: 'ssh:conn@@pty-1',
       code: 0,

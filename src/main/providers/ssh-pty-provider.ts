@@ -59,9 +59,8 @@ export class SshPtyProvider implements IPtyProvider {
     this.outputState = new SshPtyProviderOutputState(providerGeneration, {
       mux,
       toAppPtyId: (id) => this.toAppPtyId(id),
-      livePtyIds: this.livenessState.livePtyIds,
+      acceptLivePty: (id) => this.acceptLivePty(id),
       recordExit: (relayPtyId, incarnationId) => {
-        this.acceptExitedPty(this.toAppPtyId(relayPtyId))
         this.spawnExitRaces.recordExit(relayPtyId, incarnationId)
       }
     })
@@ -297,8 +296,8 @@ export class SshPtyProvider implements IPtyProvider {
     return processes
   }
 
-  // `hasPty` retains routing ownership; liveness callers must use the tri-state probe.
-  hasPty = (id: string): boolean => this.livenessState.hasRoutingOwnership(id)
+  // Why: unverifiable is not live; callers needing all three verdicts use probePtyLiveness.
+  hasPty = (id: string): boolean => this.livenessState.livePtyIds.has(id)
 
   probePtyLiveness = async (id: string): Promise<boolean | null> => this.livenessState.probe(id)
 

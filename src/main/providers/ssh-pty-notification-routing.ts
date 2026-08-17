@@ -39,7 +39,7 @@ export function subscribeSshPtyNotifications(args: {
   rejectedDataListeners?: Set<SshPtyDataCallback>
   replayListeners: Set<SshPtyReplayCallback>
   exitListeners: Set<SshPtyExitCallback>
-  livePtyIds: Set<string>
+  acceptLivePty: (id: string) => void
   recordExit: (relayPtyId: string, incarnationId: unknown) => void
   providerGeneration: number
   resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
@@ -70,7 +70,7 @@ export function subscribeSshPtyNotifications(args: {
   }
   const publishData = (pending: PendingSshPtySourceData): void => {
     const payload = toDataPayload(pending)
-    args.livePtyIds.add(payload.id)
+    args.acceptLivePty(payload.id)
     for (const listener of args.dataListeners) {
       listener(payload)
     }
@@ -165,7 +165,6 @@ export function subscribeSshPtyNotifications(args: {
       const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
       rejectedPublications.delete(relayPtyId)
       args.recordExit(relayPtyId, params.incarnationId)
-      args.livePtyIds.delete(id)
       sourceDeliveries.recordExit(relayPtyId)
       for (const listener of args.exitListeners) {
         listener({
@@ -182,7 +181,7 @@ export function subscribeSshPtyNotifications(args: {
     }
     if (method === 'pty.replay') {
       const id = args.toAppPtyId(relayPtyId)
-      args.livePtyIds.add(id)
+      args.acceptLivePty(id)
       for (const listener of args.replayListeners) {
         listener({ id, data: params.data as string })
       }

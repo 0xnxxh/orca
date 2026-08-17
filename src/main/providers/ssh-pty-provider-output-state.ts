@@ -28,7 +28,7 @@ export class SshPtyProviderOutputState {
     args: {
       mux: SshChannelMultiplexer
       toAppPtyId: (id: string) => string
-      livePtyIds: Set<string>
+      acceptLivePty: (id: string) => void
       recordExit: (relayPtyId: string, incarnationId: unknown) => void
     }
   ) {

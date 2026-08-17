@@ -2216,6 +2216,10 @@ export class SshRelaySession {
       ptyIncarnation: payload.ptyIncarnation
     })
     if (isCurrentPtyExit(payload)) {
+      const provider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
+      if (provider?.providerGeneration === payload.providerGeneration) {
+        provider.acceptExitedPty(payload.id)
+      }
       this.retireExitedPty(payload, true)
     }
   }
