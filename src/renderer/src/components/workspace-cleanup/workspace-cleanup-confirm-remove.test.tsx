@@ -73,4 +73,39 @@ describe('WorkspaceCleanupConfirmRemove', () => {
     expect(listProbe).toHaveBeenCalledWith(candidates.length)
     expect(container.querySelectorAll('span.truncate.text-sm.font-medium')).toHaveLength(5)
   })
+
+  it('names what local context would be discarded instead of totalling it', () => {
+    const candidate = makeFacetCandidate({
+      worktreeId: 'repo-1::/repo/with-context',
+      displayName: 'Has context',
+      localContext: {
+        terminalTabCount: 1,
+        cleanEditorTabCount: 0,
+        browserTabCount: 1,
+        diffCommentCount: 0,
+        newestDiffCommentAt: null,
+        retainedDoneAgentCount: 0
+      }
+    })
+
+    act(() => {
+      root.render(
+        <WorkspaceCleanupConfirmRemove
+          candidates={[candidate]}
+          now={Date.now()}
+          reviewInfoByWorktreeId={new Map()}
+          progress={null}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      )
+    })
+
+    // Why: "Context: 2" summed terminals, editor/browser tabs, diff notes and
+    // finished agents into one number that told the reader nothing.
+    expect(container.textContent).toContain('Terminal tabs: 1')
+    expect(container.textContent).toContain('Browser tabs: 1')
+    expect(container.textContent).not.toContain('Context: ')
+  })
 })

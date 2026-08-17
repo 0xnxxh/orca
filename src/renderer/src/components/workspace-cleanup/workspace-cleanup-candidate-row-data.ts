@@ -7,7 +7,6 @@ import {
 } from './workspace-cleanup-presentation'
 import {
   formatUnpushedCommitCount,
-  formatWorkspaceCleanupContextCount,
   formatWorkspaceCleanupContextDetail,
   formatWorkspaceCleanupGitStatusLabel,
   getGitStatusUnknownLabel,
@@ -166,11 +165,16 @@ export function getReviewPillTone(reviewInfo: WorkspaceCleanupReviewInfo): Statu
   return 'neutral'
 }
 
+/**
+ * Why the breakdown and not a total: the count sums five unrelated things
+ * (terminals, editor tabs, browser tabs, diff notes, finished agents), so a
+ * bare "Context: 2" tells a reader nothing about what deleting would discard.
+ */
 export function getContextPillLabel(candidate: WorkspaceCleanupCandidate): string | null {
   if (!hasWorkspaceCleanupLocalContext(candidate)) {
     return null
   }
-  return formatWorkspaceCleanupContextCount(getContextCount(candidate))
+  return formatContextDetails(candidate)
 }
 
 export function getContextCount(candidate: WorkspaceCleanupCandidate): number {
