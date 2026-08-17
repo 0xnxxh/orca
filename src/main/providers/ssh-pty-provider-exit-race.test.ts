@@ -139,6 +139,8 @@ it('does not classify a legacy exit as current while reattach resolves its incar
     isDisposed: vi.fn().mockReturnValue(false)
   }
   const provider = new SshPtyProvider('conn-1', mux as never)
+  const exitListener = vi.fn()
+  provider.onExit(exitListener)
   let resolveAttach: (() => void) | undefined
   mux.request.mockImplementation((method: string, _params, options) => {
     if (method !== 'pty.attach') {
@@ -161,6 +163,7 @@ it('does not classify a legacy exit as current while reattach resolves its incar
   await vi.waitFor(() => expect(resolveAttach).toBeTypeOf('function'))
   const notify = mux.onNotification.mock.calls[0]?.[0]
   notify?.('pty.exit', { id: 'pty-existing', code: 0 })
+  expect(exitListener).not.toHaveBeenCalled()
   resolveAttach?.()
 
   await expect(spawn).resolves.toMatchObject({
@@ -168,7 +171,21 @@ it('does not classify a legacy exit as current while reattach resolves its incar
     incarnationId: 'incarnation-current',
     isReattach: true
   })
+  expect(exitListener).not.toHaveBeenCalled()
   await expect(provider.probePtyLiveness('ssh:conn-1@@pty-existing')).resolves.toBe(true)
+
+  notify?.('pty.exit', {
+    id: 'pty-existing',
+    code: 7,
+    incarnationId: 'incarnation-current'
+  })
+  expect(exitListener).toHaveBeenCalledExactlyOnceWith({
+    id: 'ssh:conn-1@@pty-existing',
+    code: 7,
+    incarnationId: 'incarnation-current',
+    providerGeneration: expect.any(Number),
+    ptyIncarnation: 'incarnation-current'
+  })
 })
 
 it('returns a provisional source activation lease to reconnect authority', async () => {

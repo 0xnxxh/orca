@@ -7,6 +7,8 @@ import {
   SSH_SESSION_EXPIRED_ERROR,
   isSshPtyExitedEvidenceError,
   isSshPtyIdentityMismatchError,
+  isSshPtyLivenessUnverifiableError,
+  isSshPtyRestoreRequiredError,
   isSshPtyNotFoundError
 } from './ssh-pty-errors'
 import { toAppSshPtyId, toRelaySshPtyId } from './ssh-pty-id'
@@ -237,7 +239,7 @@ export async function reattachSshPtySessionWithExitFence(
     exitRaceTracker: SshPtySpawnExitRaceTracker
   }
 ): Promise<SshPtyReattachResult> {
-  const operation = args.exitRaceTracker.begin()
+  const operation = args.exitRaceTracker.begin(toRelaySshPtyId(args.connectionId, args.sessionId))
   let result: SshPtyReattachResult | undefined
   try {
     result = await reattachSshPtySession(args)
@@ -276,19 +278,7 @@ export async function reattachSshPtySessionForSpawn(
       if (unresumable.sourceActivationLease) {
         await unresumable.sourceActivationLease.rollback()
       }
-      try {
-        result = await reattachSshPtySessionWithExitFence(args)
-      } catch (error) {
-        if (isSshPtyIdentityMismatchError(error) || isSshPtyExitedEvidenceError(error)) {
-          throw error
-        }
-        // Why: losing contact during verification is unverifiable, not live or exited.
-        args.acceptUnverifiablePty(unresumable.id)
-        throw new Error(
-          `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${toRelaySshPtyId(args.connectionId, unresumable.id)}`,
-          { cause: error }
-        )
-      }
+      result = await reattachSshPtySessionWithExitFence(args)
       if (result.sourceRecovery?.status === 'restoreRequired') {
         args.acceptLivePty(result.id)
         throw new Error(
@@ -304,6 +294,17 @@ export async function reattachSshPtySessionForSpawn(
     await result?.sourceActivationLease?.rollback()
     if (isSshPtyExitedEvidenceError(error)) {
       args.acceptExitedPty(result?.id ?? toAppSshPtyId(args.connectionId, args.sessionId))
+    } else if (
+      !isSshPtyIdentityMismatchError(error) &&
+      !isSshPtyRestoreRequiredError(error) &&
+      !isSshPtyLivenessUnverifiableError(error)
+    ) {
+      const id = result?.id ?? toAppSshPtyId(args.connectionId, args.sessionId)
+      args.acceptUnverifiablePty(id)
+      throw new Error(
+        `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${toRelaySshPtyId(args.connectionId, id)}`,
+        { cause: error }
+      )
     }
     throw error
   }

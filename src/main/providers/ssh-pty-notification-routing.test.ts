@@ -114,7 +114,7 @@ describe('subscribeSshPtyNotifications', () => {
       incarnationId: 'incarnation-1'
     })
 
-    expect(recordExit).toHaveBeenCalledWith('pty-1', 'incarnation-1')
+    expect(recordExit).toHaveBeenCalledWith('pty-1', 'incarnation-1', expect.any(Function))
     expect(livePtyIds.has('ssh:conn@@pty-1')).toBe(true)
     expect(onExit).toHaveBeenCalledWith({
       id: 'ssh:conn@@pty-1',

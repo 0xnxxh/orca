@@ -133,7 +133,7 @@ describe('SSH relay PTY incarnation exits', () => {
       providerGeneration: 31,
       acceptExitedPty
     } as never)
-    vi.mocked(isCurrentPtyExit).mockReturnValueOnce(false)
+    vi.mocked(isCurrentPtyExit).mockReturnValueOnce(true).mockReturnValueOnce(false)
 
     onExit({
       id: 'ssh:target-1@@pty-reused',

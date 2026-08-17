@@ -61,6 +61,20 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(provider.probePtyLiveness('ssh:conn-1@@pty-unprobed')).resolves.toBeNull()
   })
 
+  it('reports unverifiable when the initial attach loses contact', async () => {
+    const mux = createMockMux()
+    mux.request.mockRejectedValueOnce(new Error('Multiplexer disposed'))
+    const provider = new SshPtyProvider('conn-1', mux as never)
+
+    const message = await spawnError(provider)
+
+    expect(message).toContain(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
+    expect(message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
+    expect(provider.hasPty('ssh:conn-1@@pty-old')).toBe(false)
+    await expect(provider.probePtyLiveness('ssh:conn-1@@pty-old')).resolves.toBeNull()
+    expect(mux.request.mock.calls.filter((call) => call[0] === 'pty.attach')).toHaveLength(1)
+  })
+
   it('keeps a reconnecting PTY unverifiable after an authoritative empty inventory', async () => {
     const id = 'ssh:conn-1@@pty-reconnecting'
     const mux = createMockMux()

@@ -565,6 +565,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn() }
     vi.mocked(getSshPtyProvider).mockReturnValue({
       attachForReconnect: vi.fn().mockImplementation(async () => {
+        emitExitDuringAttach({ id: APP_PTY_ID, code: 0 })
         emitExitDuringAttach({
           id: APP_PTY_ID,
           code: 0,

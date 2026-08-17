@@ -3,6 +3,7 @@ import { SshPtyProvider } from './ssh-pty-provider'
 import { POWERLEVEL10K_WIZARD_DISABLE_ENV } from '../pty/powerlevel10k-wizard-env'
 import { PTY_STARTUP_INGRESS_VERSION } from '../../shared/pty-startup-ingress'
 import { AGENT_SESSION_EXECUTION_OWNER_PROTOCOL_VERSION } from '../../shared/agent-session-host-authority'
+import { SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR } from './ssh-pty-errors'
 
 type MockMultiplexer = {
   request: ReturnType<typeof vi.fn>
@@ -681,11 +682,11 @@ describe('SshPtyProvider', () => {
       expect(mux.request).toHaveBeenCalledTimes(1)
     })
 
-    it('preserves transient reattach failures for retry handling', async () => {
+    it('classifies transient reattach failures as unverifiable', async () => {
       mux.request.mockRejectedValueOnce(new Error('SSH connection lost, reconnecting...'))
 
       await expect(provider.spawn({ cols: 80, rows: 24, sessionId: 'pty-old' })).rejects.toThrow(
-        'SSH connection lost, reconnecting...'
+        `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: pty-old`
       )
 
       expect(mux.request).toHaveBeenCalledTimes(1)

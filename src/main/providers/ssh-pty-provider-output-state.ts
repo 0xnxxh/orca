@@ -28,7 +28,11 @@ export class SshPtyProviderOutputState {
     args: {
       mux: SshChannelMultiplexer
       toAppPtyId: (id: string) => string
-      recordExit: (relayPtyId: string, incarnationId: unknown) => void
+      recordExit: (
+        relayPtyId: string,
+        incarnationId: unknown,
+        publish?: () => void
+      ) => boolean | void
     }
   ) {
     this.subscription = subscribeSshPtyNotifications({
@@ -41,9 +45,7 @@ export class SshPtyProviderOutputState {
       resolvePtyIncarnation: (relayPtyId, incarnationId) =>
         this.resolvePtyIncarnation(relayPtyId, incarnationId),
       peekPtyIncarnation: (relayPtyId) => this.incarnationByRelayPtyId.get(relayPtyId),
-      recordExit: (relayPtyId, incarnationId) => {
-        args.recordExit(relayPtyId, incarnationId)
-      }
+      recordExit: args.recordExit
     })
   }
 
@@ -121,6 +123,12 @@ export class SshPtyProviderOutputState {
       typeof incarnationId === 'string' &&
       incarnationId.length > 0
     ) {
+      this.incarnationByRelayPtyId.set(relayPtyId, incarnationId)
+    }
+  }
+
+  acceptPtyIncarnation(relayPtyId: string, incarnationId: unknown): void {
+    if (typeof incarnationId === 'string' && incarnationId.length > 0) {
       this.incarnationByRelayPtyId.set(relayPtyId, incarnationId)
     }
   }

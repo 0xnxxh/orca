@@ -2215,6 +2215,9 @@ export class SshRelaySession {
   }
 
   private async acceptPtyExit(payload: SshPtyExitPayload): Promise<void> {
+    if (!isCurrentPtyExit(payload)) {
+      return
+    }
     await acceptSshPtyOutputExit({
       id: payload.id,
       code: payload.code,
@@ -2389,11 +2392,9 @@ export class SshRelaySession {
       if (!shouldContinue()) {
         return
       }
-      const exitDuringAttach = pendingReattach.exits.find(
-        (exit) =>
-          !exit.incarnationId ||
-          !attachResult.incarnationId ||
-          exit.incarnationId === attachResult.incarnationId
+      const exitDuringAttach = this.findExactPendingExit(
+        pendingReattach,
+        attachResult.incarnationId
       )
       if (exitDuringAttach && !recoveryRequest) {
         if (attachResult.incarnationId) {
@@ -2507,11 +2508,9 @@ export class SshRelaySession {
         }
         pendingReattach.livePassthrough = true
       }
-      const exitAfterActivation = pendingReattach.exits.find(
-        (exit) =>
-          !exit.incarnationId ||
-          !attachResult.incarnationId ||
-          exit.incarnationId === attachResult.incarnationId
+      const exitAfterActivation = this.findExactPendingExit(
+        pendingReattach,
+        attachResult.incarnationId
       )
       if (exitAfterActivation) {
         await this.acceptPtyExit(exitAfterActivation)

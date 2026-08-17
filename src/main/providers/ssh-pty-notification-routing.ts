@@ -40,7 +40,7 @@ export function subscribeSshPtyNotifications(args: {
   rejectedDataListeners?: Set<SshPtyDataCallback>
   replayListeners: Set<SshPtyReplayCallback>
   exitListeners: Set<SshPtyExitCallback>
-  recordExit: (relayPtyId: string, incarnationId: unknown) => void
+  recordExit: (relayPtyId: string, incarnationId: unknown, publish?: () => void) => boolean | void
   providerGeneration: number
   resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
   peekPtyIncarnation: (relayPtyId: string) => string | undefined
@@ -160,19 +160,23 @@ export function subscribeSshPtyNotifications(args: {
     }
     const relayPtyId = params.id
     if (method === 'pty.exit') {
-      const id = args.toAppPtyId(relayPtyId)
-      const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
-      args.recordExit(relayPtyId, params.incarnationId)
-      for (const listener of args.exitListeners) {
-        listener({
-          id,
-          code: params.code as number,
-          providerGeneration: args.providerGeneration,
-          ptyIncarnation,
-          ...(isPtyIncarnationId(params.incarnationId)
-            ? { incarnationId: params.incarnationId }
-            : {})
-        })
+      const publish = (): void => {
+        const id = args.toAppPtyId(relayPtyId)
+        const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
+        for (const listener of args.exitListeners) {
+          listener({
+            id,
+            code: params.code as number,
+            providerGeneration: args.providerGeneration,
+            ptyIncarnation,
+            ...(isPtyIncarnationId(params.incarnationId)
+              ? { incarnationId: params.incarnationId }
+              : {})
+          })
+        }
+      }
+      if (!args.recordExit(relayPtyId, params.incarnationId, publish)) {
+        publish()
       }
       return
     }
