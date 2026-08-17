@@ -244,7 +244,7 @@ export async function reattachSshPtySessionWithExitFence(
   try {
     result = await reattachSshPtySession(args)
     const relayPtyId = toRelaySshPtyId(args.connectionId, result.id)
-    const exitOutcome = args.exitRaceTracker.classifyReattachExit(operation, {
+    const exitOutcome = args.exitRaceTracker.classifyPendingExit(operation, {
       id: relayPtyId,
       incarnationId: result.incarnationId
     })

@@ -180,6 +180,11 @@ type PendingPtyReattach = {
   activated: boolean
 }
 
+type PendingPtyExitOutcome =
+  | { status: 'exited'; exit: SshPtyExitPayload }
+  | { status: 'unverifiable' }
+  | null
+
 type RemoteCliBridgeEnv = {
   remoteHome: string
   binDir: string
@@ -1777,10 +1782,11 @@ export class SshRelaySession {
         this.wakeRecovery(pendingReattach)
         return
       }
+      if (!payload.incarnationId) {
+        ptyProvider.acceptUnverifiablePty(payload.id)
+        return
+      }
       if (!isCurrentPtyExit(payload)) {
-        if (!payload.incarnationId) {
-          ptyProvider.acceptUnverifiablePty(payload.id)
-        }
         return
       }
       void this.acceptPtyExit(payload).catch(() => {})
@@ -2385,20 +2391,17 @@ export class SshRelaySession {
       if (!shouldContinue()) {
         return
       }
-      if (!attachResult.incarnationId && pendingReattach.exits.length > 0) {
+      const exitDuringAttach = this.classifyPendingExit(pendingReattach, attachResult.incarnationId)
+      if (exitDuringAttach?.status === 'unverifiable') {
         ptyProvider.acceptUnverifiablePty?.(appPtyId)
         return
       }
-      const exitDuringAttach = this.findExactPendingExit(
-        pendingReattach,
-        attachResult.incarnationId
-      )
-      if (exitDuringAttach && !recoveryRequest) {
+      if (exitDuringAttach?.status === 'exited' && !recoveryRequest) {
         if (attachResult.incarnationId) {
           restorePtyIncarnation(appPtyId, attachResult.incarnationId)
           this.runtime?.acceptPtyIncarnationForExit(appPtyId, attachResult.incarnationId)
         }
-        await this.acceptPtyExit(exitDuringAttach)
+        await this.acceptPtyExit(exitDuringAttach.exit)
         return
       }
       const existingDeliveryConfirmed =
@@ -2441,10 +2444,7 @@ export class SshRelaySession {
           }
         )
         if (!recovered) {
-          const recoveryExit = this.findExactPendingExit(
-            pendingReattach,
-            attachResult.incarnationId
-          )
+          const recoveryExit = this.classifyPendingExit(pendingReattach, attachResult.incarnationId)
           if (
             recoveryExit &&
             shouldContinue() &&
@@ -2462,18 +2462,26 @@ export class SshRelaySession {
                 )
               }
             }
-            this.preparePtyIncarnationForExit(appPtyId, attachResult.incarnationId)
-            await this.acceptPtyExit(recoveryExit)
+            if (recoveryExit.status === 'unverifiable') {
+              ptyProvider.acceptUnverifiablePty?.(appPtyId)
+            } else {
+              this.preparePtyIncarnationForExit(appPtyId, attachResult.incarnationId)
+              await this.acceptPtyExit(recoveryExit.exit)
+            }
           }
           return
         }
-        const recoveryExit = this.findExactPendingExit(pendingReattach, attachResult.incarnationId)
-        if (recoveryExit) {
+        const recoveryExit = this.classifyPendingExit(pendingReattach, attachResult.incarnationId)
+        if (recoveryExit?.status === 'unverifiable') {
+          ptyProvider.acceptUnverifiablePty?.(appPtyId)
+          return
+        }
+        if (recoveryExit?.status === 'exited') {
           this.preparePtyIncarnationForExit(appPtyId, attachResult.incarnationId)
           pendingReattach.activated = true
           recoveryActivationLease?.commit()
           recoveryActivationLease = undefined
-          await this.acceptPtyExit(recoveryExit)
+          await this.acceptPtyExit(recoveryExit.exit)
           return
         }
       }
@@ -2489,10 +2497,6 @@ export class SshRelaySession {
           activeLeaseByPtyId.get(ptyId)
         )
       }
-      attachedLeaseIds.add(ptyId)
-      pendingReattach.activated = true
-      recoveryActivationLease?.commit()
-      recoveryActivationLease = undefined
       if (targetedDeliveryRecovery) {
         if (targetedDeliveryRecovery === 'fresh-activation') {
           this.retiredSourceDeliveries.activate(ptyId)
@@ -2503,16 +2507,26 @@ export class SshRelaySession {
         while (pendingReattach.queuedData.length > 0) {
           await this.acceptPtyData(pendingReattach.queuedData.shift()!)
         }
-        pendingReattach.livePassthrough = true
       }
-      const exitAfterActivation = this.findExactPendingExit(
+      const exitAfterActivation = this.classifyPendingExit(
         pendingReattach,
         attachResult.incarnationId
       )
-      if (exitAfterActivation) {
-        await this.acceptPtyExit(exitAfterActivation)
+      if (exitAfterActivation?.status === 'unverifiable') {
+        ptyProvider.acceptUnverifiablePty?.(appPtyId)
         return
       }
+      pendingReattach.activated = true
+      if (exitAfterActivation?.status === 'exited') {
+        recoveryActivationLease?.commit()
+        recoveryActivationLease = undefined
+        await this.acceptPtyExit(exitAfterActivation.exit)
+        return
+      }
+      attachedLeaseIds.add(ptyId)
+      recoveryActivationLease?.commit()
+      recoveryActivationLease = undefined
+      pendingReattach.livePassthrough = targetedDeliveryRecovery !== undefined
       if (!recoveryRequest && !targetedDeliveryRecovery) {
         this.forwardReattachReplay(appPtyId, attachResult.replay ?? '')
       }
@@ -2536,18 +2550,21 @@ export class SshRelaySession {
     }
   }
 
-  private findExactPendingExit(
+  private classifyPendingExit(
     pending: PendingPtyReattach,
     ptyIncarnation: string | undefined
-  ): SshPtyExitPayload | undefined {
-    if (!ptyIncarnation) {
-      return undefined
-    }
-    return pending.exits.find(
-      (exit) =>
-        exit.providerGeneration === pending.providerGeneration &&
-        exit.ptyIncarnation === ptyIncarnation
+  ): PendingPtyExitOutcome {
+    const exits = pending.exits.filter(
+      (exit) => exit.providerGeneration === pending.providerGeneration
     )
+    if (!ptyIncarnation) {
+      return exits.length > 0 ? { status: 'unverifiable' } : null
+    }
+    const exact = exits.find((exit) => exit.incarnationId === ptyIncarnation)
+    if (exact) {
+      return { status: 'exited', exit: exact }
+    }
+    return exits.some((exit) => !exit.incarnationId) ? { status: 'unverifiable' } : null
   }
 
   private preparePtyIncarnationForExit(appPtyId: string, ptyIncarnation: string | undefined): void {
@@ -2819,8 +2836,8 @@ export class SshRelaySession {
       this.routeQuarantinedReattachData(pending, payload)
     }
     await this.waitForRecoveryFence(pending, shouldContinue)
-    const exactExit = this.findExactPendingExit(pending, acceptedRecovery.ptyIncarnation)
-    const complete = pending.recoveryComplete ?? (exactExit ? acceptedRecovery : undefined)
+    const pendingExit = this.classifyPendingExit(pending, acceptedRecovery.ptyIncarnation)
+    const complete = pending.recoveryComplete ?? (pendingExit ? acceptedRecovery : undefined)
     if (
       !shouldContinue() ||
       pending.restoreRequired ||
@@ -2906,7 +2923,7 @@ export class SshRelaySession {
       shouldContinue() &&
       !pending.recoveryComplete &&
       !pending.restoreRequired &&
-      !this.findExactPendingExit(pending, pending.recovery?.ptyIncarnation) &&
+      !this.classifyPendingExit(pending, pending.recovery?.ptyIncarnation) &&
       Date.now() < deadline
     ) {
       await new Promise<void>((resolve) => {
@@ -2928,7 +2945,7 @@ export class SshRelaySession {
     if (
       !pending.recoveryComplete &&
       !pending.restoreRequired &&
-      !this.findExactPendingExit(pending, pending.recovery?.ptyIncarnation)
+      !this.classifyPendingExit(pending, pending.recovery?.ptyIncarnation)
     ) {
       pending.restoreRequired = 'recoveryFenceTimeout'
     }

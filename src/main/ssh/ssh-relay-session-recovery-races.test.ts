@@ -76,6 +76,7 @@ vi.mock('../providers/ssh-pty-provider', () => ({
       return () => {}
     })
     attachForReconnect = attachForReconnectMock
+    acceptUnverifiablePty = vi.fn()
     setPtyDeliveryPauseAdapter = vi.fn()
     dispose = ptyProviderDisposeMock
   }
@@ -281,6 +282,44 @@ describe('SshRelaySession recovery race fencing', () => {
     expect(recoveryActivationLease.commit).toHaveBeenCalledOnce()
     expect(recoveryActivationLease.retire).not.toHaveBeenCalled()
     expect(muxRequestMock).not.toHaveBeenCalledWith('pty.cancelDelivery', expect.anything())
+    expect(setPtyOwnership).not.toHaveBeenCalled()
+    expect(deps.mockStore.markSshRemotePtyLeasesAttachedAsync).not.toHaveBeenCalled()
+  })
+
+  it('keeps a legacy exit during source recovery unverifiable', async () => {
+    const targetId = 'legacy-exit-during-recovery'
+    const { session, deps } = await prepareRecovery(targetId)
+    const recoveryActivationLease = { commit: vi.fn(), retire: vi.fn() }
+    const sourceActivationLease = {
+      commit: vi.fn(),
+      rollback: vi.fn(async () => true),
+      transferToRecovery: vi.fn(() => {
+        queueMicrotask(() => {
+          ptyExitHandlerRef.current?.({
+            id: `ssh:${targetId}@@pty-1`,
+            code: 0,
+            providerGeneration: 23,
+            ptyIncarnation: 'incarnation-1'
+          })
+        })
+        return recoveryActivationLease
+      })
+    }
+    attachForReconnectMock.mockResolvedValue({
+      incarnationId: 'incarnation-1',
+      sourceRecovery: pendingRecovery(4),
+      sourceActivationLease
+    })
+
+    await session.reconnect(deps.mockConn)
+    const provider = vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1] as unknown as {
+      acceptUnverifiablePty: ReturnType<typeof vi.fn>
+    }
+
+    expect(provider.acceptUnverifiablePty).toHaveBeenCalledWith(`ssh:${targetId}@@pty-1`)
+    expect(acceptOutputExitMock).not.toHaveBeenCalled()
+    expect(recoveryActivationLease.commit).not.toHaveBeenCalled()
+    expect(recoveryActivationLease.retire).toHaveBeenCalledOnce()
     expect(setPtyOwnership).not.toHaveBeenCalled()
     expect(deps.mockStore.markSshRemotePtyLeasesAttachedAsync).not.toHaveBeenCalled()
   })

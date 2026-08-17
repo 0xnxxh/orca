@@ -240,4 +240,32 @@ describe('SSH relay PTY incarnation exits', () => {
     )
     expect(acceptOutputExitMock).not.toHaveBeenCalled()
   })
+
+  it('marks a legacy exit unverifiable without incarnation ownership', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
+      onExit: ReturnType<typeof vi.fn>
+      acceptUnverifiablePty: ReturnType<typeof vi.fn>
+    }
+    const onExit = provider.onExit.mock.calls[0]?.[0] as (payload: {
+      id: string
+      code: number
+      providerGeneration: number
+      ptyIncarnation: string
+    }) => void
+
+    onExit({
+      id: 'ssh:target-1@@pty-legacy',
+      code: 0,
+      providerGeneration: 31,
+      ptyIncarnation: 'legacy:31:1:pty-legacy'
+    })
+
+    expect(provider.acceptUnverifiablePty).toHaveBeenCalledExactlyOnceWith(
+      'ssh:target-1@@pty-legacy'
+    )
+    expect(acceptOutputExitMock).not.toHaveBeenCalled()
+  })
 })

@@ -20,6 +20,10 @@ export class SshPtySpawnExitRaceTracker {
     return operation
   }
 
+  bind(operation: PendingSshPtySpawn, relayPtyId: string): void {
+    operation.relayPtyId = relayPtyId
+  }
+
   recordExit(relayPtyId: string, incarnationId: unknown, publish?: () => void): boolean {
     let quarantined = false
     let published = false
@@ -41,20 +45,7 @@ export class SshPtySpawnExitRaceTracker {
     return quarantined
   }
 
-  didMatchingExitArrive(
-    operation: PendingSshPtySpawn,
-    result: { id: string; incarnationId?: PtyIncarnationId }
-  ): boolean {
-    const matchingExit = operation.exits.find(
-      (exit) =>
-        exit.relayPtyId === result.id &&
-        (!result.incarnationId || exit.incarnationId === result.incarnationId)
-    )
-    matchingExit?.publish?.()
-    return matchingExit !== undefined
-  }
-
-  classifyReattachExit(
+  classifyPendingExit(
     operation: PendingSshPtySpawn,
     result: { id: string; incarnationId?: PtyIncarnationId }
   ): SshPtyPendingExitOutcome {

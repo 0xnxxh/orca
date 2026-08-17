@@ -84,6 +84,35 @@ it('rejects a fresh SSH PTY whose exit shares the spawn response batch', async (
   })
 })
 
+it('keeps a fresh spawn with a legacy exit unverifiable', async () => {
+  const mux = {
+    request: vi.fn(),
+    notify: vi.fn(),
+    onNotification: vi.fn(),
+    dispose: vi.fn(),
+    isDisposed: vi.fn().mockReturnValue(false)
+  }
+  const provider = new SshPtyProvider('conn-1', mux as never)
+  const exitListener = vi.fn()
+  provider.onExit(exitListener)
+  mux.request.mockImplementation(async (method: string, _params, options) => {
+    if (method !== 'pty.spawn') {
+      return undefined
+    }
+    const result = { id: 'pty-raced', incarnationId: 'incarnation-current' }
+    options?.beforeResolve?.(result)
+    const notify = mux.onNotification.mock.calls[0]?.[0]
+    notify?.('pty.exit', { id: 'pty-raced', code: 0 })
+    return result
+  })
+
+  await expect(provider.spawn({ cols: 80, rows: 24 })).rejects.toThrow(
+    SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR
+  )
+  expect(exitListener).not.toHaveBeenCalled()
+  await expect(provider.probePtyLiveness('ssh:conn-1@@pty-raced')).resolves.toBeNull()
+})
+
 it('rejects an SSH reattach whose matching exit shares the attach reply batch', async () => {
   const mux = {
     request: vi.fn(),
