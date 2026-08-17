@@ -95,6 +95,22 @@ function parseRemoteWorkerPayload(payload: string | undefined): Record<string, u
   }
 }
 
+function parseMessageTaskId(payload: string | undefined): string | undefined {
+  if (!payload) {
+    return undefined
+  }
+  try {
+    const parsed: unknown = JSON.parse(payload)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? typeof (parsed as { taskId?: unknown }).taskId === 'string'
+        ? (parsed as { taskId: string }).taskId
+        : undefined
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function isWorkerReportOutcome(value: unknown): value is 'succeeded' | 'failed' {
   return value === 'succeeded' || value === 'failed'
 }
@@ -649,33 +665,68 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           ? db.getDispatchContextById(routing.dispatchId)
           : undefined
         const dispatchMutationMessage = isDispatchMutationMessageType(msg.type)
-        if (
-          dispatchMutationMessage &&
-          dispatch &&
-          (dispatch.capability_hash || dispatch.process_incarnation)
-        ) {
+        if (dispatchMutationMessage) {
           const processIncarnation =
             attestedCaller?.processIncarnation ??
             runtime.getTerminalProcessIncarnation(from) ??
             undefined
-          const capabilityBacked = Boolean(dispatch.capability_hash)
-          const authority = capabilityBacked
-            ? db.verifyDispatchCapability({
+          const taskId = parseMessageTaskId(params.payload)
+          const capabilityBacked = Boolean(dispatch?.capability_hash)
+          const coordinatorMutation = msg.type === 'escalation' || msg.type === 'decision_gate'
+          let authority: {
+            valid: boolean
+            code: 'sender_not_assignee' | 'task_dispatch_mismatch' | 'dispatch_capability_invalid'
+            reason: string
+          }
+          if (!dispatch) {
+            authority = {
+              valid: !coordinatorMutation,
+              code: 'sender_not_assignee',
+              reason: 'No active Dispatch belongs to this message sender.'
+            }
+          } else if (coordinatorMutation && taskId && taskId !== dispatch.task_id) {
+            authority = {
+              valid: false,
+              code: 'task_dispatch_mismatch',
+              reason: `Task ${taskId} does not belong to Dispatch ${dispatch.id}.`
+            }
+          } else if (capabilityBacked) {
+            const capabilityAuthority = db.verifyDispatchCapability({
+              dispatchId: dispatch.id,
+              capability: orchestrationCapability,
+              paneKey: senderPaneKey,
+              processIncarnation
+            })
+            authority = {
+              valid: capabilityAuthority.valid,
+              code: 'dispatch_capability_invalid',
+              reason: capabilityAuthority.valid ? '' : capabilityAuthority.reason
+            }
+          } else if (dispatch.process_incarnation) {
+            authority = {
+              valid: db.isDispatchProcessCurrent({
                 dispatchId: dispatch.id,
-                capability: orchestrationCapability,
-                paneKey: senderPaneKey,
-                processIncarnation
-              })
-            : {
-                valid: db.isDispatchProcessCurrent({
+                paneKey: senderPaneKey ?? null,
+                processIncarnation: processIncarnation ?? null
+              }),
+              code: 'sender_not_assignee',
+              reason: `Dispatch ${dispatch.id} process incarnation is no longer current for its pane.`
+            }
+          } else {
+            authority = {
+              valid:
+                !coordinatorMutation ||
+                db.isDispatchMessageSender({
                   dispatchId: dispatch.id,
-                  paneKey: senderPaneKey ?? null,
-                  processIncarnation: processIncarnation ?? null
+                  handle: from,
+                  paneKey: senderPaneKey
                 }),
-                reason: `Dispatch ${dispatch.id} process incarnation is no longer current for its pane.`
-              }
+              code: 'sender_not_assignee',
+              reason: `Terminal ${from} does not own Dispatch ${dispatch.id}.`
+            }
+          }
           if (!authority.valid) {
-            const code = capabilityBacked ? 'dispatch_capability_invalid' : 'sender_not_assignee'
+            const code = authority.code
             const rejection =
               db.convertLifecycleMessageToRejection(msg.id, code, authority.reason) ?? msg
             runtime.notifyMessageArrived(rejection.to_handle, rejection.type)

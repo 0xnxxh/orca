@@ -113,6 +113,7 @@ describe('buildDispatchPreamble', () => {
 
     expect(result).toMatch(/orchestration ask --from term_worker/)
     expect(result).toMatch(/orchestration send --from term_worker \\\n    --type escalation/)
+    expect(result).toContain('--task-id task_abc123 --dispatch-id ctx_def456')
     expect(result).toContain('orchestration check --terminal term_worker')
   })
 

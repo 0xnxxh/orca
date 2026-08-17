@@ -31,6 +31,17 @@ export function applyEscalationToDispatch(
   if (!dispatch) {
     return null
   }
+  if (
+    !db.isDispatchMessageSender({
+      dispatchId: dispatch.id,
+      handle: msg.from_handle,
+      paneKey: msg.sender_pane_key,
+      allowCanonicalDispatchHandle: true
+    })
+  ) {
+    onLog(`Rejected escalation from ${msg.from_handle}: it does not own Task ${taskId}`)
+    return null
+  }
 
   const worker = db.getWorkerDispatch(dispatch.id)
   if (worker && !['failed', 'succeeded', 'stopped', 'abandoned'].includes(worker.state)) {

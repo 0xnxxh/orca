@@ -5258,6 +5258,7 @@ export class OrchestrationDb {
              WHERE id = ? AND status IN ('pending', 'dispatched')`
           )
           .run(reason, params.dispatchId)
+        this.reconcileTaskAfterDispatchInterruption(dispatch.task_id, params.dispatchId)
         this.db
           .prepare(
             `UPDATE tasks SET status = 'failed', completed_at = datetime('now')
@@ -5328,6 +5329,7 @@ export class OrchestrationDb {
           .run(dispatchStatus, failureCount, reason, dispatchId)
         if (!stopWasPending) {
           const taskStatus: TaskStatus = dispatchStatus === 'circuit_broken' ? 'failed' : 'ready'
+          this.reconcileTaskAfterDispatchInterruption(dispatch.task_id, dispatchId)
           this.db
             .prepare(
               `UPDATE tasks
@@ -7478,6 +7480,29 @@ export class OrchestrationDb {
     return this.findActiveDispatchForAssignee(handle, paneKey)
   }
 
+  isDispatchMessageSender(params: {
+    dispatchId: string
+    handle: string
+    paneKey?: string | null
+    allowCanonicalDispatchHandle?: boolean
+  }): boolean {
+    const dispatch = this.getDispatchContextById(params.dispatchId)
+    if (!dispatch || !['pending', 'dispatched'].includes(dispatch.status)) {
+      return false
+    }
+    if (params.allowCanonicalDispatchHandle && params.handle === `dispatch:${dispatch.id}`) {
+      return true
+    }
+    if (
+      params.paneKey &&
+      dispatch.assignee_pane_key &&
+      isEquivalentPaneKey(dispatch.assignee_pane_key, params.paneKey)
+    ) {
+      return true
+    }
+    return params.handle === dispatch.assignee_handle && !params.paneKey
+  }
+
   private findActiveDispatchForAssignee(
     assigneeHandle: string,
     assigneePaneKey?: string
@@ -7818,10 +7843,12 @@ export class OrchestrationDb {
       if (
         gate.requester &&
         (!active ||
-          active.assignee_handle !== gate.requester.handle ||
-          (gate.requester.paneKey &&
-            active.assignee_pane_key &&
-            !isEquivalentPaneKey(active.assignee_pane_key, gate.requester.paneKey)))
+          !this.isDispatchMessageSender({
+            dispatchId: active.id,
+            handle: gate.requester.handle,
+            paneKey: gate.requester.paneKey,
+            allowCanonicalDispatchHandle: true
+          }))
       ) {
         throw new OrchestrationError(
           'consumer_fenced',

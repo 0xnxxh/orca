@@ -318,6 +318,40 @@ describe('Task/Dispatch lifecycle guards', () => {
     ).toEqual({ action: 'settled', outcome: 'succeeded', duplicate: false })
   })
 
+  it.each(['federated-reconcile', 'missing-terminal'] as const)(
+    'restores a live sibling after an uncertain worker start fails through %s',
+    (recovery) => {
+      const database = createDatabase()
+      const task = database.createTask({ spec: `${recovery} uncertain sibling` })
+      const live = startWorker(database, task.id, `${recovery}_live`)
+      sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+      const uncertain = database.createStartingWorkerDispatch({ taskId: task.id, startOptions: {} })
+      database.markWorkerStartUnknown(uncertain.dispatch.id, 'agent_readiness', 'outcome unknown')
+
+      if (recovery === 'federated-reconcile') {
+        database.reconcileFederatedWorkerStart({
+          dispatchId: uncertain.dispatch.id,
+          state: 'failed',
+          stage: 'start_failed',
+          lastError: 'worker did not start'
+        })
+      } else {
+        database.reconcileMissingWorkerTerminal(uncertain.dispatch.id, 'worker terminal missing')
+      }
+
+      expect(database.getTask(task.id)?.status).toBe('dispatched')
+      expect(database.getDispatchContextById(live.dispatchId)?.status).toBe('dispatched')
+      expect(
+        database.settleWorkerReport({
+          taskId: task.id,
+          dispatchId: live.dispatchId,
+          outcome: 'succeeded',
+          result: 'live sibling completed'
+        })
+      ).toEqual({ action: 'settled', outcome: 'succeeded', duplicate: false })
+    }
+  )
+
   it('rejects gate creation while a supervised worker remains active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'worker gate guard' })

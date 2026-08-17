@@ -67,7 +67,7 @@ Slack, GitHub comments, or any other channel to reach a human during the run.
   orca orchestration send --from term_WORKER \\
     --type escalation --subject "Blocked: <reason>" \\
     --body "<details>" \\
-    --task-id task_SNAP
+    --task-id task_SNAP --dispatch-id ctx_SNAP
 
   # Check for messages from the coordinator:
   orca orchestration check --terminal term_WORKER

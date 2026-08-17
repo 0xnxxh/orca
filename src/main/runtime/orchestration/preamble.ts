@@ -123,7 +123,7 @@ Slack, GitHub comments, or any other channel to reach a human during the run.
   ${cli} orchestration send --from ${params.workerHandle}${capabilityFlag} \\
     --type escalation --subject "Blocked: <reason>" \\
     --body "<details>" \\
-    --task-id ${params.taskId}
+    --task-id ${params.taskId} --dispatch-id ${params.dispatchId}
 
   # Check for messages from the coordinator:
   ${cli} orchestration check --terminal ${params.workerHandle}

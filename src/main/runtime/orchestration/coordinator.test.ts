@@ -335,8 +335,9 @@ describe('Coordinator', () => {
       await new Promise((r) => {
         setTimeout(r, 100)
       })
+      const dispatch = db.getDispatchContext(task.id)
       db.insertMessage({
-        from: `term_${i === 0 ? 'a' : 'b'}`,
+        from: dispatch?.assignee_handle ?? 'missing-worker',
         to: 'coord',
         subject: `Failed attempt ${i + 1}`,
         type: 'escalation',

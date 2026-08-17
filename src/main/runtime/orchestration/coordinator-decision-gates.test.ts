@@ -66,4 +66,26 @@ describe('coordinator decision-gate authority', () => {
     expect(db.getDispatchContextById(victim.id)?.status).toBe('dispatched')
     expect(logs.at(-1)).toContain('Rejected decision gate from term_attacker')
   })
+
+  it('accepts the canonical sender of an imported federated Dispatch', () => {
+    db = new OrchestrationDb(':memory:')
+    const task = db.createTask({ spec: 'remote gate target' })
+    const dispatch = db.createDispatchContext(task.id, 'remote-worker')
+
+    openDecisionGateFromMessage(
+      db,
+      db.insertMessage({
+        from: `dispatch:${dispatch.id}`,
+        to: 'term_coordinator',
+        subject: 'Remote approval required',
+        type: 'decision_gate',
+        payload: JSON.stringify({ taskId: task.id, question: 'Proceed remotely?' })
+      }),
+      () => {}
+    )
+
+    expect(db.listGates({ taskId: task.id })).toHaveLength(1)
+    expect(db.getTask(task.id)?.status).toBe('blocked')
+    expect(db.getDispatchContextById(dispatch.id)?.status).toBe('completed')
+  })
 })
