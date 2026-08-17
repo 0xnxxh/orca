@@ -659,6 +659,7 @@ import {
 import { retireTerminalSurfaceFromPersistence } from './mobile-session-terminal-persistence-retirement'
 import {
   NO_OBSERVING_PROVIDER_REASON,
+  SSH_PROVIDER_UNREGISTERED_REASON,
   type PtyLivenessVerdict
 } from '../../shared/pty-liveness-verdict'
 import {
@@ -28532,13 +28533,18 @@ export class OrcaRuntimeService {
           )
         }
         if (!stopped) {
-          this.ptyController.kill(ptyId)
           const verdict = this.getPtyLivenessVerdict(ptyId)
-          if (!verdict || verdict.status === 'live') {
-            this.markPtyLivenessUnverifiable(
-              ptyId,
-              'a follow-up stop was issued but its outcome could not be verified'
-            )
+          const providerAlreadyRetiredPty =
+            verdict?.status === 'unverifiable' &&
+            verdict.reason === SSH_PROVIDER_UNREGISTERED_REASON
+          if (!providerAlreadyRetiredPty) {
+            this.ptyController.kill(ptyId)
+            if (!verdict || verdict.status === 'live') {
+              this.markPtyLivenessUnverifiable(
+                ptyId,
+                'a follow-up stop was issued but its outcome could not be verified'
+              )
+            }
           }
         }
       } else {

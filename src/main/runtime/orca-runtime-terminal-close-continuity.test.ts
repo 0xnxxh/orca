@@ -384,6 +384,7 @@ describe('terminal close and handle incarnation continuity', () => {
       ptyStopVerdict: 'unverifiable',
       ptyStopReason: 'its SSH provider is no longer registered'
     })
+    expect(harness.kill).not.toHaveBeenCalled()
   })
 
   it('downgrades a live verdict after issuing an unverified follow-up stop', async () => {
