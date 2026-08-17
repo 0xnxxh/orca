@@ -16420,6 +16420,98 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  // Why: a daemon respawn or cold restore reuses the PTY id. The previous process's turn
+  // state must not survive into its replacement, or the veto blocks tui-idle forever for a
+  // process that never reported anything.
+  it('drops the retained working veto when the provider generation resets', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => 'claude'
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      runtime.onPtyData(
+        'pty-bg',
+        '\x1b]9999;{"state":"working","agentType":"claude"}\x07mid turn\n',
+        Date.now()
+      )
+
+      // Initialize the provider domain, then replace it — the respawn shape.
+      runtime.synchronizePtyOutputSequenceFromProvider(
+        'pty-bg',
+        { value: 0, generation: 'continued' },
+        0
+      )
+      runtime.synchronizePtyOutputSequenceFromProvider(
+        'pty-bg',
+        { value: 0, generation: 'reset' },
+        Number.MAX_SAFE_INTEGER
+      )
+
+      const waitPromise = runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 20_000
+      })
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      await expect(waitPromise).resolves.toMatchObject({
+        handle,
+        condition: 'tui-idle',
+        satisfied: true
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: the quiet-foreground branch is pure absence-of-evidence — a non-shell process that
+  // has not written for a while. The agent's own stream saying `working` outranks it, so the
+  // veto has to guard that branch too, not just the title-derived one.
+  it('does not report tui-idle from quiet foreground while the stream reports working', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => 'claude'
+      })
+      // No startupAgent: `quietForegroundProcessProvesTuiIdle` allows this branch, and the
+      // sibling test above shows it resolves here without a status stream.
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      // OSC 9999 only — no OSC 0 title, so lastAgentStatus stays null and the branch is live.
+      runtime.onPtyData(
+        'pty-bg',
+        '\x1b]9999;{"state":"working","agentType":"claude"}\x07starting up\n',
+        Date.now()
+      )
+
+      const waitPromise = runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 20_000
+      })
+      let settled = false
+      void waitPromise.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(settled).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   // Why: this is the orchestration worker-readiness shape. `startWorker` waits tui-idle on a
   // freshly launched agent, so the pre-registration fast path can never satisfy it — it always
   // registers. Codex announces readiness in its BODY banner, not an OSC title, so no title
