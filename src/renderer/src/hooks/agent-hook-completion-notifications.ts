@@ -323,7 +323,7 @@ export function observeAgentHookCompletionForNotification({
   }
   // Why: notification preferences may suppress alerts, but accepted hooks must
   // still release pane-owned cursor/cache effects after the quiet window.
-  if (payload.state === 'working' && trackingEnabled) {
+  if (payload.state === 'working' && payload.turnCompletedAt === undefined && trackingEnabled) {
     paneKeysRequiringFreshWorking.delete(paneKey)
   }
   if (seedOnly === true) {
