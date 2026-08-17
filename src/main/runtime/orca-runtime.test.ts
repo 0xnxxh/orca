@@ -34838,10 +34838,8 @@ describe('OrcaRuntimeService', () => {
       oldCleanup,
       'conn-old'
     )
-    expect(oldRegistration.isCurrent()).toBe(true)
 
     runtime.registerOwnedSubscriptionCleanup('terminal:owned', replacementCleanup, 'conn-new')
-    expect(oldRegistration.isCurrent()).toBe(false)
     expect(oldCleanup).toHaveBeenCalledTimes(1)
 
     // The stale registration must not reach the replacement that now owns the id.
@@ -34859,7 +34857,10 @@ describe('OrcaRuntimeService', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(cleanup).toHaveBeenCalledTimes(1)
-    expect(registration.isCurrent()).toBe(false)
+    // A second release is a no-op: the registration no longer owns the id.
+    registration.releaseIfCurrent()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
   it('refuses an unsubscribe from a connection that no longer owns the subscription', async () => {

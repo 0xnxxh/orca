@@ -1721,8 +1721,6 @@ export type RuntimePtyDataAdmission = Readonly<{
 // Why: a subscription id is stable across reconnects, so holding the string is not
 // proof of ownership. This handle is the only safe way to tear down a registration.
 export type SubscriptionRegistration = Readonly<{
-  /** True while this registration still owns its subscription id. */
-  isCurrent: () => boolean
   /** Tears down only if this registration still owns the id; otherwise a no-op. */
   releaseIfCurrent: () => void
 }>
@@ -13777,7 +13775,6 @@ export class OrcaRuntimeService {
   ): SubscriptionRegistration {
     this.registerSubscriptionCleanup(subscriptionId, cleanup, connectionId)
     return {
-      isCurrent: () => this.subscriptionCleanups.get(subscriptionId) === cleanup,
       releaseIfCurrent: () => this.cleanupOwnedSubscription(subscriptionId, cleanup)
     }
   }
@@ -13801,6 +13798,11 @@ export class OrcaRuntimeService {
     // unconditional teardown authority; this guard scopes socket clients only.
     if (!connectionId) {
       this.cleanupSubscription(subscriptionId)
+      return true
+    }
+    // Why: an id with no registration is already gone, not a refusal. Reporting
+    // false there would tell a retrying client to keep chasing a dead id.
+    if (!this.subscriptionCleanups.has(subscriptionId)) {
       return true
     }
     if (this.subscriptionConnectionByEntry.get(subscriptionId) !== connectionId) {
