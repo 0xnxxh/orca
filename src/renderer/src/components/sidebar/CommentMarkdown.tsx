@@ -62,6 +62,9 @@ const commentMarkdownFileUriUrlTransform: UrlTransform = (value, key, node) => {
 // remark-breaks converts single newlines to <br>, keeping backward compat
 // with existing plain-text comments that rely on newline formatting.
 const remarkPlugins = [remarkGfm, remarkBreaks]
+// Every chat row renders one of these, so keep both lists module-level rather
+// than allocating a fresh array per instance.
+const proseRemarkPlugins = [...remarkPlugins, remarkDisableDefinitions]
 
 const GITHUB_REFERENCE_PATTERN = /(?:\b([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+))?#([1-9][0-9]*)\b/g
 
@@ -223,10 +226,8 @@ const CommentMarkdown = React.memo(
         : createCompactCommentMarkdownComponents(onLinkClick, expandImages)
     }, [expandImages, variant, onLinkClick])
     const activeRemarkPlugins = React.useMemo(() => {
-      const active = githubRepo
-        ? [...remarkPlugins, remarkGitHubReferences(githubRepo)]
-        : remarkPlugins
-      return disableLinkDefinitions ? [...active, remarkDisableDefinitions] : active
+      const base = disableLinkDefinitions ? proseRemarkPlugins : remarkPlugins
+      return githubRepo ? [...base, remarkGitHubReferences(githubRepo)] : base
     }, [disableLinkDefinitions, githubRepo])
 
     return (
