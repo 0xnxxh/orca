@@ -8,7 +8,7 @@ import {
 function activity(overrides: Partial<AgentPromptActivity> = {}): AgentPromptActivity {
   return {
     generation: 1,
-    lifecycleSequence: 4,
+    workingSequence: 4,
     status: 'idle',
     ...overrides
   }
@@ -25,7 +25,7 @@ describe('agent prompt submission verification', () => {
       readActivity: () => current
     })
 
-    current = activity({ lifecycleSequence: 5, status: 'working' })
+    current = activity({ workingSequence: 5, status: 'working' })
     await vi.advanceTimersByTimeAsync(50)
 
     await expect(verification).resolves.toBeUndefined()
@@ -39,7 +39,7 @@ describe('agent prompt submission verification', () => {
       readActivity: () => current
     })
 
-    current = activity({ lifecycleSequence: 6 })
+    current = activity({ workingSequence: 5 })
     await vi.advanceTimersByTimeAsync(50)
 
     await expect(verification).resolves.toBeUndefined()
@@ -54,7 +54,7 @@ describe('agent prompt submission verification', () => {
     })
     const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
 
-    current = activity({ lifecycleSequence: 5, status: null })
+    current = activity({ status: null })
     await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
 
     await rejected
@@ -83,7 +83,7 @@ describe('agent prompt submission verification', () => {
     })
     const rejected = expect(verification).rejects.toThrow('agent_prompt_blocked')
 
-    current = activity({ lifecycleSequence: 5, status: 'permission' })
+    current = activity({ status: 'permission' })
     await vi.advanceTimersByTimeAsync(50)
 
     await rejected

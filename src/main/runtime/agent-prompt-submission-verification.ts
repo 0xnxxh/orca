@@ -3,7 +3,7 @@ const AGENT_PROMPT_EFFECT_POLL_MS = 50
 
 export type AgentPromptActivity = Readonly<{
   generation: number
-  lifecycleSequence: number
+  workingSequence: number
   status: 'working' | 'permission' | 'idle' | null
 }>
 
@@ -49,7 +49,7 @@ function agentPromptLifecycleChanged(
   if (current.status === 'working') {
     return true
   }
-  return current.status === 'idle' && current.lifecycleSequence >= baseline.lifecycleSequence + 2
+  return current.status === 'idle' && current.workingSequence > baseline.workingSequence
 }
 
 function assertSamePromptGeneration(

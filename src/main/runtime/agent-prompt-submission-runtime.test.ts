@@ -65,6 +65,22 @@ describe('agent prompt submission runtime', () => {
     expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
+  it('accepts a working-to-idle cycle completed before the first poll', async () => {
+    vi.useFakeTimers()
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data === '\r') {
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
+      }
+    })
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    await vi.runAllTimersAsync()
+
+    await expect(submission).resolves.toMatchObject({ accepted: true })
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+  })
+
   it('reports redraw-only activity as stalled without retrying Enter', async () => {
     vi.useFakeTimers()
     const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
@@ -88,6 +104,7 @@ describe('agent prompt submission runtime', () => {
     const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
       if (data === '\r') {
         runtime.onPtyData('pty-prompt', '\x1b]0;plain shell\x07', Date.now())
+        runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
       }
     })
     runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
@@ -151,6 +168,33 @@ describe('agent prompt submission runtime', () => {
     runtime.onPtyData(
       'pty-prompt',
       '\x1b]9999;{"state":"done","agentType":"aider"}\x07',
+      Date.now()
+    )
+
+    const submission = runtime.sendTerminalAgentPrompt(handle, 'review this')
+    await vi.runAllTimersAsync()
+
+    await expect(submission).resolves.toMatchObject({ accepted: true })
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+  })
+
+  it('prefers a newer explicit working status over an older permission title', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {
+      if (data === '\r') {
+        runtime.onPtyData(
+          'pty-prompt',
+          '\x1b]9999;{"state":"working","agentType":"aider"}\x07',
+          Date.now()
+        )
+      }
+    })
+    runtime.onPtyData('pty-prompt', '\x1b]0;Codex waiting for permission\x07', Date.now())
+    vi.setSystemTime(2_000)
+    runtime.onPtyData(
+      'pty-prompt',
+      '\x1b]9999;{"state":"working","agentType":"aider"}\x07',
       Date.now()
     )
 

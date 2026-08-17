@@ -3196,7 +3196,7 @@ export class OrcaRuntimeService {
   private ptyOutputSequenceById = new Map<string, number>()
   private agentPromptLifecycleByPtyId = new Map<
     string,
-    { status: AgentStatus | null; sequence: number; updatedAt: number }
+    { status: AgentStatus | null; workingSequence: number; updatedAt: number }
   >()
   private agentPromptExplicitStatusFloorByPtyId = new Map<string, number>()
   private agentPromptSubmissionTailByPtyId = new Map<string, Promise<void>>()
@@ -11903,12 +11903,17 @@ export class OrcaRuntimeService {
     const current = this.agentPromptLifecycleByPtyId.get(ptyId)
     const updatedAt = Date.now()
     if (!current) {
-      this.agentPromptLifecycleByPtyId.set(ptyId, { status, sequence: 0, updatedAt })
+      this.agentPromptLifecycleByPtyId.set(ptyId, {
+        status,
+        workingSequence: status === 'working' ? 1 : 0,
+        updatedAt
+      })
       return
     }
     this.agentPromptLifecycleByPtyId.set(ptyId, {
       status,
-      sequence: current.sequence + (current.status === status ? 0 : 1),
+      workingSequence:
+        current.workingSequence + (status === 'working' && current.status !== 'working' ? 1 : 0),
       updatedAt
     })
   }
@@ -18667,15 +18672,15 @@ export class OrcaRuntimeService {
       lifecycle || explicitFloor === undefined
         ? (this.ptysById.get(ptyId)?.lastAgentStatus ?? null)
         : null
-    const status =
-      lifecycle?.status === 'permission' || explicit?.status === 'permission'
-        ? 'permission'
-        : lifecycle && (!explicit || lifecycle.updatedAt >= explicit.updatedAt)
-          ? lifecycle.status
-          : (explicit?.status ?? ptyStatus ?? null)
+    const lifecycleIsNewer =
+      lifecycle &&
+      (!explicit ||
+        lifecycle.updatedAt > explicit.updatedAt ||
+        (lifecycle.updatedAt === explicit.updatedAt && lifecycle.status === 'permission'))
+    const status = lifecycleIsNewer ? lifecycle.status : (explicit?.status ?? ptyStatus ?? null)
     return {
       generation: this.getPtyLifecycleGeneration(ptyId),
-      lifecycleSequence: lifecycle?.sequence ?? 0,
+      workingSequence: lifecycle?.workingSequence ?? 0,
       status
     }
   }
