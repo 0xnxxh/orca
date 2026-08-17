@@ -540,6 +540,37 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     ).toBe(false)
   })
 
+  it('keeps a legacy reconnect unverifiable when its attach and exit omit incarnation', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn() }
+    const acceptUnverifiablePty = vi.fn()
+    const acceptExitedPty = vi.fn()
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect: vi.fn().mockImplementation(async () => {
+        emitExitDuringAttach({ id: APP_PTY_ID, code: 0, ptyIncarnation: undefined })
+        return { sourceActivationLease }
+      }),
+      acceptUnverifiablePty,
+      acceptExitedPty,
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
+      typeof mockStore.getSshRemotePtyLeases
+    >)
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+
+    await session.establish(mockConn)
+
+    expect(acceptUnverifiablePty).toHaveBeenCalledOnce()
+    expect(acceptUnverifiablePty).toHaveBeenCalledWith(APP_PTY_ID)
+    expect(acceptExitedPty).not.toHaveBeenCalled()
+    expect(acceptOutputExitMock).not.toHaveBeenCalled()
+    expect(setPtyOwnership).not.toHaveBeenCalled()
+    expect(mockStore.markSshRemotePtyLeasesAttachedAsync).not.toHaveBeenCalled()
+    expect(sourceActivationLease.rollback).toHaveBeenCalledOnce()
+    expect(sourceActivationLease.commit).not.toHaveBeenCalled()
+  })
+
   it('ignores an older incarnation exit while reconnecting a reused PTY id', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
     const currentIncarnationId = 'incarnation-current'

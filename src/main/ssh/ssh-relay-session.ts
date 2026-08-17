@@ -2385,6 +2385,10 @@ export class SshRelaySession {
       if (!shouldContinue()) {
         return
       }
+      if (!attachResult.incarnationId && pendingReattach.exits.length > 0) {
+        ptyProvider.acceptUnverifiablePty?.(appPtyId)
+        return
+      }
       const exitDuringAttach = this.findExactPendingExit(
         pendingReattach,
         attachResult.incarnationId
