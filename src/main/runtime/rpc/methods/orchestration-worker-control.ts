@@ -122,7 +122,12 @@ export const ORCHESTRATION_WORKER_CONTROL_METHODS: RpcMethod[] = [
         dispatch,
         worker: exposeWorker(worker),
         terminal: observation.exact ? observation.terminal : null,
-        observation: { status: observation.status, exactWorker: observation.exact },
+        observation: {
+          status: observation.status,
+          exactWorker: observation.exact,
+          // Why: a bare `unverifiable` is not actionable without naming what we lost.
+          ...(observation.reason ? { reason: observation.reason } : {})
+        },
         terminalResource: resource ? exposeWorkerTerminalResource(resource) : null
       }
     }

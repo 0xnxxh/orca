@@ -86,7 +86,7 @@ export async function callFederatedWorkerShow(
     residualResources: unknown[]
   }
   terminal: unknown
-  observation: { status: string; exactWorker: boolean }
+  observation: { status: string; exactWorker: boolean; reason?: string }
 }> {
   return (await runtime.callOrchestrationWorkerServer(
     federated.environment_id,

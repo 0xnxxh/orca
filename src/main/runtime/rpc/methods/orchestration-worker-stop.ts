@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 import { defineMethod, type RpcMethod } from '../core'
 import { requiredString } from '../schemas'
+import { describeUnconfirmedAgentStop } from '../../../../shared/pty-liveness-verdict'
 import {
   inspectWorkerTerminal,
   resolvePinnedFederatedServer
@@ -101,18 +102,17 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
         )
       }
       const observation = await inspectWorkerTerminal(runtime, db, params.dispatch)
-      if (!observation.exact || observation.status !== 'running') {
+      // Why `unverifiable` still proceeds: losing contact is a reason to report
+      // the outcome honestly, never a reason to stop trying to stop the worker.
+      if (
+        !observation.exact ||
+        (observation.status !== 'running' && observation.status !== 'unverifiable')
+      ) {
         return unknownReceipt(
           params.dispatch,
           db.markWorkerStopUnknown(
             params.dispatch,
-            observation.status === 'unverifiable'
-              ? // Why: losing the link to the worker's host is not a death certificate,
-                // so this must not settle as a stop or read as an observed exit.
-                `The recorded worker process could not be confirmed stopped: ${
-                  observation.reason ?? 'its host could not be reached'
-                }; no terminal was closed.`
-              : `The recorded worker process is ${observation.status}; no terminal was closed.`
+            `The recorded worker process is ${observation.status}; no terminal was closed.`
           ),
           'none'
         )
@@ -124,14 +124,7 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
           // settling here is the false success this receipt exists to prevent.
           return unknownReceipt(
             params.dispatch,
-            db.markWorkerStopUnknown(
-              params.dispatch,
-              `The agent terminal was closed but its process could not be confirmed stopped: ${
-                close.ptyStopVerdict === 'live'
-                  ? 'it is still running'
-                  : (close.ptyStopReason ?? 'its host could not be reached')
-              }.`
-            ),
+            db.markWorkerStopUnknown(params.dispatch, describeUnconfirmedAgentStop(close)),
             'closed_agent_terminal'
           )
         }

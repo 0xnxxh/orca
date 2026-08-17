@@ -66,17 +66,34 @@ describe('worker-stop against a terminal we lost contact with', () => {
       status: 'unverifiable',
       reason: 'its SSH provider is no longer registered'
     })
+    const closeTerminal = vi.spyOn(runtime, 'closeTerminal').mockResolvedValue({
+      handle: 'term_worker',
+      tabId: 'tab_worker',
+      ptyKilled: false,
+      ptyStopVerdict: 'unverifiable',
+      ptyStopReason: 'its SSH provider is no longer registered'
+    })
     const dispatch = createWorker()
 
     await expect(
       call('orchestration.workerShow', { dispatch: dispatch.id })
     ).resolves.toMatchObject({
-      observation: { status: 'unverifiable', exactWorker: true }
+      observation: {
+        status: 'unverifiable',
+        exactWorker: true,
+        reason: 'its SSH provider is no longer registered'
+      }
     })
 
     const stopped = (await call('orchestration.workerStop', { dispatch: dispatch.id })) as {
+      state: string
+      processAction: string
       lastError: string
     }
+    // Losing contact is a reason to report honestly, never to stop trying.
+    expect(closeTerminal).toHaveBeenCalledWith('term_worker')
+    expect(stopped.processAction).toBe('closed_agent_terminal')
+    expect(stopped.state).toBe('stop_unknown')
     expect(stopped.lastError).toContain('could not be confirmed stopped')
     expect(stopped.lastError).not.toContain('exited')
   })

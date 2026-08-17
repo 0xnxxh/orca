@@ -13,10 +13,21 @@ export type PtyLivenessVerdict =
 
 export const SSH_PROVIDER_UNREGISTERED_REASON = 'its SSH provider is no longer registered'
 export const NO_OBSERVING_PROVIDER_REASON = 'no registered provider can observe its host'
+export const PTY_STILL_RUNNING_NOTE = 'The PTY is still running.'
 
 /** The one sentence every surface uses to admit a stop was not confirmed. */
 export function describeUnconfirmedStop(reason: string): string {
   return `The PTY was not confirmed stopped: ${reason}.`
 }
 
-export const PTY_STILL_RUNNING_NOTE = 'The PTY is still running.'
+/** Words a close whose PTY teardown was never confirmed, for a stop receipt. */
+export function describeUnconfirmedAgentStop(close: {
+  ptyStopVerdict?: 'live' | 'unverifiable'
+  ptyStopReason?: string
+}): string {
+  const detail =
+    close.ptyStopVerdict === 'live'
+      ? 'it is still running'
+      : (close.ptyStopReason ?? 'its host could not be reached')
+  return `The agent terminal was closed but its process could not be confirmed stopped: ${detail}.`
+}
