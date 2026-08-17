@@ -244,13 +244,15 @@ export async function reattachSshPtySessionWithExitFence(
   try {
     result = await reattachSshPtySession(args)
     const relayPtyId = toRelaySshPtyId(args.connectionId, result.id)
-    if (
-      args.exitRaceTracker.didMatchingExitArrive(operation, {
-        id: relayPtyId,
-        incarnationId: result.incarnationId
-      })
-    ) {
+    const exitOutcome = args.exitRaceTracker.classifyReattachExit(operation, {
+      id: relayPtyId,
+      incarnationId: result.incarnationId
+    })
+    if (exitOutcome === 'exited') {
       throw new Error('agent_session_exited_during_start')
+    }
+    if (exitOutcome === 'unverifiable') {
+      throw new Error(`${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${relayPtyId}`)
     }
     return result
   } catch (error) {
@@ -294,17 +296,15 @@ export async function reattachSshPtySessionForSpawn(
     await result?.sourceActivationLease?.rollback()
     if (isSshPtyExitedEvidenceError(error)) {
       args.acceptExitedPty(result?.id ?? toAppSshPtyId(args.connectionId, args.sessionId))
-    } else if (
-      !isSshPtyIdentityMismatchError(error) &&
-      !isSshPtyRestoreRequiredError(error) &&
-      !isSshPtyLivenessUnverifiableError(error)
-    ) {
+    } else if (!isSshPtyIdentityMismatchError(error) && !isSshPtyRestoreRequiredError(error)) {
       const id = result?.id ?? toAppSshPtyId(args.connectionId, args.sessionId)
       args.acceptUnverifiablePty(id)
-      throw new Error(
-        `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${toRelaySshPtyId(args.connectionId, id)}`,
-        { cause: error }
-      )
+      if (!isSshPtyLivenessUnverifiableError(error)) {
+        throw new Error(
+          `${SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR}: ${toRelaySshPtyId(args.connectionId, id)}`,
+          { cause: error }
+        )
+      }
     }
     throw error
   }

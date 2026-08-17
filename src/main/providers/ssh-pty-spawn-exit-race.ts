@@ -9,6 +9,8 @@ type PendingSshPtySpawn = {
   }[]
 }
 
+type SshPtyPendingExitOutcome = 'exited' | 'unverifiable' | null
+
 export class SshPtySpawnExitRaceTracker {
   private pending = new Set<PendingSshPtySpawn>()
 
@@ -50,6 +52,22 @@ export class SshPtySpawnExitRaceTracker {
     )
     matchingExit?.publish?.()
     return matchingExit !== undefined
+  }
+
+  classifyReattachExit(
+    operation: PendingSshPtySpawn,
+    result: { id: string; incarnationId?: PtyIncarnationId }
+  ): SshPtyPendingExitOutcome {
+    const sameIdExits = operation.exits.filter((exit) => exit.relayPtyId === result.id)
+    if (!result.incarnationId) {
+      return sameIdExits.length > 0 ? 'unverifiable' : null
+    }
+    const matchingExit = sameIdExits.find((exit) => exit.incarnationId === result.incarnationId)
+    if (matchingExit) {
+      matchingExit.publish?.()
+      return 'exited'
+    }
+    return sameIdExits.some((exit) => !exit.incarnationId) ? 'unverifiable' : null
   }
 
   finish(operation: PendingSshPtySpawn): void {

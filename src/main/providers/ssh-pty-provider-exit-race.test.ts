@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { SshPtyProvider } from './ssh-pty-provider'
+import { SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR } from './ssh-pty-errors'
 
 function sourceActivation(ptyIncarnation: string) {
   return {
@@ -130,7 +131,7 @@ it('rejects an SSH reattach whose matching exit shares the attach reply batch', 
   })
 })
 
-it('does not classify a legacy exit as current while reattach resolves its incarnation', async () => {
+it('keeps a legacy exit unverifiable while reattach resolves its incarnation', async () => {
   const mux = {
     request: vi.fn(),
     notify: vi.fn(),
@@ -166,13 +167,9 @@ it('does not classify a legacy exit as current while reattach resolves its incar
   expect(exitListener).not.toHaveBeenCalled()
   resolveAttach?.()
 
-  await expect(spawn).resolves.toMatchObject({
-    id: 'ssh:conn-1@@pty-existing',
-    incarnationId: 'incarnation-current',
-    isReattach: true
-  })
+  await expect(spawn).rejects.toThrow(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
   expect(exitListener).not.toHaveBeenCalled()
-  await expect(provider.probePtyLiveness('ssh:conn-1@@pty-existing')).resolves.toBe(true)
+  await expect(provider.probePtyLiveness('ssh:conn-1@@pty-existing')).resolves.toBeNull()
 
   notify?.('pty.exit', {
     id: 'pty-existing',
@@ -186,6 +183,34 @@ it('does not classify a legacy exit as current while reattach resolves its incar
     providerGeneration: expect.any(Number),
     ptyIncarnation: 'incarnation-current'
   })
+})
+
+it('keeps an incarnation-less attach and exit race unverifiable', async () => {
+  const mux = {
+    request: vi.fn(),
+    notify: vi.fn(),
+    onNotification: vi.fn(),
+    dispose: vi.fn(),
+    isDisposed: vi.fn().mockReturnValue(false)
+  }
+  const provider = new SshPtyProvider('conn-1', mux as never)
+  const exitListener = vi.fn()
+  provider.onExit(exitListener)
+  mux.request.mockImplementation(async (method: string, _params, options) => {
+    if (method !== 'pty.attach') {
+      return undefined
+    }
+    options?.beforeResolve?.({})
+    const notify = mux.onNotification.mock.calls[0]?.[0]
+    notify?.('pty.exit', { id: 'pty-existing', code: 0 })
+    return {}
+  })
+
+  await expect(
+    provider.spawn({ cols: 80, rows: 24, sessionId: 'ssh:conn-1@@pty-existing' })
+  ).rejects.toThrow(SSH_PTY_LIVENESS_UNVERIFIABLE_ERROR)
+  expect(exitListener).not.toHaveBeenCalled()
+  await expect(provider.probePtyLiveness('ssh:conn-1@@pty-existing')).resolves.toBeNull()
 })
 
 it('returns a provisional source activation lease to reconnect authority', async () => {
