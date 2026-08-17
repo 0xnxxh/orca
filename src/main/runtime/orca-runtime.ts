@@ -31333,7 +31333,11 @@ export class OrcaRuntimeService {
             if (connectionId === undefined) {
               for (const process of processes) {
                 const hostId = getPtyExecutionHost(process.id)
-                if (hostId !== 'foreign' && parseExecutionHostId(hostId)?.kind === 'ssh') {
+                if (
+                  hostId &&
+                  hostId !== 'foreign' &&
+                  parseExecutionHostId(hostId)?.kind === 'ssh'
+                ) {
                   hostIds.add(hostId)
                 }
               }

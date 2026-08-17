@@ -3,6 +3,7 @@ import { OrcaRuntimeService } from './orca-runtime'
 import { getDefaultWorkspaceSession } from '../../shared/constants'
 import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
 import { folderWorkspaceKey } from '../../shared/workspace-scope'
+import type { FolderWorkspace } from '../../shared/folder-workspace-types'
 
 // An agent once declared a task exited because `terminal list` came back without
 // its worker: the worker was live on an SSH host, and nothing in the response
@@ -37,7 +38,7 @@ function makeStore() {
   return {
     getWorkspaceSession: vi.fn(() => session),
     getWorkspaceSessionHostIds: vi.fn(() => ['local', 'ssh:box-1']),
-    getFolderWorkspaces: vi.fn(() => []),
+    getFolderWorkspaces: vi.fn((): FolderWorkspace[] => []),
     getProjectGroups: vi.fn(() => []),
     setWorkspaceSession: vi.fn(),
     getRepos: vi.fn(() => REPOS),
