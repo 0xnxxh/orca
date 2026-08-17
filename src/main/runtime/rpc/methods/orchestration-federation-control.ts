@@ -91,7 +91,18 @@ export const ORCHESTRATION_FEDERATION_CONTROL_METHODS: RpcMethod[] = [
         dispatchId: params.dispatchId,
         terminalHandle: observation.terminal.handle,
         workerState: attachment.state,
-        terminalStatus: observation.status === 'exited' ? 'exited' : 'running',
+        terminalStatus:
+          observation.status === 'exited'
+            ? 'exited'
+            : observation.status === 'unverifiable'
+              ? 'unknown'
+              : 'running',
+        terminalLiveness:
+          observation.status === 'unverifiable'
+            ? 'unverifiable'
+            : observation.status === 'exited'
+              ? 'exited'
+              : 'live',
         attachedAt: attachment.created_at,
         source: params.source,
         cursor: params.cursor,

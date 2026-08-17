@@ -208,7 +208,18 @@ export const ORCHESTRATION_WORKER_CONTROL_METHODS: RpcMethod[] = [
         dispatchId: params.dispatch,
         terminalHandle: worker.agent_terminal_handle,
         workerState: worker.state,
-        terminalStatus: observation.status === 'exited' ? 'exited' : 'running',
+        terminalStatus:
+          observation.status === 'exited'
+            ? 'exited'
+            : observation.status === 'unverifiable'
+              ? 'unknown'
+              : 'running',
+        terminalLiveness:
+          observation.status === 'unverifiable'
+            ? 'unverifiable'
+            : observation.status === 'exited'
+              ? 'exited'
+              : 'live',
         attachedAt: worker.created_at,
         source: params.source,
         cursor: params.cursor,
