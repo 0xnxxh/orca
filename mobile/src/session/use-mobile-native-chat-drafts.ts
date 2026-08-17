@@ -291,7 +291,13 @@ export function useMobileNativeChatDrafts(args: {
     if (pending.length === 0) {
       return
     }
-    const landedImagePreviews = findLandedImagePreviewEchoes(messages, pending)
+    // This pass runs before the rebase below, so a send captured with no
+    // boundary would claim any image turn in the read — binding the user's fresh
+    // photo to an old one. It waits a tick and claims against a real tail.
+    const landedImagePreviews = findLandedImagePreviewEchoes(
+      messages,
+      pending.filter((item) => item.baselineResolved)
+    )
     const landedImagePendingIds = new Set(landedImagePreviews.map((preview) => preview.pendingId))
     if (landedImagePreviews.length > 0) {
       setImagePreviewsBySession((previous) =>

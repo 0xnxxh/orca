@@ -25,6 +25,16 @@ function assistantTurn(id: string, text: string, timestamp: number): NativeChatM
   }
 }
 
+function imageTurn(id: string, path: string, timestamp: number): NativeChatMessage {
+  return {
+    id,
+    role: 'user',
+    blocks: [{ type: 'text', text: `[Image: source: ${path}]` }],
+    timestamp,
+    source: 'transcript'
+  }
+}
+
 /** Texts of the optimistic bubbles the chat list actually renders. */
 function renderedPendingTexts(
   messages: NativeChatMessage[],
@@ -297,6 +307,23 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
       await update(olderIdentical)
       expect(pendingTexts()).toEqual(['fix the', 'bug'])
       expect(renderedPendingTexts(olderIdentical, state)).toEqual(['fix the', 'bug'])
+    })
+
+    // The preview pass runs before the rebase, so an entry with no boundary
+    // would bind the user's fresh photo to whatever image turn the read carries.
+    it('does not bind a photo sent before the read to an image turn already in it', async () => {
+      await mount([], false, false)
+      act(() => {
+        const origin = state?.captureSendOrigin('')
+        if (origin) {
+          state?.acceptSend(origin, '', ['file:///new.png'])
+        }
+      })
+
+      const olderImage = [imageTurn('m1', '/old/photo.png', 1000)]
+      await update(olderImage)
+      expect(state?.imagePreviewsByMessageId).toEqual({})
+      expect(state?.pending.map((item) => item.images)).toEqual([['file:///new.png']])
     })
 
     it('still retires them once their own glued row lands', async () => {
