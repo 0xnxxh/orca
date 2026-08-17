@@ -2002,13 +2002,19 @@ export async function importCookiesFromBrowser(
     const cookieClearStore = openCookieClearStore(targetSession)
     try {
       await withCookieClearLock(targetSession, () =>
-        removeTransplantableCookies({
-          cookies: cookieClearStore,
-          clearData: (options) => targetSession.clearData(options),
-          snapshotClearIdentities: (cookies) => cookieClearStore.snapshotClearIdentities(cookies),
-          restoreClearIdentities: (identities) =>
-            cookieClearStore.restoreClearIdentities(identities)
-        })
+        removeTransplantableCookies(
+          {
+            cookies: cookieClearStore,
+            clearData: (options) => targetSession.clearData(options),
+            snapshotClearIdentities: (cookies) => cookieClearStore.snapshotClearIdentities(cookies),
+            restoreClearIdentities: (identities) =>
+              cookieClearStore.restoreClearIdentities(identities)
+          },
+          // Why (STA-4300): the families this import declined to write must not be removed either.
+          // Passing them here keeps their coordinates out of the removal plan AND out of the CDP
+          // snapshot taken from it, so they are never submitted to any mutation.
+          nativePlan.skippedFamilies
+        )
       )
       diag(
         `  cleared existing session cookies before loading ${decryptedCookies.length} imported cookies`
