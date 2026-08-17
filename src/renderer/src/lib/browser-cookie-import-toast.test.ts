@@ -40,7 +40,7 @@ describe('emitBrowserCookieImportToast', () => {
     )
 
     expect(warningToastMock).toHaveBeenCalledWith(
-      'None of the 3 cookies could be loaded, and the restart fallback was unavailable. The previous cookies for this profile were replaced. Try the import again.'
+      'None of the 3 cookies could be loaded and they were not kept for a retry. The previous cookies for this profile are gone. Try the import again.'
     )
     expect(successToastMock).not.toHaveBeenCalled()
   })
@@ -213,7 +213,7 @@ describe('emitBrowserCookieImportToast', () => {
     expect(successToastMock).not.toHaveBeenCalled()
     expect(warningToastMock.mock.calls).toEqual([
       [
-        'Imported 1 of 2 cookies. The rest could not be loaded, and the restart fallback was unavailable. Try the import again.'
+        'Imported 1 of 2 cookies. The rest could not be loaded and were not kept for a retry. Try the import again.'
       ],
       [
         "Google cookies were not imported. Sign in to Google directly in Orca on Remote Mac. If sign-in does not work, clear this profile's Google cookies from Settings → Browser.",

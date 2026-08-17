@@ -43,12 +43,12 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
       return warning.loadedCookies === 0
         ? translate(
             'auto.lib.browser.cookie.import.toast.restartFallbackUnavailableNone',
-            'None of the {{value0}} cookies could be loaded, and the restart fallback was unavailable. The previous cookies for this profile were replaced. Try the import again.',
+            'None of the {{value0}} cookies could be loaded and they were not kept for a retry. The previous cookies for this profile are gone. Try the import again.',
             { value0: warning.failedCookies }
           )
         : translate(
             'auto.lib.browser.cookie.import.toast.restartFallbackUnavailablePartial',
-            'Imported {{value0}} of {{value1}} cookies. The rest could not be loaded, and the restart fallback was unavailable. Try the import again.',
+            'Imported {{value0}} of {{value1}} cookies. The rest could not be loaded and were not kept for a retry. Try the import again.',
             {
               value0: warning.loadedCookies,
               value1: warning.loadedCookies + warning.failedCookies
