@@ -13,7 +13,7 @@
  * On a Linux host isWslPath() is always false, so a native /tmp path routes to
  * createWatcher() -> real @parcel/watcher (not the inotifywait WSL fallback).
  */
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -116,6 +116,39 @@ describe('filesystem-watcher real @parcel/watcher integration', () => {
       expect(['create', 'update']).toContain(event!.kind)
 
       await handlers['fs:unwatchWorktree']({ sender: { id: 1 } }, { worktreePath: tempDir })
+    },
+    15_000
+  )
+
+  // Why: macOS delivers symlink-resolved paths, so a worktree reached through a
+  // symlink used to emit events outside its own root and every consumer dropped
+  // them. Assert the emitted paths stay under the subscribed root — the same
+  // contract Linux gets for free, so a regression in the rewrite shows up here.
+  it.runIf(process.platform === 'linux' || process.platform === 'darwin')(
+    'reports events under a symlinked worktree root, not its realpath',
+    async () => {
+      tempDir = await realpath(await mkdtemp(join(tmpdir(), 'orca-fswatch-link-')))
+      const realRoot = join(tempDir, 'real')
+      const linkedRoot = join(tempDir, 'linked')
+      await mkdir(join(realRoot, 'src'), { recursive: true })
+      await symlink(realRoot, linkedRoot)
+
+      const sendMock = vi.fn()
+      const sender = { isDestroyed: () => false, send: sendMock, once: vi.fn(), id: 1 }
+      await handlers['fs:watchWorktree']({ sender }, { worktreePath: linkedRoot })
+
+      const expectedPath = join(linkedRoot, 'src', 'agent-edit.ts')
+      await writeFile(join(realRoot, 'src', 'agent-edit.ts'), 'hello')
+
+      await waitFor(() =>
+        sendMock.mock.calls.some(
+          ([channel, payload]) =>
+            channel === 'fs:changed' &&
+            (payload as FsChangedCall).events.some((event) => event.absolutePath === expectedPath)
+        )
+      )
+
+      await handlers['fs:unwatchWorktree']({ sender: { id: 1 } }, { worktreePath: linkedRoot })
     },
     15_000
   )
