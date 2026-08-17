@@ -31328,9 +31328,9 @@ export class OrcaRuntimeService {
             }
             if (connectionId === undefined) {
               for (const process of processes) {
-                const ssh = parseAppSshPtyId(process.id)
-                if (ssh) {
-                  hostIds.add(toSshExecutionHostId(ssh.connectionId))
+                const hostId = getPtyExecutionHost(process.id)
+                if (hostId !== 'foreign' && parseExecutionHostId(hostId)?.kind === 'ssh') {
+                  hostIds.add(hostId)
                 }
               }
             }

@@ -136,9 +136,10 @@ describe('listTerminals execution-host identity', () => {
       { worktreeId: LOCAL_WORKTREE_ID, leafId: REMOTE_LEAF_ID, ptyId: 'remote:handle-1' }
     ])
 
-    const { terminals } = await runtime.listTerminals()
+    const { hostScope, terminals } = await runtime.listTerminals()
 
     expect(terminals[0]?.executionHostId).toBeUndefined()
+    expect(hostScope?.hostIds).toEqual(['local'])
   })
 
   it.each([
@@ -149,9 +150,10 @@ describe('listTerminals execution-host identity', () => {
   ])('leaves the host unset for a malformed foreign PTY id: %s', async (ptyId) => {
     const runtime = makeRuntime([{ worktreeId: LOCAL_WORKTREE_ID, leafId: REMOTE_LEAF_ID, ptyId }])
 
-    const { terminals } = await runtime.listTerminals()
+    const { hostScope, terminals } = await runtime.listTerminals()
 
     expect(terminals[0]?.executionHostId).toBeUndefined()
+    expect(hostScope?.hostIds).toEqual(['local'])
   })
 })
 
