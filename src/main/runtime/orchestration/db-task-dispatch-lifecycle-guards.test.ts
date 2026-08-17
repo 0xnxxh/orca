@@ -191,6 +191,39 @@ describe('Task/Dispatch lifecycle guards', () => {
     }
   )
 
+  it.each(['stop', 'abandon'] as const)(
+    '%s releases the last context-only sibling after a newer worker start fails',
+    (operation) => {
+      const database = createDatabase()
+      const task = database.createTask({ spec: `${operation} historical sibling` })
+      const contextOnly = database.createDispatchContext(task.id, `term_${operation}`)
+      sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+      const failed = database.createStartingWorkerDispatch({ taskId: task.id, startOptions: {} })
+
+      database.failWorkerStart(failed.dispatch.id, 'start_failed', 'worker failed to start')
+      expect(database.getTask(task.id)?.status).toBe('dispatched')
+
+      const released =
+        operation === 'stop'
+          ? database.beginWorkerStop(contextOnly.id)
+          : database.abandonWorkerDispatch(contextOnly.id)
+      expect(released).toMatchObject({
+        disposition: 'context_only',
+        alreadySettled: false,
+        releasedCurrentTask: true
+      })
+      expect(database.getTask(task.id)?.status).toBe('blocked')
+      expect(database.getDispatchContextById(contextOnly.id)?.status).toBe('failed')
+      expect(database.getActiveDispatchForTerminal(`term_${operation}`)).toBeUndefined()
+      expect(() =>
+        database.createDispatchContext(
+          database.createTask({ spec: `${operation} later work` }).id,
+          `term_${operation}`
+        )
+      ).not.toThrow()
+    }
+  )
+
   it('rejects gate creation while a supervised worker remains active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'worker gate guard' })

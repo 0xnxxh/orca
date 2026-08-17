@@ -12,14 +12,13 @@ export type ContextOnlyDispatchReleaseResult = {
 export function releaseContextOnlyDispatch(
   db: Database.Database,
   dispatch: DispatchContextRow,
-  latestDispatchId: string | undefined,
   requestedState: 'abandoned' | 'stopped'
 ): ContextOnlyDispatchReleaseResult {
   if (dispatch.status !== 'pending' && dispatch.status !== 'dispatched') {
     return {
       state: persistedReleaseState(dispatch),
       alreadySettled: true,
-      releasedCurrentTask: latestDispatchId === dispatch.id
+      releasedCurrentTask: false
     }
   }
 
@@ -36,10 +35,12 @@ export function releaseContextOnlyDispatch(
        WHERE task_id = ? AND status IN ('pending', 'dispatched') LIMIT 1`
     )
     .get(dispatch.task_id)
-  const releasedCurrentTask = latestDispatchId === dispatch.id && !remaining
-  if (releasedCurrentTask) {
-    db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ?").run(dispatch.task_id)
-  }
+  const releasedCurrentTask = Boolean(
+    !remaining &&
+    db
+      .prepare("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status = 'dispatched'")
+      .run(dispatch.task_id).changes
+  )
   return { state: requestedState, alreadySettled: false, releasedCurrentTask }
 }
 

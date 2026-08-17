@@ -6383,12 +6383,7 @@ export class OrchestrationDb {
         throw new OrchestrationError('dispatch_not_found', `Dispatch ${dispatchId} was not found.`)
       }
       if (!worker) {
-        const released = releaseContextOnlyDispatch(
-          this.db,
-          dispatch,
-          this.getDispatchContext(dispatch.task_id)?.id,
-          'stopped'
-        )
+        const released = releaseContextOnlyDispatch(this.db, dispatch, 'stopped')
         if (!released.alreadySettled) {
           this.closeQuestionsForDispatch(dispatchId)
         }
@@ -6560,12 +6555,7 @@ export class OrchestrationDb {
         throw new OrchestrationError('dispatch_not_found', `Dispatch ${dispatchId} was not found.`)
       }
       if (!worker) {
-        const released = releaseContextOnlyDispatch(
-          this.db,
-          dispatch,
-          this.getDispatchContext(dispatch.task_id)?.id,
-          'abandoned'
-        )
+        const released = releaseContextOnlyDispatch(this.db, dispatch, 'abandoned')
         if (!released.alreadySettled) {
           this.closeQuestionsForDispatch(dispatchId)
         }
