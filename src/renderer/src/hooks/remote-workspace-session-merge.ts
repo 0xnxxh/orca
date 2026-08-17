@@ -70,8 +70,13 @@ export function mergeDirectSshRemoteWorkspaceSession(
       }
       // Why: the host is authoritative for what it knows, not for what it has never been told. A tab
       // created locally whose upload was still pending is absent from the snapshot for the same
-      // reason it is new — deleting it here loses a live pane and the process running in it. Closing
-      // a tab removes it from local state too, so a genuinely closed tab is not in this list.
+      // reason it is new — deleting it here loses a live pane and the process running in it.
+      //
+      // The trade this accepts: absence cannot distinguish "never uploaded" from "closed by another
+      // client on this host", so a tab closed elsewhere survives here until that client's snapshot
+      // is applied. Closing on THIS client removes it from local state, so the common case is
+      // unaffected. Keeping a tab a moment too long is recoverable — the user closes it — while
+      // deleting a live one is not, and that is the failure this branch exists to prevent.
       // Why the id is checked against EVERY worktree and not just this one: the same tab id can be
       // owned by two worktrees while a rename settles, and re-adding it here would keep recreating
       // the duplicate the repair pass is trying to converge. A host that knows the id anywhere has

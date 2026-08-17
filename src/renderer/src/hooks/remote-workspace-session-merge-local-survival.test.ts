@@ -90,6 +90,22 @@ describe('direct-SSH reconnect merge: local state the host has not seen', () => 
     }
   })
 
+  it('keeps a tab another client closed, which is the accepted cost of the rule', () => {
+    // Pinned because it is a deliberate trade, not an oversight. Absence in the snapshot cannot
+    // distinguish "never uploaded" from "closed on another client sharing this host", and the two
+    // outcomes are not symmetric: keeping a tab a moment too long is recoverable, deleting a live
+    // one is not. Closing on THIS client removes it from local state, so the common case never
+    // reaches here.
+    const agent = terminalTab('agent')
+    const closedElsewhere = terminalTab('closed-elsewhere')
+    const current = sessionState({ tabsByWorktree: { [WORKTREE]: [agent, closedElsewhere] } })
+    const remote = sessionState({ tabsByWorktree: { [WORKTREE]: [agent] } })
+
+    const merged = merge(current, remote, { [WORKTREE]: [agent, closedElsewhere] })
+
+    expect(merged.tabsByWorktree[WORKTREE].map((tab) => tab.id)).toContain('closed-elsewhere')
+  })
+
   it('invents no tab that is in neither the host snapshot nor local state', () => {
     const agent = terminalTab('agent')
     const current = sessionState({ tabsByWorktree: { [WORKTREE]: [agent] } })
