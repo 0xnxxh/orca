@@ -100,16 +100,29 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
     })
   })
 
-  // An image echo counts image turns AFTER its tail, so moving the tail onto this
-  // read would discard an echo the read already carries.
-  it('keeps a caption-less image echo on its captured tail', () => {
-    const images = { ...unresolved('p1', ''), images: ['file:///a.png'] }
+  // An image echo counts image turns AFTER its tail, so moving a real tail onto
+  // this read would discard an echo the read already carries.
+  it('keeps a caption-less image echo on the tail it actually captured', () => {
+    const images = {
+      ...unresolved('p1', ''),
+      baselineTailMessageId: 'm1',
+      images: ['file:///a.png']
+    }
+    const rebased = rebaseMobileNativeChatPendingBaselines(history, [images])
+    expect(rebased[0]?.baselineTailMessageId).toBe('m1')
+    expect(rebased[0]?.expectedOccurrence).toBe(1)
+    expect(rebased[0]?.baselineResolved).toBe(true)
+  })
+
+  // A null tail counts from the top of the transcript, so an image turn already
+  // in this read would claim the send and take the user's fresh photo with it.
+  it('pins a caption-less image echo that captured no tail at all', () => {
     const rebased = rebaseMobileNativeChatPendingBaselines(history, [
-      images,
+      { ...unresolved('p1', ''), images: ['file:///a.png'] },
       { ...unresolved('p2', '', 2), images: ['file:///b.png'] }
     ])
+    expect(rebased.map((item) => item.baselineTailMessageId)).toEqual(['m2', 'm2'])
     expect(rebased.map((item) => item.expectedOccurrence)).toEqual([1, 2])
-    expect(rebased.map((item) => item.baselineTailMessageId)).toEqual([null, null])
     expect(rebased.every((item) => item.baselineResolved)).toBe(true)
   })
 })

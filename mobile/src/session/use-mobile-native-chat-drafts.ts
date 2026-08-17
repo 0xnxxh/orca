@@ -50,7 +50,7 @@ export function useMobileNativeChatDrafts(args: {
   /** `messages` is this session's own settled history — so an empty one really
    *  is an empty conversation, not a read that failed or never ran. Only then
    *  does a send's captured tail describe a real boundary. */
-  transcriptSettled?: boolean
+  transcriptSettled: boolean
 }): {
   composerText: string
   setComposerText: Dispatch<SetStateAction<string>>
@@ -85,7 +85,7 @@ export function useMobileNativeChatDrafts(args: {
     launchDraftCreatedAt,
     chatActive = true,
     transcriptLoading,
-    transcriptSettled = !transcriptLoading
+    transcriptSettled
   } = args
   const draftKey = mobileNativeChatScopeKey(hostId, worktreeId, tabId)
   const pendingKey = draftKey && sessionId ? `${draftKey}\0${sessionId}` : null

@@ -229,9 +229,11 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
     // The read that resolves a hydration-time send can already contain that
     // send's own echo — a re-subscribe returns whatever exists now — and nothing
     // local tells that echo from an identical older prompt. Claiming the row is
-    // the safe direction: being wrong costs one round trip of invisibility,
-    // while holding costs a queued bubble that never clears and a run that can
-    // never glue again.
+    // the lesser evil, not a free one: normally the real echo lands a round trip
+    // later, but a send that never landed and was claimed by an older identical
+    // row stops being tracked at all — worst for short repeats ("yes", "1").
+    // Holding instead costs a queued bubble that never clears AND a run that can
+    // never glue again, for the rest of the session.
     it('retires a hydration-time send whose echo arrives with the read', async () => {
       await mount([], true)
       act(() => send('run the tests'))

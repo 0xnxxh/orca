@@ -21,9 +21,11 @@ import type { MobileNativeChatPendingMessage } from './mobile-native-chat-pendin
  * anything the transcript can supply, which strands the bubble for the rest of
  * the session and stops its whole run from ever gluing.
  *
- * A caption-less image echo keeps its captured tail: it reconciles by counting
- * image turns AFTER that tail, so pinning the tail past this read would throw
- * away an echo the read already carries.
+ * A caption-less image echo keeps a captured tail it actually has: it reconciles
+ * by counting image turns AFTER that tail, so moving the tail onto this read
+ * would throw away an echo the read already carries. A null tail is not such a
+ * boundary — it counts from the top of the transcript, so an old image turn can
+ * claim the send and bind the user's fresh photo to it. Those get pinned too.
  */
 export function rebaseMobileNativeChatPendingBaselines(
   messages: readonly NativeChatMessage[],
@@ -37,7 +39,8 @@ export function rebaseMobileNativeChatPendingBaselines(
     if (item.baselineResolved) {
       return item
     }
-    return item.images?.length || normalizeReconcileText(item.text) === ''
+    const countsAfterItsOwnTail = item.images?.length || normalizeReconcileText(item.text) === ''
+    return countsAfterItsOwnTail && item.baselineTailMessageId !== null
       ? { ...item, baselineResolved: true }
       : { ...item, baselineResolved: true, baselineTailMessageId }
   })
