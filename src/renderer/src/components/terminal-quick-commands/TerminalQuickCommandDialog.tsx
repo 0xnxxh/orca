@@ -40,6 +40,9 @@ type TerminalQuickCommandDialogProps = {
   mode: TerminalQuickCommandDialogMode
   command: TerminalQuickCommand
   repos?: readonly Pick<Repo, 'id' | 'displayName' | 'path' | 'badgeColor'>[]
+  /** Settings has no ambient workspace to imply scope from, so it opens the
+   *  Advanced section up front. In-workspace entry points leave it collapsed. */
+  defaultAdvancedOpen?: boolean
   onOpenChange: (open: boolean) => void
   onSave: (command: TerminalQuickCommand) => void
 }
@@ -63,6 +66,7 @@ export function TerminalQuickCommandDialog({
   mode,
   command,
   repos = EMPTY_REPOS,
+  defaultAdvancedOpen = false,
   onOpenChange,
   onSave
 }: TerminalQuickCommandDialogProps): React.JSX.Element {
@@ -76,7 +80,7 @@ export function TerminalQuickCommandDialog({
   const lastRepoScopeIdRef = useRef<string | null>(
     initialScope.type === 'repo' ? initialScope.repoId : null
   )
-  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen)
   const selectedAction = getTerminalQuickCommandAction(draft)
   const selectedScope = getTerminalQuickCommandScope(draft)
   const isAgentAction = isTerminalAgentQuickCommand(draft)
@@ -95,7 +99,7 @@ export function TerminalQuickCommandDialog({
     draftMemoryRef.current = createTerminalQuickCommandDialogDraftMemory(command, fallbackAgent)
     const commandScope = getTerminalQuickCommandScope(command)
     lastRepoScopeIdRef.current = commandScope.type === 'repo' ? commandScope.repoId : null
-    setAdvancedOpen(false)
+    setAdvancedOpen(defaultAdvancedOpen)
     setDraft({ ...command })
   }
 

@@ -8,7 +8,10 @@ import { TerminalQuickCommandDialog } from './TerminalQuickCommandDialog'
 
 const mountedRoots: Root[] = []
 
-async function renderDialog(command: TerminalQuickCommand): Promise<void> {
+async function renderDialog(
+  command: TerminalQuickCommand,
+  props: { defaultAdvancedOpen?: boolean } = {}
+): Promise<void> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -21,6 +24,7 @@ async function renderDialog(command: TerminalQuickCommand): Promise<void> {
         mode="add"
         command={command}
         repos={[]}
+        defaultAdvancedOpen={props.defaultAdvancedOpen}
         onOpenChange={vi.fn()}
         onSave={vi.fn()}
       />
@@ -104,5 +108,23 @@ describe('TerminalQuickCommandDialog animation structure', () => {
     })
 
     expect(document.body.textContent).toMatch(/Advanced\s*·\s*Global/)
+  })
+
+  it('opens the advanced section when defaultAdvancedOpen is true', async () => {
+    await renderDialog(
+      {
+        id: 'qc-5',
+        label: 'Start dev server',
+        action: 'terminal-command',
+        command: 'npm run dev',
+        appendEnter: true,
+        scope: { type: 'global' }
+      },
+      { defaultAdvancedOpen: true }
+    )
+
+    const advancedToggle = document.body.querySelector('[aria-expanded="true"]')
+    expect(advancedToggle?.textContent).toContain('Advanced')
+    expect(document.body.textContent).not.toMatch(/Advanced\s*·\s*Global/)
   })
 })
