@@ -50,7 +50,7 @@ Orchestration state (Runs, Tasks, Dispatches, mailboxes) is client-resident for 
 
 ## Distinguishing `unverifiable` from `exited`
 
-Several signals currently report the first as the second. Until the fixes below land, treat every row here as `unverifiable`:
+Several signals report the first as the second. Treat every row here as `unverifiable` unless you have confirmed, against the current code, that its fix has landed — the stop/close rows are addressed by #14977, but a signal from an older host or client still carries the old meaning:
 
 | Signal                                 | Says                        | May actually mean                        |
 | -------------------------------------- | --------------------------- | ---------------------------------------- |
@@ -65,17 +65,18 @@ Several signals currently report the first as the second. Until the fixes below 
 
 **Prefer artifacts over process state, but read them precisely.** A matching expected commit from `git ls-remote --heads origin <branch>` or a PR head lookup proves that commit reached the remote. A branch or PR alone does not prove the latest work was pushed, and an absent result does not prove that nothing was ever pushed: the ref may have been deleted, the PR may be closed, or the query may have failed. A clean _local_ worktree says nothing at all about the remote one.
 
-`orca terminal list` also has no host field and silently returns only the runtime you are pointed at. **An empty result is not evidence that nothing is running elsewhere.**
+`orca terminal list` reports an execution-host field and a listing scope naming the hosts it covered and omitted (#14973). On an older client or host those fields are absent and the listing is silently scoped to one runtime — when they are missing, **an empty result is not evidence that nothing is running elsewhere.**
 
 ## Known gaps
 
-Fixes proposed in open PRs: client-git fallback in `src/main/github/client.ts` (#14945), repo-icon local filesystem probe (#14947), GHES auth cache key omitting the connection (#14948).
+> **This list is dated and goes stale as fixes land. Verify any entry against the current code before acting on it** — several were fixed within days of being written. Each entry names the PR that addresses it; check whether that PR merged before treating the gap as real. The rules above are durable; this section is not.
+
+Landed: client-git fallback in `src/main/github/client.ts` (#14945), repo-icon local filesystem probe (#14947), the `unverifiable` stop verdict (#14977), and the `terminal list` execution-host field and listing scope (#14973).
 
 Outstanding, roughly by impact on reaching a wrong conclusion:
 
-- **`restoreRequired` is relabeled `SSH_SESSION_EXPIRED`** in `SshPtyProvider.spawn` (`src/main/providers/ssh-pty-provider.ts`). A delivery-layer "cannot resume your output stream" becomes a claim the session `exited`; the lease is marked `expired`, filtered from all future reattaches, and a duplicate agent is cold-started over the same worktree while the original may still be `live`. Highest-impact open item. `abandonPtySourceRecovery` (`src/main/ssh/ssh-relay-session.ts:3006-3008`) handles the same relay answer correctly and is the model to copy.
-- **No `unverifiable` verdict** in the signals table above. Necessary but not sufficient on its own — the lease is often already destroyed before any verdict is rendered.
-- **`orca terminal list` has no host field**, and a runtime-scoped listing does not mark itself partial.
+- **`restoreRequired` is relabeled `SSH_SESSION_EXPIRED`** in `SshPtyProvider.spawn` (`src/main/providers/ssh-pty-provider.ts`) — **fix in flight, #14974.** A delivery-layer "cannot resume your output stream" becomes a claim the session `exited`; the lease is marked `expired`, filtered from all future reattaches, and a duplicate agent is cold-started over the same worktree while the original may still be `live`. Highest-impact open item. `abandonPtySourceRecovery` (`src/main/ssh/ssh-relay-session.ts:3006-3008`) handles the same relay answer correctly and is the model to copy.
+- **GHES auth cache key omits the executing connection** — **fix in flight, #14948.** An unverifiable Enterprise auth inventory collapses into a definitive negative, so a repository with a PR can report none.
 - **No way to observe a target's effective grace period.** At 17 hours since disconnect, "unlimited" and "24h with 7 hours left" demand opposite actions, and nothing reports which applies.
 - **Nothing in any error or command output points at this document.** A reader only finds these rules by being told they exist.
 - **Credentials are not provisioned on SSH hosts**: `gh` auth is never probed (`src/main/ipc/preflight.ts` is local/WSL only), git `user.name`/`user.email` produce an error message only, SSH agent forwarding happens only if your own `~/.ssh/config` sets `ForwardAgent yes`, and provider API keys are not carried at all. An agent can do all the work and fail at the push — which also makes artifact-checking inconclusive.
