@@ -285,7 +285,7 @@ describe('orca root help', () => {
     await main(['--help'], '/tmp/repo')
 
     expect(logSpy.mock.calls[0][0]).toContain(
-      'computer capabilities     Show declared provider capabilities (use --probe for a live check)'
+      'computer capabilities     Show declared provider capabilities'
     )
     expect(logSpy.mock.calls[0][0]).toContain(
       'computer permissions      Show or open computer-use permission setup'

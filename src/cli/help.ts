@@ -124,7 +124,7 @@ Orchestration:
   orchestration reset       Reset orchestration state
 
 Computer Use:
-  computer capabilities     Show declared provider capabilities (use --probe for a live check)
+  computer capabilities     Show declared provider capabilities
   computer permissions      Show or open computer-use permission setup
   computer list-apps        List running apps available to computer-use
   computer list-windows     List visible windows for a target app
