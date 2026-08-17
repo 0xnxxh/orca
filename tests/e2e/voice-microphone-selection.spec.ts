@@ -165,9 +165,16 @@ test.describe('Voice microphone selection', () => {
       state.dispatchDeviceChange()
     })
 
-    await expect(microphone).toHaveText('AirPods')
-    await microphone.press('Space')
-    await expect(orcaPage.getByRole('option', { name: 'AirPods' })).toBeVisible()
+    // Why: a live devicechange can keep Radix's listbox open and drop the
+    // trigger's accessible name, so the Voice pane's only combobox is the
+    // stable handle — not name=Microphone.
+    const microphoneValue = orcaPage.getByRole('combobox')
+    await expect(microphoneValue).toHaveText('AirPods')
+    const airpodsOption = orcaPage.getByRole('option', { name: 'AirPods', exact: true })
+    if ((await microphoneValue.getAttribute('aria-expanded')) !== 'true') {
+      await microphoneValue.press('Space')
+    }
+    await expect(airpodsOption).toBeVisible()
     await expect(orcaPage.getByRole('option', { name: 'AirPods (unavailable)' })).toHaveCount(0)
     await orcaPage.keyboard.press('Escape')
     await expect(readMicrophoneSettings(orcaPage)).resolves.toEqual({
