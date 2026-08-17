@@ -20,16 +20,18 @@ const HANDLED_UNDECRYPTABLE_REASONS: Record<UndecryptableReason, true> = {
   unknown: true
 }
 
-function isHandledWarningCode(code: string): code is CookieImportWarningCode {
-  return Object.hasOwn(HANDLED_WARNING_CODES, code)
+// Why: typeof first — hasOwn coerces its key, so a host that widened `reason` to an array would
+// send ['unknown'], pass a hasOwn-only guard, then fall straight back out of the switch.
+function isHandledWarningCode(code: unknown): code is CookieImportWarningCode {
+  return typeof code === 'string' && Object.hasOwn(HANDLED_WARNING_CODES, code)
 }
 
-function isHandledUndecryptableReason(reason: string): reason is UndecryptableReason {
-  return Object.hasOwn(HANDLED_UNDECRYPTABLE_REASONS, reason)
+function isHandledUndecryptableReason(reason: unknown): reason is UndecryptableReason {
+  return typeof reason === 'string' && Object.hasOwn(HANDLED_UNDECRYPTABLE_REASONS, reason)
 }
 
 function formatCookieImportWarning(warning: CookieImportWarning): string {
-  const code: string = warning.code
+  const code: unknown = warning.code
   if (!isHandledWarningCode(code)) {
     return translate(
       'auto.lib.browser.cookie.import.toast.unrecognizedWarning',
@@ -53,7 +55,7 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
             }
           )
     case 'cookies-undecryptable': {
-      const reason: string = warning.reason
+      const reason: unknown = warning.reason
       if (!isHandledUndecryptableReason(reason)) {
         return translate(
           'auto.lib.browser.cookie.import.toast.undecryptableUnrecognizedReason',
