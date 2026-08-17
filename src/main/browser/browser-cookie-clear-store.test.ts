@@ -72,6 +72,23 @@ describe('cookie clear CDP identities', () => {
     ).toThrow(/Could not snapshot cookie identity/)
   })
 
+  it('fails closed instead of making an opaque CDP partition restorable as unpartitioned', () => {
+    expect(() =>
+      cookieClearIdentitiesFromCdp(
+        [{ cookie: chipsCookie, url: 'https://app.acme-chips.test/' }],
+        [
+          {
+            name: 'chips-auth',
+            value: 'keep-me',
+            domain: 'app.acme-chips.test',
+            path: '/',
+            partitionKeyOpaque: true
+          }
+        ]
+      )
+    ).toThrow(/Could not snapshot cookie identity/)
+  })
+
   it.each([
     { hasCrossSiteAncestor: true },
     { topLevelSite: 'not-a-site', hasCrossSiteAncestor: true },

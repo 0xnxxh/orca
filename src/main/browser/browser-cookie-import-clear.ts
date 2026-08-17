@@ -51,7 +51,7 @@ export type CookieClearSession = {
   restoreClearIdentities: CookieClearStore['restoreClearIdentities']
 }
 
-const clearLocks = new WeakMap<object, Promise<void>>()
+const mutationLocks = new WeakMap<object, Promise<void>>()
 
 function cookieClearKey(url: string, name: string): string {
   return JSON.stringify([url, name])
@@ -74,17 +74,22 @@ export function identitiesFromClearCookies(
   }))
 }
 
-export async function withCookieClearLock<T>(owner: object, run: () => Promise<T>): Promise<T> {
-  const previous = clearLocks.get(owner) ?? Promise.resolve()
+export async function acquireCookieMutationLock(owner: object): Promise<() => void> {
+  const previous = mutationLocks.get(owner) ?? Promise.resolve()
   let release!: () => void
   const current = new Promise<void>((resolve) => {
     release = resolve
   })
-  clearLocks.set(
+  mutationLocks.set(
     owner,
     previous.then(() => current)
   )
   await previous
+  return release
+}
+
+export async function withCookieMutationLock<T>(owner: object, run: () => Promise<T>): Promise<T> {
+  const release = await acquireCookieMutationLock(owner)
   try {
     return await run()
   } finally {
@@ -169,7 +174,7 @@ export async function removeTransplantableCookies(
   targetSession: CookieClearSession,
   preserveFamilies: ReadonlySet<string> = new Set()
 ): Promise<void> {
-  return withCookieClearLock(targetSession, async () => {
+  return withCookieMutationLock(targetSession, async () => {
     const store = targetSession.cookies
     const initialCookies = await store.get({})
     if (initialCookies.length === 0) {

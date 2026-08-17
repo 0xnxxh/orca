@@ -221,6 +221,50 @@ describe('validated import partition fidelity', () => {
     expect(remove).not.toHaveBeenCalled()
   })
 
+  it('preserves a populated family and creates no staged replay for an opaque JSON partition', async () => {
+    const targetJar = [
+      {
+        name: 'live-session',
+        value: 'must-survive',
+        domain: '.preserved.example',
+        path: '/',
+        secure: true,
+        sameSite: 'lax'
+      }
+    ]
+    const remove = vi.fn(async (_url: string, name: string) => {
+      const index = targetJar.findIndex((cookie) => cookie.name === name)
+      if (index !== -1) {
+        targetJar.splice(index, 1)
+      }
+    })
+    sessionFromPartitionMock.mockReturnValue({
+      cookies: { get: vi.fn(async () => targetJar), remove, set: unreachableCookieSet }
+    })
+    const filePath = writeCookieFile([
+      {
+        domain: '.preserved.example',
+        name: 'opaque-session',
+        value: 'do-not-downgrade',
+        secure: true,
+        partitionKeyOpaque: true
+      },
+      { domain: 'sub.preserved.example', name: 'sibling', value: 'do-not-write', secure: true }
+    ])
+
+    const result = await importCookiesFromFile(filePath, 'persist:test')
+
+    expect(result.ok && result.summary).toMatchObject({
+      importedCookies: 0,
+      skippedCookies: 2,
+      partitionSkippedCookies: 2
+    })
+    expect(targetJar).toEqual([expect.objectContaining({ name: 'live-session' })])
+    expect(remove).not.toHaveBeenCalled()
+    expect(cookieWriteMock).not.toHaveBeenCalled()
+    expect(setPendingCookieImportMock).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['null', null],
     ['empty string', '']

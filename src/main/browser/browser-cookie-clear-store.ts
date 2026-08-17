@@ -26,6 +26,7 @@ type CdpCookie = {
   expires?: number
   sameSite?: string
   partitionKey?: CdpCookiePartitionKey | null
+  partitionKeyOpaque?: boolean
 }
 
 type CookieClearDebugger = {
@@ -54,18 +55,17 @@ function cdpSameSite(sameSite: Cookie['sameSite']): 'Strict' | 'Lax' | 'None' | 
 }
 
 function electronSameSite(sameSite: string | undefined): Cookie['sameSite'] {
-  if (sameSite === 'Strict') {
-    return 'strict'
-  }
-  if (sameSite === 'None') {
-    return 'no_restriction'
+  if (sameSite === 'Strict' || sameSite === 'None') {
+    return sameSite === 'Strict' ? 'strict' : 'no_restriction'
   }
   return sameSite === 'Lax' ? 'lax' : 'unspecified'
 }
 
-function partitionKeyFromCdp(
-  partitionKey: CdpCookiePartitionKey | null | undefined
-): CookieClearPartitionKey | undefined {
+function partitionKeyFromCdp(cookie: CdpCookie): CookieClearPartitionKey | undefined {
+  if (cookie.partitionKeyOpaque === true) {
+    throw new Error('Could not snapshot cookie identity for an atomic clear')
+  }
+  const partitionKey = cookie.partitionKey
   if (partitionKey === undefined) {
     return undefined
   }
@@ -108,7 +108,7 @@ function indexCdpCookies(cookies: readonly CdpCookie[]): Map<string, CdpCookie[]
 }
 
 function identityFromCdpCookie(url: string, cdpCookie: CdpCookie): CookieClearIdentity {
-  const partitionKey = partitionKeyFromCdp(cdpCookie.partitionKey)
+  const partitionKey = partitionKeyFromCdp(cdpCookie)
   return {
     url,
     name: cdpCookie.name,
@@ -199,7 +199,7 @@ export function cookieClearIdentitiesFromCdp(
         match.name,
         match.domain,
         match.path,
-        partitionKeyFromCdp(match.partitionKey) ?? null
+        partitionKeyFromCdp(match) ?? null
       ])
       if (seen.has(key)) {
         continue

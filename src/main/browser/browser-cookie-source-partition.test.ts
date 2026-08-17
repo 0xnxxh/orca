@@ -113,6 +113,24 @@ describe('readJsonCookiePartition', () => {
     expect(readJsonCookiePartition(undefined)).toEqual({ status: 'unpartitioned' })
   })
 
+  it('refuses an opaque partition key even when its key object is absent or populated', () => {
+    expect(readJsonCookiePartition(undefined, true)).toEqual({
+      status: 'unreadable',
+      reason: 'partition key was opaque'
+    })
+    expect(
+      readJsonCookiePartition(
+        { topLevelSite: 'https://top.example', hasCrossSiteAncestor: true },
+        true
+      ).status
+    ).toBe('unreadable')
+  })
+
+  it('accepts the explicit non-opaque CDP shape and rejects a malformed opaque flag', () => {
+    expect(readJsonCookiePartition(undefined, false)).toEqual({ status: 'unpartitioned' })
+    expect(readJsonCookiePartition(undefined, 'false').status).toBe('unreadable')
+  })
+
   it.each([null, ''])('refuses a present but empty partitionKey (%s)', (partitionKey) => {
     expect(readJsonCookiePartition(partitionKey).status).toBe('unreadable')
   })

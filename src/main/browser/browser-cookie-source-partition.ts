@@ -127,7 +127,16 @@ export function readFirefoxRowPartition(
  * exporters that emit only `topLevelSite` (or the legacy CDP string form) carry no ancestor bit, and
  * guessing it silently misfiles the cookie.
  */
-export function readJsonCookiePartition(raw: unknown): SourcePartitionRead {
+export function readJsonCookiePartition(
+  raw: unknown,
+  partitionKeyOpaque: unknown = undefined
+): SourcePartitionRead {
+  if (partitionKeyOpaque === true) {
+    return { status: 'unreadable', reason: 'partition key was opaque' }
+  }
+  if (partitionKeyOpaque !== undefined && typeof partitionKeyOpaque !== 'boolean') {
+    return { status: 'unreadable', reason: 'partitionKeyOpaque was not a boolean' }
+  }
   if (raw === undefined) {
     return UNPARTITIONED
   }
