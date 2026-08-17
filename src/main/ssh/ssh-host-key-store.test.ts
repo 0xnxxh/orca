@@ -307,3 +307,35 @@ describe('ssh host key store', () => {
     })
   })
 })
+
+/**
+ * Rollback safety for a brand-new on-disk format.
+ *
+ * `version` was written and never read, so a store from a future Orca would have every record
+ * dropped by validation and then be rewritten as v1 — the file silently losing whatever that version
+ * knew. v1 is the only place this can be made safe, because v2 cannot retrofit it.
+ */
+describe('a host key store written by a newer version', () => {
+  it('is not trusted and not overwritten', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'orca-host-key-store-'))
+    const storeFile = join(dir, 'ssh-host-keys.json')
+    const future = JSON.stringify({
+      version: 99,
+      hostKeys: [{ shape: 'we do not understand' }]
+    })
+    await writeFile(storeFile, future, 'utf-8')
+
+    try {
+      expect(await loadTrustedHostKeys(storeFile)).toEqual([])
+
+      await trustHostKey(
+        { host: 'build-01', port: 22, keyType: 'ssh-ed25519', key: Buffer.from('key') },
+        storeFile
+      )
+
+      expect(await readFile(storeFile, 'utf-8'), 'a newer store was downgraded').toBe(future)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})

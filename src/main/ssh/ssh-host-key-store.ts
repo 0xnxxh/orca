@@ -56,6 +56,19 @@ export function initSshHostKeyStoreFile(dataFile: string): void {
   configuredStoreFile = getSshHostKeyStoreFile(dataFile)
 }
 
+/** True when the file on disk was written by a newer Orca than this one understands. */
+async function storeIsFromNewerVersion(storeFile: string): Promise<boolean> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(storeFile, 'utf-8')
+    ) as Partial<HostKeyStoreFile> | null
+    return typeof parsed?.version === 'number' && parsed.version > STORE_VERSION
+  } catch {
+    // Missing or unparseable is not "newer"; the load path already degrades those to empty.
+    return false
+  }
+}
+
 /** The bound store path, for messages that must name the artefact a user has to remove. */
 export function boundSshHostKeyStoreFile(): string | null {
   return configuredStoreFile
@@ -154,6 +167,18 @@ export async function loadTrustedHostKeys(file?: string): Promise<TrustedHostKey
     parsed = JSON.parse(contents)
   } catch {
     console.warn(`[ssh] Host key store at ${storeFile} is not valid JSON; treating it as empty`)
+    return []
+  }
+
+  // Why the version is finally consulted: it was written and never read, so a store from a future
+  // Orca would have every record dropped by validateRecord and then be REWRITTEN as v1 — silently
+  // discarding whatever that version knew. Refusing to read it keeps the file intact for the version
+  // that owns it; trustHostKey refuses to write over it for the same reason.
+  const onDiskVersion = (parsed as Partial<HostKeyStoreFile> | null)?.version
+  if (typeof onDiskVersion === 'number' && onDiskVersion > STORE_VERSION) {
+    console.warn(
+      `[ssh] Host key store at ${storeFile} is version ${onDiskVersion}, newer than ${STORE_VERSION}; leaving it alone and trusting nothing from it`
+    )
     return []
   }
 
@@ -264,6 +289,12 @@ export async function trustHostKey(
   // Serialized: startup restore connects to every previously-active target in parallel, so two
   // first-contact accepts can otherwise read the same snapshot and one overwrites the other.
   await withSidecarSnapshotQueue(storeFile, async () => {
+    // Inside the queue so the check and the write cannot be separated by another writer.
+    if (await storeIsFromNewerVersion(storeFile)) {
+      // Not an error the caller should fail on: the key verified, we simply decline to downgrade the
+      // file. The next connect re-derives the same decision from known_hosts.
+      return
+    }
     const kept = (await loadTrustedHostKeys(storeFile)).filter(
       (existing) =>
         existing.host !== record.host ||
