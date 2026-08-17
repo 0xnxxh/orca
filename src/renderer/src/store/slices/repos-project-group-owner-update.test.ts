@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ProjectGroup, Repo } from '../../../../shared/types'
+import type { ProjectGroup } from '../../../../shared/project-group-types'
+import type { Repo } from '../../../../shared/repo-types'
 import { createTestStore } from './store-test-helpers'
 import {
   createCompatibleRuntimeStatusResponseIfNeeded,

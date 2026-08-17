@@ -5,7 +5,9 @@ import {
   toSshExecutionHostId,
   type ExecutionHostId
 } from './execution-host'
-import type { FolderWorkspace, Repo, ProjectGroup, ProjectGroupCreatedFrom } from './types'
+import type { FolderWorkspace } from './folder-workspace-types'
+import type { ProjectGroup, ProjectGroupCreatedFrom } from './project-group-types'
+import type { Repo } from './repo-types'
 
 export const UNGROUPED_PROJECT_GROUP_KEY = 'project-group:ungrouped'
 

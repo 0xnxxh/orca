@@ -11,9 +11,12 @@ import {
 import type { ExecutionHostHealth } from '../../../../shared/execution-host-registry'
 import type { RuntimeCompatVerdict } from '../../../../shared/protocol-compat'
 import type { SshConnectionStatus } from '../../../../shared/ssh-types'
-import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
-import type { Row } from './worktree-list-groups'
-import { getFolderWorkspaceExecutionHostIdForRows } from './worktree-list-host-filtering'
+import type { FolderWorkspace } from '../../../../shared/folder-workspace-types'
+import type { ProjectGroup } from '../../../../shared/project-group-types'
+import type { Repo } from '../../../../shared/repo-types'
+import type { Row } from './worktree-list/grouping/row-types'
+import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
+import { getProjectGroupOwnerHostId } from '../../../../shared/project-groups'
 
 export type HostHeaderRow = {
   type: 'host-header'
@@ -56,15 +59,15 @@ function getRepoHostId(
 }
 
 function getFolderWorkspaceHostId(
-  folderWorkspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId'>,
-  projectGroup: Pick<ProjectGroup, 'connectionId' | 'executionHostId'>,
+  folderWorkspace: FolderWorkspace,
+  projectGroup: ProjectGroup,
   defaultHostId: ExecutionHostId
 ): ExecutionHostId {
-  return getFolderWorkspaceExecutionHostIdForRows({
-    folderWorkspace,
-    projectGroup,
+  return (
+    resolveFolderWorkspaceCatalogOwnerHostId(folderWorkspace, [projectGroup]) ??
+    getProjectGroupOwnerHostId(projectGroup) ??
     defaultHostId
-  })
+  )
 }
 
 function getRowHostId(row: Row, defaultHostId: ExecutionHostId): ExecutionHostId | null {
@@ -99,22 +102,15 @@ function countWorktreeRows(rows: readonly Row[]): number {
   // while a visibly populated project sits right under it.
   let count = 0
   const seenWorktreeIds = new Set<string>()
-  const seenFolderWorkspaceIds = new Set<string>()
   let pendingHeader: Extract<Row, { type: 'header' }> | null = null
-  let pendingHeaderHadRows = false
+  let pendingHeaderHadItems = false
   const flushHeader = (): void => {
-    if (pendingHeader && !pendingHeaderHadRows) {
-      if (pendingHeader.worktreeIds || pendingHeader.folderWorkspaceIds) {
-        for (const worktreeId of pendingHeader.worktreeIds ?? []) {
+    if (pendingHeader && !pendingHeaderHadItems) {
+      if (pendingHeader.worktreeIds) {
+        for (const worktreeId of pendingHeader.worktreeIds) {
           if (!seenWorktreeIds.has(worktreeId)) {
             count += 1
             seenWorktreeIds.add(worktreeId)
-          }
-        }
-        for (const folderWorkspaceId of pendingHeader.folderWorkspaceIds ?? []) {
-          if (!seenFolderWorkspaceIds.has(folderWorkspaceId)) {
-            count += 1
-            seenFolderWorkspaceIds.add(folderWorkspaceId)
           }
         }
       } else {
@@ -122,7 +118,7 @@ function countWorktreeRows(rows: readonly Row[]): number {
       }
     }
     pendingHeader = null
-    pendingHeaderHadRows = false
+    pendingHeaderHadItems = false
   }
   for (const row of rows) {
     if (row.type === 'header') {
@@ -135,13 +131,7 @@ function countWorktreeRows(rows: readonly Row[]): number {
         count += 1
         seenWorktreeIds.add(row.worktree.id)
       }
-      pendingHeaderHadRows = pendingHeader !== null
-    } else if (row.type === 'folder-workspace') {
-      if (!seenFolderWorkspaceIds.has(row.folderWorkspace.id)) {
-        count += 1
-        seenFolderWorkspaceIds.add(row.folderWorkspace.id)
-      }
-      pendingHeaderHadRows = pendingHeader !== null
+      pendingHeaderHadItems = pendingHeader !== null
     }
   }
   flushHeader()
@@ -161,13 +151,12 @@ function localizePendingRowsForHost(
       continue
     }
     const count = row.hostWorktreeCounts.get(hostId)
-    if (count !== undefined) {
+    if (count !== undefined && count > 0) {
       localized.push({
         ...row,
         count,
         hostId,
-        worktreeIds: row.hostWorktreeIds?.get(hostId) ?? row.worktreeIds,
-        folderWorkspaceIds: row.hostFolderWorkspaceIds?.get(hostId) ?? row.folderWorkspaceIds
+        worktreeIds: row.hostWorktreeIds?.get(hostId) ?? row.worktreeIds
       })
     }
   }
@@ -178,7 +167,7 @@ function getPendingRowsKey(rows: readonly Extract<Row, { type: 'header' }>[]): s
   return rows
     .map(
       (pendingRow) =>
-        `${pendingRow.key}:${pendingRow.count}:${pendingRow.worktreeIds?.join(',') ?? ''}:${pendingRow.folderWorkspaceIds?.join(',') ?? ''}`
+        `${pendingRow.key}:${pendingRow.count}:${pendingRow.worktreeIds?.join(',') ?? ''}`
     )
     .join('\0')
 }
@@ -229,14 +218,16 @@ export function addHostSectionRows(args: {
     }
     for (const row of pendingRows) {
       for (const [hostId, count] of row.hostWorktreeCounts ?? []) {
+        if (count <= 0) {
+          continue
+        }
         const hostRows = rowsByHostId.get(hostId) ?? []
         const hostIds = row.hostWorktreeIds?.get(hostId)
         hostRows.push({
           ...row,
           count,
           hostId,
-          worktreeIds: hostIds ?? row.worktreeIds,
-          folderWorkspaceIds: row.hostFolderWorkspaceIds?.get(hostId) ?? row.folderWorkspaceIds
+          worktreeIds: hostIds ?? row.worktreeIds
         })
         rowsByHostId.set(hostId, hostRows)
       }

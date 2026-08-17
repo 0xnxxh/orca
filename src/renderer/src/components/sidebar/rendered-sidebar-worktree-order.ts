@@ -1,50 +1,33 @@
-import type { FolderWorkspace, ProjectGroup, Worktree } from '../../../../shared/types'
+import type { Worktree } from '../../../../shared/worktree/types'
+import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
+import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
 import type { AppState } from '@/store/types'
 import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
 import {
   ALL_EXECUTION_HOSTS_SCOPE,
-  getSettingsFocusedExecutionHostId,
-  type ExecutionHostId
+  getSettingsFocusedExecutionHostId
 } from '../../../../shared/execution-host'
 import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { getProjectHostSetupProjectionFromState } from '@/store/project-host-setup-selector'
-import {
-  buildProjectGroupSidebarIndex,
-  buildRows,
-  getAmbiguousFolderWorkspaceSidebarIds,
-  getPinnedWorktreeDisplayPolicy,
-  getProjectGroupMutationSelector,
-  getSidebarWorkspaceActivationId,
-  type WorktreeRow
-} from './worktree-list-groups'
+import { buildRows } from './worktree-list/grouping/build-rows'
+import { getPinnedWorktreeDisplayPolicy } from './worktree-list/grouping/row-types'
 import { addHostSectionRows } from './host-section-rows'
 import { orderHostSectionOptions } from './host-section-order'
 import { buildSidebarHostOptions } from './sidebar-host-options'
 import { getLogicalRepoOrderRankById } from './project-header-drop'
 import { getPreferredWorktreeRows } from './worktree-sidebar-row-preference'
-import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
-import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
-import { selectWorktreeListReviewCacheInputs } from './worktree-list-review-cache-inputs'
+import type { WorktreeRow } from './worktree-list/grouping/row-types'
+import { selectWorktreeListReviewCacheInputs } from './worktree-list/listing/review-cache-inputs'
 import {
   filterFolderWorkspacesForVisibleHosts,
   filterProjectGroupsForVisibleHosts,
   getVisibleSidebarHostIdSet
-} from './worktree-list-host-filtering'
+} from './worktree-list/listing/host-filtering'
 
 const EMPTY_REPO_ID_SET: ReadonlySet<string> = Object.freeze(new Set<string>())
 const EMPTY_IMPORTED_BY_REPO = Object.freeze(new Map()) as never
 const EMPTY_INBOX_BY_REPO = Object.freeze(new Map()) as never
 const EMPTY_PENDING_CREATIONS = Object.freeze([]) as never
-
-function getFolderOwnerHostId(row: {
-  folderWorkspace: FolderWorkspace
-  projectGroup: ProjectGroup
-}): ExecutionHostId {
-  return (
-    resolveFolderWorkspaceCatalogOwnerHostId(row.folderWorkspace, [row.projectGroup]) ??
-    getProjectGroupMutationSelector(row.projectGroup).ownerHostId
-  )
-}
 
 /**
  * Orders already-filtered worktrees the way the sidebar would render them, for
@@ -134,24 +117,27 @@ export function computeRenderedSidebarWorktreeOrder(
     : rows
 
   const itemRows = sectionRows.filter((row): row is WorktreeRow => row.type === 'item')
-  const preferredItemRowKeys = new Set(
+  const preferredRowKeys = new Set(
     getPreferredWorktreeRows(itemRows, pinnedDisplayPolicy).map((row) => row.rowKey)
   )
-  const ambiguousFolderWorkspaceIds = getAmbiguousFolderWorkspaceSidebarIds(
-    buildProjectGroupSidebarIndex(projectGroups),
+  const duplicateFolderIds = new Set(
     state.folderWorkspaces
+      .map((workspace) => workspace.id)
+      .filter((id, index, ids) => ids.indexOf(id) !== index)
   )
-
   const workspaceIds: string[] = []
   for (const row of sectionRows) {
-    if (row.type === 'item' && preferredItemRowKeys.has(row.rowKey)) {
+    if (row.type === 'item' && preferredRowKeys.has(row.rowKey)) {
       workspaceIds.push(row.worktree.id)
     } else if (row.type === 'folder-workspace') {
+      const ownerHostId = resolveFolderWorkspaceCatalogOwnerHostId(
+        row.folderWorkspace,
+        projectGroups
+      )
       workspaceIds.push(
-        getSidebarWorkspaceActivationId(
-          folderWorkspaceToWorktree(row.folderWorkspace),
-          getFolderOwnerHostId(row),
-          ambiguousFolderWorkspaceIds
+        folderWorkspaceKey(
+          row.folderWorkspace.id,
+          duplicateFolderIds.has(row.folderWorkspace.id) ? (ownerHostId ?? undefined) : undefined
         )
       )
     }

@@ -12,13 +12,15 @@ import {
   resolveProjectGroupOwner,
   type ProjectGroupOwnerIndex
 } from './project-groups'
-import type { FolderWorkspace, ProjectGroup } from './types'
+import type { FolderWorkspace } from './folder-workspace-types'
 import type { FolderWorkspacePathStatusRequest } from './folder-workspace-path-status'
+import type { ProjectGroup } from './project-group-types'
 import { folderWorkspaceKey } from './workspace-scope'
 import { isTuiAgent } from './tui-agent-config'
 import { normalizeStoredTaskSourceContext } from './task-source-context'
 import { normalizeWorkspaceLinkedItem } from './workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from './workspace-linked-item-source-context'
+import { normalizeWorkspaceCreatorProvenance } from './workspace-creator-provenance'
 
 const projectGroupOwnerIndexCache = new WeakMap<readonly ProjectGroup[], ProjectGroupOwnerIndex>()
 
@@ -215,6 +217,7 @@ export function normalizeFolderWorkspaces(
     const now = Date.now()
     const linkedTask = normalizeWorkspaceLinkedItem(raw.linkedTask)
     const linkedTaskSourceContext = normalizeStoredTaskSourceContext(raw.linkedTaskSourceContext)
+    const creatorProvenance = normalizeWorkspaceCreatorProvenance(raw.creatorProvenance)
     seen.add(identity)
     workspaces.push({
       id: raw.id,
@@ -223,6 +226,7 @@ export function normalizeFolderWorkspaces(
       folderPath,
       connectionId,
       ...(executionHostId ? { executionHostId } : {}),
+      ...(creatorProvenance ? { creatorProvenance } : {}),
       linkedTask,
       linkedTaskSourceContext: isWorkspaceLinkedItemSourceContextMatch(
         linkedTask,

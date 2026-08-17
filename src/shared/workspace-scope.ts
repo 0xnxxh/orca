@@ -1,5 +1,5 @@
 import { parseExecutionHostId, type ExecutionHostId } from './execution-host'
-import type { WorkspaceKey, WorkspaceScope } from './types'
+import type { WorkspaceKey, WorkspaceScope } from './folder-workspace-types'
 
 const FOLDER_WORKSPACE_OWNER_KEY_PREFIX = '@owner:'
 const FOLDER_WORKSPACE_ESCAPED_ID_PREFIX = '@id:'

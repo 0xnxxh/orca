@@ -32,16 +32,18 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
-import { useAllWorktrees, useRepoMap, useWorktreeMap } from '@/store/selectors'
+import { useAllWorktrees, useRepoById, useRepoMap, useWorktreeMap } from '@/store/selectors'
 import { cn } from '@/lib/utils'
+import type { Repo } from '../../../../shared/repo-types'
 import type {
-  ProjectGroup,
-  Repo,
-  Worktree,
   WorkspaceStatus,
-  WorkspaceStatusDefinition
-} from '../../../../shared/types'
-import { runWorktreeBatchDelete, runWorktreeDelete } from './delete-worktree-flow'
+  WorkspaceStatusDefinition,
+  Worktree
+} from '../../../../shared/worktree/types'
+import {
+  deferWorktreeContextMenuDeleteIntent,
+  type WorktreeContextMenuDeleteIntent
+} from './worktree-context-menu-delete-intent'
 import { runSleepWorktrees } from './sleep-worktree-flow'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedScrollAnchor'
@@ -63,22 +65,10 @@ import {
 import { WorkspaceSleepMenuItems } from './WorkspaceSleepMenuItems'
 import { isEventTargetInsideCurrentTarget } from './worktree-card-dom-events'
 import { translate } from '@/i18n/i18n'
-import {
-  folderWorkspaceKey,
-  parseWorkspaceKey,
-  worktreeWorkspaceKey
-} from '../../../../shared/workspace-scope'
-import {
-  getRepoExecutionHostId,
-  LOCAL_EXECUTION_HOST_ID,
-  normalizeExecutionHostId,
-  type ExecutionHostId
-} from '../../../../shared/execution-host'
-import {
-  getProjectGroupOwnerHostId,
-  getProjectGroupOwnerIdentity
-} from '../../../../shared/project-groups'
-import { shouldClearActiveFolderWorkspaceAfterDelete } from './worktree-list-folder-reveal'
+import { unnestWorktrees } from './worktree-unnest'
+import { parseWorkspaceKey, worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
+import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
+import { normalizeExecutionHostId } from '../../../../shared/execution-host'
 
 type Props = {
   worktree: Worktree
@@ -101,26 +91,6 @@ const DELETE_POSITION_RESTORE_STABLE_FRAMES = 6
 // data-[state=closed] exit animation short; hold the subtree for its duration.
 const PARENT_PICKER_EXIT_ANIMATION_MS = 200
 
-export function findContextMenuRepo(
-  repos: readonly Repo[] | undefined,
-  repoId: string,
-  executionHostId: ExecutionHostId
-): Repo | null {
-  const matches = (repos ?? []).filter(
-    (repo) => repo.id === repoId && getRepoExecutionHostId(repo) === executionHostId
-  )
-  return matches.length === 1 ? matches[0] : null
-}
-
-export function resolveWorktreeContextMenuTargets(
-  worktree: Worktree,
-  selectedWorktrees: readonly Worktree[]
-): readonly Worktree[] {
-  const ids = selectedWorktrees.map((item) => item.id)
-  // Why: batch APIs accept bare IDs and cannot distinguish same-ID rows owned by different hosts.
-  return new Set(ids).size === ids.length ? selectedWorktrees : [worktree]
-}
-
 // Why: stable empty sentinels let closed menu wrappers subscribe to a referentially
 // stable value instead of the high-churn maps that delete teardown replaces. The
 // selector returns these when the menu is closed, so the wrapper stays inert to
@@ -141,26 +111,6 @@ const EMPTY_CYCLIC_LINEAGE_IDS: ReadonlySet<string> = new Set()
 // data. Extracted as a pure function so the stable-reference contract is unit-testable.
 export function selectMenuScopedMap<T>(menuOpen: boolean, live: T, empty: T): T {
   return menuOpen ? live : empty
-}
-
-export function getContextMenuProjectGroupTargets(
-  repo: Pick<Repo, 'connectionId' | 'executionHostId'>,
-  projectGroups: readonly ProjectGroup[]
-): { ownerHostId: ExecutionHostId; projectGroups: readonly ProjectGroup[] } {
-  const ownerHostId = getRepoExecutionHostId(repo)
-  return {
-    ownerHostId,
-    projectGroups: projectGroups.filter(
-      (group) => getProjectGroupOwnerHostId(group) === ownerHostId
-    )
-  }
-}
-
-export function getFolderWorkspaceContextMenuDeleteOwner(
-  worktree: Pick<Worktree, 'hostId'>
-): { ownerHostId: ExecutionHostId } | undefined {
-  const ownerHostId = normalizeExecutionHostId(worktree.hostId)
-  return ownerHostId ? { ownerHostId } : undefined
 }
 
 export function getContextMenuWorktreeMetaId(worktree: Pick<Worktree, 'id' | 'hostId'>): string {
@@ -392,16 +342,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   const projectGroups = useAppStore((s) => s.projectGroups)
   const createProjectGroup = useAppStore((s) => s.createProjectGroup)
   const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
-  const deleteFolderWorkspace = useAppStore((s) => s.deleteFolderWorkspace)
-  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
-  const repo = useAppStore((s) => {
-    const executionHostId = normalizeExecutionHostId(worktree.hostId) ?? LOCAL_EXECUTION_HOST_ID
-    return findContextMenuRepo(s.repos, worktree.repoId, executionHostId)
-  })
-  const projectGroupTargets = useMemo(
-    () => (repo ? getContextMenuProjectGroupTargets(repo, projectGroups) : null),
-    [projectGroups, repo]
-  )
+  const repo = useRepoById(worktree.repoId)
   const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
   const [menuOpen, setMenuOpen] = useState(false)
   // Why: the Developer submenu is a power-user affordance, so it is revealed by
@@ -625,14 +566,8 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   }, [worktree, updateWorktreeMeta])
 
   const handleTogglePin = useCallback(() => {
-    if (parseWorkspaceKey(worktree.id)?.type === 'folder') {
-      void updateWorktreeMeta(getContextMenuWorktreeMetaId(worktree), {
-        isPinned: !worktree.isPinned
-      })
-      return
-    }
     setWorktreesPinnedAndReveal([worktree.id], !worktree.isPinned)
-  }, [setWorktreesPinnedAndReveal, updateWorktreeMeta, worktree])
+  }, [worktree.id, worktree.isPinned, setWorktreesPinnedAndReveal])
 
   const handleCreateGroupFromRepo = useCallback(() => {
     if (!repo) {
@@ -652,10 +587,9 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       if (!repo) {
         return
       }
-      const ownerHostId = getRepoExecutionHostId(repo)
-      const group = await createProjectGroup(name, { ownerHostId })
+      const group = await createProjectGroup(name)
       if (group) {
-        await moveProjectToGroup(repo.id, group.id, undefined, { ownerHostId })
+        await moveProjectToGroup(repo.id, group.id)
       }
     },
     [createProjectGroup, moveProjectToGroup, repo]
@@ -666,9 +600,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       if (!repo || repo.projectGroupId === groupId) {
         return
       }
-      void moveProjectToGroup(repo.id, groupId, undefined, {
-        ownerHostId: getRepoExecutionHostId(repo)
-      })
+      void moveProjectToGroup(repo.id, groupId)
     },
     [moveProjectToGroup, repo]
   )
@@ -677,9 +609,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
     if (!repo) {
       return
     }
-    void moveProjectToGroup(repo.id, null, undefined, {
-      ownerHostId: getRepoExecutionHostId(repo)
-    })
+    void moveProjectToGroup(repo.id, null)
   }, [moveProjectToGroup, repo])
 
   const handleAssignWorkspaceStatus = useCallback(
@@ -698,11 +628,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       // Why: outside the workspace board (e.g. the sidebar list) status changes
       // are local-only; Linear sync is scoped to board moves like drag-and-drop.
       void Promise.all(
-        activeContextWorktrees
-          .filter((item) => getWorkspaceStatus(item, workspaceStatuses) !== status)
-          .map((item) =>
-            updateWorktreeMeta(getContextMenuWorktreeMetaId(item), { workspaceStatus: status })
-          )
+        plan.localWriteIds.map((id) => updateWorktreeMeta(id, { workspaceStatus: status }))
       )
     },
     [
@@ -720,7 +646,6 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       // Why: the same workspace ID can exist under two hosts. Naming the owner
       // keeps the dialog on this row instead of the ambiguous lookup.
       repoId: worktree.repoId,
-      executionHostId: normalizeExecutionHostId(worktree.hostId),
       currentDisplayName: worktree.displayName,
       currentIssue: worktree.linkedIssue,
       currentPR: worktree.linkedPR,
@@ -730,7 +655,6 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   }, [
     worktree.id,
     worktree.repoId,
-    worktree.hostId,
     worktree.displayName,
     worktree.linkedIssue,
     worktree.linkedPR,
@@ -758,58 +682,30 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   }, [sleepWorktreesAfterMenuClose, subtreeSleepableWorktrees])
 
   const handleDelete = useCallback(() => {
-    // Folder mode handled inline because it routes to a different modal;
-    // standard delete delegates to the shared runWorktreeDelete helper.
     const restoreSidebarPosition = preserveDeleteSiblingPosition(scopeRef.current)
     scopeRef.current
       ?.closest('[data-worktree-sidebar]')
       ?.dispatchEvent(new Event(VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT))
-    setMenuOpenState(false)
-    // Why: Delete can remove the active row and remount the sidebar. Run it
-    // after menu close for the same reason as Sleep above.
-    window.setTimeout(() => {
-      if (isMultiContext) {
-        runWorktreeBatchDelete(batchDeleteWorktrees.map((item) => item.id))
-        restoreSidebarPosition()
-        return
-      }
-      if (folderWorkspaceId) {
-        const deleteOwner = getFolderWorkspaceContextMenuDeleteOwner({ hostId: worktree.hostId })
-        void deleteFolderWorkspace(folderWorkspaceId, deleteOwner).then((deleted) => {
-          const state = useAppStore.getState()
-          if (
-            deleted &&
-            shouldClearActiveFolderWorkspaceAfterDelete({
-              activeWorktreeId: state.activeWorktreeId,
-              activeOwnerHostId: state.activeWorkspaceExecutionHostId,
-              deletedFolderWorkspaceId: folderWorkspaceId,
-              deletedOwnerHostId: deleteOwner?.ownerHostId,
-              sameIdWorkspaceStillExists: state.folderWorkspaces.some(
-                (workspace) => workspace.id === folderWorkspaceId
-              )
-            })
-          ) {
-            setActiveWorktree(null)
+    const intent: WorktreeContextMenuDeleteIntent = isMultiContext
+      ? {
+          kind: 'batch',
+          worktrees: batchDeleteWorktrees.map(({ id, instanceId }) => ({ id, instanceId }))
+        }
+      : folderWorkspaceId
+        ? { kind: 'folder', folderWorkspaceId }
+        : {
+            kind: 'worktree',
+            worktree: { id: worktree.id, instanceId: worktree.instanceId }
           }
-        })
-        restoreSidebarPosition()
-        return
-      }
-      // Why delegate to runWorktreeDelete: keeps the delete-vs-project-removal
-      // decision tree (and its rationale) in one place shared with command
-      // surfaces and the memory popover's inline Delete action.
-      runWorktreeDelete(worktree.id)
-      restoreSidebarPosition()
-    }, 50)
+    deferWorktreeContextMenuDeleteIntent(intent, restoreSidebarPosition)
+    setMenuOpenState(false)
   }, [
     batchDeleteWorktrees,
-    deleteFolderWorkspace,
     folderWorkspaceId,
     isMultiContext,
-    setActiveWorktree,
     setMenuOpenState,
-    worktree.hostId,
-    worktree.id
+    worktree.id,
+    worktree.instanceId
   ])
 
   const handleOpenParent = useCallback(() => {
@@ -864,8 +760,9 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   )
 
   const handleRemoveParentLink = useCallback(() => {
-    void Promise.all(
-      activeContextWorktrees.map((item) => updateWorktreeLineage(item.id, { noParent: true }))
+    void unnestWorktrees(
+      activeContextWorktrees.map((item) => item.id),
+      updateWorktreeLineage
     )
   }, [activeContextWorktrees, updateWorktreeLineage])
 
@@ -927,8 +824,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
         contextMenuOpenedAtRef.current = Date.now()
         window.dispatchEvent(new Event(CLOSE_ALL_CONTEXT_MENUS_EVENT))
         setDeveloperMenuRevealed(event.altKey)
-        const selectedContextWorktrees = onContextMenuSelect?.(event) ?? effectiveSelectedWorktrees
-        setContextWorktrees(resolveWorktreeContextMenuTargets(worktree, selectedContextWorktrees))
+        setContextWorktrees(onContextMenuSelect?.(event) ?? effectiveSelectedWorktrees)
         const bounds = event.currentTarget.getBoundingClientRect()
         setMenuPoint({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })
         setMenuOpenState(true)
@@ -1043,7 +939,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
                       'New group from project'
                     )}
                   </DropdownMenuItem>
-                  {projectGroupTargets && projectGroupTargets.projectGroups.length > 0 ? (
+                  {projectGroups.length > 0 ? (
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger disabled={isDeleting}>
                         <FolderInput className="size-3.5" />
@@ -1053,9 +949,9 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
                         )}
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent>
-                        {projectGroupTargets.projectGroups.map((group) => (
+                        {projectGroups.map((group) => (
                           <DropdownMenuItem
-                            key={getProjectGroupOwnerIdentity(group)}
+                            key={group.id}
                             disabled={repo.projectGroupId === group.id}
                             onSelect={() => handleMoveProjectToGroup(group.id)}
                           >

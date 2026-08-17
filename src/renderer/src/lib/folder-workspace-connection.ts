@@ -1,4 +1,6 @@
-import type { FolderWorkspace, ProjectGroup, Repo } from '../../../shared/types'
+import type { FolderWorkspace } from '../../../shared/folder-workspace-types'
+import type { ProjectGroup } from '../../../shared/project-group-types'
+import type { Repo } from '../../../shared/repo-types'
 import { isPathInsideOrEqual } from '../../../shared/cross-platform-path'
 import {
   buildProjectGroupOwnerIndex,
@@ -19,9 +21,9 @@ import {
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 
 export type FolderWorkspaceConnectionState = {
-  folderWorkspaces: FolderWorkspace[]
-  projectGroups: ProjectGroup[]
-  repos: Repo[]
+  folderWorkspaces: readonly FolderWorkspace[]
+  projectGroups: readonly ProjectGroup[]
+  repos: readonly Repo[]
   activeWorktreeId?: string | null
   activeWorkspaceExecutionHostId?: ExecutionHostId | null
 }

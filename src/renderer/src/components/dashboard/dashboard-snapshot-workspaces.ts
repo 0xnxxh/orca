@@ -1,19 +1,30 @@
 import type { AppState } from '@/store/types'
 import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-stream'
-import type {
-  DashboardCard,
-  DashboardCardHostKind,
-  DashboardCardWorkspaceKind
+import {
+  DASHBOARD_MAX_LABEL_LENGTH,
+  type DashboardCard,
+  type DashboardCardHostKind,
+  type DashboardCardWorkspaceKind
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
-import { getWorktreeExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
+import {
+  getWorktreeExecutionHostId,
+  parseExecutionHostId,
+  toRuntimeExecutionHostId,
+  toSshExecutionHostId,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import {
   buildProjectGroupOwnerIndex,
-  getFolderWorkspaceProjectGroupOwnerHostId,
-  getProjectGroupOwnerHostId
+  getProjectGroupOwnerHostId,
+  resolveProjectGroupOwner
 } from '../../../../shared/project-groups'
-import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../../../shared/folder-workspaces'
+import {
+  getFolderWorkspaceCatalogOwnerHostId,
+  resolveFolderWorkspaceProjectGroupWithLegacySsh
+} from '../../../../shared/folder-workspaces'
+import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
 import { folderWorkspaceKey, getProjectGroupSelectorKey } from '../../../../shared/workspace-scope'
@@ -26,10 +37,32 @@ export type ActiveDashboardWorkspace = {
   worktree: AppState['worktreesByRepo'][string][number] & { parentWorktreeId?: string | null }
   workspaceKind: DashboardCardWorkspaceKind
   remoteHostKind: Extract<DashboardCardHostKind, 'ssh' | 'remote'> | null
+  hostLabel?: string
 }
 
 type DashboardWorkspaceState = Pick<AppState, 'repos' | 'worktreesByRepo'> &
-  Partial<Pick<AppState, 'folderWorkspaces' | 'projectGroups'>>
+  Partial<
+    Pick<
+      AppState,
+      'folderWorkspaces' | 'projectGroups' | 'runtimeEnvironments' | 'settings' | 'sshTargetLabels'
+    >
+  >
+
+function buildHostLabelLookup(
+  state: DashboardWorkspaceState
+): ReadonlyMap<ExecutionHostId, string> {
+  const labels = new Map<ExecutionHostId, string>()
+  for (const [targetId, label] of state.sshTargetLabels ?? []) {
+    labels.set(toSshExecutionHostId(targetId), label)
+  }
+  for (const environment of state.runtimeEnvironments ?? []) {
+    labels.set(toRuntimeExecutionHostId(environment.id), environment.name)
+  }
+  for (const [hostId, label] of getHostDisplayLabelOverrides(state.settings)) {
+    labels.set(hostId, label)
+  }
+  return labels
+}
 
 function remoteHostKind(
   connectionId: string | null | undefined,
@@ -47,6 +80,20 @@ export function collectActiveDashboardWorkspaces(
 ): ActiveDashboardWorkspace[] {
   const workspaces: ActiveDashboardWorkspace[] = []
   const seenWorkspaceIds = new Set<string>()
+  let hostLabels: ReadonlyMap<ExecutionHostId, string> | null = null
+  const resolveHostLabel = (executionHostId: ExecutionHostId): string | undefined => {
+    const parsed = includeMapMetadata ? parseExecutionHostId(executionHostId) : null
+    if (parsed?.kind !== 'ssh' && parsed?.kind !== 'runtime') {
+      return undefined
+    }
+    hostLabels ??= buildHostLabelLookup(state)
+    const label =
+      hostLabels.get(executionHostId) ??
+      (parsed.kind === 'ssh' ? parsed.targetId : parsed.environmentId)
+    return label.length > DASHBOARD_MAX_LABEL_LENGTH
+      ? label.slice(0, DASHBOARD_MAX_LABEL_LENGTH)
+      : label
+  }
 
   for (const repo of state.repos ?? []) {
     for (const worktree of state.worktreesByRepo?.[repo.id] ?? []) {
@@ -54,6 +101,9 @@ export function collectActiveDashboardWorkspaces(
         continue
       }
       seenWorkspaceIds.add(worktree.id)
+      const workspaceHostLabel = includeMapMetadata
+        ? resolveHostLabel(getWorktreeExecutionHostId(worktree, repo))
+        : undefined
       workspaces.push({
         projectId: repo.id,
         projectName: repo.displayName,
@@ -63,33 +113,36 @@ export function collectActiveDashboardWorkspaces(
         workspaceKind: includeMapMetadata && isFolderRepo(repo) ? 'folder' : 'worktree',
         remoteHostKind: includeMapMetadata
           ? remoteHostKind(repo.connectionId, worktree.hostId ?? repo.executionHostId)
-          : null
+          : null,
+        ...(workspaceHostLabel ? { hostLabel: workspaceHostLabel } : {})
       })
     }
   }
 
   const projectGroupIndex = buildProjectGroupOwnerIndex(state.projectGroups ?? [])
+  const duplicateProjectGroupIds = new Set(
+    [...projectGroupIndex.byId].flatMap(([id, groups]) => (groups.length > 1 ? [id] : []))
+  )
   const folderOwnersById = new Map<string, Set<ExecutionHostId>>()
   for (const folderWorkspace of state.folderWorkspaces ?? []) {
-    const ownerHostId = getFolderWorkspaceProjectGroupOwnerHostId(
+    const ownerHostId = getFolderWorkspaceCatalogOwnerHostId(
       folderWorkspace,
-      projectGroupIndex
+      state.projectGroups ?? []
     )
     const owners = folderOwnersById.get(folderWorkspace.id) ?? new Set<ExecutionHostId>()
     owners.add(ownerHostId)
     folderOwnersById.set(folderWorkspace.id, owners)
   }
   for (const folderWorkspace of state.folderWorkspaces ?? []) {
-    const projectGroup = resolveFolderWorkspaceProjectGroupWithLegacySsh(
-      projectGroupIndex,
-      folderWorkspace
-    )
+    const projectGroup =
+      resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, folderWorkspace) ??
+      resolveProjectGroupOwner(projectGroupIndex, folderWorkspace.projectGroupId)
     if (!projectGroup) {
       continue
     }
-    const ownerHostId = getFolderWorkspaceProjectGroupOwnerHostId(
+    const ownerHostId = getFolderWorkspaceCatalogOwnerHostId(
       folderWorkspace,
-      projectGroupIndex
+      state.projectGroups ?? []
     )
     const worktree = {
       ...folderWorkspaceToWorktree(folderWorkspace),
@@ -101,11 +154,15 @@ export function collectActiveDashboardWorkspaces(
     if (folderWorkspace.isArchived || seenWorkspaceIds.has(worktree.id)) {
       continue
     }
+    const workspaceHostLabel = includeMapMetadata
+      ? resolveHostLabel(getWorktreeExecutionHostId(worktree, undefined))
+      : undefined
     workspaces.push({
-      projectId: `folder-workspace:${getProjectGroupSelectorKey(
-        projectGroup.id,
-        getProjectGroupOwnerHostId(projectGroup)
-      )}`,
+      projectId: `folder-workspace:${
+        duplicateProjectGroupIds.has(projectGroup.id)
+          ? getProjectGroupSelectorKey(projectGroup.id, getProjectGroupOwnerHostId(projectGroup))
+          : projectGroup.id
+      }`,
       projectName: projectGroup.name,
       repo: null,
       repoIcon: null,
@@ -116,7 +173,8 @@ export function collectActiveDashboardWorkspaces(
             folderWorkspace.connectionId ?? projectGroup.connectionId,
             worktree.hostId ?? projectGroup.executionHostId
           )
-        : null
+        : null,
+      ...(workspaceHostLabel ? { hostLabel: workspaceHostLabel } : {})
     })
   }
   return workspaces
@@ -149,10 +207,12 @@ export function dashboardCardMapWorkspaceMetadata(
   hostKind: DashboardCardHostKind
   executionHostId: ExecutionHostId
   workspaceKind: DashboardCardWorkspaceKind
+  hostLabel?: string
 } {
   return {
     hostKind: dashboardCardHostKind(workspace, ptyId, terminalInput, clientPlatform),
     executionHostId: getWorktreeExecutionHostId(workspace.worktree, workspace.repo ?? undefined),
-    workspaceKind: workspace.workspaceKind
+    workspaceKind: workspace.workspaceKind,
+    ...(workspace.hostLabel ? { hostLabel: workspace.hostLabel } : {})
   }
 }

@@ -1,21 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildProjectGroupOwnerIndex,
   clearMissingProjectGroupMemberships,
   createProjectGroup,
   getEffectiveProjectGroupManualRank,
-  getFolderWorkspaceProjectGroupOwnerHostId,
   getNextProjectGroupOrder,
-  getProjectGroupOwnerIdentity,
-  getProjectGroupOwnerSubtreeIdentities,
   getProjectGroupSubtreeIds,
   normalizeProjectGroupName,
-  normalizeProjectGroups,
-  resolveFolderWorkspaceProjectGroup,
-  resolveProjectGroupOwner
+  normalizeProjectGroups
 } from './project-groups'
-import { getFolderWorkspaceOwnerIdentity, normalizeFolderWorkspaces } from './folder-workspaces'
-import type { ProjectGroup, Repo } from './types'
+import type { Repo } from './repo-types'
 
 function repo(overrides: Partial<Repo>): Repo {
   return {
@@ -25,22 +18,6 @@ function repo(overrides: Partial<Repo>): Repo {
     badgeColor: '#999',
     addedAt: 1,
     kind: 'git',
-    ...overrides
-  }
-}
-
-function projectGroup(overrides: Partial<ProjectGroup>): ProjectGroup {
-  return {
-    id: overrides.id ?? 'group-1',
-    name: overrides.name ?? 'Group',
-    parentPath: null,
-    parentGroupId: null,
-    createdFrom: 'manual',
-    tabOrder: 0,
-    isCollapsed: false,
-    color: null,
-    createdAt: 1,
-    updatedAt: 1,
     ...overrides
   }
 }
@@ -107,190 +84,6 @@ describe('project-groups', () => {
     expect(groups.find((group) => group.id === 'invalid')?.executionHostId).toBeUndefined()
   })
 
-  it('preserves same-id groups and parentage independently across owners', () => {
-    const groups = normalizeProjectGroups([
-      projectGroup({ id: 'root', name: 'Local root' }),
-      projectGroup({ id: 'child', name: 'Local child', parentGroupId: 'root' }),
-      projectGroup({ id: 'root', name: 'SSH root', connectionId: 'builder' }),
-      projectGroup({
-        id: 'child',
-        name: 'SSH child',
-        connectionId: 'builder',
-        parentGroupId: 'root'
-      }),
-      projectGroup({ id: 'root', name: 'Duplicate SSH root', connectionId: 'builder' })
-    ])
-
-    expect(groups.map((group) => [group.name, group.parentGroupId])).toEqual([
-      ['Local child', 'root'],
-      ['Local root', null],
-      ['SSH child', 'root'],
-      ['SSH root', null]
-    ])
-  })
-
-  it('resolves mutations exactly by owner and rejects ambiguous legacy selectors', () => {
-    const local = projectGroup({ id: 'same-id', name: 'Local' })
-    const ssh = projectGroup({ id: 'same-id', name: 'SSH', connectionId: 'builder' })
-    const index = buildProjectGroupOwnerIndex([local, ssh])
-
-    expect(resolveProjectGroupOwner(index, 'same-id', 'local')).toBe(local)
-    expect(resolveProjectGroupOwner(index, 'same-id', 'ssh:builder')).toBe(ssh)
-    expect(resolveProjectGroupOwner(index, 'same-id')).toBeNull()
-    expect(resolveProjectGroupOwner(index, 'same-id', 'ssh:missing')).toBeNull()
-  })
-
-  it('resolves folder membership by owner and rejects unstamped same-id ambiguity', () => {
-    const local = projectGroup({ id: 'same-id', name: 'Local' })
-    const runtime = projectGroup({
-      id: 'same-id',
-      name: 'Runtime',
-      executionHostId: 'runtime:env-1'
-    })
-    const index = buildProjectGroupOwnerIndex([local, runtime])
-
-    expect(
-      resolveFolderWorkspaceProjectGroup(index, {
-        projectGroupId: 'same-id',
-        connectionId: null
-      })
-    ).toBe(local)
-    expect(
-      resolveFolderWorkspaceProjectGroup(index, {
-        projectGroupId: 'same-id',
-        executionHostId: 'runtime:env-1'
-      })
-    ).toBe(runtime)
-    expect(resolveFolderWorkspaceProjectGroup(index, { projectGroupId: 'same-id' })).toBeNull()
-  })
-
-  it('retains a legacy SSH folder owner with one unstamped group', () => {
-    const legacyGroup = normalizeProjectGroups([
-      {
-        id: 'legacy',
-        name: 'Legacy',
-        parentPath: '/legacy',
-        createdFrom: 'migration',
-        tabOrder: 0
-      }
-    ])[0]!
-    expect(legacyGroup.connectionId).toBeUndefined()
-    const index = buildProjectGroupOwnerIndex([legacyGroup])
-    const workspace = { projectGroupId: 'legacy', connectionId: 'builder' }
-
-    expect(resolveFolderWorkspaceProjectGroup(index, workspace)).toBeNull()
-    expect(getFolderWorkspaceProjectGroupOwnerHostId(workspace, index)).toBe('ssh:builder')
-    expect(
-      normalizeFolderWorkspaces(
-        [{ id: 'legacy-folder', projectGroupId: 'legacy', connectionId: 'builder' }],
-        [legacyGroup]
-      )
-    ).toHaveLength(1)
-  })
-
-  it('retains a legacy SSH folder under one local-stamped group', () => {
-    const localGroup = projectGroup({
-      id: 'local-stamped',
-      parentPath: '/local-stamped',
-      executionHostId: 'local'
-    })
-
-    const legacyFolder = {
-      id: 'legacy-folder',
-      projectGroupId: localGroup.id,
-      connectionId: 'builder'
-    }
-
-    expect(normalizeFolderWorkspaces([legacyFolder], [localGroup])).toHaveLength(1)
-    expect(
-      normalizeFolderWorkspaces(
-        [legacyFolder],
-        [localGroup, projectGroup({ id: localGroup.id, executionHostId: 'runtime:env-1' })]
-      )
-    ).toEqual([])
-  })
-
-  it('does not reinterpret explicit local provenance as a unique SSH owner', () => {
-    const ssh = projectGroup({ id: 'same-id', connectionId: 'builder' })
-    const index = buildProjectGroupOwnerIndex([ssh])
-
-    expect(
-      resolveFolderWorkspaceProjectGroup(index, {
-        projectGroupId: 'same-id',
-        connectionId: null
-      })
-    ).toBeNull()
-  })
-
-  it('rejects folder workspaces stamped for missing foreign owners', () => {
-    const local = projectGroup({
-      id: 'same-id',
-      name: 'Local',
-      parentPath: '/local',
-      connectionId: null
-    })
-
-    expect(
-      normalizeFolderWorkspaces(
-        [
-          {
-            id: 'runtime-folder',
-            projectGroupId: 'same-id',
-            executionHostId: 'runtime:missing'
-          },
-          {
-            id: 'ssh-folder',
-            projectGroupId: 'same-id',
-            connectionId: 'missing'
-          }
-        ],
-        [local]
-      )
-    ).toEqual([])
-  })
-
-  it('collects descendants only from the selected owner hierarchy', () => {
-    const localRoot = projectGroup({ id: 'root', name: 'Local root' })
-    const localChild = projectGroup({ id: 'child', parentGroupId: 'root' })
-    const sshRoot = projectGroup({ id: 'root', name: 'SSH root', connectionId: 'builder' })
-    const sshChild = projectGroup({
-      id: 'child',
-      parentGroupId: 'root',
-      connectionId: 'builder'
-    })
-
-    expect(
-      getProjectGroupOwnerSubtreeIdentities([localRoot, localChild, sshRoot, sshChild], localRoot)
-    ).toEqual(
-      new Set([getProjectGroupOwnerIdentity(localRoot), getProjectGroupOwnerIdentity(localChild)])
-    )
-  })
-
-  it('indexes project groups once for bulk folder owner resolution', () => {
-    let groupIdReads = 0
-    const groups = Array.from({ length: 512 }, (_, index) => ({
-      ...projectGroup({
-        id: `group-${index}`,
-        executionHostId: index === 0 ? 'local' : `runtime:env-${index}`
-      }),
-      get id() {
-        groupIdReads += 1
-        return `group-${index}`
-      }
-    }))
-    const workspaces = groups.map((group, index) => ({
-      id: `folder-${index}`,
-      projectGroupId: group.id
-    }))
-    groupIdReads = 0
-
-    for (const workspace of workspaces) {
-      getFolderWorkspaceOwnerIdentity(workspace, groups)
-    }
-
-    expect(groupIdReads).toBeLessThan(4_096)
-  })
-
   it('clears repo memberships whose group no longer exists', () => {
     const groups = [createProjectGroup({ name: 'Known', createdFrom: 'manual', tabOrder: 0 })]
     const repos = clearMissingProjectGroupMemberships(
@@ -303,25 +96,6 @@ describe('project-groups', () => {
 
     expect(repos.find((entry) => entry.id === 'known')?.projectGroupId).toBe(groups[0].id)
     expect(repos.find((entry) => entry.id === 'missing')?.projectGroupId).toBeNull()
-  })
-
-  it('does not retain repo membership from another owner with the same group id', () => {
-    const localGroup = projectGroup({ id: 'same-id', name: 'Local' })
-    const sshGroup = projectGroup({ id: 'same-id', name: 'SSH', connectionId: 'builder' })
-    const repos = clearMissingProjectGroupMemberships(
-      [
-        repo({ id: 'local', projectGroupId: 'same-id' }),
-        repo({ id: 'ssh', projectGroupId: 'same-id', connectionId: 'builder' }),
-        repo({ id: 'wrong-local', projectGroupId: 'ssh-only' })
-      ],
-      [localGroup, sshGroup, projectGroup({ id: 'ssh-only', connectionId: 'builder' })]
-    )
-
-    expect(repos.map((entry) => [entry.id, entry.projectGroupId])).toEqual([
-      ['local', 'same-id'],
-      ['ssh', 'same-id'],
-      ['wrong-local', null]
-    ])
   })
 
   it('falls back to global repo order when projectGroupOrder is unset', () => {

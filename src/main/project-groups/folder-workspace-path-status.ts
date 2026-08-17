@@ -1,6 +1,7 @@
 import { stat as statLocalPath } from 'node:fs/promises'
 import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
 import type { FolderWorkspacePathStatus } from '../../shared/folder-workspace-path-status'
+import type { FolderWorkspace } from '../../shared/folder-workspace-types'
 import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
@@ -10,7 +11,8 @@ import {
   resolveProjectGroupOwner
 } from '../../shared/project-groups'
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
-import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
+import type { ProjectGroup } from '../../shared/project-group-types'
+import type { Repo } from '../../shared/repo-types'
 import {
   type OwnerQualifiedFolderWorkspacePathStatusRequest,
   resolveFolderWorkspaceCatalogOwnerHostIdFromIndex,
