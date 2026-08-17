@@ -18550,6 +18550,7 @@ export class OrcaRuntimeService {
     if (this.getAgentPromptActivity(handle, ptyId).status === 'permission') {
       throw new Error('agent_prompt_blocked')
     }
+    this.providerVisibleStateByPtyId.delete(ptyId)
     const renderGate = this.createAgentPromptRenderGate(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false

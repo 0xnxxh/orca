@@ -65,7 +65,26 @@ export async function verifyAgentPromptSubmission(
   throwIfAgentPromptAborted(options.signal)
   const retry = await options.retrySubmit(activityAfterProof)
   if (retry === 'activity') {
-    return { retried: false }
+    const activityBeforeFinalProof = options.readActivity()
+    assertSamePromptGeneration(options.baseline, activityBeforeFinalProof)
+    assertPromptNotBlocked(activityBeforeFinalProof)
+    if (activityBeforeFinalProof.status === 'working') {
+      return { retried: false }
+    }
+    const finalTextBeforeCursor = await options.readTextBeforeCursor()
+    const activityAfterFinalProof = options.readActivity()
+    assertSamePromptGeneration(options.baseline, activityAfterFinalProof)
+    assertPromptNotBlocked(activityAfterFinalProof)
+    if (activityAfterFinalProof.status === 'working') {
+      return { retried: false }
+    }
+    if (finalTextBeforeCursor === null) {
+      throw new Error('agent_prompt_stalled')
+    }
+    if (!textBeforeCursorEndsWithPrompt(finalTextBeforeCursor, options.prompt)) {
+      return { retried: false }
+    }
+    throw new Error('agent_prompt_stalled')
   }
   const retryEffect = await waitForAgentPromptEffect(
     activityAfterProof,

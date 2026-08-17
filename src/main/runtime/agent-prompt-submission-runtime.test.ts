@@ -214,6 +214,64 @@ describe('agent prompt submission runtime', () => {
     expect(writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
+  it('does not reuse a provider composer snapshot captured before the current paste', async () => {
+    vi.useFakeTimers()
+    const runtime = new OrcaRuntimeService(makeStore() as never)
+    const writes: string[] = []
+    const serializeProviderBuffer = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: '\x1b[2J\x1b[H› review this',
+        cols: 80,
+        rows: 24,
+        seq: 900,
+        source: 'headless' as const,
+        alternateScreen: true
+      })
+      .mockResolvedValueOnce({
+        data: '\x1b[2J\x1b[H› ',
+        cols: 80,
+        rows: 24,
+        seq: 900,
+        source: 'headless' as const,
+        alternateScreen: true
+      })
+    runtime.setPtyController({
+      spawn: vi.fn().mockResolvedValue({ id: 'pty-prompt' }),
+      write: (_ptyId, data) => {
+        writes.push(data)
+        return true
+      },
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    const terminal = await runtime.createTerminal(`path:${WORKTREE_PATH}`, {
+      launchAgent: 'aider'
+    })
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-prompt',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const internal = runtime as unknown as {
+      providerSnapshotPreferredPtys: Set<string>
+      readVisibleTerminalState: (ptyId: string) => Promise<unknown>
+    }
+    internal.providerSnapshotPreferredPtys.add('pty-prompt')
+    await internal.readVisibleTerminalState('pty-prompt')
+    expect(serializeProviderBuffer).toHaveBeenCalledOnce()
+
+    const submission = runtime.sendTerminalAgentPrompt(terminal.handle, 'review this')
+    const rejected = expect(submission).rejects.toThrow('agent_prompt_stalled')
+    await vi.runAllTimersAsync()
+
+    await rejected
+    expect(serializeProviderBuffer).toHaveBeenCalledTimes(2)
+    expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+  })
+
   it('blocks a retry when permission appears after the first Enter', async () => {
     vi.useFakeTimers()
     const { runtime, handle, writes } = await createPromptRuntime((runtime, data) => {

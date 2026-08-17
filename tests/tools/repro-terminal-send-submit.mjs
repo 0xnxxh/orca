@@ -231,6 +231,7 @@ async function fakeAgentMain() {
   const marker = argValue('marker')
   const timeoutMs = parsePositiveInteger('timeout-ms', DEFAULT_TIMEOUT_MS)
   const pasteFramingRequired = !hasFlag('allow-unframed-paste')
+  const swallowFirstEnter = hasFlag('swallow-first-enter')
   if (!reportPath || !marker) {
     throw new Error('--fake-agent requires --report and --marker')
   }
@@ -243,6 +244,8 @@ async function fakeAgentMain() {
   let input = ''
   let countedCarriages = 0
   let prematureEnters = 0
+  let receivedEnters = 0
+  let swallowedEnters = 0
   let composerReady = false
   let renderScheduled = false
   let finished = false
@@ -257,6 +260,8 @@ async function fakeAgentMain() {
       contractOk: prematureEnters === 0 && (!pasteFramingRequired || hasBracketedPasteFrame),
       submitted: true,
       prematureEnters,
+      receivedEnters,
+      swallowedEnters,
       pasteFramingRequired,
       hasBracketedPasteFrame,
       markerReceived: input.includes(marker),
@@ -274,13 +279,25 @@ async function fakeAgentMain() {
       renderScheduled = true
       setTimeout(() => {
         composerReady = true
-        process.stdout.write('\x1b[?25hcomposer rendered')
+        const pasteStart = input.indexOf(BEGIN)
+        const pasteEnd = input.indexOf(END, pasteStart + BEGIN.length)
+        const composer =
+          pasteStart !== -1 && pasteEnd !== -1
+            ? input.slice(pasteStart + BEGIN.length, pasteEnd)
+            : input
+        process.stdout.write(`\x1b[?25h\x1b[2J\x1b[H› ${composer}`)
       }, COMPOSER_RENDER_MS)
     }
     let nextCarriage = input.indexOf('\r', countedCarriages)
     while (nextCarriage !== -1) {
       countedCarriages = nextCarriage + 1
       if (composerReady) {
+        receivedEnters += 1
+        if (swallowFirstEnter && swallowedEnters === 0) {
+          swallowedEnters += 1
+          nextCarriage = input.indexOf('\r', countedCarriages)
+          continue
+        }
         clearTimeout(timeout)
         void finish()
         return
