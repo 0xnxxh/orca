@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { realpathSync, readFileSync, writeFileSync } from 'node:fs'
+import { realpathSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import type * as NodeFs from 'node:fs'
 import { buildCodexResetCreditExpectedScope } from '../../shared/codex-reset-credit-scope'
 import {
@@ -117,6 +117,66 @@ describe('Codex reset-credit managed-home ownership', () => {
     expect(fixture.store.updateSettings).not.toHaveBeenCalled()
     expect(fsFaults.mkdirCalls()).toBe(0)
   })
+
+  it.each([
+    {
+      homeState: 'indeterminate',
+      expectedError: 'temporarily locked',
+      makeHomeUnsafe: (managedHomePath: string) =>
+        fsFaults.hold(join(realpathSync(managedHomePath), '.orca-managed-home'))
+    },
+    {
+      homeState: 'proven untrusted',
+      expectedError: 'ownership marker does not match',
+      makeHomeUnsafe: (managedHomePath: string) =>
+        writeFileSync(join(managedHomePath, '.orca-managed-home'), 'someone-else\n', 'utf-8')
+    }
+  ])(
+    'rechecks ownership for a durable providerPending retry when the home is $homeState',
+    async ({ expectedError, makeHomeUnsafe }) => {
+      const fixture = await createFixture()
+      const pendingLedger = {
+        version: 1 as const,
+        attempts: [
+          {
+            idempotencyKey: fixture.idempotencyKey,
+            expectedScope: fixture.expectedScope,
+            state: 'providerPending' as const
+          }
+        ]
+      }
+      fixture.store.replaceCodexResetCreditAttemptLedgerAndFlush(pendingLedger)
+      makeHomeUnsafe(fixture.managedHomePath)
+
+      const settingsBefore = structuredClone(fixture.store.getSettings())
+      const authPath = join(fixture.managedHomePath, 'auth.json')
+      const markerPath = join(fixture.managedHomePath, '.orca-managed-home')
+      const authBefore = readFileSync(authPath, 'utf-8')
+      const markerBefore = readFileSync(markerPath, 'utf-8')
+      const directoryEntriesBefore = readdirSync(fixture.managedHomePath).sort()
+      fixture.consume.mockClear()
+      fixture.store.getCodexResetCreditAttemptLedger.mockClear()
+      fixture.store.replaceCodexResetCreditAttemptLedgerAndFlush.mockClear()
+      fixture.store.updateSettings.mockClear()
+      fsFaults.resetMkdirCalls()
+
+      const restarted = fixture.createService()
+      await expect(
+        restarted.consumeRateLimitResetCredit(fixture.idempotencyKey, fixture.expectedScope)
+      ).rejects.toThrow(expectedError)
+
+      expect(fixture.store.getCodexResetCreditAttemptLedger).toHaveBeenCalledOnce()
+      expect(fixture.store.getCodexResetCreditAttemptLedger()).toEqual(pendingLedger)
+      expect(fixture.consume).not.toHaveBeenCalled()
+      expect(fixture.store.replaceCodexResetCreditAttemptLedgerAndFlush).not.toHaveBeenCalled()
+      expect(fixture.store.updateSettings).not.toHaveBeenCalled()
+      expect(fixture.store.getSettings()).toEqual(settingsBefore)
+      expect(fsFaults.mkdirCalls()).toBe(0)
+      expect(readFileSync(authPath, 'utf-8')).toBe(authBefore)
+      expect(readFileSync(markerPath, 'utf-8')).toBe(markerBefore)
+      expect(readdirSync(fixture.managedHomePath).sort()).toEqual(directoryEntriesBefore)
+    }
+  )
 
   it('replays a durable settled outcome without reading a locked managed home', async () => {
     const fixture = await createFixture()
