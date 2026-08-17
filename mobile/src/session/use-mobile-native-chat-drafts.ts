@@ -47,6 +47,10 @@ export function useMobileNativeChatDrafts(args: {
    *  transcript still belongs to the previously active tab), so it cannot be
    *  trusted to decline or retire the seed. */
   transcriptLoading?: boolean
+  /** `messages` is this session's own settled history — so an empty one really
+   *  is an empty conversation, not a read that failed or never ran. Only then
+   *  does a send's captured tail describe a real boundary. */
+  transcriptSettled?: boolean
 }): {
   composerText: string
   setComposerText: Dispatch<SetStateAction<string>>
@@ -80,7 +84,8 @@ export function useMobileNativeChatDrafts(args: {
     launchDraft,
     launchDraftCreatedAt,
     chatActive = true,
-    transcriptLoading
+    transcriptLoading,
+    transcriptSettled = !transcriptLoading
   } = args
   const draftKey = mobileNativeChatScopeKey(hostId, worktreeId, tabId)
   const pendingKey = draftKey && sessionId ? `${draftKey}\0${sessionId}` : null
@@ -139,12 +144,13 @@ export function useMobileNativeChatDrafts(args: {
         normalizedText,
         baselineOccurrences: countUserTextOccurrences(messagesRef.current, normalizedText),
         baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null,
-        // A hydrating transcript is not yet this session's, so this baseline is
-        // a placeholder the first authoritative read rebases.
-        baselineResolved: !transcriptLoading
+        // Only a settled read makes this a boundary. Anything else — hydrating,
+        // or a read that failed — hands back an empty list that reads as "the
+        // conversation was empty", which lets any row claim this send later.
+        baselineResolved: transcriptSettled
       }
     },
-    [draftKey, pendingKey, transcriptLoading]
+    [draftKey, pendingKey, transcriptSettled]
   )
 
   // Why: over relay the send RPC can take seconds (or lose only its ack), and a
@@ -294,11 +300,11 @@ export function useMobileNativeChatDrafts(args: {
     }
     setPendingBySession((previous) => {
       const current = previous[pendingKey] ?? []
-      // Rebase before retiring: a hydration-time send has to own a real boundary
-      // before any row can be judged against it.
-      const rebased = transcriptLoading
-        ? current
-        : rebaseMobileNativeChatPendingBaselines(messages, current)
+      // Rebase before retiring: a send captured before the history was known has
+      // to own a real boundary before any row can be judged against it.
+      const rebased = transcriptSettled
+        ? rebaseMobileNativeChatPendingBaselines(messages, current)
+        : current
       const next = retireLandedMobileNativeChatPending(messages, rebased, landedImagePendingIds)
       if (next === current) {
         return previous
@@ -310,7 +316,7 @@ export function useMobileNativeChatDrafts(args: {
       delete remaining[pendingKey]
       return remaining
     })
-  }, [messages, pending, pendingKey, transcriptLoading])
+  }, [messages, pending, pendingKey, transcriptSettled])
 
   return {
     composerText: draftKey ? (drafts[draftKey] ?? '') : '',

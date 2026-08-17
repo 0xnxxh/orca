@@ -41,15 +41,16 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
     expect(rebaseMobileNativeChatPendingBaselines(history, pending)).toBe(pending)
   })
 
-  it('pins an unresolved send to the loaded tail and past the rows it never saw', () => {
+  it('gives an unresolved send the loaded tail as its glue boundary', () => {
     expect(
       rebaseMobileNativeChatPendingBaselines(history, [unresolved('p1', 'run the tests')])
     ).toEqual([
       {
         id: 'p1',
         text: 'run the tests',
-        // The one row already in history is not this send's echo; it waits for the second.
-        expectedOccurrence: 2,
+        // NOT recounted against this read: the read may already carry this send's
+        // own echo, and counting it as history would strand the bubble forever.
+        expectedOccurrence: 1,
         baselineTailMessageId: 'm2',
         baselineResolved: true
       }
@@ -68,23 +69,16 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
     ])
   })
 
-  it('gives identical queued sends consecutive ordinals', () => {
+  it('keeps the ordinals the queue already assigned', () => {
     expect(
       rebaseMobileNativeChatPendingBaselines(history, [
-        unresolved('p1', 'run the tests'),
-        unresolved('p2', 'run the tests')
+        unresolved('p1', 'run the tests', 1),
+        unresolved('p2', 'run the tests', 2)
       ]).map((item) => item.expectedOccurrence)
-    ).toEqual([2, 3])
+    ).toEqual([1, 2])
   })
 
-  it('normalizes whitespace when counting a send against the loaded rows', () => {
-    expect(
-      rebaseMobileNativeChatPendingBaselines(history, [unresolved('p1', '  run   the tests \n')])[0]
-        ?.expectedOccurrence
-    ).toBe(2)
-  })
-
-  it('leaves already-resolved neighbours untouched but still counts them', () => {
+  it('leaves already-resolved neighbours untouched', () => {
     const resolved: MobileNativeChatPendingMessage = {
       id: 'p1',
       text: 'run the tests',
@@ -94,19 +88,28 @@ describe('rebaseMobileNativeChatPendingBaselines', () => {
     }
     const rebased = rebaseMobileNativeChatPendingBaselines(history, [
       resolved,
-      unresolved('p2', 'run the tests')
+      unresolved('p2', 'run the tests', 2)
     ])
     expect(rebased[0]).toBe(resolved)
-    expect(rebased[1]?.expectedOccurrence).toBe(3)
+    expect(rebased[1]).toEqual({
+      id: 'p2',
+      text: 'run the tests',
+      expectedOccurrence: 2,
+      baselineTailMessageId: 'm2',
+      baselineResolved: true
+    })
   })
 
-  it('ordinals caption-less image echoes among themselves, not against text rows', () => {
+  // An image echo counts image turns AFTER its tail, so moving the tail onto this
+  // read would discard an echo the read already carries.
+  it('keeps a caption-less image echo on its captured tail', () => {
     const images = { ...unresolved('p1', ''), images: ['file:///a.png'] }
     const rebased = rebaseMobileNativeChatPendingBaselines(history, [
       images,
-      { ...unresolved('p2', ''), images: ['file:///b.png'] }
+      { ...unresolved('p2', '', 2), images: ['file:///b.png'] }
     ])
     expect(rebased.map((item) => item.expectedOccurrence)).toEqual([1, 2])
-    expect(rebased.map((item) => item.baselineTailMessageId)).toEqual(['m2', 'm2'])
+    expect(rebased.map((item) => item.baselineTailMessageId)).toEqual([null, null])
+    expect(rebased.every((item) => item.baselineResolved)).toBe(true)
   })
 })

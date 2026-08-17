@@ -52,10 +52,12 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
 
   function Harness({
     messages,
-    transcriptLoading = false
+    transcriptLoading = false,
+    transcriptSettled = !transcriptLoading
   }: {
     messages: NativeChatMessage[]
     transcriptLoading?: boolean
+    transcriptSettled?: boolean
   }): null {
     state = useMobileNativeChatDrafts({
       hostId: 'host',
@@ -63,19 +65,30 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
       tabId: 'tab',
       sessionId: 'session',
       messages,
-      transcriptLoading
+      transcriptLoading,
+      transcriptSettled
     })
     return null
   }
 
-  async function mount(messages: NativeChatMessage[], transcriptLoading = false): Promise<void> {
+  async function mount(
+    messages: NativeChatMessage[],
+    transcriptLoading = false,
+    transcriptSettled = !transcriptLoading
+  ): Promise<void> {
     await act(async () => {
-      renderer = create(createElement(Harness, { messages, transcriptLoading }))
+      renderer = create(createElement(Harness, { messages, transcriptLoading, transcriptSettled }))
     })
   }
 
-  async function update(messages: NativeChatMessage[], transcriptLoading = false): Promise<void> {
-    await act(async () => renderer?.update(createElement(Harness, { messages, transcriptLoading })))
+  async function update(
+    messages: NativeChatMessage[],
+    transcriptLoading = false,
+    transcriptSettled = !transcriptLoading
+  ): Promise<void> {
+    await act(async () =>
+      renderer?.update(createElement(Harness, { messages, transcriptLoading, transcriptSettled }))
+    )
   }
 
   function send(text: string): void {
@@ -213,17 +226,71 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
       expect(state?.pending).toEqual([])
     })
 
-    it('does not retire a hydration-time send against history it never saw', async () => {
+    // The read that resolves a hydration-time send can already contain that
+    // send's own echo — a re-subscribe returns whatever exists now — and nothing
+    // local tells that echo from an identical older prompt. Claiming the row is
+    // the safe direction: being wrong costs one round trip of invisibility,
+    // while holding costs a queued bubble that never clears and a run that can
+    // never glue again.
+    it('retires a hydration-time send whose echo arrives with the read', async () => {
       await mount([], true)
       act(() => send('run the tests'))
 
-      // The read lands carrying an older identical prompt: not this send's echo.
+      const echoed = [userTurn('m1', 'run the tests', 1000), assistantTurn('m2', 'passed', 1100)]
+      await update(echoed)
+      expect(state?.pending).toEqual([])
+    })
+
+    // The same read seen one reconnect later: the send left, the agent echoed it,
+    // and only then did the first authoritative read land.
+    it('retires a hydration-time send after a reconnect delivered the read late', async () => {
+      await mount([], true)
+      act(() => send('run the tests'))
+      // Still loading: the first read never arrived before the drop.
+      await update([], true)
+
+      const afterReconnect = [
+        userTurn('m1', 'run the tests', 5000),
+        assistantTurn('m2', 'ok', 5100)
+      ]
+      await update(afterReconnect)
+      expect(state?.pending).toEqual([])
+
+      // Nothing later resurrects it, and the run stays glue-capable.
+      await update([...afterReconnect, assistantTurn('m3', 'all green', 6000)])
+      expect(state?.pending).toEqual([])
+    })
+  })
+
+  // A read that failed is not a boundary: `messages` is empty because the history
+  // is unknown, not because the conversation is. Without that distinction the
+  // empty list reads as "the transcript was empty", and any row the successful
+  // read finally brings can claim these sends.
+  describe('sends issued before any read settled', () => {
+    it('keeps both bubbles when the late read carries only an older glue-alike', async () => {
+      await mount([], false, false)
+      rapidSend('fix the', 'bug')
+
       const olderIdentical = [
-        userTurn('m1', 'run the tests', 1000),
-        assistantTurn('m2', 'passed', 1100)
+        userTurn('m1', 'fix the bug', 1000),
+        assistantTurn('m2', 'fixed', 1100)
       ]
       await update(olderIdentical)
-      expect(pendingTexts()).toEqual(['run the tests'])
+      expect(pendingTexts()).toEqual(['fix the', 'bug'])
+      expect(renderedPendingTexts(olderIdentical, state)).toEqual(['fix the', 'bug'])
+    })
+
+    it('still retires them once their own glued row lands', async () => {
+      await mount([], false, false)
+      rapidSend('fix the', 'bug')
+      const olderIdentical = [
+        userTurn('m1', 'fix the bug', 1000),
+        assistantTurn('m2', 'fixed', 1100)
+      ]
+      await update(olderIdentical)
+
+      await update([...olderIdentical, userTurn('m3', 'fix the bug', 5000)])
+      expect(state?.pending).toEqual([])
     })
   })
 })
