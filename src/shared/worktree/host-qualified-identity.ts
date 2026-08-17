@@ -7,7 +7,13 @@ import type { Worktree } from './types'
  * Printable on purpose: these identities become React keys and DOM attribute
  * values, and HTML attribute parsing replaces U+0000 with U+FFFD — a NUL
  * separator would not survive the round trip an anchor comparison depends on.
- * The host comes first so the variable-length id absorbs any `|` of its own.
+ *
+ * `|` is safe as a delimiter because an execution host id cannot contain one:
+ * it is `local`, or a fixed `ssh:`/`runtime:` prefix followed by an
+ * `encodeURIComponent`-escaped part (see `toSshExecutionHostId`), which encodes
+ * `|` as `%7C`. Putting the host first therefore makes the split unambiguous
+ * even though the workspace id — a repo id and a filesystem path — may contain
+ * anything.
  */
 const HOST_SEPARATOR = '|'
 
@@ -35,9 +41,10 @@ export function composeWorktreeHostIdentity(
 /**
  * The workspace id back out of an identity.
  *
- * Host-first ordering makes this exact: the host cannot contain the separator,
- * so everything after the first one is the id — which lets an index recover the
- * id without re-reading it off the row.
+ * Exact, not best-effort: the host cannot contain the separator (see above), so
+ * everything after the first one is the id. That lets an index recover the id
+ * from its own key instead of re-reading `worktree.id`, which matters because
+ * retained selectors assert that getter is read exactly once per snapshot.
  */
 export function getWorktreeIdFromHostIdentity(identity: string): string {
   return identity.slice(identity.indexOf(HOST_SEPARATOR) + 1)
