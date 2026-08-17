@@ -69,7 +69,7 @@ Several signals currently report the first as the second. Until the fixes below 
 
 ## Known gaps
 
-Fixed (PRs open): client-git fallback in `src/main/github/client.ts` (#14945), repo-icon local filesystem probe (#14947), GHES auth cache key omitting the connection (#14948).
+Fixes proposed in open PRs: client-git fallback in `src/main/github/client.ts` (#14945), repo-icon local filesystem probe (#14947), GHES auth cache key omitting the connection (#14948).
 
 Outstanding, roughly by impact on reaching a wrong conclusion:
 
