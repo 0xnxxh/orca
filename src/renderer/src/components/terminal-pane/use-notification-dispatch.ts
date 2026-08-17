@@ -4,6 +4,7 @@ import { resolveCommittedTitleAgentType } from '@/lib/pane-agent-evidence'
 import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { playDesktopNotificationSound } from '@/lib/desktop-notification-sound'
 import { showBlockedNotificationFallbackToast } from '@/lib/blocked-notification-fallback'
+import { recordAnnouncedAgentNotificationId } from '@/lib/announced-agent-notification-ids'
 import { buildAgentNotificationId } from '../../../../shared/agent-notification-id'
 import { resolveCompatibleAgentTypeForOwner } from '../../../../shared/agent-title-owner'
 import {
@@ -213,6 +214,12 @@ export function dispatchTerminalNotification(
           stateStartedAt: agentNotificationStateStartedAt
         })
       : null
+  if (notificationId && event.paneKey) {
+    // Why: acknowledging the pane must dismiss what was announced. A background
+    // turn's id is the turn stamp, which the still-working status row no longer
+    // carries, so it cannot be reconstructed from the store later.
+    recordAnnouncedAgentNotificationId(event.paneKey, notificationId)
+  }
 
   void window.api.notifications
     .dispatch({
