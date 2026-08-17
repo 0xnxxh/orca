@@ -71,7 +71,7 @@ describe('requestGitStreamable reassembly cap', () => {
 
   it('admits a stream declared exactly at the cap', async () => {
     const payload = Buffer.from(JSON.stringify({ kind: 'text' }), 'utf-8')
-    const { mux, chunkHandlers } = createFakeMux({
+    const { mux, notify } = createFakeMux({
       streamId: 8,
       totalBytes: payload.length,
       chunkCount: 1
@@ -85,8 +85,51 @@ describe('requestGitStreamable reassembly cap', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    // The marker passed the gate: a chunk subscriber is live and nothing rejected.
-    expect(chunkHandlers).toHaveLength(1)
+    // The marker passed the gate: the stream was not cancelled and nothing rejected.
+    expect(notify).not.toHaveBeenCalledWith('git.cancelResponseStream', expect.anything())
     expect(settled).not.toHaveBeenCalled()
+  })
+
+  // Why: the marker gate only bounds the declared size; a relay that declares small and
+  // then streams forever (never sending responseEnd) must be cut off mid-flight.
+  it('rejects a relay that streams past its declared size', async () => {
+    const chunk = Buffer.from('a'.repeat(8), 'utf-8')
+    const { mux, chunkHandlers, notify } = createFakeMux({
+      streamId: 9,
+      totalBytes: chunk.length,
+      chunkCount: 1
+    })
+
+    const result = requestGitStreamable(mux, 'git.diff', { cwd: '/repo' })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const feed = chunkHandlers[0]
+    feed({ streamId: 9, seq: 0, data: chunk.toString('base64') })
+    feed({ streamId: 9, seq: 1, data: chunk.toString('base64') })
+
+    await expect(result).rejects.toThrow(/sent more chunks than declared/)
+    expect(notify).toHaveBeenCalledWith('git.cancelResponseStream', { streamId: 9 })
+  })
+
+  it('rejects a chunk that overruns the declared byte total', async () => {
+    const { mux, chunkHandlers, notify } = createFakeMux({
+      streamId: 10,
+      totalBytes: 4,
+      chunkCount: 2
+    })
+
+    const result = requestGitStreamable(mux, 'git.diff', { cwd: '/repo' })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    chunkHandlers[0]({
+      streamId: 10,
+      seq: 0,
+      data: Buffer.from('abcdefgh', 'utf-8').toString('base64')
+    })
+
+    await expect(result).rejects.toThrow(/overran declared size: 8\/4 bytes/)
+    expect(notify).toHaveBeenCalledWith('git.cancelResponseStream', { streamId: 10 })
   })
 })

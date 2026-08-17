@@ -156,6 +156,25 @@ export function requestGitStreamable(
         return
       }
       const decoded = Buffer.from(data, 'base64')
+      // Why: without this the declared size is advisory — a relay that never sends
+      // responseEnd could stream past it forever and OOM the main process. The relay
+      // derives both figures from the same buffer, so an honest stream cannot trip it.
+      if (expectedSeq >= chunkCount) {
+        fail(
+          new GitResponseStreamError(
+            `Git stream ${streamIdRef.current} sent more chunks than declared: ${chunkCount}`
+          )
+        )
+        return
+      }
+      if (receivedBytes + decoded.length > totalBytes) {
+        fail(
+          new GitResponseStreamError(
+            `Git stream ${streamIdRef.current} overran declared size: ${receivedBytes + decoded.length}/${totalBytes} bytes`
+          )
+        )
+        return
+      }
       parts.push(decoded)
       receivedBytes += decoded.length
       expectedSeq += 1
