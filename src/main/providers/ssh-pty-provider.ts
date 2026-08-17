@@ -129,7 +129,7 @@ export class SshPtyProvider implements IPtyProvider {
       installSourceActivation: (id, activation) =>
         this.outputState.installReceivingActivation(id, activation),
       rememberPtyIncarnation: (id, incarnation) =>
-        this.outputState.acceptPtyIncarnation(id, incarnation),
+        this.outputState.rememberPtyIncarnation(id, incarnation),
       acceptLivePty: (id) => this.acceptLivePty(id),
       toAppPtyId: this.toAppPtyId
     })
@@ -289,7 +289,7 @@ export class SshPtyProvider implements IPtyProvider {
     for (const process of processes) {
       this.acceptLivePty(process.id)
       const relayPtyId = this.toRelayPtyId(process.id)
-      this.outputState.acceptPtyIncarnation(relayPtyId, process.incarnationId)
+      this.outputState.rememberPtyIncarnation(relayPtyId, process.incarnationId)
     }
     return processes
   }
