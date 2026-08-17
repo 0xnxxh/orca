@@ -270,6 +270,7 @@ import {
 } from './terminal-snapshot-replay-paint'
 import {
   decideSshReattachPaintSource,
+  lastAlternateScreenTransition,
   memoizeSshReattachModelSnapshotProbe,
   resolveSshReattachModelSnapshotWithTimeout,
   shouldFetchSshReattachModelSnapshot,
@@ -8355,8 +8356,14 @@ export function connectPanePty(
             ? (prefetchedParkModelSnapshot ??
               (isRemoteRuntimePtyId(ptyId) ? null : await fetchSshMainModelReattachSnapshot()))
             : null
+          // Asked before the probe, not after: if the replay shows the app left the alternate
+          // screen, no snapshot can be used no matter what it says, so fetching one only spends the
+          // 750ms timeout to throw the answer away — and spends it inside the coordinator, with live
+          // PTY bytes deferred and the payload still able to be superseded.
+          const replayVetoesModel =
+            lastAlternateScreenTransition(connectResult?.replay) === 'exited'
           const reconnectSnapshot =
-            !revealSnapshot && reconnectMayUseModel
+            !revealSnapshot && reconnectMayUseModel && !replayVetoesModel
               ? await fetchSshMainModelReattachSnapshot()
               : null
           const paintsReconnectFromModel = sshReconnectPaintsFromModel({
