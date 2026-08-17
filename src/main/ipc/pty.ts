@@ -275,9 +275,12 @@ async function listRegisteredPtyProcessesWithHostScope(
   const providerSessions = await Promise.all(
     providers.map(async ({ provider, connectionId }) => {
       try {
+        const hostId: ExecutionHostId = connectionId
+          ? toSshExecutionHostId(connectionId)
+          : LOCAL_EXECUTION_HOST_ID
         return {
           processes: await provider.listProcesses(),
-          hostId: connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
+          hostId
         }
       } catch (error) {
         if (!connectionId) {
