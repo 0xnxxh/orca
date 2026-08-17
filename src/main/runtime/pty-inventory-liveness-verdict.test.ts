@@ -83,6 +83,15 @@ describe('inventory sweep liveness verdicts', () => {
     })
   })
 
+  it('accepts a current owning-host exit even when its numeric code is negative', () => {
+    const runtime = makeRuntimeMissingFromInventory(() => null)
+    runtime.markPtyLivenessUnverifiable(REMOTE_PTY_ID, 'inventory transport failed')
+
+    runtime.onPtyExit(REMOTE_PTY_ID, -1, undefined, { hostExitConfirmed: true })
+
+    expect(runtime.getPtyLivenessVerdict(REMOTE_PTY_ID)).toBeNull()
+  })
+
   it('records lost contact when no provider can answer for the PTY', async () => {
     const runtime = makeRuntimeMissingFromInventory(() => null)
 

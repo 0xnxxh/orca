@@ -3910,7 +3910,9 @@ export function registerPtyHandlers(
       return release
     },
     finalizeExit: (event) => {
-      runtime?.onPtyExit(event.id, event.code, event.ptyIncarnation)
+      runtime?.onPtyExit(event.id, event.code, event.ptyIncarnation, {
+        hostExitConfirmed: true
+      })
       finalizePtyExitForRenderer(event)
     },
     pauseProvider: (generation, id) => {
