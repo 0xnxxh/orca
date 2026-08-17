@@ -4,7 +4,7 @@ How Orca splits work between your machine and an SSH host, what survives a disco
 
 ## The rule
 
-**The execution host owns everything that touches execution** — tools, credentials, identity, environment, processes, and artifacts. The client owns the UI, transport, and Orca control-plane state, but no execution state.
+**The execution host owns everything that touches execution** — tools, credentials, identity, environment, processes, and artifacts. The client owns the UI, transport, and Orca control-plane state, but is not authoritative for execution state.
 
 Two consequences, both non-negotiable:
 
@@ -82,7 +82,7 @@ Outstanding, roughly by impact on reaching a wrong conclusion:
 - **`ORCA_CLI_COMMAND` is not set on SSH hosts** (`src/main/ipc/pty.ts:1883-1893` is WSL-only) although the bundled guides tell agents to prefer it. On Linux, bare `orca` is usually `/usr/bin/orca`, the GNOME screen reader. Orca's own PTYs prepend `~/.orca-relay/bin` to `PATH`, but a process launched outside an Orca-managed PTY does not inherit that override.
 - **`gh`/`glab` execute on the client** for SSH repos (`src/main/github/github-repository-identity.ts:41-52`, `src/main/gitlab/gitlab-project-ref-resolution.ts:245-256`). PRs are authored by the client's GitHub identity, the client's rate limit is spent, and the PR body is written to the client's tmpdir. Moving this to the execution host needs a new relay RPC surface — the relay has no `gh.*` method today.
 - **`doResetRelay` marks every lease `expired` in a `finally`** (`src/main/ipc/ssh.ts:1393-1399`). The code carries an explicit rationale at `:1401` — reset force-kills the relay, so local handles are stale "even if the reset command failed after SIGTERM." That rationale is sound for its stated case but does not cover the case where the command never ran at all (transport failure), where the client records a termination that never happened.
-- **Windows relay-install GC** treats 200 ms of pipe silence as proof the relay `exited` and deletes its directory (`src/main/ssh/ssh-relay-versioned-install.ts:355-361`). The sibling exception path already fails closed correctly.
+- **Windows relay-install GC** treats 200 ms of pipe silence as proof the relay `exited` and authorizes deleting its directory (`relayLivenessProbeCommand` in `src/main/ssh/ssh-remote-commands.ts` and `hasLiveRelaySocket` in `src/main/ssh/ssh-relay-versioned-install.ts`). The sibling exception path already fails closed correctly.
 - **Shared symlinks, `orca.yaml` shared directories, and `.worktreeinclude` are silently skipped** for SSH worktree creation (`src/main/ipc/worktree-remote.ts:1885`).
 
 ## One host, one model
