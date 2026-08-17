@@ -89,6 +89,23 @@ describe('cookie clear CDP identities', () => {
     ).toThrow(/Could not snapshot cookie identity/)
   })
 
+  it.each([null, 1, 'true'])('fails closed on a malformed CDP opaque flag (%s)', (opaque) => {
+    expect(() =>
+      cookieClearIdentitiesFromCdp(
+        [{ cookie: chipsCookie, url: 'https://app.acme-chips.test/' }],
+        [
+          {
+            name: 'chips-auth',
+            value: 'keep-me',
+            domain: 'app.acme-chips.test',
+            path: '/',
+            partitionKeyOpaque: opaque as unknown as boolean
+          }
+        ]
+      )
+    ).toThrow(/Could not snapshot cookie identity/)
+  })
+
   it.each([
     { hasCrossSiteAncestor: true },
     { topLevelSite: 'not-a-site', hasCrossSiteAncestor: true },

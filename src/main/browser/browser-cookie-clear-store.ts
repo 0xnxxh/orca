@@ -62,7 +62,8 @@ function electronSameSite(sameSite: string | undefined): Cookie['sameSite'] {
 }
 
 function partitionKeyFromCdp(cookie: CdpCookie): CookieClearPartitionKey | undefined {
-  if (cookie.partitionKeyOpaque === true) {
+  const opaque = cookie.partitionKeyOpaque
+  if (opaque === true || (opaque !== undefined && typeof opaque !== 'boolean')) {
     throw new Error('Could not snapshot cookie identity for an atomic clear')
   }
   const partitionKey = cookie.partitionKey
