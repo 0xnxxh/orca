@@ -154,7 +154,9 @@ export type TokenizeCustomCommandResult =
  * is one token. `'literal'` is for a command that will run on native Windows,
  * where `\` is the path separator — eating it turns
  * `C:\Windows\System32\powershell.exe` into `C:WindowsSystem32powershell.exe`,
- * a path that then "cannot be found" (#11375).
+ * a path that then "cannot be found" (#11375). `\"` stays an escaped quote in
+ * both modes: it is the only spelling for a quote inside a quoted argument, and
+ * it is how `CommandLineToArgvW` reads it too.
  *
  * Opt-in rather than sniffed from `process.platform` here, because the same
  * template can be parsed on one host and executed on another.
@@ -178,7 +180,15 @@ export function tokenizeCustomCommandTemplate(
   while (i < template.length) {
     const ch = template[i]
     if (quote) {
-      if (backslashEscapes && ch === '\\' && quote === '"' && i + 1 < template.length) {
+      // Why: literal mode still unescapes `\"` — a quoted argument has no other
+      // way to carry a quote — but leaves every other `\` alone so that path
+      // separators survive.
+      if (
+        ch === '\\' &&
+        quote === '"' &&
+        i + 1 < template.length &&
+        (backslashEscapes || template[i + 1] === '"')
+      ) {
         // Why: inside double quotes the shell only consumes the backslash
         // before these; elsewhere it stays a literal byte this tokenizer drops.
         divergesFromShell ||= !'$`"\\'.includes(template[i + 1])
@@ -213,7 +223,7 @@ export function tokenizeCustomCommandTemplate(
       continue
     }
 
-    if (backslashEscapes && ch === '\\' && i + 1 < template.length) {
+    if (ch === '\\' && i + 1 < template.length && (backslashEscapes || template[i + 1] === '"')) {
       // Why: an unquoted line continuation joins words the shell splits, so a
       // selector can hide inside the joined token and skip the gap check.
       divergesFromShell ||= template[i + 1] === '\n'
