@@ -240,7 +240,7 @@ describe('ClaudeAgentTeamsService', () => {
   })
 
   it('keeps the replacement addressable when the retired placeholder stop is unconfirmed', async () => {
-    const { service, teamId, token, leaderPane, api } = createServiceWithLeader()
+    const { service, teamId, token, leaderPane, api, splitCalls } = createServiceWithLeader()
     const request = (argv: string[], envPane = leaderPane) =>
       service.handleTmuxCompat({ teamId, token, envPane, argv }, api)
 
@@ -256,6 +256,11 @@ describe('ClaudeAgentTeamsService', () => {
       request(['respawn-pane', '-k', '-t', '%2', '--', 'claude --agent-id a'])
     ).resolves.toMatchObject({ ok: false, exitCode: 1 })
     expect(api.closeTerminal).toHaveBeenNthCalledWith(1, 'teammate-1')
+
+    await expect(
+      request(['respawn-pane', '-k', '-t', '%2', '--', 'claude --agent-id a'])
+    ).resolves.toMatchObject({ ok: false, exitCode: 1 })
+    expect(splitCalls).toHaveLength(2)
 
     await request(['kill-pane', '-t', '%2'])
     expect(api.closeTerminal).toHaveBeenLastCalledWith('teammate-2')

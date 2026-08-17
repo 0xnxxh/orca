@@ -158,6 +158,9 @@ export class ClaudeAgentTeamsTmuxDispatcher {
     if (!command) {
       return ''
     }
+    if (pane.respawnBlockedReason) {
+      throw new Error(pane.respawnBlockedReason)
+    }
     const origin =
       (pane.splitFromPane ? team.panes.get(pane.splitFromPane) : undefined) ??
       team.panes.get(team.leaderPane)!
@@ -176,7 +179,8 @@ export class ClaudeAgentTeamsTmuxDispatcher {
       const close = await api.closeTerminal(previousHandle)
       if (!close.ptyKilled) {
         pane.handle = split.handle
-        throw new Error(describeUnconfirmedAgentStop(close))
+        pane.respawnBlockedReason = describeUnconfirmedAgentStop(close)
+        throw new Error(pane.respawnBlockedReason)
       }
     } catch (error) {
       if (pane.handle === previousHandle) {
