@@ -22,6 +22,12 @@ describe('disableLinkDefinitions', () => {
     ['inside a bullet', '- [Image #1]: /tmp/a.png', '[Image #1]: /tmp/a.png'],
     ['inside an ordered item', '1. [Image #1]: /tmp/a.png', '[Image #1]: /tmp/a.png'],
     ['inside a blockquote', '> [Image #1]: /tmp/a.png', '[Image #1]: /tmp/a.png'],
+    // GFM adds a second definition construct that swallows prose the same way.
+    [
+      'as a footnote definition',
+      '[^note]: I meant this literally',
+      '[^note]: I meant this literally'
+    ],
     // A link label may span lines, so the swallow is not a single-line shape.
     [
       'with a wrapped label',
@@ -49,6 +55,10 @@ describe('disableLinkDefinitions', () => {
     '~~~\ncode\n```\n[Image #1]: /tmp/a.png\n~~~',
     '| a | b |\n| - | - |\n| 1 | 2 |'
   ])('leaves content the pipeline already rendered untouched', (typed) => {
+    // Why the second assertion: comparing the two prop values to each other is
+    // trivially true if the plugin ever stops attaching, so pin that these
+    // render something before trusting that they render the same thing.
+    expect(rendered(typed, true)).not.toBe('')
     expect(rendered(typed, true)).toBe(rendered(typed, false))
   })
 
