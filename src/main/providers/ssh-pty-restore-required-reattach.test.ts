@@ -167,6 +167,53 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(provider.probePtyLiveness(id)).resolves.toBe(true)
   })
 
+  it('does not promote an attach response after a newer legacy exit', async () => {
+    const id = 'ssh:conn-1@@pty-attach'
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    provider.onExit((payload) => provider.acceptUnverifiablePty(payload.id))
+    mux.request.mockImplementation(async (method: string, _params, options) => {
+      if (method !== 'pty.attach') {
+        return undefined
+      }
+      const result = { incarnationId: 'incarnation-attach' }
+      options?.beforeResolve?.(result)
+      notificationHandler(mux)('pty.exit', { id: 'pty-attach', code: 0 })
+      return result
+    })
+
+    await provider.attach(id)
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBeNull()
+  })
+
+  it('does not promote an inventory response after a newer legacy exit', async () => {
+    const id = 'ssh:conn-1@@pty-inventory'
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    provider.onExit((payload) => provider.acceptUnverifiablePty(payload.id))
+    mux.request.mockImplementation(async (method: string, _params, options) => {
+      if (method !== 'pty.listProcesses') {
+        return undefined
+      }
+      const result = [
+        {
+          id: 'pty-inventory',
+          cwd: '/work',
+          title: 'shell',
+          incarnationId: 'incarnation-inventory'
+        }
+      ]
+      options?.beforeResolve?.(result)
+      notificationHandler(mux)('pty.exit', { id: 'pty-inventory', code: 0 })
+      return result
+    })
+
+    await provider.listProcesses()
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBeNull()
+  })
+
   it('re-attaches over the live PTY instead of reporting exited', async () => {
     const mux = createMockMux()
     // Why: the relay retires the stale delivery record as the restoreRequired response settles,

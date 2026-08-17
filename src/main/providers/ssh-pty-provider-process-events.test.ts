@@ -36,13 +36,16 @@ describe('SshPtyProvider process listings and events', () => {
     await expect(provider.listProcesses()).resolves.toEqual([
       { id: scopedPty1, cwd: '/home', title: 'zsh', worktreeId: 'repo::/home' }
     ])
-    expect(mux.request).toHaveBeenLastCalledWith('pty.listProcesses', undefined, undefined)
+    expect(mux.request).toHaveBeenLastCalledWith('pty.listProcesses', undefined, {
+      beforeResolve: expect.any(Function)
+    })
 
     vi.useFakeTimers()
     try {
       mux.request.mockResolvedValue([])
       await provider.listProcesses({ deadlineMs: Date.now() + 4321 })
       expect(mux.request).toHaveBeenLastCalledWith('pty.listProcesses', undefined, {
+        beforeResolve: expect.any(Function),
         timeoutMs: 4321
       })
     } finally {

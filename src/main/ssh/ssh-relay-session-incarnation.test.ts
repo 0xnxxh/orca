@@ -51,13 +51,38 @@ vi.mock('../agent-hooks/remote-managed-hook-installers', () => ({
 }))
 vi.mock('../providers/ssh-pty-provider', () => ({
   SshPtyProvider: class MockSshPtyProvider {
+    private readonly pendingLiveEvidence = new Set<{ valid: boolean }>()
+    readonly providerGeneration: number
     onData = vi.fn().mockReturnValue(() => {})
     onReplay = vi.fn().mockReturnValue(() => {})
     onExit = vi.fn().mockReturnValue(() => {})
     attach = vi.fn().mockResolvedValue(undefined)
     attachForReconnect = vi.fn().mockResolvedValue({})
-    acceptUnverifiablePty = vi.fn()
+    acceptLivePty = vi.fn()
+    beginLivePtyEvidence = vi.fn(() => {
+      const evidence = { valid: true }
+      this.pendingLiveEvidence.add(evidence)
+      return evidence
+    })
+    settleLivePtyEvidence = vi.fn(
+      (id: string, evidence: { valid: boolean }, acceptLive: boolean) => {
+        this.pendingLiveEvidence.delete(evidence)
+        if (evidence.valid && acceptLive) {
+          this.acceptLivePty(id)
+        }
+      }
+    )
+    acceptUnverifiablePty = vi.fn(() => {
+      for (const evidence of this.pendingLiveEvidence) {
+        evidence.valid = false
+      }
+      this.pendingLiveEvidence.clear()
+    })
     dispose = vi.fn()
+
+    constructor(_connectionId: string, _mux: unknown, _env: unknown, providerGeneration: number) {
+      this.providerGeneration = providerGeneration
+    }
   }
 }))
 vi.mock('../providers/ssh-filesystem-provider', () => ({
@@ -186,9 +211,19 @@ describe('SSH relay PTY incarnation exits', () => {
       ptyIncarnation: string
     }) => void
     const acceptLivePty = vi.fn()
+    const beginLivePtyEvidence = vi.fn(() => ({ valid: true }))
+    const settleLivePtyEvidence = vi.fn(
+      (id: string, evidence: { valid: boolean }, acceptLive: boolean) => {
+        if (evidence.valid && acceptLive) {
+          acceptLivePty(id)
+        }
+      }
+    )
     vi.mocked(getSshPtyProvider).mockReturnValue({
       providerGeneration: 31,
-      acceptLivePty
+      acceptLivePty,
+      beginLivePtyEvidence,
+      settleLivePtyEvidence
     } as never)
     acceptOutputDataMock.mockRejectedValueOnce(new Error('stale incarnation'))
 
@@ -210,6 +245,58 @@ describe('SSH relay PTY incarnation exits', () => {
     await vi.waitFor(() =>
       expect(acceptLivePty).toHaveBeenCalledExactlyOnceWith('ssh:target-1@@pty-reused')
     )
+  })
+
+  it('does not promote delayed output after a newer legacy exit', async () => {
+    let settleOutput!: () => void
+    acceptOutputDataMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        settleOutput = resolve
+      })
+    )
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
+      providerGeneration: number
+      onData: ReturnType<typeof vi.fn>
+      onExit: ReturnType<typeof vi.fn>
+      acceptLivePty: ReturnType<typeof vi.fn>
+      acceptUnverifiablePty: ReturnType<typeof vi.fn>
+      settleLivePtyEvidence: ReturnType<typeof vi.fn>
+    }
+    vi.mocked(getSshPtyProvider).mockReturnValue(provider as never)
+    const onData = provider.onData.mock.calls[0]?.[0] as (payload: {
+      id: string
+      data: string
+      providerGeneration: number
+      ptyIncarnation: string
+    }) => void
+    const onExit = provider.onExit.mock.calls[0]?.[0] as (payload: {
+      id: string
+      code: number
+      providerGeneration: number
+      ptyIncarnation: string
+    }) => void
+    const id = 'ssh:target-1@@pty-current'
+
+    onData({
+      id,
+      data: 'accepted-before-exit',
+      providerGeneration: provider.providerGeneration,
+      ptyIncarnation: 'incarnation-current'
+    })
+    onExit({
+      id,
+      code: 0,
+      providerGeneration: provider.providerGeneration,
+      ptyIncarnation: 'legacy:31:1:pty-current'
+    })
+    settleOutput()
+
+    await vi.waitFor(() => expect(provider.settleLivePtyEvidence).toHaveBeenCalledOnce())
+    expect(provider.acceptUnverifiablePty).toHaveBeenCalledExactlyOnceWith(id)
+    expect(provider.acceptLivePty).not.toHaveBeenCalled()
   })
 
   it('marks a legacy exit unverifiable after current incarnation ownership is known', async () => {

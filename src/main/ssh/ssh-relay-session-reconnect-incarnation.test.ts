@@ -87,15 +87,39 @@ vi.mock('../providers/ssh-pty-provider', () => ({
   isSshPtyNotFoundError: (error: unknown) => String(error).includes('not found'),
   isSshPtyIdentityMismatchError: (error: unknown) => String(error).includes('identity mismatch'),
   SshPtyProvider: class MockSshPtyProvider {
+    private readonly pendingLiveEvidence = new Set<{ valid: boolean }>()
+    readonly providerGeneration: number
     onData = vi.fn().mockReturnValue(() => {})
     onReplay = vi.fn().mockReturnValue(() => {})
     onExit = vi.fn().mockReturnValue(() => {})
     attach = vi.fn().mockResolvedValue(undefined)
     attachForReconnect = vi.fn().mockResolvedValue({})
     acceptLivePty = vi.fn()
-    acceptUnverifiablePty = vi.fn()
+    beginLivePtyEvidence = vi.fn(() => {
+      const evidence = { valid: true }
+      this.pendingLiveEvidence.add(evidence)
+      return evidence
+    })
+    settleLivePtyEvidence = vi.fn(
+      (id: string, evidence: { valid: boolean }, acceptLive: boolean) => {
+        this.pendingLiveEvidence.delete(evidence)
+        if (evidence.valid && acceptLive) {
+          this.acceptLivePty(id)
+        }
+      }
+    )
+    acceptUnverifiablePty = vi.fn(() => {
+      for (const evidence of this.pendingLiveEvidence) {
+        evidence.valid = false
+      }
+      this.pendingLiveEvidence.clear()
+    })
     acceptExitedPty = vi.fn()
     dispose = vi.fn()
+
+    constructor(_connectionId: string, _mux: unknown, _env: unknown, providerGeneration: number) {
+      this.providerGeneration = providerGeneration
+    }
   }
 }))
 vi.mock('../providers/ssh-filesystem-provider', () => ({
@@ -516,6 +540,14 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const incarnationId = 'incarnation-reconnect'
     const acceptLivePty = vi.fn()
+    const beginLivePtyEvidence = vi.fn(() => ({ valid: true }))
+    const settleLivePtyEvidence = vi.fn(
+      (id: string, evidence: { valid: boolean }, acceptLive: boolean) => {
+        if (evidence.valid && acceptLive) {
+          acceptLivePty(id)
+        }
+      }
+    )
     let liveCallsDuringAttach = -1
     vi.mocked(getSshPtyProvider).mockReturnValue({
       providerGeneration: 17,
@@ -527,6 +559,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
         return { incarnationId }
       }),
       acceptLivePty,
+      beginLivePtyEvidence,
+      settleLivePtyEvidence,
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
     vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<

@@ -11,7 +11,6 @@ import type {
 } from './ssh-pty-provider-contract'
 import { SshPtyProviderOutputState } from './ssh-pty-provider-output-state'
 import { spawnFreshSshPty } from './ssh-agent-session-create-operation'
-import { mapSshPtyProcessList } from './ssh-agent-session-process-list'
 import {
   requestSshPtyAttach,
   reattachSshPtySessionForSpawn,
@@ -24,6 +23,9 @@ import { SshAgentSessionCapabilities } from './ssh-agent-session-capabilities'
 import type { PtyProcessInspection } from './pty-process-inspection'
 import { writeToSshPty, writeToSshPtyWithSettlement } from './ssh-pty-write'
 import { SshPtyLivenessState } from './ssh-pty-liveness-state'
+import type { SshPtyLiveEvidence } from './ssh-pty-liveness-state'
+import { listSshPtyProcessesWithLiveEvidence } from './ssh-pty-process-list-liveness'
+import { attachSshPtyWithLiveEvidence } from './ssh-pty-attach-liveness'
 
 // Why: sequential relay teardown calls share one absolute budget; convert to the mux-relative timeout only at dispatch.
 function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: number } | undefined {
@@ -151,17 +153,16 @@ export class SshPtyProvider implements IPtyProvider {
 
   async attach(id: string): Promise<void> {
     const relayPtyId = this.toRelayPtyId(id)
-    await requestSshPtyAttach({
+    await attachSshPtyWithLiveEvidence({
       mux: this.mux,
+      appPtyId: id,
       relayPtyId,
-      params: { id: relayPtyId },
-      commitSourceActivation: true,
       installSourceActivation: (ptyId, activation) =>
         this.outputState.installReceivingActivation(ptyId, activation),
       rememberPtyIncarnation: (ptyId, incarnationId) =>
-        this.outputState.acceptPtyIncarnation(ptyId, incarnationId)
+        this.outputState.acceptPtyIncarnation(ptyId, incarnationId),
+      livenessState: this.livenessState
     })
-    this.acceptLivePty(id)
   }
 
   async attachForReconnect(
@@ -279,18 +280,15 @@ export class SshPtyProvider implements IPtyProvider {
   }
 
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
-    const result = await this.mux.request(
-      'pty.listProcesses',
-      undefined,
-      relayTimeoutOptions(opts?.deadlineMs)
-    )
-    const processes = mapSshPtyProcessList(result as PtyProcessInfo[], (id) => this.toAppPtyId(id))
-    for (const process of processes) {
-      this.acceptLivePty(process.id)
-      const relayPtyId = this.toRelayPtyId(process.id)
-      this.outputState.rememberPtyIncarnation(relayPtyId, process.incarnationId)
-    }
-    return processes
+    return await listSshPtyProcessesWithLiveEvidence({
+      mux: this.mux,
+      deadlineMs: opts?.deadlineMs,
+      toAppPtyId: this.toAppPtyId,
+      toRelayPtyId: this.toRelayPtyId,
+      livenessState: this.livenessState,
+      rememberPtyIncarnation: (id, incarnationId) =>
+        this.outputState.rememberPtyIncarnation(id, incarnationId)
+    })
   }
 
   // Why: unverifiable is not live; callers needing all three verdicts use probePtyLiveness.
@@ -300,6 +298,14 @@ export class SshPtyProvider implements IPtyProvider {
 
   acceptLivePty(id: string): void {
     this.livenessState.acceptLive(id)
+  }
+
+  beginLivePtyEvidence(id: string): SshPtyLiveEvidence {
+    return this.livenessState.beginLiveEvidence(id)
+  }
+
+  settleLivePtyEvidence(id: string, evidence: SshPtyLiveEvidence, acceptLive: boolean): void {
+    this.livenessState.settleLiveEvidence(id, evidence, acceptLive)
   }
 
   acceptUnverifiablePty(id: string): void {

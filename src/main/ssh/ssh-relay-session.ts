@@ -1843,7 +1843,12 @@ export class SshRelaySession {
       })
     }
     const rawLength = payload.sequenceChars ?? payload.data.length
-    return acceptSshPtyOutputData({
+    const evidenceProvider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
+    const liveEvidence =
+      evidenceProvider?.providerGeneration === payload.providerGeneration
+        ? evidenceProvider.beginLivePtyEvidence(payload.id)
+        : undefined
+    const intake = acceptSshPtyOutputData({
       id: payload.id,
       data: payload.data,
       providerGeneration: payload.providerGeneration,
@@ -1852,16 +1857,26 @@ export class SshRelaySession {
       transformed: payload.transformed === true,
       ...(typeof payload.seq === 'number' ? { sequence: payload.seq } : {}),
       ...(source ? { source } : {})
-    }).then((receipt) => {
-      const provider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
-      if (
-        provider?.providerGeneration === payload.providerGeneration &&
-        !this.pendingPtyReattaches.has(payload.id)
-      ) {
-        provider.acceptLivePty(payload.id)
-      }
-      return receipt
     })
+    return intake.then(
+      (receipt) => {
+        if (liveEvidence) {
+          const provider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
+          evidenceProvider?.settleLivePtyEvidence(
+            payload.id,
+            liveEvidence,
+            provider === evidenceProvider && !this.pendingPtyReattaches.has(payload.id)
+          )
+        }
+        return receipt
+      },
+      (error) => {
+        if (liveEvidence) {
+          evidenceProvider?.settleLivePtyEvidence(payload.id, liveEvidence, false)
+        }
+        throw error
+      }
+    )
   }
 
   private recoverRejectedPtyDelivery(
