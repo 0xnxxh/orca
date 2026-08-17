@@ -141,18 +141,18 @@ describe('listTerminals execution-host identity', () => {
     expect(terminals[0]?.executionHostId).toBeUndefined()
   })
 
-  it.each(['remote:env@@%E0%A4%A', 'ssh:%E0%A4%A@@pty-7'])(
-    'leaves the host unset for a malformed foreign PTY id: %s',
-    async (ptyId) => {
-      const runtime = makeRuntime([
-        { worktreeId: LOCAL_WORKTREE_ID, leafId: REMOTE_LEAF_ID, ptyId }
-      ])
+  it.each([
+    'remote:env@@%E0%A4%A',
+    'remote:%20@@terminal%3Aone',
+    'ssh:%E0%A4%A@@pty-7',
+    'ssh:%20@@pty-7'
+  ])('leaves the host unset for a malformed foreign PTY id: %s', async (ptyId) => {
+    const runtime = makeRuntime([{ worktreeId: LOCAL_WORKTREE_ID, leafId: REMOTE_LEAF_ID, ptyId }])
 
-      const { terminals } = await runtime.listTerminals()
+    const { terminals } = await runtime.listTerminals()
 
-      expect(terminals[0]?.executionHostId).toBeUndefined()
-    }
-  )
+    expect(terminals[0]?.executionHostId).toBeUndefined()
+  })
 })
 
 describe('listTerminals scope declaration', () => {
