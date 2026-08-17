@@ -96,37 +96,12 @@ export function toggleIssueLabel(args: {
     ? [...prevLabels, args.label]
     : prevLabels.filter((l) => l !== args.label)
 
-  if (isAdding) {
-    args.run('labels', {
-      mutate: () =>
-        runIssueUpdate({
-          repoId: args.item.repoId,
-          repoPath: args.repoPath,
-          sourceContext: args.sourceContext,
-          projectOrigin: args.projectOrigin,
-          number: args.item.number,
-          updates: { addLabels: [args.label] }
-        }),
-      onOptimistic: () => {
-        args.onLabelsChange(newLabels)
-        args.patchWorkItem(args.item.id, { labels: newLabels }, args.item.repoId, {
-          sourceContext: args.sourceContext
-        })
-        args.patchProjectRowIfNeeded({ labels: newLabels })
-      },
-      onSuccess: () => {
-        args.onMutated()
-      },
-      onRevert: () => {
-        args.onLabelsChange(prevLabels)
-        args.patchWorkItem(args.item.id, { labels: prevLabels }, args.item.repoId, {
-          sourceContext: args.sourceContext
-        })
-        args.patchProjectRowIfNeeded({ labels: prevLabels })
-      },
-      onError: (err) => toast.error(err)
+  const applyLabels = (labels: string[]): void => {
+    args.onLabelsChange(labels)
+    args.patchWorkItem(args.item.id, { labels }, args.item.repoId, {
+      sourceContext: args.sourceContext
     })
-    return
+    args.patchProjectRowIfNeeded({ labels })
   }
 
   args.run('labels', {
@@ -137,22 +112,10 @@ export function toggleIssueLabel(args: {
         sourceContext: args.sourceContext,
         projectOrigin: args.projectOrigin,
         number: args.item.number,
-        updates: { removeLabels: [args.label] }
+        updates: isAdding ? { addLabels: [args.label] } : { removeLabels: [args.label] }
       }),
-    onOptimistic: () => {
-      args.onLabelsChange(newLabels)
-      args.patchWorkItem(args.item.id, { labels: newLabels }, args.item.repoId, {
-        sourceContext: args.sourceContext
-      })
-      args.patchProjectRowIfNeeded({ labels: newLabels })
-    },
-    onRevert: () => {
-      args.onLabelsChange(prevLabels)
-      args.patchWorkItem(args.item.id, { labels: prevLabels }, args.item.repoId, {
-        sourceContext: args.sourceContext
-      })
-      args.patchProjectRowIfNeeded({ labels: prevLabels })
-    },
+    onOptimistic: () => applyLabels(newLabels),
+    onRevert: () => applyLabels(prevLabels),
     onSuccess: () => {
       args.onMutated()
     },
@@ -182,31 +145,10 @@ export function toggleIssueAssignee(args: {
 
   // Why: scope the optimistic guard to this repo item so switching items doesn't suppress the next item's assignee sync.
   args.editedAssigneesItemKeyRef.current = args.assigneesItemKey
-  if (isAssigned) {
-    args.run('assignees', {
-      mutate: () =>
-        runIssueUpdate({
-          repoId: args.item.repoId,
-          repoPath: args.repoPath,
-          sourceContext: args.sourceContext,
-          projectOrigin: args.projectOrigin,
-          number: args.item.number,
-          updates: { removeAssignees: [args.login] }
-        }),
-      onOptimistic: () => {
-        args.setLocalAssignees(newAssignees)
-        args.patchProjectRowIfNeeded({ assignees: newAssignees })
-      },
-      onRevert: () => {
-        args.setLocalAssignees(prevAssignees)
-        args.patchProjectRowIfNeeded({ assignees: prevAssignees })
-      },
-      onSuccess: () => {
-        args.onMutated()
-      },
-      onError: (err) => toast.error(err)
-    })
-    return
+
+  const applyAssignees = (assignees: string[]): void => {
+    args.setLocalAssignees(assignees)
+    args.patchProjectRowIfNeeded({ assignees })
   }
 
   args.run('assignees', {
@@ -217,18 +159,12 @@ export function toggleIssueAssignee(args: {
         sourceContext: args.sourceContext,
         projectOrigin: args.projectOrigin,
         number: args.item.number,
-        updates: { addAssignees: [args.login] }
+        updates: isAssigned ? { removeAssignees: [args.login] } : { addAssignees: [args.login] }
       }),
-    onOptimistic: () => {
-      args.setLocalAssignees(newAssignees)
-      args.patchProjectRowIfNeeded({ assignees: newAssignees })
-    },
+    onOptimistic: () => applyAssignees(newAssignees),
+    onRevert: () => applyAssignees(prevAssignees),
     onSuccess: () => {
       args.onMutated()
-    },
-    onRevert: () => {
-      args.setLocalAssignees(prevAssignees)
-      args.patchProjectRowIfNeeded({ assignees: prevAssignees })
     },
     onError: (err) => toast.error(err)
   })

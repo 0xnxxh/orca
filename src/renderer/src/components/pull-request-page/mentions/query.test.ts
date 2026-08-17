@@ -19,4 +19,8 @@ describe('findMentionQuery', () => {
   it('allows a mention after punctuation that starts a token', () => {
     expect(findMentionQuery('(@octo', 6)).toEqual({ atIndex: 1, query: 'octo' })
   })
+
+  it('reads only the text before the caret', () => {
+    expect(findMentionQuery('hi @octo trailing', 8)).toEqual({ atIndex: 3, query: 'octo' })
+  })
 })

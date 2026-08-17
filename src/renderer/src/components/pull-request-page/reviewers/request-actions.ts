@@ -16,6 +16,8 @@ import type { GitHubWorkItem } from '../../../../../shared/github/work-item-type
 import type { TaskSourceContext } from '../../../../../shared/task-source-context'
 import type { GlobalSettings } from '../../../../../shared/global-settings-types'
 
+const MAX_REQUESTED_REVIEWERS = 15
+
 type ReviewerRequestActionsArgs = {
   // Why: a ref, not the render-time `submitting` value, so two clicks in one tick can't both pass the guard.
   submittingRef: { current: boolean }
@@ -59,7 +61,7 @@ export function createReviewerRequestActions(args: ReviewerRequestActionsArgs): 
       toast.error(translate('auto.components.PullRequestPage.dace0d1a9f', 'Enter a reviewer'))
       return
     }
-    if (args.localReviewRequests.length + logins.length > 15) {
+    if (args.localReviewRequests.length + logins.length > MAX_REQUESTED_REVIEWERS) {
       toast.error(
         translate(
           'auto.components.PullRequestPage.8f369a6b6b',
@@ -141,7 +143,8 @@ export function createReviewerRequestActions(args: ReviewerRequestActionsArgs): 
           ? translate('auto.components.PullRequestPage.03282ff3b9', 'Reviewer requested')
           : translate('auto.components.PullRequestPage.102d3d177f', 'Reviewers requested')
       )
-    } catch {
+    } catch (err) {
+      console.error('Failed to request pull request reviewer', err)
       if (args.reviewerPanelMountedRef.current) {
         toast.error(
           translate('auto.components.PullRequestPage.2560588245', 'Failed to request reviewer')
@@ -240,7 +243,8 @@ export function createReviewerRequestActions(args: ReviewerRequestActionsArgs): 
           ? translate('auto.components.PullRequestPage.2c1d93da43', 'Reviewer removed')
           : translate('auto.components.PullRequestPage.1e6d089420', 'Reviewers removed')
       )
-    } catch {
+    } catch (err) {
+      console.error('Failed to remove pull request reviewer', err)
       if (args.reviewerPanelMountedRef.current) {
         toast.error(
           translate('auto.components.PullRequestPage.c798fa0ec7', 'Failed to remove reviewer')

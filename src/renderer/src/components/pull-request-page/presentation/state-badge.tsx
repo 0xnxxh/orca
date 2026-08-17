@@ -22,6 +22,19 @@ export function getStateTone(item: GitHubWorkItem): string {
   return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
 }
 
+/** Filled counterpart of `getStateTone` for high-emphasis surfaces like the PR page header. */
+export function getSolidStateTone(item: GitHubWorkItem): string {
+  if (item.type === 'pr') {
+    if (item.state === 'merged') {
+      return 'bg-purple-600 text-white'
+    }
+    if (item.state === 'draft') {
+      return 'bg-slate-500 text-white'
+    }
+  }
+  return item.state === 'closed' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'
+}
+
 export function WorkItemStateBadge({
   item,
   className

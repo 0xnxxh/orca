@@ -66,6 +66,8 @@ export function ChecksTab({
   const repo = useAppStore((s) =>
     targetRepoId ? (s.repos.find((candidate) => candidate.id === targetRepoId) ?? null) : null
   )
+  const repos = useAppStore((s) => s.repos)
+  const projects = useAppStore((s) => s.projects)
   const [fixingChecks, setFixingChecks] = useState(false)
   const [fixChecksComposerPrompt, setFixChecksComposerPrompt] = useState<string | null>(null)
   const mountedRef = useMountedRef()
@@ -124,14 +126,23 @@ export function ChecksTab({
         projectRuntime: repo?.connectionId
           ? undefined
           : getLocalRepoProjectExecutionRuntimeContext(
-              useAppStore.getState(),
+              // Why: repo-scoped resolution only reads repos/projects/settings, and subscribing keeps the launch platform fresh.
+              {
+                activeRepoId: null,
+                activeWorktreeId: null,
+                projects,
+                repos,
+                settings,
+                worktreesByRepo: {}
+              },
               repo?.id,
               CLIENT_PLATFORM
             )
       }),
-    [repo?.connectionId, repo?.id, repo?.path]
+    [projects, repo?.connectionId, repo?.id, repo?.path, repos, settings]
   )
-  const runtimeHost = getGitHubSourceRuntimeHost(sourceContext)
+  // Why: parses a fresh host object per call, so memoize to keep the check action callbacks stable.
+  const runtimeHost = useMemo(() => getGitHubSourceRuntimeHost(sourceContext), [sourceContext])
   const canUseChecksRepoContext = canUseGitHubRepoContext(repoPath, sourceContext)
   const sorted = sortChecksBySeverity(list)
   const failedChecks = getBrokenChecks(list)

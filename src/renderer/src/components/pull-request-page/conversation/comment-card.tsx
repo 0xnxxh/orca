@@ -55,7 +55,6 @@ export function ConversationCommentCard({
 }): React.JSX.Element {
   return (
     <div
-      key={comment.id}
       className={cn(
         'min-w-0 overflow-hidden rounded-lg border border-border/40 bg-card shadow-xs',
         isReply && 'ml-6 max-w-[calc(100%-1.5rem)]',

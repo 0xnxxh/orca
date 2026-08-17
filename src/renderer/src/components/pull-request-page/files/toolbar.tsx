@@ -53,24 +53,28 @@ export function PRFilesDiffToolbar({
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <button
+        <Button
           type="button"
-          className="w-20 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+          variant="ghost"
+          size="xs"
+          className="w-20 justify-start px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
           onClick={onToggleAllCollapsed}
         >
           {allSectionsCollapsed
             ? translate('auto.components.PullRequestPage.eb722a5a8c', 'Expand All')
             : translate('auto.components.PullRequestPage.dd94111c18', 'Collapse All')}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="w-24 rounded border border-border px-2 py-0.5 text-center text-xs text-muted-foreground transition-colors hover:text-foreground"
+          variant="outline"
+          size="xs"
+          className="w-24 justify-center text-muted-foreground shadow-none hover:text-foreground"
           onClick={onToggleSideBySide}
         >
           {sideBySide
             ? translate('auto.components.PullRequestPage.e5f4a24f78', 'Inline')
             : translate('auto.components.PullRequestPage.1378d79e83', 'Side by Side')}
-        </button>
+        </Button>
       </div>
     </div>
   )

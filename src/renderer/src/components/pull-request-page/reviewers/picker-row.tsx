@@ -5,6 +5,7 @@ import { translate } from '@/i18n/i18n'
 import type { GitHubAssignableUser } from '../../../../../shared/github/pull-request-types'
 
 export function ReviewerPickerRow({
+  id,
   reviewer,
   suggested,
   active,
@@ -14,6 +15,7 @@ export function ReviewerPickerRow({
   onHover,
   onRequest
 }: {
+  id: string
   reviewer: GitHubAssignableUser
   suggested: boolean
   active: boolean
@@ -25,6 +27,7 @@ export function ReviewerPickerRow({
 }): React.JSX.Element {
   return (
     <button
+      id={id}
       type="button"
       disabled={disabled}
       aria-label={

@@ -118,12 +118,12 @@ export function ConversationDescription({
             value={resolvedBodyDraft}
             onValueChange={onDraftChange}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') {
+              if (event.key === 'Escape' && !bodySaving) {
                 event.preventDefault()
                 onCancelEdit()
                 return
               }
-              if (isScreenSubmitShortcut(event)) {
+              if (isScreenSubmitShortcut(event) && !bodySaving && bodyChanged) {
                 event.preventDefault()
                 onSave()
               }

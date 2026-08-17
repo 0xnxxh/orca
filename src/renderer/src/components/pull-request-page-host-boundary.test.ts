@@ -122,9 +122,7 @@ describe('PullRequestPage host boundaries', () => {
     expect(editSource).toContain(
       'args.patchWorkItem(args.item.id, { state: args.newState }, args.item.repoId, {'
     )
-    expect(editSource).toContain(
-      'args.patchWorkItem(args.item.id, { labels: newLabels }, args.item.repoId, {'
-    )
+    expect(editSource).toContain('args.patchWorkItem(args.item.id, { labels }, args.item.repoId, {')
   })
 
   it('routes PR mention metadata through the PR repo owner host', () => {

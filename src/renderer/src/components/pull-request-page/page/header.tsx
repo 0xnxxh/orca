@@ -25,6 +25,7 @@ import { formatRelativeTime, getStateLabel } from '@/components/github/work-item
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import type { GitHubWorkItem } from '../../../../../shared/github/work-item-types'
+import { getSolidStateTone } from '../presentation/state-badge'
 
 export function PullRequestPageHeader({
   workItem,
@@ -34,7 +35,7 @@ export function PullRequestPageHeader({
   linkCopied,
   setLinkCopyButtonRef,
   onCopyLink,
-  attachedWorkspace,
+  hasAttachedWorkspace,
   attachedWorkspaceLabel,
   localState,
   Icon,
@@ -48,7 +49,7 @@ export function PullRequestPageHeader({
   linkCopied: boolean
   setLinkCopyButtonRef: (node: HTMLButtonElement | null) => void
   onCopyLink: () => void
-  attachedWorkspace: unknown
+  hasAttachedWorkspace: boolean
   attachedWorkspaceLabel: string | null
   localState: GitHubWorkItem['state']
   Icon: React.ComponentType<{ className?: string }>
@@ -58,15 +59,9 @@ export function PullRequestPageHeader({
   const ownerRepo = parseOwnerRepoFromItemUrl(workItem.url)
   const headBranch = workItem.branchName
   const baseBranch = workItem.baseRefName
-  const stateBadgeTone =
-    localState === 'merged'
-      ? 'bg-purple-600 text-white'
-      : localState === 'draft'
-        ? 'bg-slate-500 text-white'
-        : localState === 'closed'
-          ? 'bg-rose-600 text-white'
-          : 'bg-emerald-600 text-white'
-  const stateBadgeLabel = getStateLabel({ ...workItem, state: localState })
+  const stateBadgeItem = { ...workItem, state: localState }
+  const stateBadgeTone = getSolidStateTone(stateBadgeItem)
+  const stateBadgeLabel = getStateLabel(stateBadgeItem)
 
   return (
     <>
@@ -163,7 +158,7 @@ export function PullRequestPageHeader({
                   onClick={onOpenOrUsePR}
                   className="w-[180px] justify-center gap-1.5 whitespace-nowrap"
                   aria-label={
-                    attachedWorkspace
+                    hasAttachedWorkspace
                       ? translate(
                           'auto.components.PullRequestPage.a459866967',
                           'Resume workspace attached to PR'
@@ -174,7 +169,7 @@ export function PullRequestPageHeader({
                         )
                   }
                 >
-                  {attachedWorkspace
+                  {hasAttachedWorkspace
                     ? translate('auto.components.PullRequestPage.c9e7094a7b', 'Resume workspace')
                     : translate('auto.components.PullRequestPage.71a3c0f9d2', 'Start workspace')}
                   <ArrowRight className="size-4" />
@@ -193,7 +188,7 @@ export function PullRequestPageHeader({
                 </DropdownMenuTrigger>
               </ButtonGroup>
               <DropdownMenuContent align="end">
-                {attachedWorkspace ? (
+                {hasAttachedWorkspace ? (
                   <DropdownMenuItem onSelect={onUseWorkItem}>
                     <Plus className="size-4" />
                     {translate('auto.components.PullRequestPage.1a2570e18e', 'Start new workspace')}

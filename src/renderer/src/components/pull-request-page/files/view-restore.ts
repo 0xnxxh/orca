@@ -77,7 +77,7 @@ export function usePRFilesDiffViewPersistence(args: {
       writeCachedScrollPosition(args.pendingRestoreScrollTopRef.current ?? container.scrollTop)
     }
 
-    container.addEventListener('scroll', cacheScrollPositionOnScroll)
+    container.addEventListener('scroll', cacheScrollPositionOnScroll, { passive: true })
     return () => {
       cacheScrollPositionOnTeardown()
       container.removeEventListener('scroll', cacheScrollPositionOnScroll)

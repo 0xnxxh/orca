@@ -19,6 +19,11 @@ import type { PRCheckDetail } from '../../../../../shared/github/check-types'
 import type { PRComment } from '../../../../../shared/github/comment-types'
 import type { TaskSourceContext } from '../../../../../shared/task-source-context'
 import type { PullRequestPageProjectOrigin } from '../page-types'
+import {
+  patchCachedPRChecks,
+  patchCachedPRReviewRequests,
+  patchCachedWorkItemBody
+} from '../cache/work-item-details'
 import { ConversationTab } from '../conversation/tab'
 import { ChecksTab } from '../checks/tab'
 import { PRFilesCombinedDiffViewer } from '../files/combined-diff-viewer'
@@ -47,10 +52,7 @@ export function PullRequestPageTabs({
   invalidateCurrentDetailsCache,
   appendOptimisticComment,
   handlePRFileViewedChange,
-  onReviewRequestsChange,
-  patchCachedPRChecks,
-  patchCachedWorkItemBody,
-  patchCachedPRReviewRequests
+  onReviewRequestsChange
 }: {
   tab: ItemDialogTab
   onTabChange: (value: ItemDialogTab) => void
@@ -79,9 +81,6 @@ export function PullRequestPageTabs({
     itemKey: { id: string; repoId: string },
     reviewRequests: GitHubAssignableUser[]
   ) => void
-  patchCachedPRChecks: (cacheKey: string, checks: PRCheckDetail[]) => void
-  patchCachedWorkItemBody: (cacheKey: string, body: string) => void
-  patchCachedPRReviewRequests: (cacheKey: string, reviewRequests: GitHubAssignableUser[]) => void
 }): React.JSX.Element {
   return (
     <Tabs

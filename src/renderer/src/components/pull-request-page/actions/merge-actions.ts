@@ -183,9 +183,11 @@ export async function mergePullRequest(args: {
     }
     toast.success(translate('auto.components.PullRequestPage.c57873d721', 'Pull request merged'))
     args.onMutated()
-  } catch {
+  } catch (err) {
     toast.error(
-      translate('auto.components.PullRequestPage.aae645d36d', 'Failed to merge pull request')
+      err instanceof Error
+        ? err.message
+        : translate('auto.components.PullRequestPage.aae645d36d', 'Failed to merge pull request')
     )
   } finally {
     args.setMergePending(false)
@@ -256,11 +258,13 @@ export async function setPullRequestAutoMerge(args: {
         : translate('auto.components.PullRequestPage.0f5821b035', 'Auto-merge disabled')
     )
     args.onMutated()
-  } catch {
+  } catch (err) {
     toast.error(
-      enabled
-        ? translate('auto.components.PullRequestPage.d31f4b508c', 'Failed to enable auto-merge')
-        : translate('auto.components.PullRequestPage.973ef2fac9', 'Failed to disable auto-merge')
+      err instanceof Error
+        ? err.message
+        : enabled
+          ? translate('auto.components.PullRequestPage.d31f4b508c', 'Failed to enable auto-merge')
+          : translate('auto.components.PullRequestPage.973ef2fac9', 'Failed to disable auto-merge')
     )
   } finally {
     args.setMergePending(false)

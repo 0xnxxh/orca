@@ -27,10 +27,7 @@ import type { GitHubWorkItem } from '../../../../../shared/github/work-item-type
 import type { PullRequestPageProps } from '../page-types'
 import {
   invalidateWorkItemDetailsCacheByMatch,
-  invalidateWorkItemDetailsCacheForKey,
-  patchCachedPRChecks,
-  patchCachedPRReviewRequests,
-  patchCachedWorkItemBody
+  invalidateWorkItemDetailsCacheForKey
 } from '../cache/work-item-details'
 import { GHEditSection } from '../edit/section'
 import { usePullRequestDetails } from './use-details'
@@ -198,16 +195,22 @@ export default function PullRequestPage({
     return { ...workItem, ...details.item, repoId: workItem.repoId }
   }, [details?.item, workItem])
 
+  const workItemRepoId = workItem?.repoId
   useEffect(() => {
-    if (!workItem || details?.item.reviewRequests === undefined) {
+    if (
+      workItemId === undefined ||
+      workItemRepoId === undefined ||
+      details?.item.reviewRequests === undefined
+    ) {
       return
     }
     // Why: PR details can carry fresher reviewer metadata than the list row; push it back so the Tasks review chip isn't stale.
+    // Why: keyed on identity, not the whole item, so replacing the same PR object doesn't repush unchanged reviewers.
     onReviewRequestsChange?.(
-      { id: workItem.id, repoId: workItem.repoId },
+      { id: workItemId, repoId: workItemRepoId },
       details.item.reviewRequests
     )
-  }, [details?.item.reviewRequests, onReviewRequestsChange, workItem])
+  }, [details?.item.reviewRequests, onReviewRequestsChange, workItemId, workItemRepoId])
 
   const body = details?.body ?? ''
   const comments = details?.comments ?? []
@@ -319,7 +322,7 @@ export default function PullRequestPage({
         onCopyLink={() => {
           void handleCopyWorkItemLink()
         }}
-        attachedWorkspace={attachedWorkspace}
+        hasAttachedWorkspace={attachedWorkspace !== null}
         attachedWorkspaceLabel={attachedWorkspaceLabel}
         localState={localState}
         Icon={Icon}
@@ -373,9 +376,6 @@ export default function PullRequestPage({
             appendOptimisticComment={appendOptimisticComment}
             handlePRFileViewedChange={handlePRFileViewedChange}
             onReviewRequestsChange={onReviewRequestsChange}
-            patchCachedPRChecks={patchCachedPRChecks}
-            patchCachedWorkItemBody={patchCachedWorkItemBody}
-            patchCachedPRReviewRequests={patchCachedPRReviewRequests}
           />
         )}
       </div>
