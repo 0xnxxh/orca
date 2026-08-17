@@ -12,6 +12,7 @@ export async function listSshPtyProcessesWithLiveEvidence(args: {
   rememberPtyIncarnation: (relayPtyId: string, incarnationId: unknown) => void
 }): Promise<PtyProcessInfo[]> {
   const pendingEvidence = new Map<string, SshPtyLiveEvidence>()
+  const evidenceWindow = args.livenessState.beginLiveEvidenceWindow()
   const mapProcesses = (value: unknown): PtyProcessInfo[] =>
     mapSshPtyProcessList(value as PtyProcessInfo[], args.toAppPtyId)
   try {
@@ -22,7 +23,10 @@ export async function listSshPtyProcessesWithLiveEvidence(args: {
       beforeResolve: (value) => {
         for (const process of mapProcesses(value)) {
           if (!pendingEvidence.has(process.id)) {
-            pendingEvidence.set(process.id, args.livenessState.beginLiveEvidence(process.id))
+            pendingEvidence.set(
+              process.id,
+              args.livenessState.beginLiveEvidence(process.id, evidenceWindow)
+            )
           }
         }
       }
@@ -30,7 +34,8 @@ export async function listSshPtyProcessesWithLiveEvidence(args: {
     const processes = mapProcesses(result)
     for (const process of processes) {
       const evidence =
-        pendingEvidence.get(process.id) ?? args.livenessState.beginLiveEvidence(process.id)
+        pendingEvidence.get(process.id) ??
+        args.livenessState.beginLiveEvidence(process.id, evidenceWindow)
       args.livenessState.settleLiveEvidence(process.id, evidence, true)
       pendingEvidence.delete(process.id)
       args.rememberPtyIncarnation(args.toRelayPtyId(process.id), process.incarnationId)
@@ -40,5 +45,6 @@ export async function listSshPtyProcessesWithLiveEvidence(args: {
     for (const [id, evidence] of pendingEvidence) {
       args.livenessState.settleLiveEvidence(id, evidence, false)
     }
+    args.livenessState.closeLiveEvidenceWindow(evidenceWindow)
   }
 }

@@ -15,7 +15,8 @@ export async function attachSshPtyWithLiveEvidence(args: {
   rememberPtyIncarnation: (relayPtyId: string, incarnationId: unknown) => void
   livenessState: SshPtyLivenessState
 }): Promise<void> {
-  let liveEvidence: ReturnType<SshPtyLivenessState['beginLiveEvidence']> | undefined
+  let liveEvidence: ReturnType<SshPtyLivenessState['beginLiveEvidence']> | undefined =
+    args.livenessState.beginLiveEvidence(args.appPtyId)
   try {
     await requestSshPtyAttach({
       mux: args.mux,
@@ -23,12 +24,8 @@ export async function attachSshPtyWithLiveEvidence(args: {
       params: { id: args.relayPtyId },
       commitSourceActivation: true,
       installSourceActivation: args.installSourceActivation,
-      rememberPtyIncarnation: args.rememberPtyIncarnation,
-      observeResult: () => {
-        liveEvidence = args.livenessState.beginLiveEvidence(args.appPtyId)
-      }
+      rememberPtyIncarnation: args.rememberPtyIncarnation
     })
-    liveEvidence ??= args.livenessState.beginLiveEvidence(args.appPtyId)
     args.livenessState.settleLiveEvidence(args.appPtyId, liveEvidence, true)
     liveEvidence = undefined
   } finally {

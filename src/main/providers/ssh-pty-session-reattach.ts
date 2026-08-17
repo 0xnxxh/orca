@@ -88,7 +88,6 @@ export async function requestSshPtyAttach(args: {
     activation: PtySourceReceivingActivation
   ) => SshPtyReceivingActivationLease
   rememberPtyIncarnation?: (relayPtyId: string, incarnationId: unknown) => void
-  observeResult?: (result: SshPtyAttachResult) => void
 }): Promise<SshPtyAttachResult> {
   let activationLease: SshPtyReceivingActivationLease | undefined
   const installFromResult = (result: SshPtyAttachResult): void => {
@@ -102,7 +101,6 @@ export async function requestSshPtyAttach(args: {
       beforeResolve: (value) => {
         const result = parseSshPtyAttachResult(value)
         installFromResult(result)
-        args.observeResult?.(result)
       }
     })
     const result = parseSshPtyAttachResult(rawResult)

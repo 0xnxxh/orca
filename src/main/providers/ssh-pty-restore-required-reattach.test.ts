@@ -214,6 +214,57 @@ describe('SSH PTY reattach when the relay requires source restoration', () => {
     await expect(provider.probePtyLiveness(id)).resolves.toBeNull()
   })
 
+  it('does not promote an attach response after an in-flight exact exit', async () => {
+    const id = 'ssh:conn-1@@pty-attach-exited'
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    provider.onExit((payload) => provider.acceptExitedPty(payload.id))
+    mux.request.mockImplementation(async (method: string, _params, options) => {
+      if (method !== 'pty.attach') {
+        return undefined
+      }
+      notificationHandler(mux)('pty.exit', {
+        id: 'pty-attach-exited',
+        code: 0,
+        incarnationId: 'incarnation-attach-exited'
+      })
+      const result = { incarnationId: 'incarnation-attach-exited' }
+      options?.beforeResolve?.(result)
+      return result
+    })
+
+    await provider.attach(id)
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBe(false)
+  })
+
+  it('does not promote an inventory response after an in-flight legacy exit', async () => {
+    const id = 'ssh:conn-1@@pty-inventory-unverifiable'
+    const mux = createMockMux()
+    const provider = new SshPtyProvider('conn-1', mux as never)
+    provider.onExit((payload) => provider.acceptUnverifiablePty(payload.id))
+    mux.request.mockImplementation(async (method: string, _params, options) => {
+      if (method !== 'pty.listProcesses') {
+        return undefined
+      }
+      notificationHandler(mux)('pty.exit', { id: 'pty-inventory-unverifiable', code: 0 })
+      const result = [
+        {
+          id: 'pty-inventory-unverifiable',
+          cwd: '/work',
+          title: 'shell',
+          incarnationId: 'incarnation-inventory-unverifiable'
+        }
+      ]
+      options?.beforeResolve?.(result)
+      return result
+    })
+
+    await provider.listProcesses()
+
+    await expect(provider.probePtyLiveness(id)).resolves.toBeNull()
+  })
+
   it('re-attaches over the live PTY instead of reporting exited', async () => {
     const mux = createMockMux()
     // Why: the relay retires the stale delivery record as the restoreRequired response settles,

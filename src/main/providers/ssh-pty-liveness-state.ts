@@ -1,11 +1,16 @@
 export const MAX_SSH_PTY_EXIT_TOMBSTONES = 1000
 
 export type SshPtyLiveEvidence = { valid: boolean }
+export type SshPtyLiveEvidenceWindow = {
+  valid: boolean
+  readonly invalidatedPtyIds: Set<string>
+}
 
 export class SshPtyLivenessState {
   readonly livePtyIds = new Set<string>()
   private readonly exitedPtyIds = new Set<string>()
   private readonly pendingLiveEvidenceByPtyId = new Map<string, Set<SshPtyLiveEvidence>>()
+  private readonly liveEvidenceWindows = new Set<SshPtyLiveEvidenceWindow>()
 
   constructor(private readonly toAppPtyId: (id: string) => string) {}
 
@@ -16,6 +21,11 @@ export class SshPtyLivenessState {
       }
     }
     this.pendingLiveEvidenceByPtyId.clear()
+    for (const window of this.liveEvidenceWindows) {
+      window.valid = false
+      window.invalidatedPtyIds.clear()
+    }
+    this.liveEvidenceWindows.clear()
     this.livePtyIds.clear()
     this.exitedPtyIds.clear()
   }
@@ -30,13 +40,34 @@ export class SshPtyLivenessState {
     this.livePtyIds.add(appPtyId)
   }
 
-  beginLiveEvidence(id: string): SshPtyLiveEvidence {
+  beginLiveEvidence(id: string, window?: SshPtyLiveEvidenceWindow): SshPtyLiveEvidence {
     const appPtyId = this.toAppPtyId(id)
-    const evidence = { valid: true }
+    const evidence = {
+      valid:
+        window === undefined ||
+        (window.valid &&
+          this.liveEvidenceWindows.has(window) &&
+          !window.invalidatedPtyIds.has(appPtyId))
+    }
+    if (!evidence.valid) {
+      return evidence
+    }
     const pending = this.pendingLiveEvidenceByPtyId.get(appPtyId) ?? new Set()
     pending.add(evidence)
     this.pendingLiveEvidenceByPtyId.set(appPtyId, pending)
     return evidence
+  }
+
+  beginLiveEvidenceWindow(): SshPtyLiveEvidenceWindow {
+    const window = { valid: true, invalidatedPtyIds: new Set<string>() }
+    this.liveEvidenceWindows.add(window)
+    return window
+  }
+
+  closeLiveEvidenceWindow(window: SshPtyLiveEvidenceWindow): void {
+    window.valid = false
+    window.invalidatedPtyIds.clear()
+    this.liveEvidenceWindows.delete(window)
   }
 
   settleLiveEvidence(id: string, evidence: SshPtyLiveEvidence, acceptLive: boolean): void {
@@ -74,6 +105,9 @@ export class SshPtyLivenessState {
   }
 
   private invalidateLiveEvidence(appPtyId: string): void {
+    for (const window of this.liveEvidenceWindows) {
+      window.invalidatedPtyIds.add(appPtyId)
+    }
     const pending = this.pendingLiveEvidenceByPtyId.get(appPtyId)
     if (!pending) {
       return
