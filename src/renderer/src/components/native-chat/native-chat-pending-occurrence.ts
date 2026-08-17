@@ -212,7 +212,15 @@ export function selectPendingIndicesRepresentedByUserTexts(
     imageCount: entry.imagePaths?.filter(Boolean).length ?? 0
   }))
   for (const row of userRows) {
-    const open = remaining.filter((entry) => !represented.has(entry.index) && entry.text.length > 0)
+    // Why: a photo-less row skips image sends entirely rather than letting one sit
+    // in the prefix and block the match — glue needs a LEADING run, so an
+    // unrelated image pending ahead of the queue would strand every echo behind it.
+    const open = remaining.filter(
+      (entry) =>
+        !represented.has(entry.index) &&
+        entry.text.length > 0 &&
+        (entry.imageCount === 0 || row.imageCount > 0)
+    )
     const gluedCount = countLeadingPendingTextsGluedToUserText(
       open.map((entry) => entry.text),
       row.text

@@ -320,6 +320,19 @@ describe('glued rapid sends', () => {
     expect(prunePendingSends(pending, advancedGlueTranscript('a b [Image #1]'))).toEqual(pending)
   })
 
+  // Why: glue matches a LEADING run of pendings. Letting an unrelated image send
+  // sit in that prefix stranded every text echo queued behind it, because a
+  // photo-less row can never consume the image send that blocks the way.
+  it('retires a glued text pair queued behind an unrelated image send', () => {
+    const pending = [
+      { ...gluePending('p0', 'photo caption'), imagePaths: ['/tmp/p.png'] },
+      gluePending('p1', 'a'),
+      gluePending('p2', 'b')
+    ]
+
+    expect(prunePendingSends(pending, advancedGlueTranscript('a b'))).toEqual([pending[0]])
+  })
+
   it('retires three prompts collapsed into one row with mixed boundaries', () => {
     const pending = [
       gluePending('p1', 'first'),
