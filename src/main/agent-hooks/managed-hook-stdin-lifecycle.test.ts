@@ -69,6 +69,7 @@ vi.mock('os', async (importOriginal) => {
 
 import { AntigravityHookService } from '../antigravity/hook-service'
 import { ClaudeHookService } from '../claude/hook-service'
+import { getRemoteManagedCommand } from '../claude/hook-settings'
 import { CodexHookService } from '../codex/hook-service'
 import { CommandCodeHookService } from '../command-code/hook-service'
 import { CopilotHookService } from '../copilot/hook-service'
@@ -155,6 +156,7 @@ const LOCAL_INSTALLERS = [
 type HookRun = {
   exitCode: number | null
   stdinErrors: NodeJS.ErrnoException[]
+  stderr: string
   stdout: string
 }
 
@@ -164,8 +166,9 @@ function runHookProcess(
   env: NodeJS.ProcessEnv
 ): Promise<HookRun> {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { env, stdio: ['pipe', 'pipe', 'ignore'] })
+    const child = spawn(executable, args, { env, stdio: ['pipe', 'pipe', 'pipe'] })
     const stdinErrors: NodeJS.ErrnoException[] = []
+    let stderr = ''
     let stdout = ''
     const timeout = setTimeout(() => {
       child.kill('SIGKILL')
@@ -178,10 +181,13 @@ function runHookProcess(
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString()
     })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
     child.stdin.on('error', (error: NodeJS.ErrnoException) => stdinErrors.push(error))
     child.on('close', (exitCode) => {
       clearTimeout(timeout)
-      resolve({ exitCode, stdinErrors, stdout })
+      resolve({ exitCode, stdinErrors, stderr, stdout })
     })
     child.stdin.end(LARGE_PAYLOAD)
   })
@@ -402,11 +408,7 @@ describe('Windows managed hook stdin structure', () => {
     }
   )
 
-  // Why (#14818): this asserts the effect a Claude-hooks-compat consumer actually observes —
-  // running the exact `command` string from settings.json and parsing its stdout — rather than
-  // what the installer intended to write. The shipped `conhost.exe --headless` wrapper passed
-  // every intent-level test while relaying neither stdout nor an exit code, so cursor-agent saw
-  // empty stdout on PreToolUse, called it invalid JSON, and blocked every shell command.
+  // Why: command-shape tests missed conhost discarding the JSON consumers observe (#14818).
   it.skipIf(process.platform !== 'win32')(
     'emits parseable JSON on stdout from the registered Claude hook command, through cmd.exe and Git Bash',
     async () => {
@@ -418,20 +420,15 @@ describe('Windows managed hook stdin structure', () => {
           readFileSync(join(home, '.claude', 'settings.json'), 'utf8')
         ) as { hooks: Record<string, { hooks: { command: string; args?: string[] }[] }[]> }
         const entry = settings.hooks.PreToolUse[0].hooks[0]
-        // Why (#14815): a consumer that ignores `args` must still get a runnable invocation.
         expect(entry.args).toBeUndefined()
 
-        // Why: Git Bash is the reported execution context (#14815) — MSYS rewrites `/`-prefixed
-        // switches and collapses backslash paths, so the command must survive both shells.
+        // Why: MSYS rewrites switches and paths, so the command must survive both shells (#14815).
+        const gitBash = findGitBash()
         const shells = [
           { name: 'cmd.exe', executable: 'cmd.exe', args: ['/d', '/c', entry.command] },
-          { name: 'Git Bash', executable: findGitBash(), args: ['-lc', entry.command] }
+          { name: 'Git Bash', executable: gitBash, args: ['-c', entry.command] }
         ]
-        // Why: USERPROFILE (not homedir()) is what the registered command resolves the script
-        // through at run time, so the child must see the test home for the script to be found.
-        // Why: all three reachable paths must speak JSON — the guard exit (no Orca env), the
-        // reached-curl path (env present, nothing listening), and the launcher's own
-        // missing-script fallback, which never enters the script at all.
+        // Why: cover guard exit, reached curl, and the launcher's missing-script fallback.
         const environments = [
           { name: 'no Orca env', env: hookEnvironment({ USERPROFILE: home }) },
           {
@@ -453,6 +450,7 @@ describe('Windows managed hook stdin structure', () => {
             const label = `${shell.name} / ${environment.name}`
             const result = await runHookProcess(shell.executable, shell.args, environment.env)
             expect(result.exitCode, `${label} exit code`).toBe(0)
+            expect(result.stderr, `${label} stderr`).toBe('')
             expect(() => JSON.parse(result.stdout.trim()), `${label} stdout is JSON`).not.toThrow()
             expect(JSON.parse(result.stdout.trim()), `${label} stdout`).toEqual({})
           }
@@ -462,13 +460,22 @@ describe('Windows managed hook stdin structure', () => {
         rmSync(home, { recursive: true, force: true })
       }
     },
-    // Why: six real process launches, and a Git Bash login shell is slow to start — that overruns
-    // the 5s default once the rest of the suite is competing for cores.
+    // Why: six shell launches can overrun the default while the suite competes for cores.
     60_000
   )
 })
 
 describe.skipIf(process.platform === 'win32')('managed hook stdin lifecycle', () => {
+  it('emits neutral JSON when the Claude lifecycle script is missing', async () => {
+    const command = getRemoteManagedCommand('/home/dev/.orca/agent-hooks/claude-hook.sh')
+    const result = await runPosixHook(command)
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdinErrors).toHaveLength(0)
+    expect(result.stderr).toBe('')
+    expect(JSON.parse(result.stdout.trim())).toEqual({})
+  })
+
   it('captures stdin before every possible whole-script success exit', async () => {
     const scripts = await generatePosixScripts()
     for (const [agent, script] of scripts) {

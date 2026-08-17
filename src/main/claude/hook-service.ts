@@ -65,8 +65,7 @@ function getManagedScript(
     return [
       '@echo off',
       'setlocal',
-      // Why (#14818): emit `{}` first so a Claude-hooks-compat consumer never sees empty stdout,
-      // even if the guards below exit early.
+      // Why: Claude-compatible permission hooks fail closed on empty stdout (#14818).
       'echo {}',
       // Why: refresh endpoint coordinates for PTYs surviving an Orca restart.
       'if defined ORCA_AGENT_HOOK_ENDPOINT if exist "%ORCA_AGENT_HOOK_ENDPOINT%" call "%ORCA_AGENT_HOOK_ENDPOINT%" 2>nul',
@@ -89,8 +88,7 @@ function getManagedScript(
 
   return [
     '#!/bin/sh',
-    // Why (#14818): emit `{}` first so a Claude-hooks-compat consumer never sees empty stdout,
-    // even if the guards below exit early.
+    // Why: Claude-compatible permission hooks fail closed on empty stdout (#14818).
     'printf "{}\\n"',
     ...buildPosixHookPayloadCapture(),
     ...(options.skipWhenDevinImportsClaude

@@ -38,15 +38,12 @@ describe('getWindowsManagedLifecycleHook', () => {
     const scriptPath = 'C:\\Users\\%name%\\a^b&c\\.orca\\agent-hooks\\claude-hook.cmd'
     const hook = getWindowsManagedLifecycleHook(scriptPath)
 
-    // Why (#14815): a separate `args` array isn't honored by every Claude-hooks-compat consumer,
-    // so the invocation must be a single self-contained `command` string.
     expect(hook.args).toBeUndefined()
     expect(hook.command).toMatch(
       /\/powershell\.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden /
     )
     expect(hook.command).not.toContain(scriptPath)
-    // Why: no backslash path or `/`-prefixed switch outside the base64 payload — both get
-    // mangled when a Claude-hooks-compat consumer runs the command through Git Bash/MSYS.
+    // Why: Git Bash/MSYS mangles backslash paths and slash-prefixed switches.
     expect(hook.command.replace(/-EncodedCommand \S+$/, '')).not.toMatch(/\\| \/[a-zA-Z]+( |$)/)
 
     const encoded = hook.command.match(/-EncodedCommand (\S+)$/)?.[1]
@@ -221,8 +218,7 @@ describe('ClaudeHookService.install', () => {
         'utf-8'
       )
       expect(managedScript).toContain('DEVIN_PROJECT_DIR')
-      // Why (#14818): `{}` must be the first thing written to stdout so a Claude-hooks-compat
-      // consumer never sees empty stdout, even on the guard-exit/Devin-skip paths below it.
+      // Why: guard and Devin-skip paths must still return neutral JSON (#14818).
       expect(managedScript).toMatch(
         process.platform === 'win32'
           ? /^@echo off\r\nsetlocal\r\necho \{\}\r\n/
@@ -420,8 +416,7 @@ describe('ClaudeHookService.install', () => {
         expect(script).toContain('--data-urlencode "payload@-"')
         expect(script).toContain('/hook/claude')
         expect(script).not.toMatch(/Invoke-WebRequest/i)
-        // Why (#14818): `{}` must be the first line of output so a Claude-hooks-compat consumer
-        // never sees empty stdout, even on the guard-exit/Devin-skip paths below it.
+        // Why: guard and Devin-skip paths must still return neutral JSON (#14818).
         expect(script.split('\r\n')[2]).toBe('echo {}')
       } finally {
         vi.unstubAllEnvs()
@@ -466,8 +461,7 @@ describe('ClaudeHookService.installRemote', () => {
     const script = fs.files.get('/home/dev/.orca/agent-hooks/claude-hook.sh')
     expect(script).toContain('#!/bin/sh')
     expect(script).toContain('DEVIN_PROJECT_DIR')
-    // Why (#14818): `{}` must be the first thing written to stdout so a Claude-hooks-compat
-    // consumer never sees empty stdout, even on the guard-exit paths below it.
+    // Why: remote guard paths must still return neutral JSON (#14818).
     expect(script!.indexOf('printf "{}\\n"')).toBe(
       script!.indexOf('#!/bin/sh') + '#!/bin/sh\n'.length
     )

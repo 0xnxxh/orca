@@ -573,8 +573,7 @@ function decodeWindowsHookCommand(command: string): string {
 
 function expectedDecodedWindowsHookCommand(scriptPath: string): string {
   const quoted = `'${scriptPath.replaceAll("'", "''")}'`
-  // Why: the progress silencer leads every encoded payload so PowerShell can't serialize CLIXML
-  // progress records onto stderr and corrupt a consumer that merges it into stdout (#14818).
+  // Why: PowerShell progress CLIXML corrupts consumers that merge stderr into JSON stdout.
   return `$ProgressPreference='SilentlyContinue'; if (Test-Path -LiteralPath ${quoted} -PathType Leaf) { & ${quoted}; exit $LASTEXITCODE }; [Console]::In.ReadToEnd() | Out-Null; exit 0`
 }
 
@@ -757,6 +756,25 @@ describe('wrapRuntimeHomeHookCommand', () => {
 
     expect(result.error).toBeUndefined()
     expect(result.status).toBe(0)
+  })
+
+  it('emits neutral JSON when a lifecycle script is missing', () => {
+    const shell =
+      process.platform === 'win32'
+        ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
+        : '/bin/sh'
+    const result = spawnSync(
+      shell,
+      ['-c', wrapRuntimeHomeHookCommand('missing-orca-hook', { neutralJsonWhenMissing: true })],
+      {
+        env: { ...process.env, HOME: tmpDir.replaceAll('\\', '/') },
+        input: Buffer.alloc(1_000_000, 'x')
+      }
+    )
+
+    expect(result.error).toBeUndefined()
+    expect(result.status, result.stderr.toString()).toBe(0)
+    expect(JSON.parse(result.stdout.toString().trim())).toEqual({})
   })
 })
 

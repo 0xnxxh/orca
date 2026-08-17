@@ -131,11 +131,15 @@ export function getRemoteConfigPath(remoteHome: string, settings = CLAUDE_HOOK_S
   return `${remoteHome.replace(/\/$/, '')}/${settings.configDirName}/settings.json`
 }
 
-export function getManagedCommand(scriptPath: string): string {
+export function getManagedCommand(
+  scriptPath: string,
+  options: { neutralJsonWhenMissing?: boolean } = {}
+): string {
   const scriptFileName = basename(scriptPath)
   const extension = extname(scriptFileName)
   return wrapRuntimeHomeHookCommand(
-    extension ? scriptFileName.slice(0, -extension.length) : scriptFileName
+    extension ? scriptFileName.slice(0, -extension.length) : scriptFileName,
+    options
   )
 }
 
@@ -144,26 +148,17 @@ export function getManagedLifecycleHook(
   settings = CLAUDE_HOOK_SETTINGS
 ): HookCommandConfig {
   if (process.platform !== 'win32' || !settings.usesWindowsPowerShellLauncher) {
-    return buildManagedCommandHook(getManagedCommand(scriptPath))
+    return buildManagedCommandHook(getManagedCommand(scriptPath, { neutralJsonWhenMissing: true }))
   }
   return getWindowsManagedLifecycleHook(scriptPath)
 }
 
-// Why: `args` is valid Claude Code hook syntax, but `~/.claude/settings.json` is also read by
-// third-party Claude-hooks-compat layers that reimplement execution and ignore it — cursor-agent
-// spawns `command` alone, so the old exec form ran bare conhost.exe, which opens an interactive
-// console that never closes (#14815). A single self-contained `command` string depends on nothing
-// optional, so it survives every consumer.
+// Why: some Claude-compatible consumers ignore `args`, so the invocation must be self-contained.
 export function getWindowsManagedLifecycleHook(scriptPath: string): HookCommandConfig {
   const scriptFileName = win32.basename(scriptPath)
-  // Why: $env:USERPROFILE (resolved at run time by powershell.exe, not baked in) keeps the
-  // managed entry portable across machines/usernames (STA-3348), matching the prior cmd.exe
-  // %USERPROFILE% form.
+  // Why: runtime profile resolution keeps the managed entry portable across users (STA-3348).
   const quotedRelativePath = quotePowerShellString(`.orca\\agent-hooks\\${scriptFileName}`)
-  // Why (#14818): the missing-script fallback must speak JSON too. A Claude-hooks-compat consumer
-  // parses stdout on every event, so a cleaned ~/.orca or a half-finished install would otherwise
-  // hand it empty stdout and get every tool call blocked — the same failure the script's own `{}`
-  // prevents. `{}` is a no-op decision for real Claude Code, identical to writing nothing.
+  // Why: compat consumers require neutral JSON even when the managed script is missing (#14818).
   const innerCommand =
     `$scriptPath = Join-Path $env:USERPROFILE ${quotedRelativePath}; ` +
     'if (Test-Path -LiteralPath $scriptPath -PathType Leaf) { & $scriptPath; exit $LASTEXITCODE }; ' +
@@ -186,7 +181,7 @@ export function hasSameManagedHookInvocation(
 }
 
 export function getRemoteManagedCommand(scriptPath: string): string {
-  return getManagedCommand(scriptPath)
+  return getManagedCommand(scriptPath, { neutralJsonWhenMissing: true })
 }
 
 export function applyManagedHooks(
