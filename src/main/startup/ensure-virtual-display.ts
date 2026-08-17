@@ -96,6 +96,28 @@ function waitForDisplaySocket(displayNumber: number, deadline: number): boolean 
 }
 
 /**
+ * Whether this host already exposes a display Chromium can initialize on.
+ *
+ * Why it matters beyond serve: when Ozone finds no display it logs
+ * `The platform failed to initialize. Exiting.` and calls exit() from a
+ * half-initialized state, which lands as a SIGSEGV inside uv_close() with no
+ * usable diagnosis (#13719). Callers check this first so a missing display is
+ * reported as a missing display.
+ */
+export function hasUsableLinuxDisplay(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (process.platform !== 'linux') {
+    return true
+  }
+  return Boolean(env.DISPLAY?.trim() || env.WAYLAND_DISPLAY?.trim())
+}
+
+export const MISSING_LINUX_DISPLAY_MESSAGE = [
+  'Orca needs a display server and this host has neither DISPLAY nor WAYLAND_DISPLAY set.',
+  'Start Orca with `orca-ide serve` to run headless (it starts Xvfb for you), or set DISPLAY',
+  'to an existing X server. On a bare server, install Xvfb first: apt-get install xvfb.'
+].join('\n')
+
+/**
  * Ensure a usable X display for headless Linux serve. Returns true when a
  * display is available (pre-existing or freshly started), false when browser
  * panes cannot be supported on this host. Safe to call on any platform.
@@ -108,7 +130,9 @@ export function ensureVirtualDisplayForHeadlessServe(options: { isServeMode: boo
   configureHeadlessServeChromiumFlags()
 
   // Why: respect an externally provided display (a real X server, or the image
-  // already running its own Xvfb). Don't start a competing one.
+  // already running its own Xvfb). Don't start a competing one. Deliberately
+  // narrower than hasUsableLinuxDisplay: serve's offscreen BrowserWindows need
+  // an X display specifically, so WAYLAND_DISPLAY alone must still start Xvfb.
   if (process.env.DISPLAY && process.env.DISPLAY.trim().length > 0) {
     return true
   }

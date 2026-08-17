@@ -5,15 +5,17 @@ import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'nod
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const OUT_COMMONJS_PACKAGE_JSON = `${JSON.stringify(
-  {
-    name: 'orca-compiled-output',
-    type: 'commonjs',
-    private: true
-  },
-  null,
-  2
-)}\n`
+// Why `version`: the packaged CLI runs under ELECTRON_RUN_AS_NODE, where asar
+// integration is off and the app's own package.json is unreadable. This is the
+// only version source `orca --version` has. Packaging restamps it with the
+// effective build version, which can differ on dev channels.
+function buildOutPackageJson(version) {
+  return `${JSON.stringify(
+    { name: 'orca-compiled-output', type: 'commonjs', private: true, version },
+    null,
+    2
+  )}\n`
+}
 
 /**
  * Verifies the published CLI entrypoint and the module-type boundary for the
@@ -49,7 +51,7 @@ export function verifyPackageCliBin({
   const outPackageJsonPath = path.join(projectDir, 'out', 'package.json')
   if (fixPackageJson) {
     mkdirSync(path.dirname(outPackageJsonPath), { recursive: true })
-    writeFileSync(outPackageJsonPath, OUT_COMMONJS_PACKAGE_JSON, 'utf8')
+    writeFileSync(outPackageJsonPath, buildOutPackageJson(packageJson.version), 'utf8')
   }
   let outPackageJson
   try {

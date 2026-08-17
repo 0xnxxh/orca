@@ -8,6 +8,7 @@ import {
   specPaths,
   validateCommandAndFlags
 } from './args'
+import { argvRequestsVersion, readOrcaCliVersion } from './cli-version'
 import { dispatch } from './dispatch'
 import { reportCliError } from './format'
 import { printHelp } from './help'
@@ -53,6 +54,19 @@ export async function main(
   argv = process.argv.slice(2),
   cwd = resolveInvocationCwd()
 ): Promise<void> {
+  // Why: deployments need to audit which build a host is running, and the
+  // packaged binary cannot answer it — a bare `<binary> --version` reaches
+  // Chromium, not the CLI, and on a headless host that aborts.
+  if (argvRequestsVersion(argv)) {
+    const version = readOrcaCliVersion()
+    if (!version) {
+      process.stderr.write('Could not determine the Orca version for this build.\n')
+      process.exitCode = 1
+      return
+    }
+    process.stdout.write(`${version}\n`)
+    return
+  }
   if (argv[0] === 'agent-teams-tmux') {
     await runAgentTeamsTmuxShim(argv.slice(1))
     return

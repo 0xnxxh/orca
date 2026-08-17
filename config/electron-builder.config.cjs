@@ -1,4 +1,4 @@
-const { chmodSync, existsSync, readdirSync } = require('node:fs')
+const { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } = require('node:fs')
 const { execFileSync } = require('node:child_process')
 const { join, resolve } = require('node:path')
 const electronBuilderNativeRebuild = require('./scripts/electron-builder-native-rebuild.cjs')
@@ -239,6 +239,7 @@ module.exports = {
       }
       writeMacBuildCompatibility(resourcesDir, { version, commit, architecture })
     }
+    stampPackagedCliVersion(resourcesDir, context.packager.appInfo.version)
     prunePackagedRuntimeNodeModules(resourcesDir, context.electronPlatformName, context.arch)
     verifyPackagedMainRuntimeDeps(resourcesDir)
     // Why: boot the packaged daemon-entry under plain Node, but only for the
@@ -520,6 +521,19 @@ module.exports = {
     repo: devChannelRepo ?? 'orca',
     releaseType: devChannelRepo ? 'prerelease' : 'release'
   }
+}
+
+// Why: `orca --version` reads the compiled tree's package.json because the CLI
+// runs under ELECTRON_RUN_AS_NODE, where the app's own package.json inside
+// app.asar is unreadable. appInfo.version is the effective version, which
+// extraMetadata can move on dev channels, so stamp it at pack time.
+function stampPackagedCliVersion(resourcesDir, version) {
+  const packageJsonPath = join(resourcesDir, 'app.asar.unpacked', 'out', 'package.json')
+  if (!existsSync(packageJsonPath)) {
+    throw new Error(`Missing unpacked CLI package boundary: ${packageJsonPath}`)
+  }
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+  writeFileSync(packageJsonPath, `${JSON.stringify({ ...packageJson, version }, null, 2)}\n`)
 }
 
 function chmodUnixCliLaunchers(resourcesDir, electronPlatformName) {

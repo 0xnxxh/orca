@@ -163,4 +163,33 @@ describe('ensureVirtualDisplayForHeadlessServe', () => {
     expect(process.env.DISPLAY).toBe(':99')
     killSpy.mockRestore()
   })
+
+  // Why this is separate from the serve path: Chromium's Ozone layer logs
+  // "The platform failed to initialize. Exiting." with no display and then
+  // exits from a half-initialized state, which lands as SIGSEGV in uv_close()
+  // (#13719). Every launch shape checks this, not just serve.
+  describe('hasUsableLinuxDisplay', () => {
+    it('accepts either an X or a Wayland display', async () => {
+      setPlatform('linux')
+      const { hasUsableLinuxDisplay } = await import('./ensure-virtual-display')
+
+      expect(hasUsableLinuxDisplay({ DISPLAY: ':0' })).toBe(true)
+      expect(hasUsableLinuxDisplay({ WAYLAND_DISPLAY: 'wayland-0' })).toBe(true)
+    })
+
+    it('rejects an absent or blank display', async () => {
+      setPlatform('linux')
+      const { hasUsableLinuxDisplay } = await import('./ensure-virtual-display')
+
+      expect(hasUsableLinuxDisplay({})).toBe(false)
+      expect(hasUsableLinuxDisplay({ DISPLAY: '   ', WAYLAND_DISPLAY: '' })).toBe(false)
+    })
+
+    it('never gates a non-Linux platform', async () => {
+      setPlatform('darwin')
+      const { hasUsableLinuxDisplay } = await import('./ensure-virtual-display')
+
+      expect(hasUsableLinuxDisplay({})).toBe(true)
+    })
+  })
 })

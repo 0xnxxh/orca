@@ -356,11 +356,10 @@ Rolling back is the case that needs care — see [Roll back](#roll-back).
 
 ### Record the version you deploy
 
-Orca has no headless version command: there is no `--version` flag or `version`
-subcommand, and `orca serve` prints only its endpoint. Choose a release tag
-explicitly instead of following the `latest` URL, and record it next to the
-binary so upgrades are auditable. The steps below keep that record in
-`/opt/orca/VERSION`.
+`orca-ide --version` prints the installed build, so a deployed host can always
+be audited in place. Still choose a release tag explicitly instead of following
+the `latest` URL, and record it next to the binary so an upgrade is auditable
+before it runs. The steps below keep that record in `/opt/orca/VERSION`.
 
 ### Upgrade steps
 

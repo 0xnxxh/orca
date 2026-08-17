@@ -137,7 +137,11 @@ import {
 } from './startup/main-process-error-guards'
 import { enableRendererHeapHeadroom } from './startup/renderer-heap-headroom'
 import { argvRequestsServeMode, normalizeServeModeArgv } from './startup/serve-mode-argv'
-import { ensureVirtualDisplayForHeadlessServe } from './startup/ensure-virtual-display'
+import {
+  ensureVirtualDisplayForHeadlessServe,
+  hasUsableLinuxDisplay,
+  MISSING_LINUX_DISPLAY_MESSAGE
+} from './startup/ensure-virtual-display'
 import {
   readActiveGpuFallbackMarker,
   writeGpuFallbackMarker,
@@ -476,6 +480,15 @@ if (argvRequestsServeMode(process.argv)) {
   process.argv = normalizeServeModeArgv(process.argv)
 }
 const isServeMode = process.argv.includes('--serve')
+// Why: with no display, Chromium's Ozone layer logs "The platform failed to
+// initialize. Exiting." and then exits from a half-initialized state, which
+// surfaces as a SIGSEGV in uv_close() with no diagnosis (#13719). Serve starts
+// its own Xvfb further down; every other launch shape is simply unrunnable
+// here, so say why and exit instead of dumping core.
+if (app.isPackaged && !isServeMode && !hasUsableLinuxDisplay()) {
+  process.stderr.write(`${MISSING_LINUX_DISPLAY_MESSAGE}\n`)
+  app.exit(1)
+}
 
 function updateGpuAccelerationAboutPanel(): void {
   app.setAboutPanelOptions(
