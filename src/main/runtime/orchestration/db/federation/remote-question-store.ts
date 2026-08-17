@@ -24,15 +24,18 @@ export function getRemoteQuestion(
     | undefined
 }
 
-export function answerRemoteQuestion(
+type RemoteAnswerParams = {
+  messageId: string
+  dispatchId: string
+  answerMessageId: string
+  body: string
+}
+
+// Returns 'settled' when the stored row already carries this exact answer, 'writable' when the guarded UPDATE may apply.
+function classifyRemoteQuestion(
   this: OrchestrationDb,
-  params: {
-    messageId: string
-    dispatchId: string
-    answerMessageId: string
-    body: string
-  }
-): void {
+  params: RemoteAnswerParams
+): 'settled' | 'writable' {
   const question = this.getRemoteQuestion(params.messageId)
   if (!question || question.dispatch_id !== params.dispatchId) {
     throw new OrchestrationError(
@@ -50,23 +53,42 @@ export function answerRemoteQuestion(
         `Remote Question ${params.messageId} already has a different answer.`
       )
     }
-    return
+    return 'settled'
   }
-  // Why: the guarded UPDATE below is a silent no-op for a closed question, which the caller would read as stored.
+  // Why: the guarded UPDATE is a silent no-op for a closed question, which the caller would read as stored.
   if (question.status === 'closed') {
     throw new OrchestrationError(
       'question_not_found',
       `Remote Question ${params.messageId} is closed.`
     )
   }
-  this.db
+  return 'writable'
+}
+
+export function answerRemoteQuestion(this: OrchestrationDb, params: RemoteAnswerParams): void {
+  if (classifyRemoteQuestion.call(this, params) === 'settled') {
+    return
+  }
+  const changes = this.db
     .prepare(
       `UPDATE remote_questions
        SET status = 'answered', answer_message_id = ?, answer_body = ?,
            answered_at = datetime('now')
        WHERE message_id = ? AND status = 'pending'`
     )
-    .run(params.answerMessageId, params.body, params.messageId)
+    .run(params.answerMessageId, params.body, params.messageId).changes
+  if (changes > 0) {
+    return
+  }
+  // Why: a concurrent answer or close won the guarded UPDATE after our read; re-classify so the caller
+  // sees the stored outcome instead of a success that never happened.
+  if (classifyRemoteQuestion.call(this, params) === 'settled') {
+    return
+  }
+  throw new OrchestrationError(
+    'answer_conflict',
+    `Remote Question ${params.messageId} could not be answered.`
+  )
 }
 
 export function setRemoteWorkerImportSequence(

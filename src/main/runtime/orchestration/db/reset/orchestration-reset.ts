@@ -9,7 +9,11 @@ export function runResetTransaction(this: OrchestrationDb, statements: string): 
     this.db.exec(statements)
     this.db.exec('COMMIT')
   } catch (error) {
-    this.db.exec('ROLLBACK')
+    try {
+      this.db.exec('ROLLBACK')
+    } catch {
+      // Why: a failed COMMIT may already have rolled back; that ROLLBACK error must not mask the real failure.
+    }
     throw error
   }
 }
@@ -44,11 +48,15 @@ export function resetAll(this: OrchestrationDb): void {
 }
 
 export function resetTasks(this: OrchestrationDb): void {
+  // Why: messages survive this scope, so question threads are closed rather than deleted — an orphaned
+  // question message would otherwise answer as a generic reply while legacy acknowledgment rejects it.
   this.runResetTransaction(`
     DELETE FROM coordinator_runs;
     DELETE FROM decision_gates;
     DELETE FROM remote_questions;
-    DELETE FROM question_threads;
+    UPDATE question_threads
+      SET status = 'closed', closed_at = COALESCE(closed_at, datetime('now'))
+      WHERE status = 'pending';
     DELETE FROM legacy_mail_receipts;
     DELETE FROM legacy_operation_receipts;
     DELETE FROM legacy_compatibility_principals;
