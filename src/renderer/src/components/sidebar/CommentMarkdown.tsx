@@ -5,6 +5,7 @@ import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import { cn } from '@/lib/utils'
+import { remarkDisableDefinitions } from './remark-disable-definitions'
 import {
   compactCommentMarkdownComponents,
   createCompactCommentMarkdownComponents,
@@ -186,6 +187,9 @@ type CommentMarkdownProps = React.ComponentPropsWithoutRef<'div'> & {
   onLinkClick?: CommentMarkdownLinkClickHandler
   allowFileUriLinks?: boolean
   expandImages?: boolean
+  /** Set when `content` is prose the user typed, not Markdown they authored, so
+   *  a `[label]: target` line renders instead of silently disappearing. */
+  disableLinkDefinitions?: boolean
 }
 
 // Why forwardRef + rest props: Radix's HoverCardTrigger asChild merges a ref
@@ -201,6 +205,7 @@ const CommentMarkdown = React.memo(
       onLinkClick,
       allowFileUriLinks = false,
       expandImages = false,
+      disableLinkDefinitions = false,
       ...rest
     },
     ref
@@ -217,10 +222,12 @@ const CommentMarkdown = React.memo(
         ? createDocumentCommentMarkdownComponents(onLinkClick)
         : createCompactCommentMarkdownComponents(onLinkClick, expandImages)
     }, [expandImages, variant, onLinkClick])
-    const activeRemarkPlugins = React.useMemo(
-      () => (githubRepo ? [...remarkPlugins, remarkGitHubReferences(githubRepo)] : remarkPlugins),
-      [githubRepo]
-    )
+    const activeRemarkPlugins = React.useMemo(() => {
+      const active = githubRepo
+        ? [...remarkPlugins, remarkGitHubReferences(githubRepo)]
+        : remarkPlugins
+      return disableLinkDefinitions ? [...active, remarkDisableDefinitions] : active
+    }, [disableLinkDefinitions, githubRepo])
 
     return (
       <div
