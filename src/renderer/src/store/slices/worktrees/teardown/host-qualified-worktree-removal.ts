@@ -23,6 +23,8 @@ import {
   WORKTREE_REMOVAL_HOST_CHANGED_ERROR
 } from '../listing/worktree-slice-constants'
 import { requestVirtualizedScrollAnchorRecord } from '@/hooks/requestVirtualizedScrollAnchorRecord'
+import { cleanupEphemeralVmRuntimesForDeleted } from '@/lib/ephemeral-vm-runtime-cleanup'
+import { purgeOrphanedRuntimeSshProjects } from './orphaned-runtime-ssh-project-purge'
 import { showPreservedBranchToast } from '@/components/sidebar/preserved-branch-toast'
 
 import { preservedBranchCleanupKey } from '../../../../../../shared/preserved-branch-cleanup'
@@ -199,8 +201,15 @@ function dropConfirmedHostRow(
 /**
  * Finish a removal whose id still exists on another host: prune just the
  * confirmed host's row and keep the preserved-branch follow-up pinned to it.
+ *
+ * Tears down the ephemeral VM even though the shared renderer state survives. A
+ * VM is NOT shared: it belongs to the workspace just deleted. The likeliest real
+ * collision is one machine reachable as both `runtime:env` and `ssh:target`, so
+ * skipping it left the VM running and billing after its row was removed. Safe to
+ * do here without the full path's ordering care, because this path tears down no
+ * terminals — there is no still-mounted pane to race a disposed relay.
  */
-export function completeSameIdHostScopedRemoval(args: {
+export async function completeSameIdHostScopedRemoval(args: {
   set: WorktreeSliceSet
   get: WorktreeSliceGet
   worktreeId: string
@@ -210,7 +219,7 @@ export function completeSameIdHostScopedRemoval(args: {
   target: ReturnType<typeof getActiveRuntimeTarget>
   worktreeBeforeRemoval: PreservedBranchWorktree
   suppressPreservedBranchToast: boolean
-}): RemoveWorktreeSliceResult {
+}): Promise<Awaited<RemoveWorktreeSliceResult>> {
   const {
     set,
     get,
@@ -222,6 +231,10 @@ export function completeSameIdHostScopedRemoval(args: {
     worktreeBeforeRemoval,
     suppressPreservedBranchToast
   } = args
+  const runtimeCleanup = await cleanupEphemeralVmRuntimesForDeleted({
+    workspaceIds: [worktreeId]
+  })
+  await purgeOrphanedRuntimeSshProjects(get, runtimeCleanup.destroyedSshTargetIds)
   dropConfirmedHostRow(set, worktreeId, requiredExecutionHostId)
   const preservedBranch = removalResult?.preservedBranch
   if (!preservedBranch) {

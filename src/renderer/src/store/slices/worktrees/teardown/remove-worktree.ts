@@ -193,6 +193,8 @@ export function createRemoveWorktree(
       // Why (STA-4343): another host still owns this id, so the shared renderer
       // state (tabs, terminals, browsers) belongs to that live workspace — drop
       // only the confirmed host's row instead of tearing all of it down.
+      //
+      // The ephemeral VM is the exception — see completeSameIdHostScopedRemoval.
       if (sameIdSurvivesOnAnotherHost && requiredExecutionHostId) {
         return completeSameIdHostScopedRemoval({
           set,
