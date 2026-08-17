@@ -196,9 +196,9 @@ import { translate } from '@/i18n/i18n'
 import { isBrowserPagePanePaintable } from './browser-page-paintability'
 import { openWorkspaceBrowserTab } from '@/lib/workspace-browser-tab-open'
 import {
+  executeRemoteBrowserPointerCommands,
   getRemoteBrowserPointerCommands,
   isRemoteBrowserPointerDrag,
-  type RemoteBrowserPointerButton,
   type RemoteBrowserPointerModifier,
   type RemoteBrowserPointerSample
 } from './remote-browser-pointer-gesture'
@@ -1657,7 +1657,7 @@ function RemoteBrowserPagePane({
         })
         if (isCurrentRemoteOperationToken(pageToken)) {
           if (legacyHistoryDirection) {
-            scheduleRemoteTabInfoRefresh(pageToken, 250)
+            lifecycle.session.scheduleTabInfoRefresh(pageToken, 250, 4)
           } else {
             applyRemoteTabInfo(result)
           }
@@ -1698,8 +1698,7 @@ function RemoteBrowserPagePane({
       onUpdatePageState,
       remoteDirectHistoryNavigationSupported,
       runtimeTarget,
-      runtimeWorktree,
-      scheduleRemoteTabInfoRefresh
+      runtimeWorktree
     ]
   )
 
@@ -1840,36 +1839,37 @@ function RemoteBrowserPagePane({
         if (isCurrentRemoteOperationToken(pending.operationToken)) {
           setPaneNotice({
             kind: 'consequence',
-            text: 'Drag input requires updating the paired runtime.'
+            text: translate(
+              'auto.components.browser.pane.BrowserPane.legacyDragUpdateRequired',
+              'Drag input requires updating the paired runtime.'
+            )
           })
         }
         return
       }
-      let pressedButton: RemoteBrowserPointerButton | null = null
       try {
-        for (const command of commands) {
-          await callRuntimeRpc(
-            pending.target,
-            command.method,
-            { worktree: pending.worktree, page: pending.pageId, ...command.params },
-            { timeoutMs: 15_000, suppressFeatureInteraction: true }
-          )
-          if (command.method === 'browser.mouseDown') {
-            pressedButton = command.params.button
-          } else if (command.method === 'browser.mouseUp') {
-            pressedButton = null
+        const completed = await executeRemoteBrowserPointerCommands(commands, {
+          isCurrent: () => isCurrentRemoteOperationToken(pending.operationToken),
+          send: (command) =>
+            callRuntimeRpc(
+              pending.target,
+              command.method,
+              { worktree: pending.worktree, page: pending.pageId, ...command.params },
+              { timeoutMs: 15_000, suppressFeatureInteraction: true }
+            ).then(() => {}),
+          release: (button) => {
+            void callRuntimeRpc(
+              pending.target,
+              'browser.mouseUp',
+              { worktree: pending.worktree, page: pending.pageId, button },
+              { timeoutMs: 3_000, suppressFeatureInteraction: true }
+            ).catch(() => {})
           }
+        })
+        if (completed && isCurrentRemoteOperationToken(pending.operationToken)) {
+          scheduleRemoteTabInfoRefresh(pending.operationToken, 250)
         }
-        scheduleRemoteTabInfoRefresh(pending.operationToken, 250)
       } catch (error) {
-        if (pressedButton) {
-          void callRuntimeRpc(
-            pending.target,
-            'browser.mouseUp',
-            { worktree: pending.worktree, page: pending.pageId, button: pressedButton },
-            { timeoutMs: 3_000, suppressFeatureInteraction: true }
-          ).catch(() => {})
-        }
         if (isCurrentRemoteOperationToken(pending.operationToken)) {
           if (isRemoteBrowserPageMissingError(error)) {
             closeMissingRemotePage(pending.pageId)
@@ -1877,7 +1877,13 @@ function RemoteBrowserPagePane({
           }
           setPaneNotice({
             kind: 'consequence',
-            text: error instanceof Error ? error.message : 'Remote mouse input failed.'
+            text:
+              error instanceof Error
+                ? error.message
+                : translate(
+                    'auto.components.browser.pane.BrowserPane.remoteMouseInputFailed',
+                    'Remote mouse input failed.'
+                  )
           })
         }
       }
