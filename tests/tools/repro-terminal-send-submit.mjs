@@ -66,7 +66,7 @@ function runCommand(command, args, options = {}) {
       reject(
         Object.assign(
           new Error(`${command} ${args.join(' ')} exited ${code}${detail ? `: ${detail}` : ''}`),
-          { stderr }
+          { stdout, stderr }
         )
       )
     })
@@ -76,10 +76,24 @@ function runCommand(command, args, options = {}) {
 async function callOrca(cli, args, cwd) {
   const command = cli.endsWith('.mjs') ? process.execPath : cli
   const prefixArgs = cli.endsWith('.mjs') ? [cli] : []
-  const { stdout } = await runCommand(command, [...prefixArgs, ...args, '--json'], { cwd })
+  let stdout
+  try {
+    const result = await runCommand(command, [...prefixArgs, ...args, '--json'], { cwd })
+    stdout = result.stdout
+  } catch (error) {
+    const parsed = JSON.parse(error?.stdout?.trim() ?? 'null')
+    if (parsed?.ok === false) {
+      throw Object.assign(new Error(parsed.error?.message ?? JSON.stringify(parsed.error)), {
+        code: parsed.error?.code
+      })
+    }
+    throw error
+  }
   const parsed = JSON.parse(stdout.trim())
   if (parsed.ok === false) {
-    throw new Error(parsed.error?.message ?? JSON.stringify(parsed.error))
+    throw Object.assign(new Error(parsed.error?.message ?? JSON.stringify(parsed.error)), {
+      code: parsed.error?.code
+    })
   }
   return parsed.result ?? parsed
 }
@@ -146,6 +160,7 @@ async function parentMain() {
   const reportPath = path.resolve(argValue('report', path.join(tempDir, 'report.json')))
   const marker = argValue('marker', `ORCA_TERMINAL_SEND_${process.pid}_${Date.now()}`)
   const prompt = `${marker} ${'slow composer payload '.repeat(24)}`
+  const expectStalled = hasFlag('expect-stalled')
   await mkdir(tempDir, { recursive: true })
 
   const command =
@@ -191,14 +206,22 @@ async function parentMain() {
       ['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '10000'],
       cwd
     )
-    await callOrca(
-      cli,
-      ['terminal', 'send', '--terminal', handle, '--text', prompt, '--enter'],
-      cwd
-    )
+    let sendErrorCode = null
+    try {
+      await callOrca(
+        cli,
+        ['terminal', 'send', '--terminal', handle, '--text', prompt, '--enter'],
+        cwd
+      )
+    } catch (error) {
+      if (!expectStalled || error?.code !== 'agent_prompt_stalled') {
+        throw error
+      }
+      sendErrorCode = error.code
+    }
     let report = await readReport(reportPath, 1_000)
     let rescueSent = false
-    if (!report) {
+    if (!report && !expectStalled) {
       rescueSent = true
       await callOrca(cli, ['terminal', 'send', '--terminal', handle, '--enter'], cwd)
       report = await readReport(reportPath, timeoutMs)
@@ -210,10 +233,16 @@ async function parentMain() {
       handle,
       promptBytes: Buffer.byteLength(prompt, 'utf8'),
       rescueSent,
+      sendErrorCode,
       ...report
     }
     console.log(JSON.stringify(summary, null, 2))
-    if (!report.contractOk || rescueSent) {
+    const expectedStallObserved =
+      sendErrorCode === 'agent_prompt_stalled' &&
+      report.submitted === false &&
+      report.receivedEnters === 1 &&
+      report.swallowedEnters === 1
+    if (!report.contractOk || rescueSent || (expectStalled && !expectedStallObserved)) {
       process.exitCode = 1
     }
   } finally {
@@ -250,15 +279,11 @@ async function fakeAgentMain() {
   let renderScheduled = false
   let finished = false
 
-  const finish = async () => {
-    if (finished) {
-      return
-    }
-    finished = true
+  const writeReport = async (submitted) => {
     const hasBracketedPasteFrame = input.includes(BEGIN) && input.includes(END)
     const report = {
       contractOk: prematureEnters === 0 && (!pasteFramingRequired || hasBracketedPasteFrame),
-      submitted: true,
+      submitted,
       prematureEnters,
       receivedEnters,
       swallowedEnters,
@@ -268,6 +293,15 @@ async function fakeAgentMain() {
       receivedBytes: Buffer.byteLength(input, 'utf8')
     }
     await writeFile(reportPath, JSON.stringify(report, null, 2))
+    return report
+  }
+
+  const finish = async () => {
+    if (finished) {
+      return
+    }
+    finished = true
+    const report = await writeReport(true)
     process.stdout.write(`\nORCA_TERMINAL_SEND_REPORT ${report.contractOk ? 'ok' : 'rescued'}\n`)
     process.exit(report.contractOk ? 0 : 7)
   }
@@ -295,10 +329,12 @@ async function fakeAgentMain() {
         receivedEnters += 1
         if (swallowFirstEnter && swallowedEnters === 0) {
           swallowedEnters += 1
+          void writeReport(false)
           nextCarriage = input.indexOf('\r', countedCarriages)
           continue
         }
         clearTimeout(timeout)
+        process.stdout.write('\x1b]0;Codex working\x07')
         void finish()
         return
       }

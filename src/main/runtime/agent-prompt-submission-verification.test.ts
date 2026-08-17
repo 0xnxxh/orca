@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AGENT_PROMPT_EFFECT_TIMEOUT_MS,
   type AgentPromptActivity,
-  textBeforeCursorEndsWithPrompt,
   verifyAgentPromptSubmission
 } from './agent-prompt-submission-verification'
 
@@ -10,7 +9,6 @@ function activity(overrides: Partial<AgentPromptActivity> = {}): AgentPromptActi
   return {
     generation: 1,
     lifecycleSequence: 4,
-    outputSequence: 20,
     status: 'idle',
     ...overrides
   }
@@ -19,307 +17,117 @@ function activity(overrides: Partial<AgentPromptActivity> = {}): AgentPromptActi
 describe('agent prompt submission verification', () => {
   afterEach(() => vi.useRealTimers())
 
-  it('accepts an observed lifecycle transition without retrying', async () => {
+  it('accepts an observed working transition', async () => {
     vi.useFakeTimers()
     let current = activity()
-    const retrySubmit = vi.fn()
     const verification = verifyAgentPromptSubmission({
       baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor: vi.fn(),
-      retrySubmit
+      readActivity: () => current
     })
 
     current = activity({ lifecycleSequence: 5, status: 'working' })
     await vi.advanceTimersByTimeAsync(50)
 
-    await expect(verification).resolves.toEqual({ retried: false })
-    expect(retrySubmit).not.toHaveBeenCalled()
+    await expect(verification).resolves.toBeUndefined()
   })
 
-  it('retries once when the full prompt remains immediately before the cursor', async () => {
+  it('accepts a completed lifecycle transition between polls', async () => {
     vi.useFakeTimers()
     let current = activity()
-    const retrySubmit = vi.fn(async () => {
-      current = activity({ lifecycleSequence: 5, outputSequence: 21, status: 'working' })
-      return 'retried' as const
-    })
     const verification = verifyAgentPromptSubmission({
       baseline: current,
-      prompt: 'line one\nline two',
-      readActivity: () => current,
-      readTextBeforeCursor: async () => 'header\n› line one\nline two',
-      retrySubmit
+      readActivity: () => current
     })
 
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS + 50)
+    current = activity({ lifecycleSequence: 6 })
+    await vi.advanceTimersByTimeAsync(50)
 
-    await expect(verification).resolves.toEqual({ retried: true })
-    expect(retrySubmit).toHaveBeenCalledOnce()
+    await expect(verification).resolves.toBeUndefined()
   })
 
-  it('fails without retrying when the prompt is not at the cursor', async () => {
+  it('does not accept an unrelated transition to a neutral title', async () => {
     vi.useFakeTimers()
-    const current = activity()
-    const retrySubmit = vi.fn()
+    let current = activity()
     const verification = verifyAgentPromptSubmission({
       baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor: async () => 'review this\n›',
-      retrySubmit
+      readActivity: () => current
+    })
+    const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
+
+    current = activity({ lifecycleSequence: 5, status: null })
+    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
+
+    await rejected
+  })
+
+  it('reports stalled when no lifecycle transition occurs', async () => {
+    vi.useFakeTimers()
+    const current = activity()
+    const verification = verifyAgentPromptSubmission({
+      baseline: current,
+      readActivity: () => current
     })
     const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
 
     await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
 
     await rejected
-    expect(retrySubmit).not.toHaveBeenCalled()
   })
 
-  it('fails closed when only a large prompt suffix is visible', async () => {
-    vi.useFakeTimers()
-    const current = activity()
-    const retrySubmit = vi.fn()
-    const verification = verifyAgentPromptSubmission({
-      baseline: current,
-      prompt: `${'hidden '.repeat(200)}visible tail`,
-      readActivity: () => current,
-      readTextBeforeCursor: async () => 'visible tail',
-      retrySubmit
-    })
-    const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
-
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
-
-    await rejected
-    expect(retrySubmit).not.toHaveBeenCalled()
-  })
-
-  it('fails after one ineffective retry', async () => {
-    vi.useFakeTimers()
-    const current = activity()
-    const retrySubmit = vi.fn().mockResolvedValue('retried')
-    const verification = verifyAgentPromptSubmission({
-      baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor: async () => '› review this',
-      retrySubmit
-    })
-    const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
-
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS * 2)
-
-    await rejected
-    expect(retrySubmit).toHaveBeenCalledOnce()
-  })
-
-  it('retries after redraw-only output leaves the exact prompt at the cursor', async () => {
+  it('blocks when permission appears after submit', async () => {
     vi.useFakeTimers()
     let current = activity()
-    const retrySubmit = vi.fn(async () => {
-      current = activity({ lifecycleSequence: 5, status: 'working' })
-      return 'retried' as const
-    })
     const verification = verifyAgentPromptSubmission({
       baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor: async () => '› review this',
-      retrySubmit
-    })
-
-    current = activity({ outputSequence: 21 })
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS + 50)
-
-    await expect(verification).resolves.toEqual({ retried: true })
-    expect(retrySubmit).toHaveBeenCalledOnce()
-  })
-
-  it('blocks a retry when permission appears after the first submit', async () => {
-    vi.useFakeTimers()
-    let current = activity()
-    const retrySubmit = vi.fn()
-    const verification = verifyAgentPromptSubmission({
-      baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor: async () => '› review this',
-      retrySubmit
+      readActivity: () => current
     })
     const rejected = expect(verification).rejects.toThrow('agent_prompt_blocked')
 
-    current = activity({ status: 'permission' })
+    current = activity({ lifecycleSequence: 5, status: 'permission' })
     await vi.advanceTimersByTimeAsync(50)
 
     await rejected
-    expect(retrySubmit).not.toHaveBeenCalled()
   })
 
-  it('fails closed when redraw activity races the retry and leaves the prompt stranded', async () => {
-    vi.useFakeTimers()
-    let current = activity()
-    const retrySubmit = vi.fn(async () => {
-      current = activity({ outputSequence: 21 })
-      return 'activity' as const
-    })
-    const verification = verifyAgentPromptSubmission({
-      baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor: async () => '› review this',
-      retrySubmit
-    })
-    const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
+  it('rejects an existing permission state', async () => {
+    const current = activity({ status: 'permission' })
 
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
-
-    await rejected
-    expect(retrySubmit).toHaveBeenCalledOnce()
+    await expect(
+      verifyAgentPromptSubmission({ baseline: current, readActivity: () => current })
+    ).rejects.toThrow('agent_prompt_blocked')
   })
 
-  it('accepts activity racing the retry after fresh proof shows the prompt cleared', async () => {
-    vi.useFakeTimers()
-    let current = activity()
-    const readTextBeforeCursor = vi
-      .fn<() => Promise<string | null>>()
-      .mockResolvedValueOnce('› review this')
-      .mockResolvedValueOnce('›')
-    const retrySubmit = vi.fn(async () => {
-      current = activity({ outputSequence: 21 })
-      return 'activity' as const
-    })
-    const verification = verifyAgentPromptSubmission({
-      baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor,
-      retrySubmit
-    })
+  it('does not wait when the agent is already working', async () => {
+    const current = activity({ status: 'working' })
 
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
-
-    await expect(verification).resolves.toEqual({ retried: false })
-    expect(retrySubmit).toHaveBeenCalledOnce()
-    expect(readTextBeforeCursor).toHaveBeenCalledTimes(2)
+    await expect(
+      verifyAgentPromptSubmission({ baseline: current, readActivity: () => current })
+    ).resolves.toBeUndefined()
   })
 
-  it('fails closed when redraw activity races the retry and fresh proof is unavailable', async () => {
-    vi.useFakeTimers()
-    let current = activity()
-    const readTextBeforeCursor = vi
-      .fn<() => Promise<string | null>>()
-      .mockResolvedValueOnce('› review this')
-      .mockResolvedValueOnce(null)
-    const retrySubmit = vi.fn(async () => {
-      current = activity({ outputSequence: 21 })
-      return 'activity' as const
-    })
-    const verification = verifyAgentPromptSubmission({
-      baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor,
-      retrySubmit
-    })
-    const rejected = expect(verification).rejects.toThrow('agent_prompt_stalled')
+  it('rejects a replaced terminal generation', async () => {
+    const baseline = activity()
 
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS)
-
-    await rejected
-    expect(retrySubmit).toHaveBeenCalledOnce()
-    expect(readTextBeforeCursor).toHaveBeenCalledTimes(2)
+    await expect(
+      verifyAgentPromptSubmission({
+        baseline,
+        readActivity: () => activity({ generation: 2 })
+      })
+    ).rejects.toThrow('terminal_handle_stale')
   })
 
-  it('reports permission reached after the retry as blocked', async () => {
-    vi.useFakeTimers()
-    let current = activity()
-    const retrySubmit = vi.fn(async () => {
-      current = activity({ lifecycleSequence: 5, status: 'permission' })
-      return 'retried' as const
-    })
-    const verification = verifyAgentPromptSubmission({
-      baseline: current,
-      prompt: 'review this',
-      readActivity: () => current,
-      readTextBeforeCursor: async () => '› review this',
-      retrySubmit
-    })
-    const rejected = expect(verification).rejects.toThrow('agent_prompt_blocked')
-
-    await vi.advanceTimersByTimeAsync(AGENT_PROMPT_EFFECT_TIMEOUT_MS + 50)
-
-    await rejected
-    expect(retrySubmit).toHaveBeenCalledOnce()
-  })
-
-  it('cancels before retrying', async () => {
+  it('cancels while waiting for activity', async () => {
     vi.useFakeTimers()
     const controller = new AbortController()
     const current = activity()
-    const retrySubmit = vi.fn()
     const verification = verifyAgentPromptSubmission({
       baseline: current,
-      prompt: 'review this',
       readActivity: () => current,
-      readTextBeforeCursor: async () => '› review this',
-      retrySubmit,
       signal: controller.signal
     })
 
     controller.abort()
 
     await expect(verification).rejects.toThrow('request_aborted')
-    expect(retrySubmit).not.toHaveBeenCalled()
-  })
-
-  it('does not retry prompts sent while an agent is already working', async () => {
-    const current = activity({ status: 'working' })
-    const retrySubmit = vi.fn()
-
-    await expect(
-      verifyAgentPromptSubmission({
-        baseline: current,
-        prompt: 'queue this',
-        readActivity: () => current,
-        readTextBeforeCursor: vi.fn(),
-        retrySubmit
-      })
-    ).resolves.toEqual({ retried: false })
-    expect(retrySubmit).not.toHaveBeenCalled()
-  })
-
-  it('rejects a replaced terminal generation', async () => {
-    vi.useFakeTimers()
-    const baseline = activity()
-    const verification = verifyAgentPromptSubmission({
-      baseline,
-      prompt: 'review this',
-      readActivity: () => activity({ generation: 2 }),
-      readTextBeforeCursor: vi.fn(),
-      retrySubmit: vi.fn()
-    })
-
-    await expect(verification).rejects.toThrow('terminal_handle_stale')
-  })
-
-  it('matches sanitized multiline text only at the cursor', () => {
-    expect(
-      textBeforeCursorEndsWithPrompt(
-        'header\n› line one\nline two<ESC>x',
-        'line one\nline two\x1bx'
-      )
-    ).toBe(true)
-    expect(textBeforeCursorEndsWithPrompt('line one\nline two\n›', 'line one\nline two')).toBe(
-      false
-    )
-  })
-
-  it('preserves meaningful whitespace and hard cursor boundaries', () => {
-    expect(textBeforeCursorEndsWithPrompt('› review this', 'review  this')).toBe(false)
-    expect(textBeforeCursorEndsWithPrompt('› review this', 'review\tthis')).toBe(false)
-    expect(textBeforeCursorEndsWithPrompt('› review this\n', 'review this')).toBe(false)
   })
 })

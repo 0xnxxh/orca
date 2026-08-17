@@ -101,7 +101,6 @@ import {
   buildAgentPromptPasteBytes
 } from '../../shared/agent-prompt-injection'
 import {
-  agentPromptActivityChanged,
   type AgentPromptActivity,
   verifyAgentPromptSubmission
 } from './agent-prompt-submission-verification'
@@ -1731,7 +1730,6 @@ export type RuntimeTerminalDataMeta = Readonly<{
 
 type RuntimeVisibleTerminalState = {
   lines: string[]
-  textBeforeCursor: string
   isAlternateScreen: boolean
   sequence: number
   generation: number
@@ -3198,8 +3196,9 @@ export class OrcaRuntimeService {
   private ptyOutputSequenceById = new Map<string, number>()
   private agentPromptLifecycleByPtyId = new Map<
     string,
-    { status: AgentStatus | null; sequence: number }
+    { status: AgentStatus | null; sequence: number; updatedAt: number }
   >()
+  private agentPromptExplicitStatusFloorByPtyId = new Map<string, number>()
   private agentPromptSubmissionTailByPtyId = new Map<string, Promise<void>>()
   private providerSequenceInitializedPtys = new Set<string>()
   private providerSequenceOffsetByPtyId = new Map<string, number>()
@@ -11902,14 +11901,16 @@ export class OrcaRuntimeService {
 
   private recordAgentPromptLifecycleState(ptyId: string, status: AgentStatus | null): void {
     const current = this.agentPromptLifecycleByPtyId.get(ptyId)
+    const updatedAt = Date.now()
     if (!current) {
-      this.agentPromptLifecycleByPtyId.set(ptyId, { status, sequence: 0 })
-    } else if (current.status !== status) {
-      this.agentPromptLifecycleByPtyId.set(ptyId, {
-        status,
-        sequence: current.sequence + 1
-      })
+      this.agentPromptLifecycleByPtyId.set(ptyId, { status, sequence: 0, updatedAt })
+      return
     }
+    this.agentPromptLifecycleByPtyId.set(ptyId, {
+      status,
+      sequence: current.sequence + (current.status === status ? 0 : 1),
+      updatedAt
+    })
   }
 
   private getPtyLifecycleGeneration(ptyId: string): number {
@@ -11925,6 +11926,7 @@ export class OrcaRuntimeService {
   private advancePtyLifecycleGeneration(ptyId: string): void {
     this.ptyLifecycleGenerationById.set(ptyId, this.nextPtyLifecycleGeneration++)
     this.agentPromptLifecycleByPtyId.delete(ptyId)
+    this.agentPromptExplicitStatusFloorByPtyId.set(ptyId, Date.now())
     this.legacyWorkerRecoveredPtys.delete(ptyId)
     // Why: a respawn under the same session id needs its own subscriber-driven attach.
     this.subscriberDrivenProviderAttachesByPtyId.delete(ptyId)
@@ -13139,7 +13141,6 @@ export class OrcaRuntimeService {
         ? { ...headlessState, isAlternateScreen: false }
         : {
             lines: [],
-            textBeforeCursor: '',
             isAlternateScreen: false,
             sequence: outputSequence,
             generation
@@ -13167,12 +13168,12 @@ export class OrcaRuntimeService {
         return liveState
       }
     }
-    const parsed = await this.parseVisibleSnapshotContent(snapshot)
+    const lines = await this.parseVisibleSnapshotLines(snapshot)
     if (this.getPtyLifecycleGeneration(ptyId) !== generation) {
       return null
     }
     const visibleState: RuntimeVisibleTerminalState = {
-      ...parsed,
+      lines,
       isAlternateScreen: snapshot.alternateScreen ?? false,
       sequence: snapshot.seq,
       generation
@@ -13200,34 +13201,9 @@ export class OrcaRuntimeService {
     }
     return {
       lines: visibleNonBlankTerminalLines(state.emulator.getVisibleLines()),
-      textBeforeCursor: state.emulator.getVisibleTextBeforeCursor(),
       isAlternateScreen: state.emulator.isAlternateScreen,
       sequence: state.outputSequence,
       generation
-    }
-  }
-
-  private async parseVisibleSnapshotContent(snapshot: {
-    data: string
-    cols: number
-    rows: number
-  }): Promise<Pick<RuntimeVisibleTerminalState, 'lines' | 'textBeforeCursor'>> {
-    if (snapshot.data.length === 0) {
-      return { lines: [], textBeforeCursor: '' }
-    }
-    const emulator = new HeadlessEmulator({
-      cols: snapshot.cols,
-      rows: snapshot.rows,
-      scrollback: 0
-    })
-    try {
-      await emulator.write(`\x1b[2J\x1b[3J\x1b[H${snapshot.data}`)
-      return {
-        lines: visibleNonBlankTerminalLines(emulator.getVisibleLines()),
-        textBeforeCursor: emulator.getVisibleTextBeforeCursor()
-      }
-    } finally {
-      emulator.dispose()
     }
   }
 
@@ -13236,7 +13212,20 @@ export class OrcaRuntimeService {
     cols: number
     rows: number
   }): Promise<string[]> {
-    return (await this.parseVisibleSnapshotContent(snapshot)).lines
+    if (snapshot.data.length === 0) {
+      return []
+    }
+    const emulator = new HeadlessEmulator({
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      scrollback: 0
+    })
+    try {
+      await emulator.write(`\x1b[2J\x1b[3J\x1b[H${snapshot.data}`)
+      return visibleNonBlankTerminalLines(emulator.getVisibleLines())
+    } finally {
+      emulator.dispose()
+    }
   }
 
   private async readRendererVisibleSnapshotLines(ptyId: string): Promise<string[]> {
@@ -14869,6 +14858,7 @@ export class OrcaRuntimeService {
     this.providerBufferAcquisitionsByPtyId.delete(ptyId)
     this.providerVisibleStateByPtyId.delete(ptyId)
     this.providerVisibleRetryAtByPtyId.delete(ptyId)
+    this.agentPromptExplicitStatusFloorByPtyId.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
     this.terminalSpawnCommandsByPtyId.delete(ptyId)
     this.disposePtyTitleTracker(ptyId)
@@ -17958,10 +17948,22 @@ export class OrcaRuntimeService {
         throw new Error('terminal_not_writable')
       }
       await assertTerminalInputWithinLimitWithYield(payload)
-      const submits = await this.serializeAgentPromptSubmission(pty.pty.ptyId, async () => {
-        this.assertLiveTerminalHandleTargetsPty(handle, pty.pty.ptyId)
-        return await this.writeTerminalAgentPrompt(handle, pty.pty.ptyId, prompt, payload, options)
-      })
+      const generation = this.getPtyLifecycleGeneration(pty.pty.ptyId)
+      const submits = await this.serializeAgentPromptSubmission(
+        pty.pty.ptyId,
+        generation,
+        async () => {
+          this.assertLiveTerminalHandleTargetsPty(handle, pty.pty.ptyId)
+          this.assertAgentPromptGeneration(pty.pty.ptyId, generation)
+          return await this.writeTerminalAgentPrompt(
+            handle,
+            pty.pty.ptyId,
+            generation,
+            payload,
+            options
+          )
+        }
+      )
       const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
       return { handle, accepted: true, bytesWritten }
     }
@@ -17976,9 +17978,11 @@ export class OrcaRuntimeService {
     if (await this.isLeafPtyProvenAbsent(leaf.ptyId)) {
       throw new Error('terminal_not_writable')
     }
-    const submits = await this.serializeAgentPromptSubmission(leaf.ptyId, async () => {
+    const generation = this.getPtyLifecycleGeneration(leaf.ptyId)
+    const submits = await this.serializeAgentPromptSubmission(leaf.ptyId, generation, async () => {
       this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId!)
-      return await this.writeTerminalAgentPrompt(handle, leaf.ptyId!, prompt, payload, options)
+      this.assertAgentPromptGeneration(leaf.ptyId!, generation)
+      return await this.writeTerminalAgentPrompt(handle, leaf.ptyId!, generation, payload, options)
     })
     const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
     return { handle, accepted: true, bytesWritten }
@@ -18538,7 +18542,7 @@ export class OrcaRuntimeService {
   private async writeTerminalAgentPrompt(
     handle: string,
     ptyId: string,
-    prompt: string,
+    generation: number,
     pastePayload: string,
     options: {
       beforeWrite?: (ptyId: string) => void | Promise<void>
@@ -18547,10 +18551,10 @@ export class OrcaRuntimeService {
     } = {}
   ): Promise<number> {
     assertAgentPromptRequestActive(options.signal)
+    this.assertAgentPromptGeneration(ptyId, generation)
     if (this.getAgentPromptActivity(handle, ptyId).status === 'permission') {
       throw new Error('agent_prompt_blocked')
     }
-    this.providerVisibleStateByPtyId.delete(ptyId)
     const renderGate = this.createAgentPromptRenderGate(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false
@@ -18560,8 +18564,10 @@ export class OrcaRuntimeService {
       while (!chunk.done) {
         const nextChunk = chunks.next()
         assertAgentPromptRequestActive(options.signal)
+        this.assertAgentPromptGeneration(ptyId, generation)
         await options.beforeWrite?.(ptyId)
         assertAgentPromptRequestActive(options.signal)
+        this.assertAgentPromptGeneration(ptyId, generation)
         if (nextChunk.done) {
           renderGate?.arm()
         }
@@ -18577,7 +18583,11 @@ export class OrcaRuntimeService {
       }
       completedPaste = true
     } catch (error) {
-      if (wrotePasteBytes && !completedPaste) {
+      if (
+        wrotePasteBytes &&
+        !completedPaste &&
+        this.getPtyLifecycleGeneration(ptyId) === generation
+      ) {
         this.ptyController?.write(ptyId, AGENT_PROMPT_BRACKETED_PASTE_END)
       }
       renderGate?.dispose()
@@ -18594,6 +18604,7 @@ export class OrcaRuntimeService {
       await waitForAgentPromptDelay(AGENT_PROMPT_SUBMIT_DELAY_MS, options.signal)
     }
     assertAgentPromptRequestActive(options.signal)
+    this.assertAgentPromptGeneration(ptyId, generation)
     try {
       await options.beforeWrite?.(ptyId)
     } catch (error) {
@@ -18603,6 +18614,7 @@ export class OrcaRuntimeService {
       throw error
     }
     assertAgentPromptRequestActive(options.signal)
+    this.assertAgentPromptGeneration(ptyId, generation)
     const baseline = this.getAgentPromptActivity(handle, ptyId)
     if (baseline.status === 'permission') {
       throw new Error('agent_prompt_blocked')
@@ -18611,87 +18623,66 @@ export class OrcaRuntimeService {
     if (!suffixWrote) {
       throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
     }
-    const verification = await verifyAgentPromptSubmission({
+    await verifyAgentPromptSubmission({
       baseline,
-      prompt,
       readActivity: () => this.getAgentPromptActivity(handle, ptyId),
-      readTextBeforeCursor: async () => {
-        const visible = await this.readVisibleTerminalState(ptyId)
-        const current = this.getAgentPromptActivity(handle, ptyId)
-        if (current.generation !== baseline.generation) {
-          throw new Error('terminal_handle_stale')
-        }
-        return visible?.generation === baseline.generation &&
-          visible.sequence >= current.outputSequence
-          ? visible.textBeforeCursor
-          : null
-      },
-      retrySubmit: async (expected) => {
-        assertAgentPromptRequestActive(options.signal)
-        try {
-          await options.beforeWrite?.(ptyId)
-        } catch (error) {
-          if (options.suffixFailureError) {
-            throw new Error(options.suffixFailureError)
-          }
-          throw error
-        }
-        assertAgentPromptRequestActive(options.signal)
-        const current = this.getAgentPromptActivity(handle, ptyId)
-        if (current.generation !== expected.generation) {
-          throw new Error('terminal_handle_stale')
-        }
-        if (current.status === 'permission') {
-          throw new Error('agent_prompt_blocked')
-        }
-        if (agentPromptActivityChanged(expected, current)) {
-          return 'activity'
-        }
-        const retryWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
-        if (!retryWrote) {
-          throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
-        }
-        return 'retried'
-      },
       signal: options.signal
     })
-    return verification.retried ? 2 : 1
+    return 1
   }
 
   private async serializeAgentPromptSubmission<T>(
     ptyId: string,
+    generation: number,
     submit: () => Promise<T>
   ): Promise<T> {
-    const previous = this.agentPromptSubmissionTailByPtyId.get(ptyId) ?? Promise.resolve()
+    const queueKey = `${ptyId}\u0000${generation}`
+    const previous = this.agentPromptSubmissionTailByPtyId.get(queueKey) ?? Promise.resolve()
     const submission = previous.catch(() => undefined).then(submit)
     const tail = submission.then(
       () => undefined,
       () => undefined
     )
-    this.agentPromptSubmissionTailByPtyId.set(ptyId, tail)
+    this.agentPromptSubmissionTailByPtyId.set(queueKey, tail)
     try {
       return await submission
     } finally {
-      if (this.agentPromptSubmissionTailByPtyId.get(ptyId) === tail) {
-        this.agentPromptSubmissionTailByPtyId.delete(ptyId)
+      if (this.agentPromptSubmissionTailByPtyId.get(queueKey) === tail) {
+        this.agentPromptSubmissionTailByPtyId.delete(queueKey)
       }
     }
   }
 
   private getAgentPromptActivity(handle: string, ptyId: string): AgentPromptActivity {
     this.assertLiveTerminalHandleTargetsPty(handle, ptyId)
-    const explicit = this.getFreshExplicitAgentStatusForHandle(handle)?.status
-    const ptyStatus = this.ptysById.get(ptyId)?.lastAgentStatus ?? null
+    const explicitCandidate = this.getFreshExplicitAgentStatusForHandle(handle)
+    const explicitFloor = this.agentPromptExplicitStatusFloorByPtyId.get(ptyId)
+    const explicit =
+      explicitCandidate &&
+      (explicitFloor === undefined || explicitCandidate.updatedAt > explicitFloor)
+        ? explicitCandidate
+        : null
     const lifecycle = this.agentPromptLifecycleByPtyId.get(ptyId)
+    const ptyStatus =
+      lifecycle || explicitFloor === undefined
+        ? (this.ptysById.get(ptyId)?.lastAgentStatus ?? null)
+        : null
     const status =
-      lifecycle?.status === 'permission'
+      lifecycle?.status === 'permission' || explicit?.status === 'permission'
         ? 'permission'
-        : (explicit ?? ptyStatus ?? lifecycle?.status ?? null)
+        : lifecycle && (!explicit || lifecycle.updatedAt >= explicit.updatedAt)
+          ? lifecycle.status
+          : (explicit?.status ?? ptyStatus ?? null)
     return {
       generation: this.getPtyLifecycleGeneration(ptyId),
       lifecycleSequence: lifecycle?.sequence ?? 0,
-      outputSequence: this.getPtyOutputSequence(ptyId),
       status
+    }
+  }
+
+  private assertAgentPromptGeneration(ptyId: string, expected: number): void {
+    if (this.getPtyLifecycleGeneration(ptyId) !== expected) {
+      throw new Error('terminal_handle_stale')
     }
   }
 

@@ -53,22 +53,6 @@ describe('HeadlessEmulator', () => {
       expect(snapshot.snapshotAnsi).toContain('red text')
     })
 
-    it('reads visible wrapped text only through the live cursor', async () => {
-      emulator = new HeadlessEmulator({ cols: 8, rows: 4 })
-      await emulator.write('header\r\nreview this now')
-
-      expect(emulator.getVisibleTextBeforeCursor()).toBe('header\nreview this now')
-      await emulator.write('\r\nfooter')
-      expect(emulator.getVisibleTextBeforeCursor()).toBe('header\nreview this now\nfooter')
-    })
-
-    it('excludes text after the live cursor', async () => {
-      emulator = new HeadlessEmulator({ cols: 20, rows: 4 })
-      await emulator.write('review this suffix\x1b[6D')
-
-      expect(emulator.getVisibleTextBeforeCursor()).toBe('review this ')
-    })
-
     it('captures OSC 8 link ranges in snapshot metadata', async () => {
       emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
       await emulator.write('\x1b]8;;https://news.ycombinator.com\x07Hacker News\x1b]8;;\x07')

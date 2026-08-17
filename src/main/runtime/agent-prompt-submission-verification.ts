@@ -1,165 +1,55 @@
-import { sanitizeAgentPromptText } from '../../shared/agent-prompt-injection'
-
 export const AGENT_PROMPT_EFFECT_TIMEOUT_MS = 5_000
 const AGENT_PROMPT_EFFECT_POLL_MS = 50
 
 export type AgentPromptActivity = Readonly<{
   generation: number
   lifecycleSequence: number
-  outputSequence: number
   status: 'working' | 'permission' | 'idle' | null
 }>
 
 type AgentPromptVerificationOptions = {
   baseline: AgentPromptActivity
-  prompt: string
   readActivity: () => AgentPromptActivity
-  readTextBeforeCursor: () => Promise<string | null>
-  retrySubmit: (expected: AgentPromptActivity) => Promise<'retried' | 'activity'>
   signal?: AbortSignal
 }
-
-type AgentPromptEffect = 'working' | 'permission' | 'activity' | 'none'
 
 export async function verifyAgentPromptSubmission(
   options: AgentPromptVerificationOptions
-): Promise<{ retried: boolean }> {
+): Promise<void> {
   throwIfAgentPromptAborted(options.signal)
-  if (options.baseline.status === 'permission') {
-    throw new Error('agent_prompt_blocked')
-  }
+  assertPromptNotBlocked(options.baseline)
   if (options.baseline.status === 'working') {
-    return { retried: false }
-  }
-  const firstEffect = await waitForAgentPromptEffect(
-    options.baseline,
-    options.readActivity,
-    options.signal
-  )
-  if (firstEffect === 'permission') {
-    throw new Error('agent_prompt_blocked')
-  }
-  if (firstEffect === 'working') {
-    return { retried: false }
+    return
   }
 
-  const proofActivity = options.readActivity()
-  assertSamePromptGeneration(options.baseline, proofActivity)
-  assertPromptNotBlocked(proofActivity)
-  const textBeforeCursor = await options.readTextBeforeCursor()
-  const activityAfterProof = options.readActivity()
-  assertSamePromptGeneration(options.baseline, activityAfterProof)
-  assertPromptNotBlocked(activityAfterProof)
-  if (agentPromptActivityChanged(options.baseline, activityAfterProof)) {
-    if (activityAfterProof.status === 'working') {
-      return { retried: false }
+  const deadline = Date.now() + AGENT_PROMPT_EFFECT_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const current = options.readActivity()
+    assertSamePromptGeneration(options.baseline, current)
+    assertPromptNotBlocked(current)
+    if (agentPromptLifecycleChanged(options.baseline, current)) {
+      return
     }
-    if (!textBeforeCursorEndsWithPrompt(textBeforeCursor, options.prompt)) {
-      return { retried: false }
-    }
-  }
-  if (!textBeforeCursorEndsWithPrompt(textBeforeCursor, options.prompt)) {
-    throw new Error('agent_prompt_stalled')
+    await waitForAgentPromptPoll(options.signal)
   }
 
-  throwIfAgentPromptAborted(options.signal)
-  const retry = await options.retrySubmit(activityAfterProof)
-  if (retry === 'activity') {
-    const activityBeforeFinalProof = options.readActivity()
-    assertSamePromptGeneration(options.baseline, activityBeforeFinalProof)
-    assertPromptNotBlocked(activityBeforeFinalProof)
-    if (activityBeforeFinalProof.status === 'working') {
-      return { retried: false }
-    }
-    const finalTextBeforeCursor = await options.readTextBeforeCursor()
-    const activityAfterFinalProof = options.readActivity()
-    assertSamePromptGeneration(options.baseline, activityAfterFinalProof)
-    assertPromptNotBlocked(activityAfterFinalProof)
-    if (activityAfterFinalProof.status === 'working') {
-      return { retried: false }
-    }
-    if (finalTextBeforeCursor === null) {
-      throw new Error('agent_prompt_stalled')
-    }
-    if (!textBeforeCursorEndsWithPrompt(finalTextBeforeCursor, options.prompt)) {
-      return { retried: false }
-    }
-    throw new Error('agent_prompt_stalled')
+  const current = options.readActivity()
+  assertSamePromptGeneration(options.baseline, current)
+  assertPromptNotBlocked(current)
+  if (agentPromptLifecycleChanged(options.baseline, current)) {
+    return
   }
-  const retryEffect = await waitForAgentPromptEffect(
-    activityAfterProof,
-    options.readActivity,
-    options.signal
-  )
-  if (retryEffect === 'permission') {
-    throw new Error('agent_prompt_blocked')
-  }
-  if (retryEffect === 'working') {
-    return { retried: true }
-  }
-  if (retryEffect === 'none') {
-    throw new Error('agent_prompt_stalled')
-  }
-  const retryTextBeforeCursor = await options.readTextBeforeCursor()
-  if (textBeforeCursorEndsWithPrompt(retryTextBeforeCursor, options.prompt)) {
-    throw new Error('agent_prompt_stalled')
-  }
-  return { retried: true }
+  throw new Error('agent_prompt_stalled')
 }
 
-export function agentPromptActivityChanged(
+function agentPromptLifecycleChanged(
   baseline: AgentPromptActivity,
   current: AgentPromptActivity
 ): boolean {
-  return (
-    current.lifecycleSequence !== baseline.lifecycleSequence ||
-    current.outputSequence !== baseline.outputSequence ||
-    current.status !== baseline.status
-  )
-}
-
-export function textBeforeCursorEndsWithPrompt(
-  textBeforeCursor: string | null,
-  prompt: string
-): boolean {
-  if (!textBeforeCursor) {
-    return false
-  }
-  const expected = sanitizeAgentPromptText(prompt)
-  return expected.length > 0 && textBeforeCursor.endsWith(expected)
-}
-
-async function waitForAgentPromptEffect(
-  baseline: AgentPromptActivity,
-  readActivity: () => AgentPromptActivity,
-  signal?: AbortSignal
-): Promise<AgentPromptEffect> {
-  const deadline = Date.now() + AGENT_PROMPT_EFFECT_TIMEOUT_MS
-  let activityObserved = false
-  while (Date.now() < deadline) {
-    throwIfAgentPromptAborted(signal)
-    const current = readActivity()
-    assertSamePromptGeneration(baseline, current)
-    if (current.status === 'permission') {
-      return 'permission'
-    }
-    if (current.status === 'working') {
-      return 'working'
-    }
-    if (agentPromptActivityChanged(baseline, current)) {
-      activityObserved = true
-    }
-    await waitForAgentPromptPoll(signal)
-  }
-  const current = readActivity()
-  assertSamePromptGeneration(baseline, current)
-  if (current.status === 'permission') {
-    return 'permission'
-  }
   if (current.status === 'working') {
-    return 'working'
+    return true
   }
-  return activityObserved || agentPromptActivityChanged(baseline, current) ? 'activity' : 'none'
+  return current.status === 'idle' && current.lifecycleSequence >= baseline.lifecycleSequence + 2
 }
 
 function assertSamePromptGeneration(

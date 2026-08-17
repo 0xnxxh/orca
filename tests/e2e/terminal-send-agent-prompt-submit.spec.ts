@@ -89,7 +89,7 @@ test('CLI text plus Enter waits for a slow agent composer before submitting', as
   })
 })
 
-test('CLI retries one swallowed Enter only while the exact prompt remains in the composer', async ({
+test('CLI reports a swallowed Enter without submitting a second Enter', async ({
   electronApp,
   orcaPage,
   testRepoPath
@@ -110,6 +110,7 @@ test('CLI retries one swallowed Enter only while the exact prompt remains in the
         testRepoPath,
         '--agent-command',
         'codex --swallow-first-enter',
+        '--expect-stalled',
         '--report',
         fixtureReport,
         '--marker',
@@ -130,10 +131,11 @@ test('CLI retries one swallowed Enter only while the exact prompt remains in the
 
   expect(JSON.parse(stdout)).toMatchObject({
     rescueSent: false,
+    sendErrorCode: 'agent_prompt_stalled',
     contractOk: true,
-    submitted: true,
+    submitted: false,
     prematureEnters: 0,
-    receivedEnters: 2,
+    receivedEnters: 1,
     swallowedEnters: 1,
     markerReceived: true
   })
