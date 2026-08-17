@@ -4,6 +4,7 @@ import type {
   CookieClearPartitionKey,
   CookieImportWriteStore
 } from './browser-cookie-import-clear'
+import { registrableFamily } from './browser-cookie-import-policy'
 import type { SourcePartitionRead } from './browser-cookie-source-partition'
 
 export type ImportedCookieFields = {
@@ -101,6 +102,68 @@ export function emptyImportWritePhase(): ImportWritePhase {
     domains: new Set<string>(),
     failure: null
   }
+}
+
+export type ImportWriteSkip = { cookie: SourceCookieToWrite; reason: string }
+
+export type ImportWritePlanResult = {
+  writes: SourceCookieToWrite[]
+  skips: ImportWriteSkip[]
+  /** registrableFamily values whose partition could not be read faithfully. */
+  skippedFamilies: Set<string>
+  /**
+   * True when a skipped cookie's family cannot be named (registrableFamily returned null). The
+   * caller must refuse the import before mutating anything: a family we cannot name is a family we
+   * cannot exclude from the removal plan, and clearing a family we cannot protect is the P0.
+   */
+  hasUnrepresentableSkip: boolean
+}
+
+/**
+ * Decides every source cookie's fate BEFORE any jar mutation (STA-4300 invariant I1).
+ *
+ * Two passes, not one, and the second is not optional. Family-atomic skip is a property of the
+ * whole input: with a readable `mixed.example` row *before* an unreadable `sub.mixed.example` row,
+ * a per-row guard emits the readable one before anything knows the family will be skipped. Pass 1
+ * classifies and collects the skipped families; pass 2 re-filters the provisional writes.
+ *
+ * Pure — no I/O — so the caller cannot mutate anything before the plan exists.
+ */
+export function planImportWrites(cookies: readonly SourceCookieToWrite[]): ImportWritePlanResult {
+  const provisional: SourceCookieToWrite[] = []
+  const skips: ImportWriteSkip[] = []
+  const skippedFamilies = new Set<string>()
+  let hasUnrepresentableSkip = false
+
+  // Pass 1: classify, and learn which families cannot be written faithfully.
+  for (const cookie of cookies) {
+    const plan = planImportedCookieWrite(cookie, cookie.partition)
+    if (plan.status === 'skip') {
+      const family = registrableFamily(cookie.domain)
+      if (family === null) {
+        hasUnrepresentableSkip = true
+      } else {
+        skippedFamilies.add(family)
+      }
+      skips.push({ cookie, reason: plan.reason })
+      continue
+    }
+    provisional.push(cookie)
+  }
+
+  // Pass 2: a readable cookie whose family was skipped is suppressed too — otherwise its family's
+  // removal scope would be widened by a domain we then decline to write back (STA-4300 §2b).
+  const writes: SourceCookieToWrite[] = []
+  for (const cookie of provisional) {
+    const family = registrableFamily(cookie.domain)
+    if (family !== null && skippedFamilies.has(family)) {
+      skips.push({ cookie, reason: 'family partition unreadable' })
+      continue
+    }
+    writes.push(cookie)
+  }
+
+  return { writes, skips, skippedFamilies, hasUnrepresentableSkip }
 }
 
 // Why: cookie values are secret; only the domain is ever logged or summarized.
